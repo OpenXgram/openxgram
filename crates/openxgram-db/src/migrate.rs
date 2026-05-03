@@ -6,6 +6,13 @@ pub struct Migration {
     pub sql: &'static str,
 }
 
+#[derive(Debug, Clone)]
+pub struct MigrationRecord {
+    pub version: u32,
+    pub name: String,
+    pub applied_at: String,
+}
+
 const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
