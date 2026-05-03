@@ -15,6 +15,7 @@ use openxgram_cli::memory::{self, MemoryAction};
 use openxgram_cli::migrate::{self, MigrateOpts};
 use openxgram_cli::notify::{self, NotifyAction};
 use openxgram_cli::patterns::{self, PatternsAction};
+use openxgram_cli::peer::{self, PeerAction};
 use openxgram_cli::reset::{self, ResetOpts};
 use openxgram_cli::session::{self, SessionAction};
 use openxgram_cli::status::{self, StatusOpts};
@@ -293,6 +294,14 @@ enum Commands {
         data_dir: Option<PathBuf>,
     },
 
+    /// Peer 레지스트리 — 머신 간 통신 주소록 (cross-machine 메시지 baseline)
+    Peer {
+        #[arg(long, global = true)]
+        data_dir: Option<PathBuf>,
+        #[command(subcommand)]
+        action: PeerCli,
+    },
+
     /// 쉘 자동 완성 스크립트 출력 (bash/zsh/fish/elvish/powershell)
     Completions {
         #[arg(value_enum)]
@@ -507,6 +516,75 @@ enum McpTokenCli {
         #[arg(long)]
         id: String,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum PeerCli {
+    /// Peer 등록
+    Add {
+        #[arg(long)]
+        alias: String,
+        /// secp256k1 압축 공개키 hex (66자)
+        #[arg(long)]
+        public_key: String,
+        /// 호출 가능 주소 — http://ip:port, xmtp://address 등
+        #[arg(long)]
+        address: String,
+        #[arg(long, value_enum, default_value_t = PeerRoleArg::Worker)]
+        role: PeerRoleArg,
+        /// 메모 (선택)
+        #[arg(long)]
+        notes: Option<String>,
+    },
+    /// 모든 peer list
+    List,
+    /// 단건 상세
+    Show { alias: String },
+    /// last_seen 갱신 (수동, 보통 transport 가 자동으로 호출)
+    Touch { alias: String },
+    /// peer 삭제
+    Delete { alias: String },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum PeerRoleArg {
+    Primary,
+    Secondary,
+    Worker,
+}
+
+impl From<PeerRoleArg> for openxgram_peer::PeerRole {
+    fn from(r: PeerRoleArg) -> Self {
+        match r {
+            PeerRoleArg::Primary => Self::Primary,
+            PeerRoleArg::Secondary => Self::Secondary,
+            PeerRoleArg::Worker => Self::Worker,
+        }
+    }
+}
+
+impl From<PeerCli> for PeerAction {
+    fn from(c: PeerCli) -> Self {
+        match c {
+            PeerCli::Add {
+                alias,
+                public_key,
+                address,
+                role,
+                notes,
+            } => PeerAction::Add {
+                alias,
+                public_key_hex: public_key,
+                address,
+                role: role.into(),
+                notes,
+            },
+            PeerCli::List => PeerAction::List,
+            PeerCli::Show { alias } => PeerAction::Show { alias },
+            PeerCli::Touch { alias } => PeerAction::Touch { alias },
+            PeerCli::Delete { alias } => PeerAction::Delete { alias },
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -1137,6 +1215,11 @@ async fn main() -> anyhow::Result<()> {
                 data_dir: resolve_data_dir(data_dir)?,
             };
             tui::run_tui(&opts)?;
+        }
+
+        Commands::Peer { data_dir, action } => {
+            let dir = resolve_data_dir(data_dir)?;
+            peer::run_peer(&dir, action.into())?;
         }
 
         Commands::Completions { shell } => {
