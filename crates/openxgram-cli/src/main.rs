@@ -533,6 +533,8 @@ enum TraitsCli {
     },
     /// 모든 trait list (updated_at DESC)
     List,
+    /// L3 ROUTINE pattern → derived trait 도출 (수동 트리거; 야간 reflection 도 자동)
+    Derive,
 }
 
 impl From<TraitsCli> for TraitsAction {
@@ -551,6 +553,7 @@ impl From<TraitsCli> for TraitsAction {
             },
             TraitsCli::Get { name } => TraitsAction::Get { name },
             TraitsCli::List => TraitsAction::List,
+            TraitsCli::Derive => TraitsAction::Derive,
         }
     }
 }

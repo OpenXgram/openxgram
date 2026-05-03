@@ -10,8 +10,12 @@ use openxgram_db::Db;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::pattern::{Classification, PatternStore};
 use crate::util::parse_ts;
 use crate::{MemoryError, Result};
+
+/// derived trait 의 name prefix — 자동 도출과 manual 구분용.
+pub const DERIVED_TRAIT_PREFIX: &str = "pattern:";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -147,4 +151,28 @@ impl<'a> TraitStore<'a> {
         }
         Ok(out)
     }
+}
+
+/// pattern_text 를 trait name 으로 안전 변환 — DERIVED_TRAIT_PREFIX + 80자 제한.
+pub fn pattern_to_trait_name(pattern_text: &str) -> String {
+    let trimmed = pattern_text.chars().take(80).collect::<String>();
+    format!("{DERIVED_TRAIT_PREFIX}{trimmed}")
+}
+
+/// L3 → L4 자동 도출 — ROUTINE 분류된 pattern 을 derived trait 로 upsert.
+/// manual source trait 는 건드리지 않음 (name prefix 로 구분).
+/// 야간 reflection job 에서 호출 — idempotent (같은 pattern 은 갱신).
+pub fn derive_traits_from_patterns(db: &mut Db) -> Result<Vec<AgentTrait>> {
+    let routines = PatternStore::new(db).list_by_classification(Classification::Routine)?;
+
+    let mut out = Vec::with_capacity(routines.len());
+    let mut store = TraitStore::new(db);
+    for p in routines {
+        let name = pattern_to_trait_name(&p.pattern_text);
+        // manual trait 와 충돌 시 우회: prefix 로 분리되어 자연스럽게 회피.
+        let refs = vec![p.id.clone()];
+        let t = store.insert_or_update(&name, &p.pattern_text, TraitSource::Derived, &refs)?;
+        out.push(t);
+    }
+    Ok(out)
 }
