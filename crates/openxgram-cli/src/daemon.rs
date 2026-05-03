@@ -9,7 +9,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use openxgram_core::paths::db_path;
 use openxgram_scheduler::{add_reflection_job, build_scheduler, NIGHTLY_REFLECTION_CRON};
-use openxgram_transport::spawn_server;
+use openxgram_transport::{spawn_server_with_metrics, MetricsProvider};
+use std::sync::Arc;
 
 const DEFAULT_BIND: &str = "127.0.0.1:7300";
 
@@ -49,7 +50,10 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
     scheduler.start().await.context("scheduler 시작 실패")?;
     println!("  ✓ reflection scheduler started");
 
-    let server = spawn_server(bind)
+    // Prometheus metrics provider — DB 카운트 매 scrape 마다 조회
+    let data_dir_for_metrics = opts.data_dir.clone();
+    let metrics: MetricsProvider = Arc::new(move || gather_db_metrics(&data_dir_for_metrics));
+    let server = spawn_server_with_metrics(bind, Some(metrics))
         .await
         .context("transport server bind 실패")?;
     println!("  ✓ transport server bound: http://{}", server.bound_addr);
@@ -91,6 +95,53 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
 
     println!("✓ daemon stopped");
     Ok(())
+}
+
+/// 매 /v1/metrics scrape 마다 호출 — Prometheus exposition format 추가 metrics.
+/// 실패 시 빈 문자열 반환 (silent — transport baseline metrics 는 영향 없음).
+fn gather_db_metrics(data_dir: &std::path::Path) -> String {
+    use openxgram_db::{Db, DbConfig};
+    let mut db = match Db::open(DbConfig {
+        path: db_path(data_dir),
+        ..Default::default()
+    }) {
+        Ok(d) => d,
+        Err(_) => return String::new(),
+    };
+    if db.migrate().is_err() {
+        return String::new();
+    }
+    let conn = db.conn();
+    let counts = [
+        ("openxgram_messages_total", "messages"),
+        ("openxgram_episodes_total", "episodes"),
+        ("openxgram_memories_total", "memories"),
+        ("openxgram_patterns_total", "patterns"),
+        ("openxgram_traits_total", "traits"),
+        ("openxgram_vault_entries_total", "vault_entries"),
+        ("openxgram_vault_acl_total", "vault_acl"),
+        (
+            "openxgram_vault_pending_total",
+            "vault_pending_confirmations",
+        ),
+        ("openxgram_vault_audit_total", "vault_audit"),
+        ("openxgram_peers_total", "peers"),
+        ("openxgram_payment_intents_total", "payment_intents"),
+        ("openxgram_mcp_tokens_total", "mcp_tokens"),
+    ];
+    let mut out = String::new();
+    for (metric, table) in counts {
+        let n: i64 = conn
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap_or(-1);
+        if n < 0 {
+            continue;
+        }
+        out.push_str(&format!(
+            "# HELP {metric} 행 수 ({table})\n# TYPE {metric} gauge\n{metric} {n}\n"
+        ));
+    }
+    out
 }
 
 /// drain 된 envelope 들을 한 번의 DB open 으로 처리 (silent error 패턴).

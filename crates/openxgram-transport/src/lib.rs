@@ -81,22 +81,35 @@ impl ServerHandle {
     }
 }
 
+/// 외부 모니터링용 metrics text provider — Prometheus exposition format 등.
+pub type MetricsProvider = Arc<dyn Fn() -> String + Send + Sync>;
+
 #[derive(Clone)]
 struct AppState {
     received: Arc<Mutex<Vec<Envelope>>>,
     started_at: std::time::Instant,
+    metrics: Option<MetricsProvider>,
 }
 
 pub async fn spawn_server(bind_addr: SocketAddr) -> Result<ServerHandle> {
+    spawn_server_with_metrics(bind_addr, None).await
+}
+
+pub async fn spawn_server_with_metrics(
+    bind_addr: SocketAddr,
+    metrics: Option<MetricsProvider>,
+) -> Result<ServerHandle> {
     let received = Arc::new(Mutex::new(Vec::new()));
     let state = AppState {
         received: received.clone(),
         started_at: std::time::Instant::now(),
+        metrics,
     };
 
     let app = Router::new()
         .route("/v1/health", get(health_check))
         .route("/v1/message", post(receive_message))
+        .route("/v1/metrics", get(metrics_endpoint))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
@@ -153,6 +166,24 @@ async fn health_check(State(state): State<AppState>) -> Json<HealthResponse> {
 async fn receive_message(State(state): State<AppState>, Json(env): Json<Envelope>) -> StatusCode {
     state.received.lock().expect("poisoned").push(env);
     StatusCode::OK
+}
+
+/// Prometheus exposition format. metrics provider 없으면 daemon 내장 baseline 만.
+async fn metrics_endpoint(State(state): State<AppState>) -> (StatusCode, String) {
+    let uptime = state.started_at.elapsed().as_secs();
+    let received = state.received.lock().expect("poisoned").len();
+    let mut body = format!(
+        "# HELP openxgram_uptime_seconds daemon uptime\n\
+         # TYPE openxgram_uptime_seconds gauge\n\
+         openxgram_uptime_seconds {uptime}\n\
+         # HELP openxgram_received_total inbound envelope 누적 수신 수\n\
+         # TYPE openxgram_received_total counter\n\
+         openxgram_received_total {received}\n",
+    );
+    if let Some(p) = &state.metrics {
+        body.push_str(&p());
+    }
+    (StatusCode::OK, body)
 }
 
 /// `base_url` 의 `/v1/message` 로 envelope POST. 4xx/5xx 시 raise.
