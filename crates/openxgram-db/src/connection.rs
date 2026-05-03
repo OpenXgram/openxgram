@@ -101,4 +101,12 @@ impl Db {
     pub fn conn(&mut self) -> &mut rusqlite::Connection {
         &mut self.conn
     }
+
+    /// `PRAGMA integrity_check` 결과를 반환. 정상 시 `"ok"`.
+    pub fn integrity_check(&mut self) -> Result<String, DbError> {
+        let result: String = self
+            .conn
+            .query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
+        Ok(result)
+    }
 }

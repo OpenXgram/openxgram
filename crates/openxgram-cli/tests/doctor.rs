@@ -1,0 +1,115 @@
+//! xgram doctor — 통합 테스트.
+
+use std::path::PathBuf;
+
+use openxgram_cli::doctor::{run_doctor, DoctorOpts, Verdict};
+use openxgram_cli::init::{run_init, InitOpts};
+use openxgram_manifest::MachineRole;
+use tempfile::tempdir;
+
+const TEST_PASSWORD: &str = "test-password-12345";
+
+fn init_opts(data_dir: PathBuf) -> InitOpts {
+    InitOpts {
+        alias: "test-machine".into(),
+        role: MachineRole::Primary,
+        data_dir,
+        force: false,
+        dry_run: false,
+        import: false,
+    }
+}
+
+fn doctor_opts(data_dir: PathBuf) -> DoctorOpts {
+    DoctorOpts { data_dir }
+}
+
+fn set_env() {
+    unsafe {
+        std::env::set_var("XGRAM_KEYSTORE_PASSWORD", TEST_PASSWORD);
+        std::env::remove_var("XGRAM_SEED");
+    }
+}
+
+#[test]
+fn doctor_after_fresh_init_all_ok() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+
+    run_init(&init_opts(data_dir.clone())).unwrap();
+    let report = run_doctor(&doctor_opts(data_dir)).unwrap();
+    report.print();
+
+    let summary: String = report
+        .checks
+        .iter()
+        .map(|c| format!("  {} {} — {}", c.verdict, c.name, c.detail))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(
+        report.fail_count(),
+        0,
+        "FAIL 0건 기대\n{summary}"
+    );
+    assert_eq!(report.exit_code(), 0);
+    // 5개 점검 모두 OK (또는 unix 외 환경에서 keystore 권한 검사 OK 처리)
+    assert!(report.ok_count() >= 4, "OK 4건 이상");
+}
+
+#[test]
+fn doctor_without_install_returns_fail() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("absent");
+
+    let report = run_doctor(&doctor_opts(data_dir)).unwrap();
+
+    assert!(report.fail_count() >= 1, "manifest 미존재 → FAIL 최소 1건");
+    assert_eq!(report.exit_code(), 1);
+}
+
+#[test]
+fn doctor_detects_corrupted_db() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    // DB 파일에 쓰레기 덮어쓰기 → integrity_check 실패
+    std::fs::write(data_dir.join("db.sqlite"), b"this is not a sqlite file").unwrap();
+
+    let report = run_doctor(&doctor_opts(data_dir)).unwrap();
+
+    let db_check = report
+        .checks
+        .iter()
+        .find(|c| c.name == "SQLite 무결성")
+        .expect("SQLite 점검 결과 존재");
+    assert_eq!(db_check.verdict, Verdict::Fail, "변조 DB → FAIL: {db_check:?}");
+    assert!(report.exit_code() >= 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_warns_on_wrong_keystore_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    // 권한을 644 로 변경 → WARN
+    let path = data_dir.join("keystore").join("master.json");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    let report = run_doctor(&doctor_opts(data_dir)).unwrap();
+    let ks_check = report
+        .checks
+        .iter()
+        .find(|c| c.name == "Keystore master")
+        .unwrap();
+    assert_eq!(ks_check.verdict, Verdict::Warn);
+}
