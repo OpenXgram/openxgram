@@ -89,12 +89,32 @@ xgram session export --session-id <ID> --out pkg.json
 xgram session import --input pkg.json --verify   # ECDSA 서명 검증
 ```
 
-### Cold backup 라운드트립
+### Cold backup
+
+비파괴 백업 (수동 또는 systemd timer):
+
+```bash
+xgram backup --to ~/snap.cbk                          # 명시 파일 경로
+xgram backup --to ~/.openxgram/backups                # 디렉토리 → timestamped
+xgram backup-install --backup-dir ~/.openxgram/backups   # systemd .timer 자동화
+systemctl --user enable --now openxgram-backup.timer
+```
+
+destructive 백업 + 복원:
 
 ```bash
 xgram uninstall --cold-backup-to ~/snap.tar.gz.enc
 xgram restore --input ~/snap.tar.gz.enc --target-dir ~/.openxgram
 xgram doctor   # 모든 layer 복원 확인
+```
+
+### 자격증명 vault
+
+```bash
+xgram vault set --key discord/bot --value "TOKEN" --tags discord,prod
+xgram vault list
+xgram vault get --key discord/bot
+xgram vault delete --key discord/bot
 ```
 
 ### Claude Code MCP 통합
@@ -112,7 +132,8 @@ xgram doctor   # 모든 layer 복원 확인
 }
 ```
 
-세 tool 노출: `list_sessions`, `recall_messages`, `list_memories_by_kind`.
+기본 tool 3종: `list_sessions`, `recall_messages`, `list_memories_by_kind`.
+`XGRAM_KEYSTORE_PASSWORD` 환경 시 추가 노출: `vault_list`, `vault_get`, `vault_set`.
 
 ### 인터랙티브 마법사
 
@@ -125,41 +146,49 @@ xgram wizard   # ratatui state machine: Welcome → MachineId → Confirm
 설치 / 운영:
 - `init` / `uninstall` / `reset` / `migrate` / `doctor` / `status`
 - `daemon` / `daemon-install` / `daemon-uninstall`
-- `restore` (cold backup)
+- `backup` (비파괴 cold backup) / `restore`
+- `backup-install` / `backup-uninstall` (systemd .timer 기반 주기 백업)
 
 데이터:
 - `keypair new/list/show/import/export`
 - `session new/list/show/message/reflect/recall/export/import/delete/reflect-all`
 - `memory add/list/pin/unpin`
+- `patterns observe/list` (L3 — NEW/RECURRING/ROUTINE)
+- `traits set/get/list` (L4 — 정체성·성향, manual source)
+- `vault set/get/list/delete` (ChaCha20 암호화 자격증명)
 
 통합:
-- `mcp-serve` — Claude Code MCP
+- `mcp-serve` — Claude Code MCP (db tools 3종 + vault tools 3종, 패스워드 환경 시)
 - `notify discord/telegram` — webhook/bot 알림
+- `backup-push` — Discord/Telegram 으로 session 통계 push
 - `wizard` / `tui` — 인터랙티브 화면
 
 ## Phase 1 MVP 진행률
 
-- ✅ 9 crate 워크스페이스 (core / keystore / db / manifest / memory / transport / adapter / scheduler / mcp / cli)
+- ✅ 11 crate 워크스페이스 (core / keystore / db / manifest / memory / transport / adapter / scheduler / mcp / vault / cli)
 - ✅ MVP 코어 명령 6/6 (init / uninstall / doctor / status / reset / migrate)
-- ✅ L0 messages + L1 episodes + L2 memories + sqlite-vec KNN
+- ✅ 5층 메모리 CLI: L0 messages / L1 episodes / L2 memories / L3 patterns / L4 traits
+- ✅ sqlite-vec KNN, BGE-small (fastembed optional feature)
 - ✅ secp256k1 ECDSA 서명·검증 (메시지 / install-manifest)
 - ✅ ChaCha20-Poly1305 keystore + cold backup + restore
+- ✅ vault: ChaCha20-Poly1305 자격증명 저장소 (set/get/list/delete + MCP tool)
 - ✅ axum + reqwest localhost transport / `/v1/health`
 - ✅ Discord webhook + Telegram bot
 - ✅ tokio-cron-scheduler nightly reflection
-- ✅ MCP JSON-RPC stdio 서버 (3 db tools)
+- ✅ MCP JSON-RPC stdio 서버 (db tools 3종 + vault tools 3종)
 - ✅ ratatui wizard state machine (3 화면)
-- ✅ systemd user unit 생성기
+- ✅ systemd user unit 생성기 (sidecar daemon + backup .timer)
 - ✅ session export/import 라운드트립 + ECDSA 검증
-- ✅ fastembed multilingual-e5-small (optional feature)
+- ✅ 비파괴 `xgram backup` + systemd timer 자동화
 
 후속 (Phase 1.5+):
-- restore 병합 모드, cold backup auto cron
+- restore 병합 모드
 - 9단계 wizard 추가 단계 (시드/패스워드/외부 어댑터 등)
 - Tailscale 실 IP / mTLS
-- HTTP MCP transport, fastembed 활성 시 의미 검색 통합
-- L3 patterns / L4 traits 분류기
-- Vault ACL 침투 테스트 자동화
+- HTTP MCP transport
+- fastembed 활성 시 MessageStore embedder 통합 (현재 DummyEmbedder)
+- L3 → L4 traits 자동 도출 (야간 reflection)
+- Vault ACL · 일일 한도 · MFA
 
 ## 빌드 환경 의존성
 
