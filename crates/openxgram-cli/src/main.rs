@@ -791,14 +791,20 @@ enum KeypairAction {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // 로그 초기화
+    // 로그 초기화 — `XGRAM_LOG_FORMAT=json` 시 구조화 로그 (운영·SRE 친화),
+    // 그 외 사람용 pretty.
     let log_level = if cli.verbose { "debug" } else { "info" };
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level)),
-        )
-        .init();
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level));
+    let json_mode = std::env::var("XGRAM_LOG_FORMAT").as_deref() == Ok("json");
+    if json_mode {
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .json()
+            .init();
+    } else {
+        tracing_subscriber::fmt().with_env_filter(env_filter).init();
+    }
 
     match cli.command {
         Commands::Init {
