@@ -78,12 +78,14 @@ impl ServerHandle {
 #[derive(Clone)]
 struct AppState {
     received: Arc<Mutex<Vec<Envelope>>>,
+    started_at: std::time::Instant,
 }
 
 pub async fn spawn_server(bind_addr: SocketAddr) -> Result<ServerHandle> {
     let received = Arc::new(Mutex::new(Vec::new()));
     let state = AppState {
         received: received.clone(),
+        started_at: std::time::Instant::now(),
     };
 
     let app = Router::new()
@@ -112,12 +114,33 @@ pub async fn spawn_server(bind_addr: SocketAddr) -> Result<ServerHandle> {
 pub struct HealthResponse {
     pub status: &'static str,
     pub version: &'static str,
+    /// daemon 가동 후 경과 (초)
+    pub uptime_seconds: u64,
+    /// 누적 수신 envelope 수
+    pub received_count: usize,
+    /// Tailscale BackendState (Running / NeedsLogin / Stopped 등). tailscaled 미설치 시 None.
+    pub tailscale_state: Option<String>,
+    /// Tailscale 노드 IPv4 (있을 때).
+    pub tailscale_ipv4: Option<String>,
 }
 
-async fn health_check() -> Json<HealthResponse> {
+async fn health_check(State(state): State<AppState>) -> Json<HealthResponse> {
+    let uptime_seconds = state.started_at.elapsed().as_secs();
+    let received_count = state.received.lock().expect("poisoned").len();
+    let (tailscale_state, tailscale_ipv4) = if crate::tailscale::is_running() {
+        let st = crate::tailscale::backend_state().ok();
+        let ip = crate::tailscale::local_ipv4().ok().map(|a| a.to_string());
+        (st, ip)
+    } else {
+        (None, None)
+    };
     Json(HealthResponse {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
+        uptime_seconds,
+        received_count,
+        tailscale_state,
+        tailscale_ipv4,
     })
 }
 
