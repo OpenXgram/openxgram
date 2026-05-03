@@ -6,8 +6,10 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use openxgram_core::paths::manifest_path;
+use openxgram_core::paths::{db_path, manifest_path};
+use openxgram_db::{Db, DbConfig};
 use openxgram_manifest::InstallManifest;
+use openxgram_memory::store_stats;
 
 #[derive(Debug, Clone)]
 pub struct StatusOpts {
@@ -45,6 +47,25 @@ pub fn run_status(opts: &StatusOpts) -> Result<()> {
     println!("  ports ({}):", m.ports.len());
     for p in &m.ports {
         println!("    {}/{} — {}", p.number, p.protocol, p.service);
+    }
+
+    // 메모리 레이어 통계 — DB 가 있을 때만
+    let dbp = db_path(&opts.data_dir);
+    if dbp.exists() {
+        if let Ok(mut db) = Db::open(DbConfig {
+            path: dbp,
+            ..Default::default()
+        }) {
+            let _ = db.migrate();
+            if let Ok(stats) = store_stats(&mut db) {
+                println!();
+                println!("  memory layers:");
+                println!("    sessions  : {}", stats.sessions);
+                println!("    messages  : {} (L0)", stats.messages);
+                println!("    episodes  : {} (L1)", stats.episodes);
+                println!("    memories  : {} (L2)", stats.memories);
+            }
+        }
     }
     Ok(())
 }

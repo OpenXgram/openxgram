@@ -12,6 +12,7 @@ pub mod episode;
 pub mod memory;
 pub mod message;
 pub mod session;
+pub mod stats;
 mod util;
 
 pub use embed::{DummyEmbedder, Embedder, EMBED_DIM};
@@ -19,6 +20,7 @@ pub use episode::{reflect_session, Episode, EpisodeStore};
 pub use memory::{Memory, MemoryKind, MemoryStore};
 pub use message::{Message, MessageStore, RecallHit};
 pub use session::{Session, SessionStore};
+pub use stats::{store_stats, StoreStats};
 
 use thiserror::Error;
 
