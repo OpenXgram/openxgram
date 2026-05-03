@@ -1,0 +1,23 @@
+[package]
+name = "openxgram-nostr"
+description = "Nostr messaging integration — secp256k1 마스터키 0-friction, kind 매핑 (PRD-NOSTR-*)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+openxgram-core = { path = "../openxgram-core" }
+openxgram-keystore = { path = "../openxgram-keystore" }
+nostr = { version = "0.43", default-features = false, features = ["std"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+hex = { workspace = true }
+k256 = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
