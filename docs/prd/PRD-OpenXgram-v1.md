@@ -321,6 +321,7 @@ L0  messages  ← 원시 메시지 + 임베딩 + 서명
 - USDC on Base 송금 + OpenAgentX 어댑터 hook
 - 회상 복합 점수 (α·관련성 + β·최신성 + γ·중요도 + δ·접근빈도)
 - Memory Transfer Phase 1 MVP (Text Package + 클립보드 + Discord 백업 + 기본 Pull, 약 5~6일)
+- Lifecycle Phase 1 MVP (init 9단계 마법사, install-manifest, uninstall 기본, doctor, reset, 약 4~5일)
 
 ---
 
@@ -336,6 +337,8 @@ L0  messages  ← 원시 메시지 + 임베딩 + 서명
 - Memory Transfer Phase 1.5 (Email + Telegram + Webhook outbound + 코드 추출)
 - Memory Transfer Phase 2 (Inbound webhook + GUI 페이지 + 모든 추출 형식)
 - Memory Transfer Phase 2+ (브라우저 확장, 클립보드 동기화 자동화)
+- Lifecycle Phase 1.5 (비대화 init --config FILE 완전 지원, migrate 기본, doctor --fix 자동 수복)
+- Lifecycle Phase 2 (GUI 설치 마법사, Windows Service 지원, 자동 라운드트립 테스트 CI 통합)
 
 ---
 
@@ -385,7 +388,47 @@ L0  messages  ← 원시 메시지 + 임베딩 + 서명
 
 ---
 
-## 18. 위험 요소
+## 18. Lifecycle Manager (설치·제거·리셋·마이그레이션·점검)
+
+용도:
+- 마스터의 반복 install-uninstall 워크플로우 보장 (테스트 시 흔적 0건)
+- 깔끔한 온보딩 (대화형 9단계 마법사)
+- 깔끔한 제거 (manifest 기반 역순 정리)
+- 데이터만 리셋 (재설치 없이)
+- 버전 마이그레이션 (DB 스키마 자동 이전)
+- 헬스체크 (doctor 명령으로 10+ 항목 점검)
+
+핵심 원칙:
+- 사이드카가 만든 것만 사이드카가 책임 (managed vs unmanaged)
+- install-manifest.json 시드 서명으로 무결성 보장
+- 셸 통합·외부 리소스도 정확히 추적·정리
+- 흔적 0건 검증
+- Idempotent: 여러 번 실행해도 안전
+- 마스터 메모리 규칙 적용: fallback 금지, 롤백 가능 후 승인
+
+명령:
+- `xgram init` — 대화형 설치 9단계
+- `xgram status` — 간단 상태
+- `xgram doctor` — 헬스체크 + 진단
+- `xgram reset` — 데이터 초기화 (재설치 없이)
+- `xgram migrate` — 버전 업그레이드
+- `xgram uninstall` — 제거 (백업 옵션 4종)
+
+설치 매니페스트:
+- 위치: `~/.starian/install-manifest.json`
+- 생성된 모든 항목 추적: 파일·디렉토리·서비스·바이너리·셸 통합·외부 리소스·키페어·포트·OS 키체인
+
+제거 백업 옵션 4종:
+- Full backup: 다른 사이드카로 sync
+- Cold backup: 암호화 zip
+- 부분 보존: 특정 경로 명시
+- 백업 없음: 확인 강제 ("DELETE OPENXGRAM" 입력)
+
+상세 사양: docs/specs/SPEC-lifecycle-v1.md (Pip 작성)
+
+---
+
+## 19. 위험 요소
 
 - Discord 정책 변경: Bot을 통한 Webhook 발신자 분리가 Discord TOS 해석에 따라 제한될 수 있음. 모니터링 필요.
 - XMTP 메인넷 전환: XMTP가 testnet → mainnet으로 전환 중. 프로토콜 변경 시 어댑터 업데이트 필요.
@@ -393,10 +436,13 @@ L0  messages  ← 원시 메시지 + 임베딩 + 서명
 - OpenAgentX API 안정성: OpenAgentX가 내부 프로젝트이므로 API 변경 시 어댑터 영향. 인터페이스 추상화 필수.
 - Memory Transfer Outbound 데이터 유출 위험: 마스킹 + 태그 제외 + 미리보기 + 감사 로그 4중 방어
 - Inbound webhook 악의 페이로드: 서명 검증 + 화이트리스트 + 크기 상한 + JSON Schema
+- Lifecycle uninstall 부분 실패: idempotent + manifest 기반 재실행으로 복구. 마지막 항목(manifest 자체)을 나중에 삭제하므로 중단 후 재실행 가능.
+- 셸 통합 잘못 제거 위험: `BEGIN OPENXGRAM` / `END OPENXGRAM` 마커 기반 sed로 범위를 정확히 특정 후 제거. 마커 외부 내용은 절대 건드리지 않음.
+- managed/unmanaged 외부 리소스 혼동: manifest의 `managed` 플래그로 명확 구분. `managed: false` 항목은 제거 시 절대 건드리지 않음.
 
 ---
 
-## 19. 검증 시나리오 (마스터 확정)
+## 20. 검증 시나리오 (마스터 확정)
 
 ### 시나리오 A — 에이전트 간 기억 공유 + 검증 요청
 
@@ -456,10 +502,34 @@ L0  messages  ← 원시 메시지 + 임베딩 + 서명
 4. Claude 웹에 붙여넣기 → 그 컨텍스트로 대화 이어가기
 5. 기대: ChatGPT와 Claude가 같은 결정·미해결 질문·파일 컨텍스트 공유. 사이드카가 웹 LLM 사이 컨텍스트 운반자 역할 입증.
 
+### 시나리오 H — install → uninstall 라운드트립 (흔적 0건 검증)
+
+1. `xgram init` 실행 → 9단계 완료 → 서비스 등록·파일 생성·셸 통합 모두 완료
+2. `xgram uninstall` 실행 → "DELETE OPENXGRAM" 입력 확인 → 역순 정리
+3. find 패턴으로 흔적 검사: `~/.xgram`, `~/.starian`, 셸 rc 파일, systemd/launchd 등록 여부
+4. 기대: 흔적 0건. manifest에 기록된 항목 전부 정리 완료. 셸 rc에 마커 블록 없음.
+
+### 시나리오 I — install → reset --hard → 즉시 재사용
+
+1. `xgram init` 완료 후 메모리·Vault·세션 데이터 적재
+2. `xgram reset --hard` 실행 → 데이터만 초기화 (키·설정·서비스 등록 유지)
+3. `xgram status` 확인 → 데몬 정상 가동, keystore 유지
+4. 새 메시지 저장·검색 즉시 가능 확인
+5. 기대: 데이터 비움 후 재설치 없이 즉시 사용 가능. 서비스 재시작 불필요.
+
+### 시나리오 J — 마스터 반복 워크플로우 (10회 install-uninstall)
+
+1. `install-uninstall-loop.sh` 스크립트로 10회 반복 실행 (비대화 모드 --config FILE)
+2. 각 회차 후 흔적 검사 + 다음 회차 install 성공 여부 확인
+3. 마지막 회차 완료 후 전체 시스템 안정성 확인 (포트 충돌, DB 잠금, 좀비 프로세스 없음)
+4. 기대: 10회 모두 흔적 0건, 오류 없음. Idempotent 보장.
+
 ---
 
-## 20. 다음 단계
+## 21. 다음 단계
 
-- Pip에게 인터페이스 상세 사양 작성 위임 (xgram CLI 명령 체계, MCP 도구 스펙, DB 스키마 초안)
-- Res에게 XMTP SDK·fastembed·sqlite-vec 최신 API 리서치 위임
-- Eno에게 Rust 워크스페이스 초기화 위임 (Phase 1 구현 시작 — 마스터 승인 후)
+- Pip: SPEC-lifecycle-v1.md 완성 (xgram init 9단계 상세, manifest 스키마, uninstall 역순 알고리즘)
+- Pip: 인터페이스 상세 사양 (xgram CLI 명령 체계, MCP 도구 스펙, DB 스키마 초안)
+- Res: XMTP SDK·fastembed·sqlite-vec 최신 API 리서치
+- Eno: Rust 워크스페이스 초기화 (Phase 1 구현 시작 — 마스터 승인 후)
+- 마스터 결정 필요: Lifecycle Phase 1 시작 시점 (Memory Transfer와 병렬 vs 순차)

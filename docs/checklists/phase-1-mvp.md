@@ -163,3 +163,77 @@
 - [ ] CLI 사용법 (docs/usage/memory-transfer.md)
 - [ ] TUI 가이드
 - [ ] 트러블슈팅
+
+---
+
+## Lifecycle Phase 1 MVP (4~5일)
+
+### 온보딩 (1.5일)
+
+- [ ] xgram init 명령 골격
+- [ ] 9단계 대화형 마법사 (Step 1~9)
+- [ ] 사전 점검 (디스크/포트/권한)
+- [ ] BIP39 시드 24단어 신규 생성
+- [ ] BIP39 시드 import (다른 머신 추가)
+- [ ] 시드 검증 (3개 단어 무작위 입력)
+- [ ] keystore 초기화 + scrypt KDF
+- [ ] DB 마이그레이션 v0.1.0.0
+- [ ] BGE-small 자동 다운로드 (~100MB)
+- [ ] 외부 어댑터 검증 (Discord/Telegram/SMTP 토큰 테스트)
+- [ ] systemd/launchd 자동 감지·등록
+- [ ] 비대화 모드 (--config FILE)
+- [ ] dry-run 모드 (--dry-run)
+
+### 매니페스트 (0.5일)
+
+- [ ] install-manifest.json 스키마
+- [ ] 시드 서명 (uninstall_token 생성)
+- [ ] 모든 생성물 자동 기록 (파일/디렉토리/서비스/바이너리/셸 통합/외부 리소스/포트/키체인)
+- [ ] manifest와 실제 파일 시스템 drift 검증
+- [ ] managed 플래그 (우리가 만든 것 vs 마스터가 만든 것)
+
+### 제거 (1.5일)
+
+- [ ] xgram uninstall 명령
+- [ ] 백업 옵션 4종 (sync/cold/keep/none)
+- [ ] 명시 확인 ("DELETE OPENXGRAM" 입력 검증)
+- [ ] 데몬 graceful shutdown (메시지 큐 flush, max 30초)
+- [ ] managed 외부 리소스 정리 (Discord webhook 등)
+- [ ] 시스템 서비스 등록 해제 (systemctl/launchctl)
+- [ ] 셸 통합 정확 제거 (마커 BEGIN/END OPENXGRAM 기반 sed)
+- [ ] OS 키체인 항목 제거
+- [ ] trash 이동 (rm 금지, 7일 복구 가능)
+- [ ] 바이너리 삭제
+- [ ] manifest 마지막 삭제 (실패 시 재실행 가능)
+- [ ] 사후 흔적 검사 (find 패턴)
+- [ ] idempotent (uninstall 2회 안전)
+- [ ] dry-run 모드
+
+### 보조 명령 (1일)
+
+- [ ] xgram doctor (10+ 헬스체크)
+  - [ ] 데몬 PID/uptime
+  - [ ] DB 무결성
+  - [ ] keystore 잠금 상태
+  - [ ] Tailscale 연결
+  - [ ] Discord/Telegram 토큰 유효성
+  - [ ] 디스크 사용량
+  - [ ] 포트 바인딩 확인
+- [ ] xgram reset (--test-only / --hard / --keep-keys / --keep-config)
+- [ ] xgram status (간단 요약)
+- [ ] xgram migrate 골격 (Phase 1.5에서 완성)
+
+### 테스트 (0.5일)
+
+- [ ] 설치→제거 라운드트립 (흔적 0건 검증)
+- [ ] reset --hard → 즉시 재사용
+- [ ] dry-run 정확성
+- [ ] idempotent (uninstall 2회)
+- [ ] 마스터 반복 시나리오 (install-uninstall 10회 스크립트)
+- [ ] drift 감지
+
+### 문서 (0.5일)
+
+- [ ] CLI 사용법 (docs/usage/lifecycle.md)
+- [ ] 온보딩 가이드 (스크린샷 또는 ASCII)
+- [ ] 트러블슈팅 (uninstall 부분 실패 복구)
