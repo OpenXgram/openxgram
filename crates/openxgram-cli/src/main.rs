@@ -193,6 +193,10 @@ enum SessionCli {
         #[arg(long)]
         input: Option<PathBuf>,
     },
+    /// session 삭제 (messages·episodes CASCADE, memories.session_id NULL)
+    Delete { id: String },
+    /// 모든 session 에 reflection 일괄 실행 (cron 전 단계)
+    ReflectAll,
 }
 
 impl From<SessionCli> for SessionAction {
@@ -214,6 +218,8 @@ impl From<SessionCli> for SessionAction {
             SessionCli::Recall { query, k } => SessionAction::Recall { query, k },
             SessionCli::Export { session_id, out } => SessionAction::Export { session_id, out },
             SessionCli::Import { input } => SessionAction::Import { input },
+            SessionCli::Delete { id } => SessionAction::Delete { id },
+            SessionCli::ReflectAll => SessionAction::ReflectAll,
         }
     }
 }
