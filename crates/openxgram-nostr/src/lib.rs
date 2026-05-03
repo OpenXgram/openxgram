@@ -21,6 +21,9 @@ use openxgram_keystore::Keypair;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+// 외부 crate 가 nostr 타입을 직접 import 하지 않아도 되도록 re-export
+pub use nostr::{Event as NostrEvent, Filter, Keys as NostrKeys, PublicKey, Tag as NostrTag};
+
 mod ratchet;
 mod relay;
 mod sink;
