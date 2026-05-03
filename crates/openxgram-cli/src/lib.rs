@@ -13,3 +13,4 @@ pub mod session;
 pub mod status;
 pub mod tui;
 pub mod uninstall;
+pub mod wizard;
