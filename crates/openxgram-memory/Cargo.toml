@@ -1,0 +1,23 @@
+[package]
+name = "openxgram-memory"
+description = "L0~L4 memory layers + embeddings + recall for OpenXgram"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+openxgram-db = { path = "../openxgram-db" }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"
