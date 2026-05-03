@@ -63,6 +63,36 @@ async fn health_endpoint_returns_status_ok() {
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["status"], "ok");
     assert!(body["version"].is_string());
+    // 새 필드 — uptime / received_count 항상 존재
+    assert!(body["uptime_seconds"].is_number());
+    assert_eq!(body["received_count"], 0);
+    // tailscale_state / tailscale_ipv4 — 환경에 따라 string 또는 null
+    assert!(body["tailscale_state"].is_string() || body["tailscale_state"].is_null());
+    assert!(body["tailscale_ipv4"].is_string() || body["tailscale_ipv4"].is_null());
+    server.shutdown();
+}
+
+#[tokio::test]
+async fn health_received_count_grows_with_messages() {
+    let server = spawn_server("127.0.0.1:0".parse().unwrap()).await.unwrap();
+    // 메시지 3개 보내기
+    let env = sample_envelope();
+    let post_url = format!("http://{}/v1/message", server.bound_addr);
+    let client = reqwest::Client::new();
+    for _ in 0..3 {
+        client.post(&post_url).json(&env).send().await.unwrap();
+    }
+    // health 조회 → received_count = 3
+    let health_url = format!("http://{}/v1/health", server.bound_addr);
+    let body: serde_json::Value = reqwest::Client::new()
+        .get(&health_url)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["received_count"], 3);
     server.shutdown();
 }
 
