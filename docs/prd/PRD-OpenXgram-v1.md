@@ -320,6 +320,7 @@ L0  messages  ← 원시 메시지 + 임베딩 + 서명
 - HD 키페어 (영구 + 서브에이전트 자동 파생)
 - USDC on Base 송금 + OpenAgentX 어댑터 hook
 - 회상 복합 점수 (α·관련성 + β·최신성 + γ·중요도 + δ·접근빈도)
+- Memory Transfer Phase 1 MVP (Text Package + 클립보드 + Discord 백업 + 기본 Pull, 약 5~6일)
 
 ---
 
@@ -332,19 +333,70 @@ L0  messages  ← 원시 메시지 + 임베딩 + 서명
 - 모바일 (Tauri Mobile)
 - IPFS 큰 파일 저장
 - Codex CLI / Gemini CLI 어댑터
+- Memory Transfer Phase 1.5 (Email + Telegram + Webhook outbound + 코드 추출)
+- Memory Transfer Phase 2 (Inbound webhook + GUI 페이지 + 모든 추출 형식)
+- Memory Transfer Phase 2+ (브라우저 확장, 클립보드 동기화 자동화)
 
 ---
 
-## 17. 위험 요소
+## 17. Memory Transfer (양방향 기억 전이)
+
+용도:
+- 웹 LLM(ChatGPT/Claude.ai/Gemini Web)과 사이드카 사이 기억 전이 (사람이 다리)
+- 외부 시스템(Notion/Linear/Slack 등)과 자동 통합 (webhook 양방향)
+- 백업 (사이드카 다 죽어도 외부 4채널에 살아있음)
+
+방향:
+- Push (Send Out): 사이드카 → 외부
+- Pull (Receive): 외부 → 사이드카
+
+추출 형식 4종:
+- Text Package (Markdown + JSON 본체) — 토론·검토용
+- 단일 파일 (.md / .json / .yaml) — 첨부·아카이브
+- 코드 추출 (.py / .ts / .sql / .nginx / .conf) — 결정·설정 → 실행 코드
+- Webhook Payload — 자동 송수신용 (서명 + 타임스탬프)
+
+전송 통로 4종:
+- 클립보드 (수동, 가장 빠름)
+- 이메일 (SMTP)
+- Telegram (@starianbot 1:1)
+- Discord (봇 + Webhook, 이미 운영 중 12+ 채널)
+
+워크플로우:
+- Push: 선택(범위) → 형식 선택 → 대상 선택 → 보안 검증 → 발송
+- Pull: 입력(붙여넣기/파일/HTTP POST) → 파싱·검증 → 세션 매핑 → 임베딩
+
+자동 트리거:
+- on session-end
+- on pin
+- on schedule (cron)
+- on memory-merge
+
+보안:
+- 태그 secret/vault 자동 제외
+- 키 패턴 자동 마스킹
+- --preview 기본
+- HMAC + 시간 윈도우 (inbound)
+- 화이트리스트 (IP + 도메인 + 키페어)
+- 1MB payload 상한
+- 외부 발송 명시 승인 (fallback 금지, 모든 검증 실패 즉시 raise)
+
+상세 사양: docs/specs/SPEC-memory-transfer-v1.md (Pip 작성)
+
+---
+
+## 18. 위험 요소
 
 - Discord 정책 변경: Bot을 통한 Webhook 발신자 분리가 Discord TOS 해석에 따라 제한될 수 있음. 모니터링 필요.
 - XMTP 메인넷 전환: XMTP가 testnet → mainnet으로 전환 중. 프로토콜 변경 시 어댑터 업데이트 필요.
 - BGE-small 한국어 임베딩 품질: 한국어 텍스트의 임베딩 품질이 영어 대비 낮을 수 있음. Phase 1에서 실측 후 모델 교체 여부 결정.
 - OpenAgentX API 안정성: OpenAgentX가 내부 프로젝트이므로 API 변경 시 어댑터 영향. 인터페이스 추상화 필수.
+- Memory Transfer Outbound 데이터 유출 위험: 마스킹 + 태그 제외 + 미리보기 + 감사 로그 4중 방어
+- Inbound webhook 악의 페이로드: 서명 검증 + 화이트리스트 + 크기 상한 + JSON Schema
 
 ---
 
-## 18. 검증 시나리오 5개 (마스터 확정)
+## 19. 검증 시나리오 (마스터 확정)
 
 ### 시나리오 A — 에이전트 간 기억 공유 + 검증 요청
 
@@ -388,7 +440,25 @@ L0  messages  ← 원시 메시지 + 임베딩 + 서명
 
 ---
 
-## 19. 다음 단계
+### 시나리오 F — ChatGPT 웹 토론 → 사이드카 import → Claude Code attach (마스터의 핵심 요구)
+
+1. 마스터가 ChatGPT 웹에서 중요한 토론·결정 세션 진행
+2. Memory Transfer Push로 Text Package(.md) 생성 → 클립보드 복사
+3. `xgram session import` 명령으로 사이드카에 Pull (붙여넣기)
+4. Claude Code에서 `xgram attach` 후 해당 기억을 `xgram.search()`로 회상
+5. 기대: 웹 LLM 세션이 사이드카로 완전 이전, Claude Code에서 컨텍스트 연속성 유지
+
+### 시나리오 G — 웹 ChatGPT ↔ 사이드카 ↔ 웹 Claude 중계
+
+1. ChatGPT 웹 대화 중 "OpenXgram 형식으로 정리" 요청 → JSON 받기
+2. 사이드카에 import → 세션 생성
+3. 사이드카에서 Memory Transfer → Claude.ai용 Text Package 추출
+4. Claude 웹에 붙여넣기 → 그 컨텍스트로 대화 이어가기
+5. 기대: ChatGPT와 Claude가 같은 결정·미해결 질문·파일 컨텍스트 공유. 사이드카가 웹 LLM 사이 컨텍스트 운반자 역할 입증.
+
+---
+
+## 20. 다음 단계
 
 - Pip에게 인터페이스 상세 사양 작성 위임 (xgram CLI 명령 체계, MCP 도구 스펙, DB 스키마 초안)
 - Res에게 XMTP SDK·fastembed·sqlite-vec 최신 API 리서치 위임

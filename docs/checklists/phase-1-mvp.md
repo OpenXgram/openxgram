@@ -92,3 +92,74 @@
 - [ ] 시나리오 C: 세션 이동 GCP → Mac Mini
 - [ ] 시나리오 D: NEW/ROUTINE 분류 (Phase 2 대상, 기초 준비)
 - [ ] 시나리오 E: 파일 송수신 무결성
+- [ ] 시나리오 F: ChatGPT 웹 토론 → 사이드카 import → Claude Code attach
+- [ ] 시나리오 G: 웹 ChatGPT ↔ 사이드카 ↔ 웹 Claude 중계 (컨텍스트 운반자 역할 입증)
+
+---
+
+## Memory Transfer Phase 1 MVP (5~6일)
+
+### 데이터 모델 (0.5일)
+
+- [ ] transfer_logs 테이블 정의
+- [ ] webhook_endpoints 테이블 정의
+- [ ] webhook_acl 테이블 정의
+- [ ] 마이그레이션 SQL 작성 + 적용 절차
+
+### Push (Send Out) (1.5일)
+
+- [ ] 메모리 추출기 (범위 선택: session/recent/pin/tag/search)
+- [ ] Text Package 빌더 (Markdown + JSON)
+- [ ] 단일 .md 파일 생성기
+- [ ] 보안 필터: secret/vault 태그 제외
+- [ ] 보안 필터: 키 패턴 마스킹 (API key/token/seed words)
+- [ ] --preview 플래그
+- [ ] 클립보드 출력 (linux: xclip, macos: pbcopy, ssh: OSC52)
+- [ ] Discord 채널 백업 (Webhook으로 #xgram-backup)
+
+### Pull (Receive) (1일)
+
+- [ ] 입력 파서 (markdown frontmatter, JSON, yaml 자동 감지)
+- [ ] 스키마 검증 (JSON Schema)
+- [ ] 중복 감지 (서명 hash 기반)
+- [ ] 세션 매핑: 새 세션 / 현재 세션 / 특정 세션 ID
+- [ ] L0/L1/L2 자동 분배
+- [ ] 임베딩 생성 후 저장
+
+### 양방향 인터페이스 (1일)
+
+- [ ] CLI: xgram extract
+- [ ] CLI: xgram backup-push
+- [ ] CLI: xgram session import
+- [ ] CLI: xgram webhook list/add (placeholder)
+- [ ] MCP 도구: xgram.transfer.push
+- [ ] MCP 도구: xgram.transfer.pull
+- [ ] MCP 도구 JSON Schema 정의
+
+### TUI 페이지 (1일)
+
+- [ ] Memory Transfer 페이지 진입
+- [ ] 좌측: Push 옵션 트리 (범위/형식/대상)
+- [ ] 우측: Pull 입력 영역 (붙여넣기/파일 드래그)
+- [ ] 미리보기 모달
+- [ ] 키바인딩 정의 (Spec 7.1 참조)
+- [ ] 상태 표시 (전송 중/완료/오류)
+
+### 보안·감사 (0.5일)
+
+- [ ] audit_log 기록 (모든 outbound)
+- [ ] Rate limit (시간/일 단위)
+- [ ] 마스터 승인 정책 (auto/confirm/mfa) — Phase 1은 confirm만
+- [ ] 검증 실패 시 즉시 raise (fallback 금지)
+
+### 테스트 (0.5일)
+
+- [ ] 단위 테스트 (추출기, 빌더, 파서, 마스킹)
+- [ ] 통합 시나리오 (Push → 클립보드 → 다른 머신 Pull)
+- [ ] 보안 케이스 (큰 payload, 잘못된 형식, 마스킹 누락 검증)
+
+### 문서 (0.5일)
+
+- [ ] CLI 사용법 (docs/usage/memory-transfer.md)
+- [ ] TUI 가이드
+- [ ] 트러블슈팅
