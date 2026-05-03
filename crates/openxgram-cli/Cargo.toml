@@ -52,6 +52,7 @@ axum = { workspace = true }
 uuid = { workspace = true }
 rusqlite = { workspace = true }
 getrandom = "0.3"
+tokio-cron-scheduler = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
