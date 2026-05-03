@@ -15,6 +15,7 @@ use openxgram_cli::memory::{self, MemoryAction};
 use openxgram_cli::migrate::{self, MigrateOpts};
 use openxgram_cli::notify::{self, NotifyAction};
 use openxgram_cli::patterns::{self, PatternsAction};
+use openxgram_cli::payment::{self, PaymentAction};
 use openxgram_cli::peer::{self, PeerAction};
 use openxgram_cli::reset::{self, ResetOpts};
 use openxgram_cli::session::{self, SessionAction};
@@ -302,6 +303,14 @@ enum Commands {
         action: PeerCli,
     },
 
+    /// USDC payment intent — PRD §16 인프라 (실 on-chain 제출은 후속)
+    Payment {
+        #[arg(long, global = true)]
+        data_dir: Option<PathBuf>,
+        #[command(subcommand)]
+        action: PaymentCli,
+    },
+
     /// 쉘 자동 완성 스크립트 출력 (bash/zsh/fish/elvish/powershell)
     Completions {
         #[arg(value_enum)]
@@ -559,6 +568,74 @@ impl From<PeerRoleArg> for openxgram_peer::PeerRole {
             PeerRoleArg::Primary => Self::Primary,
             PeerRoleArg::Secondary => Self::Secondary,
             PeerRoleArg::Worker => Self::Worker,
+        }
+    }
+}
+
+#[derive(Subcommand, Debug)]
+enum PaymentCli {
+    /// 새 payment intent draft (state=draft, 서명 전)
+    New {
+        /// USDC 단위 (예: 1.50, 0.001). USDC 는 6 decimals 까지.
+        #[arg(long)]
+        amount: String,
+        #[arg(long, default_value = "base")]
+        chain: String,
+        /// 수취인 ETH 주소 (0x...)
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        memo: Option<String>,
+    },
+    /// master ECDSA 서명 (XGRAM_KEYSTORE_PASSWORD 필요)
+    Sign { id: String },
+    /// 모든 intent list
+    List,
+    /// 단건 상세
+    Show { id: String },
+    /// 지원 chain 목록
+    Chains,
+    /// 외부 도구로 제출 후 호출 — state=submitted
+    MarkSubmitted {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        tx_hash: String,
+    },
+    /// block 확정 후 호출 — state=confirmed
+    MarkConfirmed { id: String },
+    /// 실패 시 호출 — state=failed
+    MarkFailed {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        reason: String,
+    },
+}
+
+impl From<PaymentCli> for PaymentAction {
+    fn from(c: PaymentCli) -> Self {
+        match c {
+            PaymentCli::New {
+                amount,
+                chain,
+                to,
+                memo,
+            } => PaymentAction::New {
+                amount_usdc: amount,
+                chain,
+                to,
+                memo,
+            },
+            PaymentCli::Sign { id } => PaymentAction::Sign { id },
+            PaymentCli::List => PaymentAction::List,
+            PaymentCli::Show { id } => PaymentAction::Show { id },
+            PaymentCli::Chains => PaymentAction::Chains,
+            PaymentCli::MarkSubmitted { id, tx_hash } => {
+                PaymentAction::MarkSubmitted { id, tx_hash }
+            }
+            PaymentCli::MarkConfirmed { id } => PaymentAction::MarkConfirmed { id },
+            PaymentCli::MarkFailed { id, reason } => PaymentAction::MarkFailed { id, reason },
         }
     }
 }
@@ -1220,6 +1297,11 @@ async fn main() -> anyhow::Result<()> {
         Commands::Peer { data_dir, action } => {
             let dir = resolve_data_dir(data_dir)?;
             peer::run_peer(&dir, action.into())?;
+        }
+
+        Commands::Payment { data_dir, action } => {
+            let dir = resolve_data_dir(data_dir)?;
+            payment::run_payment(&dir, action.into())?;
         }
 
         Commands::Completions { shell } => {
