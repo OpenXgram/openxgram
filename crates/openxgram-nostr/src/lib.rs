@@ -16,13 +16,17 @@
 //! - PRD-NOSTR-05 application-layer ratchet
 //! - PRD-NOSTR-06 self-host relay (nostr-relay-builder)
 
-use nostr::{Event, EventBuilder, Keys, Kind, Tag};
+use nostr::nips::nip44::{self, Version};
+use nostr::{Event, EventBuilder, Keys, Kind, SecretKey, Tag};
 use openxgram_keystore::Keypair;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 // 외부 crate 가 nostr 타입을 직접 import 하지 않아도 되도록 re-export
-pub use nostr::{Event as NostrEvent, Filter, Keys as NostrKeys, PublicKey, Tag as NostrTag};
+pub use nostr::{
+    Event as NostrEvent, Filter, Keys as NostrKeys, Kind as NostrKindRaw, PublicKey, Tag as NostrTag,
+};
+pub use nostr_sdk::RelayPoolNotification;
 
 mod ratchet;
 mod relay;
@@ -144,6 +148,85 @@ pub fn verify_event(event: &Event) -> Result<()> {
     event.verify().map_err(|_| NostrError::SignatureVerify)
 }
 
+/// NIP-44 v2 로 plaintext 를 peer 의 pubkey 로 암호화.
+/// content 가 빈 문자열이면 명시적으로 InvalidSecret 으로 raise (silent 통과 금지).
+pub fn encrypt_for_peer(
+    sender_secret: &SecretKey,
+    recipient: &PublicKey,
+    content: &str,
+) -> Result<String> {
+    if content.is_empty() {
+        return Err(NostrError::InvalidSecret("empty plaintext".into()));
+    }
+    nip44::encrypt(sender_secret, recipient, content, Version::V2)
+        .map_err(|e| NostrError::Nostr(format!("nip44 encrypt: {e}")))
+}
+
+/// NIP-44 v2 ciphertext 를 sender 의 pubkey + 자신의 secret 으로 복호.
+pub fn decrypt_from_peer(
+    receiver_secret: &SecretKey,
+    sender: &PublicKey,
+    ciphertext: &str,
+) -> Result<String> {
+    nip44::decrypt(receiver_secret, sender, ciphertext)
+        .map_err(|e| NostrError::Nostr(format!("nip44 decrypt: {e}")))
+}
+
+/// peer event content 를 복호 + WARN 로그 (실패 시) 까지 책임 — daemon 통합 단일 진입점.
+/// ciphertext 가 NIP-44 v2 가 아니거나 ratchet/master 모두 실패 시 None 반환 (drop semantics).
+pub fn try_unwrap_with_warn(
+    receiver_master: &SecretKey,
+    sender_master_pubkey: &PublicKey,
+    sender_ratchet_pubkeys: &[PublicKey],
+    ciphertext: &str,
+) -> Option<String> {
+    match unwrap_ciphertext_from_peer(
+        receiver_master,
+        sender_master_pubkey,
+        sender_ratchet_pubkeys,
+        ciphertext,
+    ) {
+        Ok(pt) => Some(pt),
+        Err(e) => {
+            tracing::warn!(target: "openxgram_nostr", error = %e, "incoming ciphertext decrypt 실패 — drop");
+            None
+        }
+    }
+}
+
+/// peer 로부터 받은 NIP-44 v2 ciphertext 를 복호 — ratchet retained keys 우선 시도,
+/// 실패 시 master secret 으로 fallback. 모두 실패하면 NostrError 반환.
+/// sender_master_pubkey 는 Event.pubkey, sender_ratchet_pubkeys 는 kind 30050 announce 에서 lookup.
+pub fn unwrap_ciphertext_from_peer(
+    receiver_master: &SecretKey,
+    sender_master_pubkey: &PublicKey,
+    sender_ratchet_pubkeys: &[PublicKey],
+    ciphertext: &str,
+) -> Result<String> {
+    for rpk in sender_ratchet_pubkeys {
+        if let Ok(pt) = nip44::decrypt(receiver_master, rpk, ciphertext) {
+            return Ok(pt);
+        }
+    }
+    decrypt_from_peer(receiver_master, sender_master_pubkey, ciphertext)
+}
+
+/// envelope 를 peer 로 암호화하는 통합 진입점. ratchet 존재 시 ratchet 경로 (forward secrecy),
+/// 없으면 master 경로 (단순). 둘 다 NIP-44 v2 ciphertext — receiver 는 단일 복호 경로로 처리.
+/// 이중 wrap 은 동일 primitive 라 추가 보안 가치 없으므로 의도적으로 단일 적용.
+pub fn wrap_envelope_for_peer(
+    sender_master: &SecretKey,
+    ratchet: Option<&mut Ratchet>,
+    recipient: &PublicKey,
+    plaintext: &str,
+    unix_ts: u64,
+) -> Result<String> {
+    if let Some(r) = ratchet {
+        return r.wrap(unix_ts, recipient, plaintext);
+    }
+    encrypt_for_peer(sender_master, recipient, plaintext)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +282,123 @@ mod tests {
         assert_eq!(event.kind, Kind::from(30500u16));
         // public_key 가 master 와 일치
         assert_eq!(event.pubkey, keys.public_key());
+    }
+
+    #[test]
+    fn try_unwrap_with_warn_returns_none_on_failure() {
+        let s = NostrKeys::generate();
+        let r = NostrKeys::generate();
+        let res = try_unwrap_with_warn(r.secret_key(), &s.public_key(), &[], "not-a-valid-ct");
+        assert!(res.is_none());
+    }
+
+    #[test]
+    fn try_unwrap_with_warn_returns_plaintext_on_success() {
+        let s = NostrKeys::generate();
+        let r = NostrKeys::generate();
+        let pt = "ok";
+        let ct = encrypt_for_peer(s.secret_key(), &r.public_key(), pt).unwrap();
+        let res = try_unwrap_with_warn(r.secret_key(), &s.public_key(), &[], &ct);
+        assert_eq!(res.as_deref(), Some(pt));
+    }
+
+    #[test]
+    fn unwrap_ciphertext_master_path() {
+        let sender = NostrKeys::generate();
+        let receiver = NostrKeys::generate();
+        let pt = "hello-master";
+        let ct = encrypt_for_peer(sender.secret_key(), &receiver.public_key(), pt).unwrap();
+        let back = unwrap_ciphertext_from_peer(
+            receiver.secret_key(),
+            &sender.public_key(),
+            &[],
+            &ct,
+        )
+        .unwrap();
+        assert_eq!(back, pt);
+    }
+
+    #[test]
+    fn unwrap_ciphertext_ratchet_path_then_master_fallback() {
+        let sender = NostrKeys::generate();
+        let receiver = NostrKeys::generate();
+        let mut ratchet = Ratchet::default();
+        let unix_ts = 1_700_000_000u64;
+        let pt = "hello-ratchet";
+        let ct = wrap_envelope_for_peer(
+            sender.secret_key(),
+            Some(&mut ratchet),
+            &receiver.public_key(),
+            pt,
+            unix_ts,
+        )
+        .unwrap();
+        let rpk = ratchet.current(unix_ts).public.clone();
+        // ratchet pk 알면 unwrap 성공
+        let ok = unwrap_ciphertext_from_peer(
+            receiver.secret_key(),
+            &sender.public_key(),
+            &[rpk],
+            &ct,
+        )
+        .unwrap();
+        assert_eq!(ok, pt);
+        // ratchet pk 미인지 시 master fallback 도 실패 → 명시 에러
+        let err =
+            unwrap_ciphertext_from_peer(receiver.secret_key(), &sender.public_key(), &[], &ct);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn encrypt_for_peer_empty_plaintext_raises() {
+        let s = NostrKeys::generate();
+        let r = NostrKeys::generate();
+        let err = encrypt_for_peer(s.secret_key(), &r.public_key(), "").unwrap_err();
+        assert!(format!("{err}").contains("empty plaintext"));
+    }
+
+    #[test]
+    fn wrap_envelope_master_path_round_trips() {
+        let sender = NostrKeys::generate();
+        let receiver = NostrKeys::generate();
+        let pt = "envelope-json-1";
+        let ct = wrap_envelope_for_peer(
+            sender.secret_key(),
+            None,
+            &receiver.public_key(),
+            pt,
+            1_700_000_000,
+        )
+        .unwrap();
+        let back = decrypt_from_peer(receiver.secret_key(), &sender.public_key(), &ct).unwrap();
+        assert_eq!(back, pt);
+    }
+
+    #[test]
+    fn wrap_envelope_ratchet_path_uses_ephemeral_key() {
+        let sender = NostrKeys::generate();
+        let receiver = NostrKeys::generate();
+        let mut ratchet = Ratchet::default();
+        let unix_ts = 1_700_000_000u64;
+        let pt = "ratchet-pt";
+        let ct = wrap_envelope_for_peer(
+            sender.secret_key(),
+            Some(&mut ratchet),
+            &receiver.public_key(),
+            pt,
+            unix_ts,
+        )
+        .unwrap();
+        // ratchet 경로 ciphertext 는 master secret 으로 복호 불가
+        let master_decrypt = decrypt_from_peer(receiver.secret_key(), &sender.public_key(), &ct);
+        assert!(master_decrypt.is_err());
+        // ratchet pubkey 로 복호 가능
+        let ratchet_pk = {
+            let key = ratchet.current(unix_ts);
+            key.public.clone()
+        };
+        let ok = decrypt_from_peer(receiver.secret_key(), &ratchet_pk, &ct).unwrap();
+        assert_eq!(ok, pt);
     }
 
     #[test]
