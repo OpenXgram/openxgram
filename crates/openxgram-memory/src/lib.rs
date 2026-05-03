@@ -11,12 +11,14 @@ pub mod embed;
 pub mod episode;
 pub mod memory;
 pub mod message;
+pub mod session;
 mod util;
 
 pub use embed::{DummyEmbedder, Embedder, EMBED_DIM};
 pub use episode::{reflect_session, Episode, EpisodeStore};
 pub use memory::{Memory, MemoryKind, MemoryStore};
 pub use message::{Message, MessageStore, RecallHit};
+pub use session::{Session, SessionStore};
 
 use thiserror::Error;
 
