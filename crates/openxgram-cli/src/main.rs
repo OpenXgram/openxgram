@@ -976,9 +976,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Wizard => {
             let outcome = wizard::run_wizard()?;
             match outcome {
-                wizard::WizardOutcome::Completed { alias } => {
-                    println!("✓ wizard 완료. alias = {alias}");
-                    println!("  XGRAM_KEYSTORE_PASSWORD=<12자+> xgram init --alias {alias} --role primary");
+                wizard::WizardOutcome::Completed { cfg } => {
+                    print!("{}", wizard::render_done(&cfg));
                 }
                 wizard::WizardOutcome::Cancelled => {
                     println!("취소됨.");
