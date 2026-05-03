@@ -14,12 +14,12 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
+use openxgram_core::confirm::DELETE_CONFIRM;
+use openxgram_core::env::{require_password, PASSWORD_ENV};
+use openxgram_core::paths::manifest_path;
 use openxgram_manifest::InstallManifest;
 
 use crate::backup::create_cold_backup;
-
-const CONFIRM_STRING: &str = "DELETE OPENXGRAM";
-const PASSWORD_ENV: &str = "XGRAM_KEYSTORE_PASSWORD";
 
 #[derive(Debug, Clone)]
 pub struct UninstallOpts {
@@ -32,7 +32,7 @@ pub struct UninstallOpts {
 }
 
 pub fn run_uninstall(opts: &UninstallOpts) -> Result<()> {
-    let manifest_path = opts.data_dir.join("install-manifest.json");
+    let manifest_path = manifest_path(&opts.data_dir);
     if !manifest_path.exists() {
         println!(
             "이미 제거되었거나 설치된 적이 없습니다 ({}).",
@@ -57,7 +57,7 @@ pub fn run_uninstall(opts: &UninstallOpts) -> Result<()> {
             "백업 옵션 필요: --cold-backup-to PATH (옵션 2) 또는 --no-backup (옵션 4)"
         ),
         (Some(target), false) => {
-            let password = std::env::var(PASSWORD_ENV)
+            let password = require_password()
                 .map_err(|_| anyhow!("환경변수 {PASSWORD_ENV} 누락 — backup 암호화에 필요"))?;
             if opts.dry_run {
                 println!(
@@ -78,11 +78,11 @@ pub fn run_uninstall(opts: &UninstallOpts) -> Result<()> {
             println!("  --no-backup 선택 (백업 없음)");
             // confirm 필수
             let confirm = opts.confirm.as_deref().ok_or_else(|| {
-                anyhow!("--no-backup 사용 시 --confirm \"{CONFIRM_STRING}\" 정확 일치 필요")
+                anyhow!("--no-backup 사용 시 --confirm \"{DELETE_CONFIRM}\" 정확 일치 필요")
             })?;
-            if confirm != CONFIRM_STRING {
+            if confirm != DELETE_CONFIRM {
                 bail!(
-                    "확인 문자열 불일치. 정확히 \"{CONFIRM_STRING}\" 입력 필요 (대소문자 포함)"
+                    "확인 문자열 불일치. 정확히 \"{DELETE_CONFIRM}\" 입력 필요 (대소문자 포함)"
                 );
             }
         }

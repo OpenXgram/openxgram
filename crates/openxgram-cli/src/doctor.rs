@@ -15,7 +15,8 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use chrono::{FixedOffset, Utc};
+use openxgram_core::paths::{db_path, manifest_path, master_keyfile};
+use openxgram_core::time::kst_now;
 use openxgram_db::{Db, DbConfig};
 use openxgram_manifest::{detect_drift, InstallManifest};
 
@@ -77,8 +78,10 @@ impl DoctorReport {
     }
 
     pub fn print(&self) {
-        let now = Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
-        println!("xgram doctor 결과 ({})", now.format("%Y-%m-%d %H:%M:%S KST"));
+        println!(
+            "xgram doctor 결과 ({})",
+            kst_now().format("%Y-%m-%d %H:%M:%S KST")
+        );
         println!();
         for c in &self.checks {
             println!("{} {} — {}", c.verdict, c.name, c.detail);
@@ -94,11 +97,11 @@ impl DoctorReport {
 }
 
 pub fn run_doctor(opts: &DoctorOpts) -> Result<DoctorReport> {
-    let manifest_path = opts.data_dir.join("install-manifest.json");
+    let mp = manifest_path(&opts.data_dir);
 
     let mut checks = Vec::new();
 
-    let manifest = match InstallManifest::read(&manifest_path) {
+    let manifest = match InstallManifest::read(&mp) {
         Ok(m) => {
             checks.push(CheckResult {
                 name: "install-manifest",
@@ -111,7 +114,7 @@ pub fn run_doctor(opts: &DoctorOpts) -> Result<DoctorReport> {
             checks.push(CheckResult {
                 name: "install-manifest",
                 verdict: Verdict::Fail,
-                detail: format!("{}: {e}", manifest_path.display()),
+                detail: format!("{}: {e}", mp.display()),
             });
             None
         }
@@ -152,16 +155,16 @@ fn check_data_dir(data_dir: &Path) -> CheckResult {
 }
 
 fn check_sqlite_integrity(data_dir: &Path) -> CheckResult {
-    let db_path = data_dir.join("db.sqlite");
-    if !db_path.exists() {
+    let path = db_path(data_dir);
+    if !path.exists() {
         return CheckResult {
             name: "SQLite 무결성",
             verdict: Verdict::Fail,
-            detail: format!("DB 파일 미존재: {}", db_path.display()),
+            detail: format!("DB 파일 미존재: {}", path.display()),
         };
     }
     match Db::open(DbConfig {
-        path: db_path.clone(),
+        path: path.clone(),
         ..Default::default()
     }) {
         Ok(mut db) => match db.integrity_check() {
@@ -190,7 +193,7 @@ fn check_sqlite_integrity(data_dir: &Path) -> CheckResult {
 }
 
 fn check_keystore(data_dir: &Path) -> CheckResult {
-    let path = data_dir.join("keystore").join("master.json");
+    let path = master_keyfile(data_dir);
     if !path.exists() {
         return CheckResult {
             name: "Keystore master",

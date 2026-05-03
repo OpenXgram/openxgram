@@ -12,6 +12,7 @@
 //!   - 야간 reflection (L0 → L1 → L2 → L3 → L4)
 
 use chrono::{DateTime, FixedOffset};
+use openxgram_core::time::kst_now;
 use openxgram_db::Db;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -366,7 +367,3 @@ fn floats_to_bytes(v: &[f32]) -> Vec<u8> {
     out
 }
 
-fn kst_now() -> DateTime<FixedOffset> {
-    let kst = FixedOffset::east_opt(9 * 3600).expect("KST offset valid");
-    chrono::Utc::now().with_timezone(&kst)
-}

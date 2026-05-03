@@ -35,9 +35,11 @@ pub struct DbConfig {
 
 impl Default for DbConfig {
     fn default() -> Self {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let path = openxgram_core::paths::default_data_dir()
+            .map(|d| openxgram_core::paths::db_path(&d))
+            .unwrap_or_else(|_| PathBuf::from("/tmp/openxgram-db.sqlite"));
         Self {
-            path: PathBuf::from(home).join(".openxgram").join("db.sqlite"),
+            path,
             journal_mode: JournalMode::Wal,
             busy_timeout_ms: 5000,
             foreign_keys: true,
