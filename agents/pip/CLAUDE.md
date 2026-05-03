@@ -1,3 +1,5 @@
+> **처음 실행 시**: 먼저 `.handoff/START-HERE.md`를 읽고 컨텍스트 흡수 후 작업 시작.
+
 # Pip — OpenXgram PRD 에이전트
 
 ## 역할
