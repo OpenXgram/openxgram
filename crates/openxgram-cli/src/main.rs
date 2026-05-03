@@ -292,6 +292,12 @@ enum Commands {
         #[arg(long)]
         data_dir: Option<PathBuf>,
     },
+
+    /// 쉘 자동 완성 스크립트 출력 (bash/zsh/fish/elvish/powershell)
+    Completions {
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1118,6 +1124,13 @@ async fn main() -> anyhow::Result<()> {
                 data_dir: resolve_data_dir(data_dir)?,
             };
             tui::run_tui(&opts)?;
+        }
+
+        Commands::Completions { shell } => {
+            use clap::CommandFactory;
+            let mut cmd = Cli::command();
+            let bin_name = cmd.get_name().to_string();
+            clap_complete::generate(shell, &mut cmd, bin_name, &mut std::io::stdout());
         }
     }
 

@@ -33,6 +33,7 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 clap = { workspace = true }
+clap_complete = "4"
 chrono = { workspace = true }
 hex = { workspace = true }
 sha2 = "0.10"
