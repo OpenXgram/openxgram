@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use openxgram_cli::backup::{create_cold_backup, resolve_backup_target};
+use openxgram_cli::backup::{create_cold_backup, resolve_backup_target, restore_cold_backup_merge};
 use openxgram_cli::init::{run_init, InitOpts};
 use openxgram_cli::uninstall::{run_uninstall, UninstallOpts};
 use openxgram_keystore::decrypt_blob;
@@ -226,4 +226,55 @@ fn backup_round_trip_into_directory() {
     assert!(info.path.exists());
     assert!(info.size_bytes > 0);
     assert_eq!(info.sha256.len(), 64);
+}
+
+#[test]
+fn restore_merge_overwrites_files_and_preserves_extras() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    // backup 한 다음 data_dir 안에 추가 파일 + manifest 파일을 변조
+    let backup_path = tmp.path().join("snap.cbk");
+    create_cold_backup(&data_dir, &backup_path, TEST_PASSWORD).unwrap();
+
+    // extra 파일 — backup 에 없음, merge 후 보존되어야 함
+    let extra = data_dir.join("extra-user-file.txt");
+    std::fs::write(&extra, b"user data").unwrap();
+
+    // backup 에 있는 manifest 변조 — merge 가 백업본으로 덮어쓰는지 확인
+    let manifest_path = data_dir.join("install-manifest.json");
+    let original = std::fs::read(&manifest_path).unwrap();
+    std::fs::write(&manifest_path, b"corrupted").unwrap();
+    assert_ne!(std::fs::read(&manifest_path).unwrap(), original);
+
+    // merge 복원
+    let info = restore_cold_backup_merge(&backup_path, &data_dir, TEST_PASSWORD).unwrap();
+    assert_eq!(info.target_dir, data_dir);
+
+    // 백업본 manifest 로 복구됨
+    assert_eq!(std::fs::read(&manifest_path).unwrap(), original);
+    // extra 파일 보존
+    assert!(extra.exists());
+    assert_eq!(std::fs::read(&extra).unwrap(), b"user data");
+}
+
+#[test]
+fn restore_without_merge_into_nonempty_raises() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    let backup_path = tmp.path().join("snap.cbk");
+    create_cold_backup(&data_dir, &backup_path, TEST_PASSWORD).unwrap();
+
+    // data_dir 비어있지 않은 상태에서 비-merge restore → raise
+    use openxgram_cli::backup::restore_cold_backup;
+    let err = restore_cold_backup(&backup_path, &data_dir, TEST_PASSWORD).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(msg.contains("비어있지 않음"));
+    // hint 가 새로 추가됐는지 검증 — --merge 안내
+    assert!(msg.contains("--merge"));
 }
