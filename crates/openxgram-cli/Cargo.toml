@@ -57,3 +57,4 @@ getrandom = "0.3"
 tempfile = "3"
 reqwest = { workspace = true }
 serial_test = { workspace = true }
+nostr-relay-builder = "0.43"
