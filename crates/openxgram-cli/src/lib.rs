@@ -2,6 +2,7 @@
 //! main.rs(바이너리)와 통합 테스트가 공유한다.
 
 pub mod backup;
+pub mod backup_push;
 pub mod daemon;
 pub mod doctor;
 pub mod init;
