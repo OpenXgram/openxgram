@@ -16,4 +16,5 @@ pub mod status;
 pub mod systemd;
 pub mod tui;
 pub mod uninstall;
+pub mod vault;
 pub mod wizard;
