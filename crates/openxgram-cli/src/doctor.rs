@@ -142,8 +142,37 @@ pub fn run_doctor(opts: &DoctorOpts) -> Result<DoctorReport> {
     checks.push(check_memory_layers(&opts.data_dir));
     checks.push(check_vault_layers(&opts.data_dir));
     checks.push(check_embedder_mode());
+    checks.push(check_tailscale());
 
     Ok(DoctorReport { checks })
+}
+
+fn check_tailscale() -> CheckResult {
+    use openxgram_transport::tailscale;
+    if !tailscale::is_running() {
+        return CheckResult {
+            name: "Tailscale",
+            verdict: Verdict::Warn,
+            detail: "tailscaled 미실행 또는 미설치 — localhost 전용 (외부 노출 시 `tailscale up` 후 `xgram daemon --tailscale`)".into(),
+        };
+    }
+    let state = tailscale::backend_state().unwrap_or_else(|e| format!("(err: {e})"));
+    let ip = tailscale::local_ipv4()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|e| format!("(err: {e})"));
+    if state == "Running" {
+        CheckResult {
+            name: "Tailscale",
+            verdict: Verdict::Ok,
+            detail: format!("BackendState=Running, ipv4={ip}"),
+        }
+    } else {
+        CheckResult {
+            name: "Tailscale",
+            verdict: Verdict::Warn,
+            detail: format!("BackendState={state} — `tailscale up` 후 재확인"),
+        }
+    }
 }
 
 fn check_memory_layers(data_dir: &Path) -> CheckResult {

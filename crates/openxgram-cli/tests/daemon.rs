@@ -13,7 +13,17 @@ fn daemon_opts_constructable() {
         data_dir: PathBuf::from("/tmp/x"),
         bind_addr: Some("127.0.0.1:7300".parse().unwrap()),
         reflection_cron: Some("0 0 15 * * *".to_string()),
+        tailscale: false,
     };
+}
+
+#[test]
+fn tailscale_module_callable_without_panic() {
+    use openxgram_transport::tailscale;
+    // is_running 은 항상 bool 반환 — tailscale 미설치 환경에서도 panic 안 함
+    let _ = tailscale::is_running();
+    // local_ipv4 는 Result — 에러여도 panic 안 함
+    let _ = tailscale::local_ipv4();
 }
 
 #[tokio::test(flavor = "multi_thread")]
