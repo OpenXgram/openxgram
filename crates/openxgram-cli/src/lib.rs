@@ -14,6 +14,7 @@ pub mod reset;
 pub mod session;
 pub mod status;
 pub mod systemd;
+pub mod traits;
 pub mod tui;
 pub mod uninstall;
 pub mod vault;
