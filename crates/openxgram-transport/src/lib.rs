@@ -9,6 +9,8 @@
 //!   - PRD §4 자동 라우팅 (localhost → Tailscale → XMTP)
 //!   - 서명 검증 (현재는 transport 책임 외, 호출자/keystore 영역)
 
+pub mod rate_limit;
+pub mod replay;
 pub mod tailscale;
 
 use std::net::SocketAddr;
@@ -38,6 +40,10 @@ pub struct Envelope {
     pub timestamp: DateTime<FixedOffset>,
     /// 송신자 서명 (hex). 검증은 수신자 측 상위 레이어
     pub signature_hex: String,
+    /// replay 방지 nonce (PRD-MFA-01). UUID 또는 random hex 권장.
+    /// None 이면 backward-compat — 검증 안 함 (legacy 메시지 호환).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -89,6 +95,8 @@ struct AppState {
     received: Arc<Mutex<Vec<Envelope>>>,
     started_at: std::time::Instant,
     metrics: Option<MetricsProvider>,
+    replay: Arc<replay::ReplayCache>,
+    rate_limiter: Arc<rate_limit::RateLimiter>,
 }
 
 pub async fn spawn_server(bind_addr: SocketAddr) -> Result<ServerHandle> {
@@ -104,6 +112,8 @@ pub async fn spawn_server_with_metrics(
         received: received.clone(),
         started_at: std::time::Instant::now(),
         metrics,
+        replay: Arc::new(replay::ReplayCache::default()),
+        rate_limiter: Arc::new(rate_limit::RateLimiter::default()),
     };
 
     let app = Router::new()
@@ -164,6 +174,23 @@ async fn health_check(State(state): State<AppState>) -> Json<HealthResponse> {
 }
 
 async fn receive_message(State(state): State<AppState>, Json(env): Json<Envelope>) -> StatusCode {
+    // 1. rate limit (PRD-2.0.4)
+    if state.rate_limiter.check_and_record(&env.from).is_err() {
+        return StatusCode::TOO_MANY_REQUESTS;
+    }
+    // 2. replay 방지 (PRD-MFA-01) — nonce 가 있는 경우만
+    if let Some(nonce) = &env.nonce {
+        if !state.replay.check_and_insert(&env.from, nonce) {
+            return StatusCode::CONFLICT;
+        }
+    }
+    // 3. timestamp window — 90초 이상 오래된 메시지 reject
+    let now = chrono::Utc::now();
+    let env_utc = env.timestamp.with_timezone(&chrono::Utc);
+    let drift = (now - env_utc).num_seconds().abs();
+    if drift > replay::DEFAULT_WINDOW_SECS as i64 {
+        return StatusCode::REQUEST_TIMEOUT;
+    }
     state.received.lock().expect("poisoned").push(env);
     StatusCode::OK
 }
