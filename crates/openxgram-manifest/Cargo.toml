@@ -1,6 +1,6 @@
 [package]
 name = "openxgram-manifest"
-description = "install-manifest schema definition and validation for OpenXgram"
+description = "install-manifest types, persistence, and verification for OpenXgram"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,5 +10,12 @@ authors.workspace = true
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-anyhow = { workspace = true }
 thiserror = { workspace = true }
+chrono = { workspace = true }
+sha2 = "0.10"
+hex = "0.4"
+k256 = { version = "0.13", features = ["ecdsa"] }
+
+[dev-dependencies]
+openxgram-keystore = { path = "../openxgram-keystore" }
+tempfile = "3"
