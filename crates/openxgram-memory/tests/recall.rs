@@ -51,7 +51,9 @@ fn insert_and_recall_self_returns_distance_zero() {
         let mut store = MessageStore::new(&mut db, &embedder);
         store.insert("s1", "alice", "hello world", "sig").unwrap();
         store.insert("s1", "bob", "foo bar baz", "sig").unwrap();
-        store.insert("s1", "alice", "openxgram memory", "sig").unwrap();
+        store
+            .insert("s1", "alice", "openxgram memory", "sig")
+            .unwrap();
     }
 
     let mut store = MessageStore::new(&mut db, &embedder);
@@ -108,10 +110,8 @@ fn migrations_create_message_embeddings_tables() {
 
     // vec0 가상 테이블 정상 사용 가능 — schema 검증
     let _ok: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM message_embedding_map",
-            [],
-            |r| r.get(0),
-        )
+        .query_row("SELECT COUNT(*) FROM message_embedding_map", [], |r| {
+            r.get(0)
+        })
         .unwrap();
 }

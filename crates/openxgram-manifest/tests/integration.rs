@@ -187,10 +187,18 @@ fn detect_drift_shell_markers() {
 
     let drift = detect_drift(&m);
     assert_eq!(drift.len(), 2);
-    assert!(drift
-        .iter()
-        .any(|d| matches!(d, DriftItem::Missing { kind: "shell_marker", .. })));
-    assert!(drift
-        .iter()
-        .any(|d| matches!(d, DriftItem::Missing { kind: "shell_file", .. })));
+    assert!(drift.iter().any(|d| matches!(
+        d,
+        DriftItem::Missing {
+            kind: "shell_marker",
+            ..
+        }
+    )));
+    assert!(drift.iter().any(|d| matches!(
+        d,
+        DriftItem::Missing {
+            kind: "shell_file",
+            ..
+        }
+    )));
 }

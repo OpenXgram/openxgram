@@ -21,9 +21,9 @@ use openxgram_cli::status::{self, StatusOpts};
 use openxgram_cli::systemd::{self, UnitOpts};
 use openxgram_cli::traits::{self, TraitsAction};
 use openxgram_cli::tui::{self, TuiOpts};
-use openxgram_cli::wizard;
 use openxgram_cli::uninstall::{self, UninstallOpts};
 use openxgram_cli::vault::{self, VaultAction};
+use openxgram_cli::wizard;
 use openxgram_keystore::{FsKeystore, Keystore};
 use openxgram_manifest::MachineRole;
 use openxgram_memory::{Classification, TraitSource};
@@ -651,10 +651,9 @@ impl TryFrom<VaultCli> for VaultAction {
                     .map_err(|e| anyhow::anyhow!("policy 파싱 실패: {e}"))?,
             },
             VaultCli::AclList => VaultAction::AclList,
-            VaultCli::AclDelete { key_pattern, agent } => VaultAction::AclDelete {
-                key_pattern,
-                agent,
-            },
+            VaultCli::AclDelete { key_pattern, agent } => {
+                VaultAction::AclDelete { key_pattern, agent }
+            }
             VaultCli::Pending => VaultAction::Pending,
             VaultCli::Approve { id } => VaultAction::Approve { id },
             VaultCli::Deny { id } => VaultAction::Deny { id },
@@ -917,7 +916,9 @@ async fn main() -> anyhow::Result<()> {
             println!("  systemctl --user daemon-reload");
             println!("  systemctl --user enable --now openxgram-sidecar.service");
             println!();
-            println!("주의: XGRAM_KEYSTORE_PASSWORD 는 systemd-creds 또는 EnvironmentFile 로 별도 주입.");
+            println!(
+                "주의: XGRAM_KEYSTORE_PASSWORD 는 systemd-creds 또는 EnvironmentFile 로 별도 주입."
+            );
         }
 
         Commands::BackupInstall {
@@ -949,7 +950,9 @@ async fn main() -> anyhow::Result<()> {
             println!("  systemctl --user daemon-reload");
             println!("  systemctl --user enable --now openxgram-backup.timer");
             println!();
-            println!("주의: XGRAM_KEYSTORE_PASSWORD 는 systemd-creds 또는 EnvironmentFile 로 별도 주입.");
+            println!(
+                "주의: XGRAM_KEYSTORE_PASSWORD 는 systemd-creds 또는 EnvironmentFile 로 별도 주입."
+            );
         }
 
         Commands::BackupUninstall => {
@@ -1025,7 +1028,10 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 restore_cold_backup(&input, &dir, &pw)?
             };
-            println!("✓ cold backup 복원 완료{}", if merge { " (merge)" } else { "" });
+            println!(
+                "✓ cold backup 복원 완료{}",
+                if merge { " (merge)" } else { "" }
+            );
             println!("  source       : {}", input.display());
             println!("  target_dir   : {}", info.target_dir.display());
             println!("  bytes_restored: {}", info.bytes_restored);

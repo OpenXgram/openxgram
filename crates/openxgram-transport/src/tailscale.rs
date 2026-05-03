@@ -59,8 +59,8 @@ pub fn backend_state() -> Result<String> {
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout)
-        .context("tailscale status JSON 파싱 실패")?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).context("tailscale status JSON 파싱 실패")?;
     v.get("BackendState")
         .and_then(|x| x.as_str())
         .map(str::to_string)

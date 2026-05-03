@@ -16,9 +16,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use openxgram_core::env::{require_password, require_seed_phrase, MIN_PASSWORD_LEN};
-use openxgram_core::paths::{
-    db_path, install_dirs, keystore_dir, manifest_path, MASTER_KEY_NAME,
-};
+use openxgram_core::paths::{db_path, install_dirs, keystore_dir, manifest_path, MASTER_KEY_NAME};
 use openxgram_core::ports::{
     HTTP_PORT, HTTP_SERVICE, INBOUND_WEBHOOK_PORT, REQUIRED_PORTS, RPC_PORT, RPC_SERVICE,
 };
@@ -49,10 +47,7 @@ pub fn run_init(opts: &InitOpts) -> Result<()> {
     println!("[1/6] 사전 점검{label}");
     precheck(opts)?;
 
-    println!(
-        "[2/6] 머신 식별 — alias={}, role={}",
-        opts.alias, opts.role
-    );
+    println!("[2/6] 머신 식별 — alias={}, role={}", opts.alias, opts.role);
     let machine = build_machine(opts)?;
 
     println!("[3/6] 마스터 시드");

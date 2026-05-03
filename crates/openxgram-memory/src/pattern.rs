@@ -78,7 +78,11 @@ impl<'a> PatternStore<'a> {
 
         // 갱신된 row 조회
         let (id, pattern_text, frequency, first_seen, last_seen): (
-            String, String, i64, String, String,
+            String,
+            String,
+            i64,
+            String,
+            String,
         ) = conn.query_row(
             "SELECT id, pattern_text, frequency, first_seen, last_seen
              FROM patterns WHERE pattern_text = ?1",
@@ -131,4 +135,3 @@ impl<'a> PatternStore<'a> {
         Ok(out)
     }
 }
-

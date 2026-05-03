@@ -42,20 +42,18 @@ pub fn run_uninstall(opts: &UninstallOpts) -> Result<()> {
     }
 
     println!("[1/4] 사전 검증");
-    let manifest = InstallManifest::read(&manifest_path)
-        .context("install-manifest 읽기·검증 실패")?;
+    let manifest =
+        InstallManifest::read(&manifest_path).context("install-manifest 읽기·검증 실패")?;
     println!("  alias       : {}", manifest.machine.alias);
     println!("  registered  : {}개 키", manifest.registered_keys.len());
     println!("  directories : {}", manifest.directories.len());
 
     println!("[2/4] 백업 옵션");
     match (opts.cold_backup_to.as_ref(), opts.no_backup) {
-        (Some(_), true) => bail!(
-            "--cold-backup-to 와 --no-backup 동시 사용 금지. 하나만 선택."
-        ),
-        (None, false) => bail!(
-            "백업 옵션 필요: --cold-backup-to PATH (옵션 2) 또는 --no-backup (옵션 4)"
-        ),
+        (Some(_), true) => bail!("--cold-backup-to 와 --no-backup 동시 사용 금지. 하나만 선택."),
+        (None, false) => {
+            bail!("백업 옵션 필요: --cold-backup-to PATH (옵션 2) 또는 --no-backup (옵션 4)")
+        }
         (Some(target), false) => {
             let password = require_password()
                 .map_err(|_| anyhow!("환경변수 {PASSWORD_ENV} 누락 — backup 암호화에 필요"))?;
@@ -81,9 +79,7 @@ pub fn run_uninstall(opts: &UninstallOpts) -> Result<()> {
                 anyhow!("--no-backup 사용 시 --confirm \"{DELETE_CONFIRM}\" 정확 일치 필요")
             })?;
             if confirm != DELETE_CONFIRM {
-                bail!(
-                    "확인 문자열 불일치. 정확히 \"{DELETE_CONFIRM}\" 입력 필요 (대소문자 포함)"
-                );
+                bail!("확인 문자열 불일치. 정확히 \"{DELETE_CONFIRM}\" 입력 필요 (대소문자 포함)");
             }
         }
     }

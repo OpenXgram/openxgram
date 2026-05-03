@@ -37,10 +37,7 @@ async fn discord_raises_on_4xx() {
         .send_text("hi")
         .await
         .unwrap_err();
-    assert!(matches!(
-        err,
-        AdapterError::ServerError { status: 404, .. }
-    ));
+    assert!(matches!(err, AdapterError::ServerError { status: 404, .. }));
 }
 
 #[tokio::test]
@@ -69,7 +66,8 @@ async fn telegram_raises_on_invalid_token() {
     Mock::given(method("POST"))
         .and(path("/bot999:WRONG/sendMessage"))
         .respond_with(
-            ResponseTemplate::new(401).set_body_json(json!({"ok": false, "description": "Unauthorized"})),
+            ResponseTemplate::new(401)
+                .set_body_json(json!({"ok": false, "description": "Unauthorized"})),
         )
         .mount(&server)
         .await;
@@ -79,10 +77,7 @@ async fn telegram_raises_on_invalid_token() {
         .send_text("hi")
         .await
         .unwrap_err();
-    assert!(matches!(
-        err,
-        AdapterError::ServerError { status: 401, .. }
-    ));
+    assert!(matches!(err, AdapterError::ServerError { status: 401, .. }));
 }
 
 #[tokio::test]

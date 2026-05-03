@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use openxgram_cli::systemd::{
     install_backup_units, install_user_unit, render_backup_service, render_backup_timer,
-    render_unit, uninstall_backup_units, uninstall_user_unit, BackupUnitOpts,
-    DEFAULT_BACKUP_ON_CALENDAR, UnitOpts,
+    render_unit, uninstall_backup_units, uninstall_user_unit, BackupUnitOpts, UnitOpts,
+    DEFAULT_BACKUP_ON_CALENDAR,
 };
 use tempfile::tempdir;
 
@@ -60,7 +60,12 @@ fn install_existing_target_raises() {
 #[test]
 fn install_creates_parent_dirs() {
     let tmp = tempdir().unwrap();
-    let nested = tmp.path().join("a").join("b").join("c").join("unit.service");
+    let nested = tmp
+        .path()
+        .join("a")
+        .join("b")
+        .join("c")
+        .join("unit.service");
     install_user_unit(&nested, &sample_opts()).unwrap();
     assert!(nested.exists());
 }
@@ -107,8 +112,12 @@ fn install_backup_units_creates_both_files() {
     let tim = tmp.path().join("openxgram-backup.timer");
     install_backup_units(&svc, &tim, &sample_backup_opts()).unwrap();
     assert!(svc.exists() && tim.exists());
-    assert!(std::fs::read_to_string(&svc).unwrap().contains("Type=oneshot"));
-    assert!(std::fs::read_to_string(&tim).unwrap().contains("OnCalendar="));
+    assert!(std::fs::read_to_string(&svc)
+        .unwrap()
+        .contains("Type=oneshot"));
+    assert!(std::fs::read_to_string(&tim)
+        .unwrap()
+        .contains("OnCalendar="));
 }
 
 #[test]

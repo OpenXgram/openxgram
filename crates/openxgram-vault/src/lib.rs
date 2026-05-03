@@ -207,9 +207,7 @@ impl<'a> VaultStore<'a> {
                 |r| r.get(0),
             )
             .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => {
-                    VaultError::NotFound(key.to_string())
-                }
+                rusqlite::Error::QueryReturnedNoRows => VaultError::NotFound(key.to_string()),
                 other => VaultError::Sqlite(other),
             })?;
         let plaintext = decrypt_blob(password, &encrypted)?;
@@ -309,9 +307,7 @@ impl<'a> VaultStore<'a> {
         policy: AclPolicy,
     ) -> Result<AclEntry> {
         if allowed_actions.is_empty() {
-            return Err(VaultError::InvalidAcl(
-                "allowed_actions 비어있음".into(),
-            ));
+            return Err(VaultError::InvalidAcl("allowed_actions 비어있음".into()));
         }
         let id = Uuid::new_v4().to_string();
         let now_rfc = kst_now().to_rfc3339();
@@ -390,15 +386,17 @@ impl<'a> VaultStore<'a> {
             },
         );
         match result {
-            Ok((id, key_pattern, agent, actions, daily_limit, policy, created)) => Ok(Some(AclEntry {
-                id,
-                key_pattern,
-                agent,
-                allowed_actions: parse_actions(&actions)?,
-                daily_limit,
-                policy: AclPolicy::parse(&policy)?,
-                created_at: parse_ts(&created)?,
-            })),
+            Ok((id, key_pattern, agent, actions, daily_limit, policy, created)) => {
+                Ok(Some(AclEntry {
+                    id,
+                    key_pattern,
+                    agent,
+                    allowed_actions: parse_actions(&actions)?,
+                    daily_limit,
+                    policy: AclPolicy::parse(&policy)?,
+                    created_at: parse_ts(&created)?,
+                }))
+            }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
         }
@@ -406,12 +404,7 @@ impl<'a> VaultStore<'a> {
 
     /// (key, agent, action) 에 대한 ACL 결정. 매칭 우선순위: exact key + exact agent
     /// > exact key + '*' > '*' + exact agent > '*' + '*'. 첫 매칭 사용.
-    pub fn check_acl(
-        &mut self,
-        key: &str,
-        agent: &str,
-        action: AclAction,
-    ) -> Result<AclDecision> {
+    pub fn check_acl(&mut self, key: &str, agent: &str, action: AclAction) -> Result<AclDecision> {
         let acl = self.find_matching_acl(key, agent)?;
         let Some(acl) = acl else {
             return Ok(AclDecision {
@@ -498,7 +491,15 @@ impl<'a> VaultStore<'a> {
         self.db.conn().execute(
             "INSERT INTO vault_audit (id, key, agent, action, allowed, reason, timestamp)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            rusqlite::params![id, key, agent, action.as_str(), allowed_int, decision.reason, now_rfc],
+            rusqlite::params![
+                id,
+                key,
+                agent,
+                action.as_str(),
+                allowed_int,
+                decision.reason,
+                now_rfc
+            ],
         )?;
         Ok(())
     }
@@ -609,9 +610,8 @@ impl<'a> VaultStore<'a> {
                 )))
             }
             AclPolicy::Mfa => {
-                let code = mfa_code.ok_or_else(|| {
-                    VaultError::AclDenied("mfa 정책 — TOTP 코드 필요".into())
-                })?;
+                let code = mfa_code
+                    .ok_or_else(|| VaultError::AclDenied("mfa 정책 — TOTP 코드 필요".into()))?;
                 if self.validate_mfa(agent, code)? {
                     Ok(())
                 } else {
