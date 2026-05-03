@@ -625,7 +625,7 @@
 
 ## Phase 2.4 신뢰·감사 (Audit + Rotation + MFA)
 
-### [ ] 14. PRD-AUDIT-01 hash chain (prev_hash + entry_hash + seq)
+### [x] 14. PRD-AUDIT-01 hash chain (prev_hash + entry_hash + seq)
 
 #### [ ] 14.1 스키마 + INSERT 트리거
 
@@ -665,7 +665,7 @@
   - [ ] 5단계 검증: 동시 100 insert 후 chain 무결성
   - [ ] 6단계 [x]
 
-### [ ] 15. PRD-AUDIT-02 Merkle checkpoint + ed25519
+### [x] 15. PRD-AUDIT-02 Merkle checkpoint + ed25519
 
 #### [ ] 15.1 체크포인트 테이블 + 1시간 cron
 
@@ -705,7 +705,7 @@
   - [ ] 5단계 검증: 시간 advance 시뮬
   - [ ] 6단계 [x]
 
-### [ ] 16. PRD-AUDIT-03 xgram audit verify CLI
+### [x] 16. PRD-AUDIT-03 xgram audit verify CLI
 
 #### [ ] 16.1 검증 CLI
 
@@ -745,7 +745,7 @@
   - [ ] 5단계 검증: --help + 실행
   - [ ] 6단계 [x]
 
-### [ ] 17. PRD-AUDIT-04 회귀 테스트 (fault injection)
+### [x] 17. PRD-AUDIT-04 회귀 테스트 (fault injection)
 
 #### [ ] 17.1 직접 row 삭제 → verify 깨짐
 
@@ -785,7 +785,7 @@
   - [ ] 5단계 검증: verify 실패
   - [ ] 6단계 [x]
 
-### [ ] 18. PRD-ROT-01 HD derivation index 테이블
+### [x] 18. PRD-ROT-01 HD derivation index 테이블
 
 #### [ ] 18.1 vault_kek_rotations 스키마
 
@@ -825,7 +825,7 @@
   - [ ] 5단계 검증: 시간 advance 테스트
   - [ ] 6단계 [x]
 
-### [ ] 19. PRD-ROT-02 xgram vault rotate-kek + dual-key
+### [x] 19. PRD-ROT-02 xgram vault rotate-kek + dual-key
 
 #### [ ] 19.1 회전 명령
 
@@ -865,7 +865,7 @@
   - [ ] 5단계 검증: 시간 시뮬
   - [ ] 6단계 [x]
 
-### [ ] 20. PRD-ROT-03 회전 audit 자동 기록
+### [x] 20. PRD-ROT-03 회전 audit 자동 기록
 
 #### [ ] 20.1 hash chain 통합
 
@@ -905,7 +905,7 @@
   - [ ] 5단계 검증: 통과
   - [ ] 6단계 [x]
 
-### [ ] 21. PRD-MFA-02 WebAuthn ADR (passkey-rs)
+### [x] 21. PRD-MFA-02 WebAuthn ADR (passkey-rs)
 
 #### [ ] 21.1 ADR 작성
 
