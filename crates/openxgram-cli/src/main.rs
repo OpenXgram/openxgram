@@ -13,6 +13,7 @@ use openxgram_cli::reset::{self, ResetOpts};
 use openxgram_cli::session::{self, SessionAction};
 use openxgram_cli::status::{self, StatusOpts};
 use openxgram_cli::tui::{self, TuiOpts};
+use openxgram_cli::wizard;
 use openxgram_cli::uninstall::{self, UninstallOpts};
 use openxgram_keystore::{FsKeystore, Keystore};
 use openxgram_manifest::MachineRole;
@@ -161,6 +162,9 @@ enum Commands {
         #[arg(long)]
         reflection_cron: Option<String>,
     },
+
+    /// 인터랙티브 init 마법사 (state machine — Welcome/MachineId/Confirm/Done)
+    Wizard,
 
     /// 인터랙티브 TUI (welcome + status)
     Tui {
@@ -532,6 +536,19 @@ async fn main() -> anyhow::Result<()> {
                 reflection_cron,
             })
             .await?;
+        }
+
+        Commands::Wizard => {
+            let outcome = wizard::run_wizard()?;
+            match outcome {
+                wizard::WizardOutcome::Completed { alias } => {
+                    println!("✓ wizard 완료. alias = {alias}");
+                    println!("  XGRAM_KEYSTORE_PASSWORD=<12자+> xgram init --alias {alias} --role primary");
+                }
+                wizard::WizardOutcome::Cancelled => {
+                    println!("취소됨.");
+                }
+            }
         }
 
         Commands::Tui { data_dir } => {
