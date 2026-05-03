@@ -195,7 +195,14 @@ impl FsKeystore {
         };
 
         let json = serde_json::to_string_pretty(&keyfile)?;
-        std::fs::write(self.key_path(name), json)?;
+        let path = self.key_path(name);
+        std::fs::write(&path, json)?;
+        // SPEC §3 Step 4: keystore 파일 권한 600 (Unix). 마스터 외 read/write 차단.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        }
         Ok(())
     }
 
