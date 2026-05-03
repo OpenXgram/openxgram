@@ -13,6 +13,8 @@
         --warn: #d29922;
         --fail: #f85149;
         --muted: #8b949e;
+        --tab-bg: #161b22;
+        --border: #21262d;
       }
       * { box-sizing: border-box; }
       body {
@@ -21,71 +23,205 @@
         background: var(--bg);
         color: var(--fg);
         min-height: 100vh;
-        padding: 24px;
       }
-      h1 { margin: 0 0 4px; font-size: 22px; }
-      .sub { color: var(--muted); margin-bottom: 24px; }
-      .checks { border: 1px solid #21262d; border-radius: 8px; overflow: hidden; }
-      .check { display: flex; gap: 12px; padding: 10px 14px; border-bottom: 1px solid #21262d; }
-      .check:last-child { border-bottom: 0; }
+      header { padding: 16px 24px 0; }
+      h1 { margin: 0 0 4px; font-size: 20px; }
+      .sub { color: var(--muted); margin-bottom: 16px; font-size: 13px; }
+      .tabs { display: flex; border-bottom: 1px solid var(--border); padding: 0 24px; }
+      .tab {
+        background: none; border: 0; color: var(--muted); padding: 10px 16px;
+        cursor: pointer; font-size: 14px; border-bottom: 2px solid transparent;
+      }
+      .tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+      .tab:hover { color: var(--fg); }
+      .pane { padding: 16px 24px; }
+      .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+      button.action {
+        background: var(--accent); color: #0e1014; border: 0; padding: 6px 12px;
+        border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px;
+      }
+      button.action:disabled { opacity: 0.5; cursor: wait; }
+      .list { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+      .row { display: flex; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); align-items: center; }
+      .row:last-child { border-bottom: 0; }
+      .row.head { background: var(--tab-bg); font-weight: 600; font-size: 12px; color: var(--muted); }
       .verdict { font-weight: 700; min-width: 60px; }
       .verdict.ok { color: var(--accent); }
       .verdict.warn { color: var(--warn); }
       .verdict.fail { color: var(--fail); }
-      .name { min-width: 200px; }
-      .detail { color: var(--muted); flex: 1; word-break: break-word; }
-      pre { background: #161b22; padding: 12px; border-radius: 6px; font-size: 12px; overflow: auto; }
-      button {
-        background: var(--accent); color: #0e1014; border: 0; padding: 8px 16px;
-        border-radius: 6px; font-weight: 600; cursor: pointer;
-      }
-      button:disabled { opacity: 0.5; cursor: wait; }
+      .col { flex: 1; word-break: break-word; }
+      .col.narrow { flex: 0 0 120px; color: var(--muted); }
+      .col.mono { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
+      pre { background: var(--tab-bg); padding: 12px; border-radius: 6px; font-size: 12px; overflow: auto; }
+      .empty { color: var(--muted); padding: 24px; text-align: center; }
     </style>
   </head>
   <body>
-    <h1>OpenXgram</h1>
-    <div class="sub" id="version">로드 중...</div>
-    <button id="refresh">새로고침</button>
-    <h2 style="margin-top:24px">Doctor 점검</h2>
-    <div id="checks"></div>
+    <header>
+      <h1>OpenXgram</h1>
+      <div class="sub" id="version">로드 중...</div>
+    </header>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="status">Status</button>
+      <button class="tab" data-tab="sessions">Sessions</button>
+      <button class="tab" data-tab="vault">Vault</button>
+      <button class="tab" data-tab="pending">Pending</button>
+      <button class="tab" data-tab="peers">Peers</button>
+      <button class="tab" data-tab="payments">Payments</button>
+    </nav>
+    <main class="pane">
+      <div class="toolbar">
+        <span id="pane-title"></span>
+        <button class="action" id="refresh">새로고침</button>
+      </div>
+      <div id="content"></div>
+    </main>
     <script type="module">
-      // textContent only — innerHTML 사용 금지 (XSS 방지)
       const invoke = window.__TAURI__?.core?.invoke;
-      const checksEl = document.getElementById('checks');
       const versionEl = document.getElementById('version');
+      const titleEl = document.getElementById('pane-title');
+      const contentEl = document.getElementById('content');
+      const tabsEl = document.getElementById('tabs');
+      let currentTab = 'status';
 
       if (!invoke) {
-        const h1 = document.querySelector('h1');
-        h1.textContent = '오류';
-        const msg = document.createElement('p');
-        msg.textContent = 'Tauri 환경이 아닙니다. cargo tauri dev 로 실행하세요.';
-        h1.after(msg);
+        document.querySelector('h1').textContent = '오류';
+        const p = document.createElement('p');
+        p.textContent = 'Tauri 환경이 아닙니다. cargo tauri dev 로 실행하세요.';
+        contentEl.appendChild(p);
       }
 
       function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); }
-
-      function makeCheckRow(check) {
-        const row = document.createElement('div');
-        row.className = 'check';
-        const verdict = document.createElement('span');
-        verdict.className = `verdict ${check.verdict}`;
-        verdict.textContent = String(check.verdict).toUpperCase();
-        const name = document.createElement('span');
-        name.className = 'name';
-        name.textContent = check.name;
-        const detail = document.createElement('span');
-        detail.className = 'detail';
-        detail.textContent = check.detail;
-        row.append(verdict, name, detail);
-        return row;
+      function rowEl(values, opts = {}) {
+        const r = document.createElement('div');
+        r.className = 'row' + (opts.head ? ' head' : '');
+        for (const [text, cls] of values) {
+          const span = document.createElement('span');
+          span.className = 'col' + (cls ? ` ${cls}` : '');
+          span.textContent = text ?? '';
+          r.appendChild(span);
+        }
+        return r;
       }
-
       function showError(text) {
-        clear(checksEl);
+        clear(contentEl);
         const pre = document.createElement('pre');
         pre.textContent = text;
-        checksEl.appendChild(pre);
+        contentEl.appendChild(pre);
       }
+      function showEmpty(text) {
+        clear(contentEl);
+        const div = document.createElement('div');
+        div.className = 'empty';
+        div.textContent = text;
+        contentEl.appendChild(div);
+      }
+
+      async function showStatus() {
+        titleEl.textContent = 'Doctor 점검';
+        const res = await invoke('get_status');
+        if (!res.success) return showError(res.output);
+        const data = JSON.parse(res.output);
+        clear(contentEl);
+        const list = document.createElement('div');
+        list.className = 'list';
+        for (const c of data.checks) {
+          const r = document.createElement('div');
+          r.className = 'row';
+          const v = document.createElement('span');
+          v.className = `verdict ${c.verdict}`;
+          v.textContent = String(c.verdict).toUpperCase();
+          const n = document.createElement('span');
+          n.className = 'col narrow';
+          n.textContent = c.name;
+          const d = document.createElement('span');
+          d.className = 'col';
+          d.textContent = c.detail;
+          r.append(v, n, d);
+          list.appendChild(r);
+        }
+        contentEl.appendChild(list);
+      }
+
+      async function showSimpleList(kind, title, columns, mapper, emptyText) {
+        titleEl.textContent = title;
+        const res = await invoke('dump', { kind });
+        if (!res.success) return showError(res.output);
+        const data = JSON.parse(res.output);
+        if (!data.items || data.items.length === 0) return showEmpty(emptyText);
+        clear(contentEl);
+        const list = document.createElement('div');
+        list.className = 'list';
+        list.appendChild(rowEl(columns.map(c => [c, '']), { head: true }));
+        for (const item of data.items) {
+          list.appendChild(rowEl(mapper(item)));
+        }
+        contentEl.appendChild(list);
+      }
+
+      const VIEWS = {
+        status: showStatus,
+        sessions: () => showSimpleList(
+          'sessions',
+          'Sessions',
+          ['ID', 'Title', 'Home', 'Last Active'],
+          s => [
+            [s.id.slice(0, 8) + '…', 'mono'],
+            [s.title, ''],
+            [s.home_machine, ''],
+            [s.last_active.slice(0, 19), 'mono'],
+          ],
+          'session 없음 — xgram session new 으로 생성',
+        ),
+        vault: () => showSimpleList(
+          'vault',
+          'Vault entries',
+          ['ID', 'Key', 'Tags', 'Last Accessed'],
+          v => [
+            [v.id.slice(0, 8) + '…', 'mono'],
+            [v.key, ''],
+            [Array.isArray(v.tags) ? v.tags.join(', ') : '', ''],
+            [v.last_accessed.slice(0, 19), 'mono'],
+          ],
+          'vault 비어있음',
+        ),
+        pending: () => showSimpleList(
+          'pending',
+          'Vault pending confirmations',
+          ['ID', 'Action', 'Key', 'Agent'],
+          p => [
+            [p.id.slice(0, 8) + '…', 'mono'],
+            [p.action, ''],
+            [p.key, ''],
+            [p.agent, ''],
+          ],
+          'pending 승인 요청 없음',
+        ),
+        peers: () => showSimpleList(
+          'peers',
+          'Peer registry',
+          ['Alias', 'Role', 'Address', 'Last Seen'],
+          p => [
+            [p.alias, ''],
+            [p.role, ''],
+            [p.address, 'mono'],
+            [p.last_seen ? p.last_seen.slice(0, 19) : '(미연결)', 'mono'],
+          ],
+          'peer 없음',
+        ),
+        payments: () => showSimpleList(
+          'payments',
+          'Payment intents',
+          ['ID', 'Amount', 'Chain', 'State'],
+          p => [
+            [p.id.slice(0, 8) + '…', 'mono'],
+            [p.amount_display, ''],
+            [p.chain, ''],
+            [p.state, ''],
+          ],
+          'payment intent 없음',
+        ),
+      };
 
       async function refresh() {
         const btn = document.getElementById('refresh');
@@ -98,21 +234,22 @@
           } else {
             versionEl.textContent = ver.output;
           }
-          const status = await invoke('get_status');
-          clear(checksEl);
-          if (!status.success) {
-            showError(status.output);
-            return;
-          }
-          const data = JSON.parse(status.output);
-          checksEl.className = 'checks';
-          for (const c of data.checks) {
-            checksEl.appendChild(makeCheckRow(c));
-          }
+          const fn = VIEWS[currentTab];
+          if (fn) await fn();
         } finally {
           btn.disabled = false;
         }
       }
+
+      tabsEl.addEventListener('click', (e) => {
+        const tab = e.target.dataset?.tab;
+        if (!tab) return;
+        currentTab = tab;
+        for (const t of tabsEl.children) {
+          t.classList.toggle('active', t.dataset.tab === tab);
+        }
+        refresh();
+      });
 
       document.getElementById('refresh').addEventListener('click', refresh);
       if (invoke) refresh();

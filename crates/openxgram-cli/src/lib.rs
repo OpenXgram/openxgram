@@ -5,6 +5,7 @@ pub mod backup;
 pub mod backup_push;
 pub mod daemon;
 pub mod doctor;
+pub mod dump;
 pub mod init;
 pub mod mcp_serve;
 pub mod mcp_tokens;
