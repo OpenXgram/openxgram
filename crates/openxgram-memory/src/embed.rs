@@ -80,6 +80,24 @@ impl Embedder for FastEmbedder {
     }
 }
 
+/// 현재 빌드/환경에서 default_embedder() 가 반환할 모드의 라벨.
+/// "fastembed" / "fastembed-overridden-dummy" / "dummy".
+pub fn embedder_mode_label() -> &'static str {
+    let force_dummy = std::env::var("XGRAM_EMBEDDER").as_deref() == Ok("dummy");
+    #[cfg(feature = "fastembed")]
+    {
+        if force_dummy {
+            return "fastembed-overridden-dummy";
+        }
+        return "fastembed";
+    }
+    #[cfg(not(feature = "fastembed"))]
+    {
+        let _ = force_dummy;
+        "dummy"
+    }
+}
+
 /// 런타임 임베더 선택. `fastembed` feature 가 빌드되어 있으면 FastEmbedder,
 /// 그렇지 않거나 `XGRAM_EMBEDDER=dummy` 면 DummyEmbedder.
 ///
