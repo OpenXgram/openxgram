@@ -52,8 +52,8 @@ fn doctor_after_fresh_init_all_ok() {
         0,
         "FAIL 0건 기대\n{summary}"
     );
-    assert_eq!(report.exit_code(), 0);
-    // 5개 점검 모두 OK (또는 unix 외 환경에서 keystore 권한 검사 OK 처리)
+    // daemon 안 떠있으면 transport 항목 WARN — exit_code 1(FAIL) 만 아니면 OK
+    assert_ne!(report.exit_code(), 1, "FAIL 없음 가정");
     assert!(report.ok_count() >= 4, "OK 4건 이상");
 }
 

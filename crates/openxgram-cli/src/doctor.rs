@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use openxgram_core::paths::{db_path, manifest_path, master_keyfile};
+use openxgram_core::ports::RPC_PORT;
 use openxgram_core::time::kst_now;
 use openxgram_db::{Db, DbConfig};
 use openxgram_manifest::{detect_drift, InstallManifest};
@@ -124,8 +125,30 @@ pub fn run_doctor(opts: &DoctorOpts) -> Result<DoctorReport> {
     checks.push(check_sqlite_integrity(&opts.data_dir));
     checks.push(check_keystore(&opts.data_dir));
     checks.push(check_drift(manifest.as_ref()));
+    checks.push(check_transport());
 
     Ok(DoctorReport { checks })
+}
+
+fn check_transport() -> CheckResult {
+    use std::net::{SocketAddr, TcpStream};
+    use std::time::Duration;
+
+    let addr: SocketAddr = ([127, 0, 0, 1], RPC_PORT).into();
+    match TcpStream::connect_timeout(&addr, Duration::from_millis(500)) {
+        Ok(_) => CheckResult {
+            name: "Transport server",
+            verdict: Verdict::Ok,
+            detail: format!("127.0.0.1:{RPC_PORT} 연결 성공 (daemon up)"),
+        },
+        Err(_) => CheckResult {
+            name: "Transport server",
+            verdict: Verdict::Warn,
+            detail: format!(
+                "127.0.0.1:{RPC_PORT} 연결 실패 (daemon 미실행 — `xgram daemon` 으로 시작)"
+            ),
+        },
+    }
 }
 
 fn check_data_dir(data_dir: &Path) -> CheckResult {
