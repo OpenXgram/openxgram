@@ -46,8 +46,7 @@ fn render_installed_state_shows_machine_info() {
     })
     .unwrap();
 
-    let manifest =
-        InstallManifest::read(data_dir.join("install-manifest.json")).unwrap();
+    let manifest = InstallManifest::read(data_dir.join("install-manifest.json")).unwrap();
 
     let backend = TestBackend::new(100, 20);
     let mut terminal = Terminal::new(backend).unwrap();

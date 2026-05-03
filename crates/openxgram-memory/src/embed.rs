@@ -28,8 +28,7 @@ impl Embedder for DummyEmbedder {
         let mut out = Vec::with_capacity(EMBED_DIM);
         for i in 0..EMBED_DIM {
             let byte = hash[i % 32];
-            let mixed = (byte as f32 - 128.0) / 128.0
-                + (i as f32 / EMBED_DIM as f32 - 0.5) * 0.001;
+            let mixed = (byte as f32 - 128.0) / 128.0 + (i as f32 / EMBED_DIM as f32 - 0.5) * 0.001;
             out.push(mixed);
         }
         // L2 정규화 — distance 비교 일관성
@@ -108,8 +107,7 @@ pub fn default_embedder() -> anyhow::Result<Box<dyn Embedder + Send + Sync>> {
 
     #[cfg(feature = "fastembed")]
     if !force_dummy {
-        let fe = FastEmbedder::new()
-            .map_err(|e| anyhow::anyhow!("fastembed init 실패: {e}"))?;
+        let fe = FastEmbedder::new().map_err(|e| anyhow::anyhow!("fastembed init 실패: {e}"))?;
         return Ok(Box::new(fe));
     }
 

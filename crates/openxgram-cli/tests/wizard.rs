@@ -6,7 +6,13 @@ use openxgram_cli::wizard::{
 use ratatui::{backend::TestBackend, crossterm::event::KeyCode, Terminal};
 
 fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
-    terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect()
+    terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol())
+        .collect()
 }
 
 /// 입력값을 keystrokes 로 분해해서 alias 단계 통과
@@ -89,8 +95,8 @@ fn alias_empty_does_not_advance() {
 
 #[test]
 fn alias_backspace_removes_char() {
-    let state = enter_text(WizardState::initial().handle(KeyCode::Enter), "abc")
-        .handle(KeyCode::Backspace);
+    let state =
+        enter_text(WizardState::initial().handle(KeyCode::Enter), "abc").handle(KeyCode::Backspace);
     if let WizardState::Alias { cfg } = state {
         assert_eq!(cfg.alias, "ab");
     } else {
@@ -109,8 +115,8 @@ fn alias_esc_returns_to_welcome() {
 
 #[test]
 fn role_keys_select_correctly() {
-    let mut state = enter_text(WizardState::initial().handle(KeyCode::Enter), "a")
-        .handle(KeyCode::Enter);
+    let mut state =
+        enter_text(WizardState::initial().handle(KeyCode::Enter), "a").handle(KeyCode::Enter);
     state = state.handle(KeyCode::Char('2'));
     if let WizardState::RoleStep { cfg } = &state {
         assert_eq!(cfg.role, Role::Secondary);

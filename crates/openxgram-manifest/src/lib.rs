@@ -164,10 +164,7 @@ pub enum DriftItem {
         actual: String,
     },
     /// 경로·셸 마커·서비스 파일 누락
-    Missing {
-        kind: &'static str,
-        path: PathBuf,
-    },
+    Missing { kind: &'static str, path: PathBuf },
 }
 
 #[derive(Debug, Error)]
@@ -289,8 +286,7 @@ pub fn detect_drift(manifest: &InstallManifest) -> Vec<DriftItem> {
     for sh in &manifest.shell_integrations {
         match std::fs::read_to_string(&sh.path) {
             Ok(contents)
-                if !contents.contains(&sh.marker_start)
-                    || !contents.contains(&sh.marker_end) =>
+                if !contents.contains(&sh.marker_start) || !contents.contains(&sh.marker_end) =>
             {
                 items.push(DriftItem::Missing {
                     kind: "shell_marker",

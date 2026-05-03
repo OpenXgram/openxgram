@@ -58,9 +58,8 @@ WantedBy=default.target\n",
 
 pub fn install_user_unit(target: &Path, opts: &UnitOpts) -> Result<()> {
     if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent).with_context(|| {
-            format!("부모 디렉토리 생성 실패: {}", parent.display())
-        })?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("부모 디렉토리 생성 실패: {}", parent.display()))?;
     }
     if target.exists() {
         bail!(

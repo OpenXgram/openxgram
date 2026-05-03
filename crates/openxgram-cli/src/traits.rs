@@ -58,20 +58,18 @@ pub fn run_traits(data_dir: &Path, action: TraitsAction) -> Result<()> {
             println!("  refs      : {:?}", t.source_refs);
             println!("  updated_at: {}", t.updated_at);
         }
-        TraitsAction::Get { name } => {
-            match store.get_by_name(&name)? {
-                Some(t) => {
-                    println!("trait: {}", t.name);
-                    println!("  id        : {}", t.id);
-                    println!("  value     : {}", t.value);
-                    println!("  source    : {}", t.source.as_str());
-                    println!("  refs      : {:?}", t.source_refs);
-                    println!("  created_at: {}", t.created_at);
-                    println!("  updated_at: {}", t.updated_at);
-                }
-                None => bail!("trait 없음: {name}"),
+        TraitsAction::Get { name } => match store.get_by_name(&name)? {
+            Some(t) => {
+                println!("trait: {}", t.name);
+                println!("  id        : {}", t.id);
+                println!("  value     : {}", t.value);
+                println!("  source    : {}", t.source.as_str());
+                println!("  refs      : {:?}", t.source_refs);
+                println!("  created_at: {}", t.created_at);
+                println!("  updated_at: {}", t.updated_at);
             }
-        }
+            None => bail!("trait 없음: {name}"),
+        },
         TraitsAction::List => {
             let traits = store.list()?;
             if traits.is_empty() {
@@ -97,10 +95,7 @@ pub fn run_traits(data_dir: &Path, action: TraitsAction) -> Result<()> {
 fn open_db(data_dir: &Path) -> Result<Db> {
     let path = db_path(data_dir);
     if !path.exists() {
-        bail!(
-            "DB 미존재 ({}). `xgram init` 먼저 실행.",
-            path.display()
-        );
+        bail!("DB 미존재 ({}). `xgram init` 먼저 실행.", path.display());
     }
     let mut db = Db::open(DbConfig {
         path,

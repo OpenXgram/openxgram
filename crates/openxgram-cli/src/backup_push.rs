@@ -74,10 +74,7 @@ pub async fn run_backup_push(opts: BackupPushOpts) -> Result<()> {
 fn open_db(data_dir: &Path) -> Result<Db> {
     let path = db_path(data_dir);
     if !path.exists() {
-        bail!(
-            "DB 미존재 ({}). `xgram init` 먼저 실행.",
-            path.display()
-        );
+        bail!("DB 미존재 ({}). `xgram init` 먼저 실행.", path.display());
     }
     let mut db = Db::open(DbConfig {
         path,

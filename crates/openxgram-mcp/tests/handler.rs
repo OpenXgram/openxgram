@@ -37,7 +37,10 @@ fn tools_list_includes_echo() {
 fn tools_call_echo_returns_text() {
     let mut d = EchoDispatcher;
     let resp = handle_request(
-        req("tools/call", json!({"name": "echo", "arguments": {"text": "안녕"}})),
+        req(
+            "tools/call",
+            json!({"name": "echo", "arguments": {"text": "안녕"}}),
+        ),
         &mut d,
     );
     let result = resp.result.unwrap();
@@ -49,7 +52,10 @@ fn tools_call_echo_returns_text() {
 fn tools_call_unknown_returns_method_not_found() {
     let mut d = EchoDispatcher;
     let resp = handle_request(
-        req("tools/call", json!({"name": "nonexistent", "arguments": {}})),
+        req(
+            "tools/call",
+            json!({"name": "nonexistent", "arguments": {}}),
+        ),
         &mut d,
     );
     assert_eq!(resp.error.as_ref().unwrap().code, ERR_METHOD_NOT_FOUND);

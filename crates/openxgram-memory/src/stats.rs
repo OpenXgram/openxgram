@@ -14,9 +14,7 @@ pub struct StoreStats {
 
 pub fn store_stats(db: &mut Db) -> Result<StoreStats> {
     let conn = db.conn();
-    let count = |sql: &str| -> rusqlite::Result<i64> {
-        conn.query_row(sql, [], |r| r.get(0))
-    };
+    let count = |sql: &str| -> rusqlite::Result<i64> { conn.query_row(sql, [], |r| r.get(0)) };
     Ok(StoreStats {
         sessions: count("SELECT COUNT(*) FROM sessions")?,
         messages: count("SELECT COUNT(*) FROM messages")?,

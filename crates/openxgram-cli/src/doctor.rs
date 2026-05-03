@@ -60,13 +60,22 @@ pub struct DoctorReport {
 
 impl DoctorReport {
     pub fn ok_count(&self) -> usize {
-        self.checks.iter().filter(|c| c.verdict == Verdict::Ok).count()
+        self.checks
+            .iter()
+            .filter(|c| c.verdict == Verdict::Ok)
+            .count()
     }
     pub fn warn_count(&self) -> usize {
-        self.checks.iter().filter(|c| c.verdict == Verdict::Warn).count()
+        self.checks
+            .iter()
+            .filter(|c| c.verdict == Verdict::Warn)
+            .count()
     }
     pub fn fail_count(&self) -> usize {
-        self.checks.iter().filter(|c| c.verdict == Verdict::Fail).count()
+        self.checks
+            .iter()
+            .filter(|c| c.verdict == Verdict::Fail)
+            .count()
     }
 
     /// 종료 코드: 0 = 모두 OK, 1 = FAIL 존재, 2 = WARN 만.
@@ -269,9 +278,7 @@ fn check_vault_layers(data_dir: &Path) -> CheckResult {
     CheckResult {
         name: "Vault layers",
         verdict,
-        detail: format!(
-            "entries={entries}, acl={acl}, audit={audit}, denied_today={denied_today}"
-        ),
+        detail: format!("entries={entries}, acl={acl}, audit={audit}, denied_today={denied_today}"),
     }
 }
 
@@ -291,7 +298,9 @@ fn check_embedder_mode() -> CheckResult {
         _ => CheckResult {
             name: "Embedder mode",
             verdict: Verdict::Warn,
-            detail: "DummyEmbedder (CI/test 결정성) — `--features fastembed` 빌드 시 의미 임베딩 활성".to_string(),
+            detail:
+                "DummyEmbedder (CI/test 결정성) — `--features fastembed` 빌드 시 의미 임베딩 활성"
+                    .to_string(),
         },
     }
 }
@@ -415,7 +424,10 @@ fn check_keystore(data_dir: &Path) -> CheckResult {
             CheckResult {
                 name: "Keystore master",
                 verdict: Verdict::Warn,
-                detail: format!("권한 0o{mode:o} (예상: 600) — `chmod 600 {}`", path.display()),
+                detail: format!(
+                    "권한 0o{mode:o} (예상: 600) — `chmod 600 {}`",
+                    path.display()
+                ),
             }
         }
     }

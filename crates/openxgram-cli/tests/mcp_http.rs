@@ -41,8 +41,7 @@ async fn spawn_http_server(data_dir: PathBuf) -> (String, tokio::task::JoinHandl
     use axum::{extract::State, routing::post, Json, Router};
     use openxgram_mcp::{handle_request, JsonRpcRequest, JsonRpcResponse};
 
-    type SharedDispatcher =
-        std::sync::Arc<tokio::sync::Mutex<mcp_serve::OpenxgramDispatcher>>;
+    type SharedDispatcher = std::sync::Arc<tokio::sync::Mutex<mcp_serve::OpenxgramDispatcher>>;
     async fn rpc_handler(
         State(state): State<SharedDispatcher>,
         Json(req): Json<JsonRpcRequest>,
@@ -51,7 +50,9 @@ async fn spawn_http_server(data_dir: PathBuf) -> (String, tokio::task::JoinHandl
         Json(handle_request(req, &mut *d))
     }
 
-    let app = Router::new().route("/rpc", post(rpc_handler)).with_state(state);
+    let app = Router::new()
+        .route("/rpc", post(rpc_handler))
+        .with_state(state);
     let handle = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
