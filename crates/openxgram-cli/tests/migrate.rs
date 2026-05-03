@@ -23,11 +23,13 @@ fn init_opts(data_dir: PathBuf) -> InitOpts {
 fn set_env() {
     unsafe {
         std::env::set_var("XGRAM_KEYSTORE_PASSWORD", TEST_PASSWORD);
+        std::env::set_var("XGRAM_SKIP_PORT_PRECHECK", "1");
         std::env::remove_var("XGRAM_SEED");
     }
 }
 
 #[test]
+#[serial_test::file_serial]
 fn migrate_after_init_idempotent() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -48,6 +50,7 @@ fn migrate_after_init_idempotent() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn migrate_without_init_raises() {
     let tmp = tempdir().unwrap();
     let err = run_migrate(&MigrateOpts {
@@ -59,6 +62,7 @@ fn migrate_without_init_raises() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn migrate_with_target_warns_but_proceeds() {
     set_env();
     let tmp = tempdir().unwrap();

@@ -23,11 +23,13 @@ fn init_opts(data_dir: PathBuf) -> InitOpts {
 fn set_env() {
     unsafe {
         std::env::set_var("XGRAM_KEYSTORE_PASSWORD", TEST_PASSWORD);
+        std::env::set_var("XGRAM_SKIP_PORT_PRECHECK", "1");
         std::env::remove_var("XGRAM_SEED");
     }
 }
 
 #[test]
+#[serial_test::file_serial]
 fn set_then_list_and_delete() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -55,6 +57,7 @@ fn set_then_list_and_delete() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn requires_init_first() {
     let tmp = tempdir().unwrap();
     let err = run_vault(&tmp.path().join("absent"), VaultAction::List).unwrap_err();
@@ -62,6 +65,7 @@ fn requires_init_first() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn delete_unknown_raises() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -78,6 +82,7 @@ fn delete_unknown_raises() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn get_unknown_raises() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -94,6 +99,7 @@ fn get_unknown_raises() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn acl_set_list_delete_round_trip() {
     use openxgram_vault::{AclAction, AclPolicy};
     set_env();
@@ -124,6 +130,7 @@ fn acl_set_list_delete_round_trip() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn acl_delete_unknown_raises() {
     set_env();
     let tmp = tempdir().unwrap();

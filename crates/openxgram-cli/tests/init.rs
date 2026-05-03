@@ -31,6 +31,7 @@ fn set_password() {
     // 다른 통합 테스트 파일과 환경 격리됨.
     unsafe {
         std::env::set_var("XGRAM_KEYSTORE_PASSWORD", TEST_PASSWORD);
+        std::env::set_var("XGRAM_SKIP_PORT_PRECHECK", "1");
     }
 }
 
@@ -41,6 +42,7 @@ fn unset_seed() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn init_creates_full_install_layout_and_signs_manifest() {
     set_password();
     unset_seed();
@@ -76,6 +78,7 @@ fn init_creates_full_install_layout_and_signs_manifest() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn init_dry_run_makes_no_changes() {
     set_password();
     unset_seed();
@@ -93,6 +96,7 @@ fn init_dry_run_makes_no_changes() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn init_refuses_to_overwrite_without_force() {
     set_password();
     unset_seed();
@@ -108,9 +112,11 @@ fn init_refuses_to_overwrite_without_force() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn init_short_password_raises() {
     unsafe {
         std::env::set_var("XGRAM_KEYSTORE_PASSWORD", "short");
+        std::env::set_var("XGRAM_SKIP_PORT_PRECHECK", "1");
     }
     unset_seed();
     let tmp = tempdir().unwrap();
@@ -124,6 +130,7 @@ fn init_short_password_raises() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn init_import_requires_seed_env() {
     set_password();
     unset_seed();

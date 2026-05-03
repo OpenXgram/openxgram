@@ -20,11 +20,13 @@ fn init_opts(data_dir: PathBuf) -> InitOpts {
 fn set_env() {
     unsafe {
         std::env::set_var("XGRAM_KEYSTORE_PASSWORD", "test-password-12345");
+        std::env::set_var("XGRAM_SKIP_PORT_PRECHECK", "1");
         std::env::remove_var("XGRAM_SEED");
     }
 }
 
 #[test]
+#[serial_test::file_serial]
 fn create_then_verify_round_trip() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -41,6 +43,7 @@ fn create_then_verify_round_trip() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn verify_unknown_token_returns_none() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -53,6 +56,7 @@ fn verify_unknown_token_returns_none() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn list_then_revoke() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -73,6 +77,7 @@ fn list_then_revoke() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn revoke_unknown_raises() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -85,6 +90,7 @@ fn revoke_unknown_raises() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn token_hash_changes_for_different_inputs() {
     let h1 = mcp_tokens::hash_token("a");
     let h2 = mcp_tokens::hash_token("b");
@@ -93,6 +99,7 @@ fn token_hash_changes_for_different_inputs() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn generate_token_returns_64_hex_chars() {
     let t = mcp_tokens::generate_token();
     assert_eq!(t.len(), 64);

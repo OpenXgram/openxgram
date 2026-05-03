@@ -22,11 +22,13 @@ fn init_opts(data_dir: PathBuf) -> InitOpts {
 fn set_env() {
     unsafe {
         std::env::set_var("XGRAM_KEYSTORE_PASSWORD", "test-password-12345");
+        std::env::set_var("XGRAM_SKIP_PORT_PRECHECK", "1");
         std::env::remove_var("XGRAM_SEED");
     }
 }
 
 #[test]
+#[serial_test::file_serial]
 fn set_then_list_and_get() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -55,6 +57,7 @@ fn set_then_list_and_get() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn set_overwrites_same_name() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -85,6 +88,7 @@ fn set_overwrites_same_name() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn get_unknown_raises() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -102,6 +106,7 @@ fn get_unknown_raises() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn derive_runs_without_patterns() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -112,6 +117,7 @@ fn derive_runs_without_patterns() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn requires_init_first() {
     let tmp = tempdir().unwrap();
     let err = run_traits(&tmp.path().join("absent"), TraitsAction::List).unwrap_err();

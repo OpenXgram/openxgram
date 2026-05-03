@@ -28,11 +28,13 @@ fn init_opts(data_dir: PathBuf) -> InitOpts {
 fn set_env() {
     unsafe {
         std::env::set_var("XGRAM_KEYSTORE_PASSWORD", TEST_PASSWORD);
+        std::env::set_var("XGRAM_SKIP_PORT_PRECHECK", "1");
         std::env::remove_var("XGRAM_SEED");
     }
 }
 
 #[test]
+#[serial_test::file_serial]
 fn create_cold_backup_round_trip_decrypt() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -58,6 +60,7 @@ fn create_cold_backup_round_trip_decrypt() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn uninstall_with_cold_backup_removes_data_and_keeps_backup() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -89,6 +92,7 @@ fn uninstall_with_cold_backup_removes_data_and_keeps_backup() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn uninstall_rejects_both_backup_and_no_backup() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -107,6 +111,7 @@ fn uninstall_rejects_both_backup_and_no_backup() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn uninstall_rejects_neither_backup_option() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -125,6 +130,7 @@ fn uninstall_rejects_neither_backup_option() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn restore_round_trip_after_uninstall() {
     use openxgram_cli::backup::restore_cold_backup;
     use openxgram_core::paths::manifest_path;
@@ -161,6 +167,7 @@ fn restore_round_trip_after_uninstall() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn restore_into_nonempty_dir_raises() {
     use openxgram_cli::backup::restore_cold_backup;
 
@@ -177,6 +184,7 @@ fn restore_into_nonempty_dir_raises() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn cold_backup_decrypt_with_wrong_password_fails() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -193,6 +201,7 @@ fn cold_backup_decrypt_with_wrong_password_fails() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn resolve_backup_target_dir_creates_timestamped_filename() {
     let tmp = tempdir().unwrap();
     // 디렉토리 → openxgram-<ts>.cbk 생성
@@ -204,6 +213,7 @@ fn resolve_backup_target_dir_creates_timestamped_filename() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn resolve_backup_target_file_path_passes_through() {
     let tmp = tempdir().unwrap();
     let explicit = tmp.path().join("manual-name.enc");
@@ -212,6 +222,7 @@ fn resolve_backup_target_file_path_passes_through() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn backup_round_trip_into_directory() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -229,6 +240,7 @@ fn backup_round_trip_into_directory() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn restore_merge_overwrites_files_and_preserves_extras() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -261,6 +273,7 @@ fn restore_merge_overwrites_files_and_preserves_extras() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn restore_without_merge_into_nonempty_raises() {
     set_env();
     let tmp = tempdir().unwrap();
