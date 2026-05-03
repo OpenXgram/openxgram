@@ -17,6 +17,8 @@ pub mod transfer;
 mod util;
 
 pub use embed::{DummyEmbedder, Embedder, EMBED_DIM};
+#[cfg(feature = "fastembed")]
+pub use embed::FastEmbedder;
 pub use episode::{reflect_all, reflect_session, Episode, EpisodeStore};
 pub use memory::{Memory, MemoryKind, MemoryStore};
 pub use message::{Message, MessageStore, RecallHit};

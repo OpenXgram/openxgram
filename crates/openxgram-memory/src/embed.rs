@@ -1,6 +1,5 @@
-//! Embedder trait + DummyEmbedder (CI/test 결정성 384d).
-//!
-//! 실 의미 임베딩(multilingual-e5-small fastembed)은 후속 PR.
+//! Embedder trait + DummyEmbedder (CI/test 결정성 384d) + FastEmbedder
+//! (optional `fastembed` feature, multilingual-e5-small 384d 의미 임베딩).
 
 use sha2::{Digest, Sha256};
 
@@ -41,5 +40,42 @@ impl Embedder for DummyEmbedder {
             }
         }
         out
+    }
+}
+
+/// multilingual-e5-small 기반 실 의미 임베딩.
+///
+/// 첫 호출 시 ONNX 모델 (~560MB) 다운로드. `fastembed` feature 활성 시 빌드.
+#[cfg(feature = "fastembed")]
+pub struct FastEmbedder {
+    model: std::sync::Mutex<fastembed::TextEmbedding>,
+}
+
+#[cfg(feature = "fastembed")]
+impl FastEmbedder {
+    pub fn new() -> Result<Self, anyhow::Error> {
+        let model = fastembed::TextEmbedding::try_new(fastembed::InitOptions::new(
+            fastembed::EmbeddingModel::MultilingualE5Small,
+        ))?;
+        Ok(Self {
+            model: std::sync::Mutex::new(model),
+        })
+    }
+}
+
+#[cfg(feature = "fastembed")]
+impl Embedder for FastEmbedder {
+    fn dim(&self) -> usize {
+        EMBED_DIM
+    }
+
+    fn embed(&self, text: &str) -> Vec<f32> {
+        let mut model = self.model.lock().expect("FastEmbedder mutex poisoned");
+        model
+            .embed(vec![text], None)
+            .expect("fastembed embed failed")
+            .into_iter()
+            .next()
+            .expect("fastembed returned empty result")
     }
 }
