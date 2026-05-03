@@ -22,6 +22,7 @@ fn init_opts(data_dir: PathBuf) -> InitOpts {
 fn set_env() {
     unsafe {
         std::env::set_var("XGRAM_KEYSTORE_PASSWORD", "test-password-12345");
+        std::env::set_var("XGRAM_SKIP_PORT_PRECHECK", "1");
         std::env::remove_var("XGRAM_SEED");
     }
 }
@@ -126,6 +127,7 @@ async fn rpc(url: &str, method: &str, params: Value) -> Value {
 }
 
 #[tokio::test]
+#[serial_test::file_serial]
 async fn http_initialize_returns_protocol_info() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -143,6 +145,7 @@ async fn http_initialize_returns_protocol_info() {
 }
 
 #[tokio::test]
+#[serial_test::file_serial]
 async fn http_tools_list_includes_db_tools() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -165,6 +168,7 @@ async fn http_tools_list_includes_db_tools() {
 }
 
 #[tokio::test]
+#[serial_test::file_serial]
 async fn http_tools_call_list_sessions_returns_zero_count() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -184,6 +188,7 @@ async fn http_tools_call_list_sessions_returns_zero_count() {
 }
 
 #[tokio::test]
+#[serial_test::file_serial]
 async fn http_invalid_bearer_returns_invalid_params() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -212,6 +217,7 @@ async fn http_invalid_bearer_returns_invalid_params() {
 }
 
 #[tokio::test]
+#[serial_test::file_serial]
 async fn http_require_auth_blocks_no_bearer() {
     set_env();
     unsafe { std::env::set_var("XGRAM_MCP_REQUIRE_AUTH", "1") };
@@ -233,6 +239,7 @@ async fn http_require_auth_blocks_no_bearer() {
 }
 
 #[tokio::test]
+#[serial_test::file_serial]
 async fn http_unknown_method_returns_jsonrpc_error() {
     set_env();
     let tmp = tempdir().unwrap();

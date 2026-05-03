@@ -36,11 +36,13 @@ fn uninstall_opts(data_dir: PathBuf) -> UninstallOpts {
 fn set_env() {
     unsafe {
         std::env::set_var("XGRAM_KEYSTORE_PASSWORD", TEST_PASSWORD);
+        std::env::set_var("XGRAM_SKIP_PORT_PRECHECK", "1");
         std::env::remove_var("XGRAM_SEED");
     }
 }
 
 #[test]
+#[serial_test::file_serial]
 fn round_trip_init_then_uninstall_leaves_no_data_dir() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -55,6 +57,7 @@ fn round_trip_init_then_uninstall_leaves_no_data_dir() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn uninstall_idempotent_when_no_manifest() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -63,6 +66,7 @@ fn uninstall_idempotent_when_no_manifest() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn uninstall_requires_no_backup_in_phase_1() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -79,6 +83,7 @@ fn uninstall_requires_no_backup_in_phase_1() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn uninstall_requires_confirm_string() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -101,6 +106,7 @@ fn uninstall_requires_confirm_string() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn uninstall_dry_run_makes_no_changes() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -116,6 +122,7 @@ fn uninstall_dry_run_makes_no_changes() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn uninstall_then_uninstall_idempotent() {
     set_env();
     let tmp = tempdir().unwrap();

@@ -30,6 +30,7 @@ fn init_opts(data_dir: PathBuf) -> InitOpts {
 fn set_env() {
     unsafe {
         std::env::set_var("XGRAM_KEYSTORE_PASSWORD", TEST_PASSWORD);
+        std::env::set_var("XGRAM_SKIP_PORT_PRECHECK", "1");
         std::env::remove_var("XGRAM_SEED");
     }
 }
@@ -46,6 +47,7 @@ fn no_backup(data_dir: PathBuf) -> UninstallOpts {
 
 /// PRD §20 H: install → uninstall → 흔적 0건 (data_dir 사라짐).
 #[test]
+#[serial_test::file_serial]
 fn scenario_h_uninstall_leaves_no_data_dir() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -62,6 +64,7 @@ fn scenario_h_uninstall_leaves_no_data_dir() {
 
 /// PRD §20 I: install → reset --hard → 즉시 재초기화 가능.
 #[test]
+#[serial_test::file_serial]
 fn scenario_i_reset_hard_then_reinstall() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -84,6 +87,7 @@ fn scenario_i_reset_hard_then_reinstall() {
 
 /// PRD §20 J: 마스터 반복 워크플로우 — 3 회 install-uninstall round-trip.
 #[test]
+#[serial_test::file_serial]
 fn scenario_j_three_round_trips() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -102,6 +106,7 @@ fn scenario_j_three_round_trips() {
 /// PRD §20 F: ChatGPT 토론 → 사이드카 import → Claude Code attach (마스터 핵심 요구).
 /// 머신 A 에서 session 생성·메시지 → export → 머신 B 에서 import --verify.
 #[test]
+#[serial_test::file_serial]
 fn scenario_f_export_import_with_verify() {
     set_env();
     use openxgram_core::paths::db_path;
@@ -204,6 +209,7 @@ fn scenario_f_export_import_with_verify() {
 
 /// 합격 시나리오 묶음: cold backup 라운드트립 (uninstall → restore → 데이터 복원).
 #[test]
+#[serial_test::file_serial]
 fn scenario_cold_backup_full_round_trip() {
     use openxgram_cli::backup::restore_cold_backup;
     use openxgram_core::paths::manifest_path;

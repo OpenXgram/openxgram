@@ -14,6 +14,7 @@ fn clear_env() {
 }
 
 #[tokio::test]
+#[serial_test::file_serial]
 async fn discord_requires_url() {
     clear_env();
     let err = run_notify(NotifyAction::Discord {
@@ -26,6 +27,7 @@ async fn discord_requires_url() {
 }
 
 #[tokio::test]
+#[serial_test::file_serial]
 async fn telegram_requires_token_and_chat() {
     clear_env();
     let err = run_notify(NotifyAction::Telegram {

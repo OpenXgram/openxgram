@@ -27,6 +27,7 @@ fn sample_opts() -> UnitOpts {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn render_unit_includes_required_sections() {
     let unit = render_unit(&sample_opts());
     assert!(unit.contains("[Unit]"));
@@ -39,6 +40,7 @@ fn render_unit_includes_required_sections() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn install_creates_file_with_unit_content() {
     let tmp = tempdir().unwrap();
     let target = tmp.path().join("openxgram-sidecar.service");
@@ -48,6 +50,7 @@ fn install_creates_file_with_unit_content() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn install_existing_target_raises() {
     let tmp = tempdir().unwrap();
     let target = tmp.path().join("openxgram-sidecar.service");
@@ -58,6 +61,7 @@ fn install_existing_target_raises() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn install_creates_parent_dirs() {
     let tmp = tempdir().unwrap();
     let nested = tmp
@@ -71,6 +75,7 @@ fn install_creates_parent_dirs() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn uninstall_removes_existing_file() {
     let tmp = tempdir().unwrap();
     let target = tmp.path().join("unit.service");
@@ -81,6 +86,7 @@ fn uninstall_removes_existing_file() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn uninstall_missing_target_is_idempotent() {
     let tmp = tempdir().unwrap();
     // 존재하지 않는 파일에 uninstall 호출 — raise 안 함
@@ -88,6 +94,7 @@ fn uninstall_missing_target_is_idempotent() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn render_backup_service_invokes_xgram_backup() {
     let s = render_backup_service(&sample_backup_opts());
     assert!(s.contains("Type=oneshot"));
@@ -97,6 +104,7 @@ fn render_backup_service_invokes_xgram_backup() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn render_backup_timer_uses_oncalendar_and_persistent() {
     let t = render_backup_timer(&sample_backup_opts());
     assert!(t.contains("OnCalendar=Sun 03:00:00"));
@@ -106,6 +114,7 @@ fn render_backup_timer_uses_oncalendar_and_persistent() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn install_backup_units_creates_both_files() {
     let tmp = tempdir().unwrap();
     let svc = tmp.path().join("openxgram-backup.service");
@@ -121,6 +130,7 @@ fn install_backup_units_creates_both_files() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn install_backup_units_raises_when_either_exists() {
     let tmp = tempdir().unwrap();
     let svc = tmp.path().join("openxgram-backup.service");
@@ -133,6 +143,7 @@ fn install_backup_units_raises_when_either_exists() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn uninstall_backup_units_removes_both_idempotent() {
     let tmp = tempdir().unwrap();
     let svc = tmp.path().join("openxgram-backup.service");

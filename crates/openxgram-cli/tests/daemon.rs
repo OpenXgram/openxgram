@@ -8,6 +8,7 @@ use openxgram_cli::daemon::DaemonOpts;
 use std::path::PathBuf;
 
 #[test]
+#[serial_test::file_serial]
 fn daemon_opts_constructable() {
     let _opts = DaemonOpts {
         data_dir: PathBuf::from("/tmp/x"),
@@ -18,6 +19,7 @@ fn daemon_opts_constructable() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn tailscale_module_callable_without_panic() {
     use openxgram_transport::tailscale;
     // is_running 은 항상 bool 반환 — tailscale 미설치 환경에서도 panic 안 함

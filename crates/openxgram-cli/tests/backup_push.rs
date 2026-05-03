@@ -26,6 +26,7 @@ fn init_opts(data_dir: PathBuf) -> InitOpts {
 fn set_env() {
     unsafe {
         std::env::set_var("XGRAM_KEYSTORE_PASSWORD", TEST_PASSWORD);
+        std::env::set_var("XGRAM_SKIP_PORT_PRECHECK", "1");
         std::env::remove_var("XGRAM_SEED");
         std::env::remove_var("DISCORD_WEBHOOK_URL");
         std::env::remove_var("TELEGRAM_BOT_TOKEN");
@@ -34,6 +35,7 @@ fn set_env() {
 }
 
 #[tokio::test]
+#[serial_test::file_serial]
 async fn discord_requires_webhook_env() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -64,6 +66,7 @@ async fn discord_requires_webhook_env() {
 }
 
 #[tokio::test]
+#[serial_test::file_serial]
 async fn telegram_requires_token_and_chat_envs() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -106,6 +109,7 @@ async fn telegram_requires_token_and_chat_envs() {
 }
 
 #[tokio::test]
+#[serial_test::file_serial]
 async fn unknown_session_raises() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -123,6 +127,7 @@ async fn unknown_session_raises() {
 }
 
 #[tokio::test]
+#[serial_test::file_serial]
 async fn requires_init_first() {
     set_env();
     let tmp = tempdir().unwrap();
