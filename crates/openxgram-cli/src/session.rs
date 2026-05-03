@@ -9,8 +9,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use openxgram_core::paths::db_path;
 use openxgram_db::{Db, DbConfig};
 use openxgram_memory::{
-    export_session, import_session, reflect_session, DummyEmbedder, EpisodeStore, MessageStore,
-    SessionStore, TextPackage,
+    export_session, import_session, reflect_all, reflect_session, DummyEmbedder, EpisodeStore,
+    MessageStore, SessionStore, TextPackage,
 };
 
 #[derive(Debug, Clone)]
@@ -23,6 +23,8 @@ pub enum SessionAction {
     Recall { query: String, k: usize },
     Export { session_id: String, out: Option<std::path::PathBuf> },
     Import { input: Option<std::path::PathBuf> },
+    Delete { id: String },
+    ReflectAll,
 }
 
 pub fn run_session(data_dir: &Path, action: SessionAction) -> Result<()> {
@@ -40,7 +42,27 @@ pub fn run_session(data_dir: &Path, action: SessionAction) -> Result<()> {
         SessionAction::Recall { query, k } => cmd_recall(&mut db, &query, k),
         SessionAction::Export { session_id, out } => cmd_export(&mut db, &session_id, out.as_deref()),
         SessionAction::Import { input } => cmd_import(&mut db, input.as_deref()),
+        SessionAction::Delete { id } => cmd_delete(&mut db, &id),
+        SessionAction::ReflectAll => cmd_reflect_all(&mut db),
     }
+}
+
+fn cmd_delete(db: &mut Db, id: &str) -> Result<()> {
+    if SessionStore::new(db).get_by_id(id)?.is_none() {
+        bail!("session 없음: {id}");
+    }
+    SessionStore::new(db).delete(id)?;
+    println!("✓ session 삭제 (messages·episodes CASCADE, memories.session_id NULL): {id}");
+    Ok(())
+}
+
+fn cmd_reflect_all(db: &mut Db) -> Result<()> {
+    let episodes = reflect_all(db)?;
+    println!("✓ reflect-all 완료 — 새 episode {}개", episodes.len());
+    for ep in &episodes {
+        println!("  [{}] session={} {}", ep.id, ep.session_id, ep.summary);
+    }
+    Ok(())
 }
 
 fn open_db(data_dir: &Path) -> Result<Db> {

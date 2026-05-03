@@ -69,6 +69,23 @@ struct SessionStats {
     senders: Option<String>,
 }
 
+/// 모든 session 에 reflect_session 일괄 호출. 빈 session 은 None 으로 skip.
+/// 후속 PR 에서 cron 자동 트리거가 이 함수를 호출.
+pub fn reflect_all(db: &mut Db) -> Result<Vec<Episode>> {
+    let session_ids: Vec<String> = {
+        let mut stmt = db.conn().prepare("SELECT id FROM sessions")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.collect::<rusqlite::Result<Vec<String>>>()?
+    };
+    let mut episodes = Vec::new();
+    for id in session_ids {
+        if let Some(ep) = reflect_session(db, &id)? {
+            episodes.push(ep);
+        }
+    }
+    Ok(episodes)
+}
+
 /// L0 → L1 — session 의 모든 messages 를 모아 1개 episode 로 집계.
 /// Phase 1: 단순 카운트·시간 범위·sender 수. 의미 요약은 fastembed/LLM 통합 이후.
 pub fn reflect_session(db: &mut Db, session_id: &str) -> Result<Option<Episode>> {

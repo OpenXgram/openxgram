@@ -81,6 +81,21 @@ impl<'a> SessionStore<'a> {
         Ok(out)
     }
 
+    /// session 삭제 — FK CASCADE 로 messages/episodes 동시 삭제. memories 는 SET NULL.
+    pub fn delete(&mut self, id: &str) -> Result<()> {
+        let affected = self
+            .db
+            .conn()
+            .execute("DELETE FROM sessions WHERE id = ?1", [id])?;
+        if affected != 1 {
+            return Err(MemoryError::UnexpectedRowCount {
+                expected: 1,
+                actual: affected as u64,
+            });
+        }
+        Ok(())
+    }
+
     pub fn get_by_id(&mut self, id: &str) -> Result<Option<Session>> {
         let result = self.db.conn().query_row(
             "SELECT id, title, created_at, last_active, home_machine

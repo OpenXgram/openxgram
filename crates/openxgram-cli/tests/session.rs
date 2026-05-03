@@ -372,6 +372,143 @@ fn export_then_import_into_fresh_install_preserves_messages() {
 }
 
 #[test]
+fn delete_session_cascades_messages() {
+    set_env();
+    use openxgram_core::paths::db_path;
+    use openxgram_db::{Db, DbConfig};
+    use openxgram_memory::{DummyEmbedder, MessageStore, SessionStore};
+
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    run_session(
+        &data_dir,
+        SessionAction::New {
+            title: "delete-test".into(),
+        },
+    )
+    .unwrap();
+    let mut db = Db::open(DbConfig {
+        path: db_path(&data_dir),
+        ..Default::default()
+    })
+    .unwrap();
+    db.migrate().unwrap();
+    let sid = SessionStore::new(&mut db).list().unwrap()[0].id.clone();
+    drop(db);
+
+    for body in &["hi", "bye"] {
+        run_session(
+            &data_dir,
+            SessionAction::Message {
+                session_id: sid.clone(),
+                sender: "0xtest".into(),
+                body: body.to_string(),
+            },
+        )
+        .unwrap();
+    }
+
+    run_session(
+        &data_dir,
+        SessionAction::Delete { id: sid.clone() },
+    )
+    .unwrap();
+
+    // CASCADE 검증
+    let mut db = Db::open(DbConfig {
+        path: db_path(&data_dir),
+        ..Default::default()
+    })
+    .unwrap();
+    db.migrate().unwrap();
+    assert!(SessionStore::new(&mut db).get_by_id(&sid).unwrap().is_none());
+    let embedder = DummyEmbedder;
+    let messages = MessageStore::new(&mut db, &embedder)
+        .list_for_session(&sid)
+        .unwrap();
+    assert_eq!(messages.len(), 0);
+}
+
+#[test]
+fn delete_unknown_session_raises() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+    let err = run_session(
+        &data_dir,
+        SessionAction::Delete {
+            id: "nonexistent".into(),
+        },
+    )
+    .unwrap_err();
+    assert!(format!("{err:#}").contains("session 없음"));
+}
+
+#[test]
+fn reflect_all_processes_multiple_sessions() {
+    set_env();
+    use openxgram_core::paths::db_path;
+    use openxgram_db::{Db, DbConfig};
+    use openxgram_memory::{EpisodeStore, SessionStore};
+
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    // 2개 session + 메시지
+    for title in &["s1", "s2"] {
+        run_session(
+            &data_dir,
+            SessionAction::New {
+                title: title.to_string(),
+            },
+        )
+        .unwrap();
+    }
+    let mut db = Db::open(DbConfig {
+        path: db_path(&data_dir),
+        ..Default::default()
+    })
+    .unwrap();
+    db.migrate().unwrap();
+    let ids: Vec<String> = SessionStore::new(&mut db)
+        .list()
+        .unwrap()
+        .iter()
+        .map(|s| s.id.clone())
+        .collect();
+    drop(db);
+
+    for sid in &ids {
+        run_session(
+            &data_dir,
+            SessionAction::Message {
+                session_id: sid.clone(),
+                sender: "0xtest".into(),
+                body: "msg".into(),
+            },
+        )
+        .unwrap();
+    }
+
+    run_session(&data_dir, SessionAction::ReflectAll).unwrap();
+
+    let mut db = Db::open(DbConfig {
+        path: db_path(&data_dir),
+        ..Default::default()
+    })
+    .unwrap();
+    db.migrate().unwrap();
+    for sid in &ids {
+        let eps = EpisodeStore::new(&mut db).list_for_session(sid).unwrap();
+        assert_eq!(eps.len(), 1);
+    }
+}
+
+#[test]
 fn show_unknown_session_raises() {
     set_env();
     let tmp = tempdir().unwrap();
