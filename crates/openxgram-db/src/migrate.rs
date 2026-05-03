@@ -49,6 +49,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "vault_acl",
         sql: include_str!("../migrations/0007_vault_acl.sql"),
     },
+    Migration {
+        version: 8,
+        name: "vault_pending",
+        sql: include_str!("../migrations/0008_vault_pending.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

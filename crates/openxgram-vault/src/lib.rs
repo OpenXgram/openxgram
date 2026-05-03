@@ -43,6 +43,48 @@ pub enum VaultError {
 /// 마스터 호출 — ACL 우회. 다른 식별자는 ACL 검사 통과 필요.
 pub const MASTER_AGENT: &str = "master";
 
+/// Pending confirmation 만료 시간 (24시간) — 자동 만료는 후속.
+pub const PENDING_TTL_HOURS: i64 = 24;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingConfirmation {
+    pub id: String,
+    pub key: String,
+    pub agent: String,
+    pub action: AclAction,
+    pub status: PendingStatus,
+    pub requested_at: DateTime<FixedOffset>,
+    pub decided_at: Option<DateTime<FixedOffset>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingStatus {
+    Pending,
+    Approved,
+    Denied,
+    Expired,
+}
+
+impl PendingStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Approved => "approved",
+            Self::Denied => "denied",
+            Self::Expired => "expired",
+        }
+    }
+    pub fn parse(s: &str) -> Result<Self> {
+        Ok(match s {
+            "pending" => Self::Pending,
+            "approved" => Self::Approved,
+            "denied" => Self::Denied,
+            "expired" => Self::Expired,
+            other => return Err(VaultError::InvalidAcl(format!("status: {other}"))),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum AclAction {
@@ -462,8 +504,18 @@ impl<'a> VaultStore<'a> {
     }
 
     /// agent 식별자가 있는 호출자의 vault.get — ACL 검사 + 감사 로그.
-    /// MASTER_AGENT 는 ACL 우회.
+    /// MASTER_AGENT 는 ACL 우회. policy=confirm/mfa 면 ensure_policy 라우팅.
     pub fn get_as(&mut self, key: &str, password: &str, agent: &str) -> Result<Vec<u8>> {
+        self.get_as_authed(key, password, agent, None)
+    }
+
+    pub fn get_as_authed(
+        &mut self,
+        key: &str,
+        password: &str,
+        agent: &str,
+        mfa_code: Option<&str>,
+    ) -> Result<Vec<u8>> {
         if agent == MASTER_AGENT {
             return self.get(key, password);
         }
@@ -474,6 +526,7 @@ impl<'a> VaultStore<'a> {
                 decision.reason.unwrap_or_else(|| "denied".into()),
             ));
         }
+        self.ensure_policy(key, agent, AclAction::Get, mfa_code, decision.policy)?;
         self.get(key, password)
     }
 
@@ -485,6 +538,18 @@ impl<'a> VaultStore<'a> {
         tags: &[String],
         agent: &str,
     ) -> Result<VaultEntry> {
+        self.set_as_authed(key, plaintext, password, tags, agent, None)
+    }
+
+    pub fn set_as_authed(
+        &mut self,
+        key: &str,
+        plaintext: &[u8],
+        password: &str,
+        tags: &[String],
+        agent: &str,
+        mfa_code: Option<&str>,
+    ) -> Result<VaultEntry> {
         if agent == MASTER_AGENT {
             return self.set(key, plaintext, password, tags);
         }
@@ -495,10 +560,20 @@ impl<'a> VaultStore<'a> {
                 decision.reason.unwrap_or_else(|| "denied".into()),
             ));
         }
+        self.ensure_policy(key, agent, AclAction::Set, mfa_code, decision.policy)?;
         self.set(key, plaintext, password, tags)
     }
 
     pub fn delete_as(&mut self, key: &str, agent: &str) -> Result<()> {
+        self.delete_as_authed(key, agent, None)
+    }
+
+    pub fn delete_as_authed(
+        &mut self,
+        key: &str,
+        agent: &str,
+        mfa_code: Option<&str>,
+    ) -> Result<()> {
         if agent == MASTER_AGENT {
             return self.delete(key);
         }
@@ -509,7 +584,206 @@ impl<'a> VaultStore<'a> {
                 decision.reason.unwrap_or_else(|| "denied".into()),
             ));
         }
+        self.ensure_policy(key, agent, AclAction::Delete, mfa_code, decision.policy)?;
         self.delete(key)
+    }
+
+    /// confirm: 마스터 승인 대기 — pending 큐 사용 / mfa: TOTP 코드 검증.
+    fn ensure_policy(
+        &mut self,
+        key: &str,
+        agent: &str,
+        action: AclAction,
+        mfa_code: Option<&str>,
+        policy: AclPolicy,
+    ) -> Result<()> {
+        match policy {
+            AclPolicy::Auto => Ok(()),
+            AclPolicy::Confirm => {
+                if self.consume_approved_confirmation(key, agent, action)? {
+                    return Ok(());
+                }
+                let id = self.insert_pending(key, agent, action)?;
+                Err(VaultError::AclDenied(format!(
+                    "confirm 정책 — 마스터 승인 대기 중 (id={id}). `xgram vault approve {id}` 후 재시도."
+                )))
+            }
+            AclPolicy::Mfa => {
+                let code = mfa_code.ok_or_else(|| {
+                    VaultError::AclDenied("mfa 정책 — TOTP 코드 필요".into())
+                })?;
+                if self.validate_mfa(agent, code)? {
+                    Ok(())
+                } else {
+                    Err(VaultError::AclDenied("mfa 코드 검증 실패".into()))
+                }
+            }
+        }
+    }
+
+    // ── Pending Confirmations ────────────────────────────────────────────
+    fn insert_pending(&mut self, key: &str, agent: &str, action: AclAction) -> Result<String> {
+        let id = Uuid::new_v4().to_string();
+        let now_rfc = kst_now().to_rfc3339();
+        self.db.conn().execute(
+            "INSERT INTO vault_pending_confirmations (id, key, agent, action, status, requested_at)
+             VALUES (?1, ?2, ?3, ?4, 'pending', ?5)",
+            rusqlite::params![id, key, agent, action.as_str(), now_rfc],
+        )?;
+        Ok(id)
+    }
+
+    /// 마스터 승인 → status='approved'.
+    pub fn approve_confirmation(&mut self, id: &str) -> Result<()> {
+        self.set_pending_status(id, PendingStatus::Approved)
+    }
+
+    pub fn deny_confirmation(&mut self, id: &str) -> Result<()> {
+        self.set_pending_status(id, PendingStatus::Denied)
+    }
+
+    fn set_pending_status(&mut self, id: &str, status: PendingStatus) -> Result<()> {
+        let now_rfc = kst_now().to_rfc3339();
+        let affected = self.db.conn().execute(
+            "UPDATE vault_pending_confirmations
+             SET status = ?1, decided_at = ?2
+             WHERE id = ?3 AND status = 'pending'",
+            rusqlite::params![status.as_str(), now_rfc, id],
+        )?;
+        if affected != 1 {
+            return Err(VaultError::NotFound(format!(
+                "pending {id} (이미 처리됐거나 미존재)"
+            )));
+        }
+        Ok(())
+    }
+
+    /// status='approved' 가장 오래된 row 발견 시 → 'expired' 처리(소비) 후 true.
+    /// 없으면 false. (consume = 1회용 승인)
+    fn consume_approved_confirmation(
+        &mut self,
+        key: &str,
+        agent: &str,
+        action: AclAction,
+    ) -> Result<bool> {
+        let id_opt: Option<String> = self
+            .db
+            .conn()
+            .query_row(
+                "SELECT id FROM vault_pending_confirmations
+                 WHERE key = ?1 AND agent = ?2 AND action = ?3 AND status = 'approved'
+                 ORDER BY decided_at ASC LIMIT 1",
+                rusqlite::params![key, agent, action.as_str()],
+                |r| r.get(0),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok::<Option<String>, VaultError>(None),
+                other => Err(other.into()),
+            })?;
+
+        let Some(id) = id_opt else { return Ok(false) };
+        // 소비 — status='expired'
+        let now_rfc = kst_now().to_rfc3339();
+        self.db.conn().execute(
+            "UPDATE vault_pending_confirmations
+             SET status = 'expired', decided_at = ?1
+             WHERE id = ?2",
+            rusqlite::params![now_rfc, id],
+        )?;
+        Ok(true)
+    }
+
+    pub fn list_pending(&mut self) -> Result<Vec<PendingConfirmation>> {
+        let mut stmt = self.db.conn().prepare(
+            "SELECT id, key, agent, action, status, requested_at, decided_at
+             FROM vault_pending_confirmations
+             WHERE status = 'pending'
+             ORDER BY requested_at ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(6)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, key, agent, action, status, requested, decided) = row?;
+            let action = match action.as_str() {
+                "get" => AclAction::Get,
+                "set" => AclAction::Set,
+                "delete" => AclAction::Delete,
+                other => return Err(VaultError::InvalidAcl(format!("action: {other}"))),
+            };
+            out.push(PendingConfirmation {
+                id,
+                key,
+                agent,
+                action,
+                status: PendingStatus::parse(&status)?,
+                requested_at: parse_ts(&requested)?,
+                decided_at: decided.as_deref().map(parse_ts).transpose()?,
+            });
+        }
+        Ok(out)
+    }
+
+    // ── MFA (TOTP RFC 6238) ──────────────────────────────────────────────
+    /// agent 별 TOTP secret 생성·저장 → base32 secret 반환 (마스터가 authenticator 등록).
+    pub fn issue_mfa_secret(&mut self, agent: &str) -> Result<String> {
+        let secret = totp_rs::Secret::generate_secret();
+        let base32 = secret.to_encoded().to_string();
+        let id = Uuid::new_v4().to_string();
+        let now_rfc = kst_now().to_rfc3339();
+        self.db.conn().execute(
+            "INSERT INTO vault_mfa_secrets (id, agent, secret_base32, created_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(agent) DO UPDATE SET secret_base32 = ?3, created_at = ?4",
+            rusqlite::params![id, agent, base32, now_rfc],
+        )?;
+        Ok(base32)
+    }
+
+    pub fn validate_mfa(&mut self, agent: &str, code: &str) -> Result<bool> {
+        let secret_b32: Option<String> = self
+            .db
+            .conn()
+            .query_row(
+                "SELECT secret_base32 FROM vault_mfa_secrets WHERE agent = ?1",
+                [agent],
+                |r| r.get(0),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok::<Option<String>, VaultError>(None),
+                other => Err(other.into()),
+            })?;
+        let Some(base32) = secret_b32 else {
+            return Err(VaultError::AclDenied(format!(
+                "mfa secret 미등록 — `xgram vault mfa-issue --agent {agent}` 먼저"
+            )));
+        };
+        let raw = totp_rs::Secret::Encoded(base32)
+            .to_bytes()
+            .map_err(|e| VaultError::InvalidAcl(format!("base32 decode: {e}")))?;
+        let totp = totp_rs::TOTP::new(
+            totp_rs::Algorithm::SHA1,
+            6,
+            1,
+            30,
+            raw,
+            Some("OpenXgram".into()),
+            agent.to_string(),
+        )
+        .map_err(|e| VaultError::InvalidAcl(format!("totp init: {e}")))?;
+        totp.check_current(code)
+            .map_err(|e| VaultError::InvalidAcl(format!("totp check: {e}")))
     }
 }
 

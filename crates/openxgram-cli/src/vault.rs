@@ -37,6 +37,16 @@ pub enum VaultAction {
         key_pattern: String,
         agent: String,
     },
+    Pending,
+    Approve {
+        id: String,
+    },
+    Deny {
+        id: String,
+    },
+    MfaIssue {
+        agent: String,
+    },
 }
 
 pub fn run_vault(data_dir: &Path, action: VaultAction) -> Result<()> {
@@ -124,6 +134,47 @@ pub fn run_vault(data_dir: &Path, action: VaultAction) -> Result<()> {
         VaultAction::AclDelete { key_pattern, agent } => {
             store.delete_acl(&key_pattern, &agent)?;
             println!("✓ vault ACL 삭제: {key_pattern}/{agent}");
+        }
+        VaultAction::Pending => {
+            let pending = store.list_pending()?;
+            if pending.is_empty() {
+                println!("vault pending 비어있음.");
+                return Ok(());
+            }
+            println!("vault pending ({})", pending.len());
+            for p in &pending {
+                println!(
+                    "  {} — {} {}/{} (요청 {})",
+                    p.id,
+                    p.action.as_str(),
+                    p.key,
+                    p.agent,
+                    p.requested_at
+                );
+                println!("     `xgram vault approve {}` 또는 `xgram vault deny {}`", p.id, p.id);
+            }
+        }
+        VaultAction::Approve { id } => {
+            store.approve_confirmation(&id)?;
+            println!("✓ vault confirm 승인: {id} (1회 소비, agent 재호출 시 통과)");
+        }
+        VaultAction::Deny { id } => {
+            store.deny_confirmation(&id)?;
+            println!("✓ vault confirm 거부: {id}");
+        }
+        VaultAction::MfaIssue { agent } => {
+            let secret = store.issue_mfa_secret(&agent)?;
+            println!("✓ TOTP secret 발급 (agent={agent})");
+            println!();
+            println!("authenticator 앱(Google Authenticator / 1Password / Authy) 에 등록:");
+            println!("  secret (base32): {secret}");
+            println!("  algorithm      : SHA1");
+            println!("  digits         : 6");
+            println!("  period         : 30s");
+            println!("  issuer         : OpenXgram");
+            println!("  account        : {agent}");
+            println!();
+            println!("이후 agent 가 vault_get/_set/_delete 호출 시 현재 TOTP 코드 동봉 필수.");
         }
     }
     Ok(())

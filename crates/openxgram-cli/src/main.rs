@@ -517,6 +517,17 @@ enum VaultCli {
         #[arg(long)]
         agent: String,
     },
+    /// confirm 정책으로 보류 중인 요청 list
+    Pending,
+    /// confirm 요청 승인 (1회 소비)
+    Approve { id: String },
+    /// confirm 요청 거부
+    Deny { id: String },
+    /// agent 별 TOTP secret 발급 (mfa 정책)
+    MfaIssue {
+        #[arg(long)]
+        agent: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -641,6 +652,10 @@ impl TryFrom<VaultCli> for VaultAction {
                 key_pattern,
                 agent,
             },
+            VaultCli::Pending => VaultAction::Pending,
+            VaultCli::Approve { id } => VaultAction::Approve { id },
+            VaultCli::Deny { id } => VaultAction::Deny { id },
+            VaultCli::MfaIssue { agent } => VaultAction::MfaIssue { agent },
         })
     }
 }
