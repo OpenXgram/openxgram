@@ -2637,7 +2637,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-adapter"
-version = "0.1.0-alpha.1"
+version = "0.1.0-rc.1"
 dependencies = [
  "reqwest 0.13.1",
  "serde",
@@ -2650,7 +2650,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-cli"
-version = "0.1.0-alpha.1"
+version = "0.1.0-rc.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -2683,7 +2683,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-core"
-version = "0.1.0-alpha.1"
+version = "0.1.0-rc.1"
 dependencies = [
  "chrono",
  "thiserror 1.0.69",
@@ -2691,7 +2691,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-db"
-version = "0.1.0-alpha.1"
+version = "0.1.0-rc.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2708,7 +2708,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-keystore"
-version = "0.1.0-alpha.1"
+version = "0.1.0-rc.1"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2729,7 +2729,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-manifest"
-version = "0.1.0-alpha.1"
+version = "0.1.0-rc.1"
 dependencies = [
  "chrono",
  "hex",
@@ -2744,7 +2744,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-mcp"
-version = "0.1.0-alpha.1"
+version = "0.1.0-rc.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2754,7 +2754,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-memory"
-version = "0.1.0-alpha.1"
+version = "0.1.0-rc.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2773,7 +2773,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-scheduler"
-version = "0.1.0-alpha.1"
+version = "0.1.0-rc.1"
 dependencies = [
  "anyhow",
  "openxgram-db",
@@ -2787,7 +2787,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-transport"
-version = "0.1.0-alpha.1"
+version = "0.1.0-rc.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -2802,7 +2802,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-vault"
-version = "0.1.0-alpha.1"
+version = "0.1.0-rc.1"
 dependencies = [
  "chrono",
  "openxgram-core",
