@@ -7,6 +7,7 @@ use openxgram_cli::doctor::{self, DoctorOpts};
 use openxgram_cli::init::{self, InitOpts};
 use openxgram_cli::reset::{self, ResetOpts};
 use openxgram_cli::status::{self, StatusOpts};
+use openxgram_cli::tui::{self, TuiOpts};
 use openxgram_cli::uninstall::{self, UninstallOpts};
 use openxgram_keystore::{FsKeystore, Keystore};
 use openxgram_manifest::MachineRole;
@@ -114,6 +115,13 @@ enum Commands {
     Keypair {
         #[command(subcommand)]
         action: KeypairAction,
+    },
+
+    /// 인터랙티브 TUI (welcome + status)
+    Tui {
+        /// 데이터 디렉토리 (기본: ~/.openxgram)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
     },
 }
 
@@ -287,6 +295,16 @@ async fn main() -> anyhow::Result<()> {
             let ks_dir = FsKeystore::default_path();
             let ks = FsKeystore::new(&ks_dir);
             handle_keypair(ks, action)?;
+        }
+
+        Commands::Tui { data_dir } => {
+            let opts = TuiOpts {
+                data_dir: match data_dir {
+                    Some(p) => p,
+                    None => init::default_data_dir()?,
+                },
+            };
+            tui::run_tui(&opts)?;
         }
     }
 
