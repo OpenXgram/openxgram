@@ -485,6 +485,33 @@ enum VaultCli {
         #[arg(long)]
         key: String,
     },
+    /// ACL 등록 — 비-master agent 호출 권한·일일 한도 설정
+    AclSet {
+        /// key 정확 일치 또는 '*' 와일드카드
+        #[arg(long)]
+        key_pattern: String,
+        /// agent 식별자 (예: 0xAlice) 또는 '*' 모든 에이전트
+        #[arg(long)]
+        agent: String,
+        /// 콤마 구분 (get,set,delete)
+        #[arg(long, default_value = "get")]
+        actions: String,
+        /// 일일 한도 (0 = 무제한)
+        #[arg(long, default_value_t = 0)]
+        daily_limit: i64,
+        /// auto / confirm / mfa (Phase 1 enforcement: auto 만)
+        #[arg(long, default_value = "auto")]
+        policy: String,
+    },
+    /// ACL list
+    AclList,
+    /// ACL 삭제
+    AclDelete {
+        #[arg(long)]
+        key_pattern: String,
+        #[arg(long)]
+        agent: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -570,9 +597,10 @@ impl From<PatternsCli> for PatternsAction {
     }
 }
 
-impl From<VaultCli> for VaultAction {
-    fn from(c: VaultCli) -> Self {
-        match c {
+impl TryFrom<VaultCli> for VaultAction {
+    type Error = anyhow::Error;
+    fn try_from(c: VaultCli) -> anyhow::Result<Self> {
+        Ok(match c {
             VaultCli::Set { key, value, tags } => VaultAction::Set {
                 key,
                 value,
@@ -586,8 +614,40 @@ impl From<VaultCli> for VaultAction {
             VaultCli::Get { key } => VaultAction::Get { key },
             VaultCli::List => VaultAction::List,
             VaultCli::Delete { key } => VaultAction::Delete { key },
-        }
+            VaultCli::AclSet {
+                key_pattern,
+                agent,
+                actions,
+                daily_limit,
+                policy,
+            } => VaultAction::AclSet {
+                key_pattern,
+                agent,
+                actions: parse_acl_actions(&actions)?,
+                daily_limit,
+                policy: openxgram_vault::AclPolicy::parse(&policy)
+                    .map_err(|e| anyhow::anyhow!("policy 파싱 실패: {e}"))?,
+            },
+            VaultCli::AclList => VaultAction::AclList,
+            VaultCli::AclDelete { key_pattern, agent } => VaultAction::AclDelete {
+                key_pattern,
+                agent,
+            },
+        })
     }
+}
+
+fn parse_acl_actions(s: &str) -> anyhow::Result<Vec<openxgram_vault::AclAction>> {
+    s.split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(|t| match t {
+            "get" => Ok(openxgram_vault::AclAction::Get),
+            "set" => Ok(openxgram_vault::AclAction::Set),
+            "delete" => Ok(openxgram_vault::AclAction::Delete),
+            other => Err(anyhow::anyhow!("invalid action: {other}")),
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -900,7 +960,7 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Vault { data_dir, action } => {
             let dir = resolve_data_dir(data_dir)?;
-            vault::run_vault(&dir, action.into())?;
+            vault::run_vault(&dir, action.try_into()?)?;
         }
 
         Commands::Traits { data_dir, action } => {

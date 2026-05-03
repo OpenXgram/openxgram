@@ -96,3 +96,51 @@ fn get_unknown_raises() {
     .unwrap_err();
     assert!(format!("{err:#}").contains("nonexistent"));
 }
+
+#[test]
+fn acl_set_list_delete_round_trip() {
+    use openxgram_vault::{AclAction, AclPolicy};
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    run_vault(
+        &data_dir,
+        VaultAction::AclSet {
+            key_pattern: "discord/bot".into(),
+            agent: "0xAlice".into(),
+            actions: vec![AclAction::Get],
+            daily_limit: 5,
+            policy: AclPolicy::Auto,
+        },
+    )
+    .unwrap();
+    run_vault(&data_dir, VaultAction::AclList).unwrap();
+    run_vault(
+        &data_dir,
+        VaultAction::AclDelete {
+            key_pattern: "discord/bot".into(),
+            agent: "0xAlice".into(),
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn acl_delete_unknown_raises() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    let err = run_vault(
+        &data_dir,
+        VaultAction::AclDelete {
+            key_pattern: "nope".into(),
+            agent: "0xNobody".into(),
+        },
+    )
+    .unwrap_err();
+    assert!(format!("{err:#}").contains("nope/0xNobody"));
+}
