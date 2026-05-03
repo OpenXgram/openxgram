@@ -307,6 +307,17 @@ L0  messages  ← 원시 메시지 + 임베딩 + 서명
 - 오픈소스: private (MVP 완료 후 public)
 - 데이터 디렉토리: `~/.openxgram/` (변경 불가. 마스터 결정 2026-04-30)
 
+### 14.1 Silent Error 패턴 (Phase 1 코드 작성 시 필수 적용)
+
+fallback 금지 원칙의 구체 적용. 다음 4개 라이브러리는 silent error가 발생할 수 있으므로 명시적 처리가 반드시 필요하다.
+
+- reqwest: 모든 HTTP 응답에 `.error_for_status()?` 강제. 4xx/5xx를 `Ok`로 흡수하는 것을 절대 금지. XMTP REST 호출 포함 모든 outbound 요청에 적용.
+- rusqlite: `execute()` 후 `affected_rows()` 검증. UPDATE/DELETE에서 영향받은 행이 0건이면 통상 버그다. 조용히 통과시키지 않는다.
+- tokio-cron-scheduler: 모든 job에 panic 핸들러 등록 + tracing 로깅 필수. job 내부 panic을 silent 흡수하는 기본 동작을 반드시 차단한다.
+- keyring: 저장 직후 `get()`으로 round-trip 검증. headless Linux 환경에서 저장이 silently 실패하는 이력이 있다. 저장 성공 여부를 항상 검증한다.
+
+코드 리뷰 체크리스트에 이 4개 항목을 반드시 포함한다.
+
 ---
 
 ## 15. MVP 범위 (Phase 1) — 추정 5~6주

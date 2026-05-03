@@ -248,3 +248,21 @@
   - .handoff 링크 정리
   - git worktree remove
 - [ ] worktree 환경에서 xgram 모든 명령 작동 검증
+
+---
+
+## 코드 리뷰 체크리스트 (모든 PR 필수)
+
+### Silent Error 4패턴 검증
+
+- [ ] reqwest 호출에 `.error_for_status()?` 모두 적용
+- [ ] rusqlite `execute()` 후 `affected_rows()` 검증
+- [ ] tokio-cron-scheduler job에 panic 핸들러 등록
+- [ ] keyring 저장 후 `get()` round-trip 검증
+
+### 4결정 적용 검증
+
+- [ ] DB 드라이버 = rusqlite (sqlx 사용 금지)
+- [ ] 임베딩 = multilingual-e5-small (BGE-small 사용 금지)
+- [ ] 대칭 암호화 = ChaCha20-Poly1305 (AES-GCM 사용 금지)
+- [ ] XMTP = reqwest REST 직접 호출 (libxmtp git 의존성 금지)
