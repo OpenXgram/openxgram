@@ -77,7 +77,7 @@ fn test_sign_and_verify() {
 
 // ── 테스트 5: FsKeystore save → load → 동일 키 복원 ─────────────────────
 #[test]
-fn test_fsKeystore_save_and_load() {
+fn test_fs_keystore_save_and_load() {
     let tmp = TempDir::new().expect("tmpdir 생성 실패");
     let ks = FsKeystore::new(tmp.path());
 
