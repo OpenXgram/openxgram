@@ -121,65 +121,65 @@ cross-network 메시징 출시 전 반드시 해결.
 
 ### 1.4 PRD-MFA-01 nonce 슬라이딩 윈도우
 
-- [ ] 1.4.1 nonce HMAC 생성·검증 함수
-  - [ ] 1.4.1.1 1단계 hmac crate 의존 검토
-  - [ ] 1.4.1.2 2단계 Context7 (hmac::Hmac)
-  - [ ] 1.4.1.3 3단계 generate_nonce / verify_nonce 작성
-  - [ ] 1.4.1.4 4단계 simpler
-  - [ ] 1.4.1.5 5단계 단위 테스트 (정상 / 시간 초과 / 재사용)
-  - [ ] 1.4.1.6 6단계 완료 표시
-- [ ] 1.4.2 90초 슬라이딩 윈도우
-  - [ ] 1.4.2.1 1단계 chrono / Instant 선택
-  - [ ] 1.4.2.2 2단계 Context7 (chrono::Duration)
-  - [ ] 1.4.2.3 3단계 시간 윈도우 검증
-  - [ ] 1.4.2.4 4단계 simpler
-  - [ ] 1.4.2.5 5단계 timing 테스트
-  - [ ] 1.4.2.6 6단계 완료 표시
-- [ ] 1.4.3 단일 사용 nonce 캐시 (HashMap<Vec<u8>, Instant>)
-  - [ ] 1.4.3.1 1단계 메모리 캐시 → DashMap vs HashMap+Mutex
-  - [ ] 1.4.3.2 2단계 Context7 (dashmap)
-  - [ ] 1.4.3.3 3단계 NonceCache 구조체
-  - [ ] 1.4.3.4 4단계 simpler
-  - [ ] 1.4.3.5 5단계 동시 접근 테스트
-  - [ ] 1.4.3.6 6단계 완료 표시
-- [ ] 1.4.4 envelope 통합 — nonce 필드 + 검증 hook
-  - [ ] 1.4.4.1 1단계 envelope schema 변경 영향
-  - [ ] 1.4.4.2 2단계 Context7 skip
-  - [ ] 1.4.4.3 3단계 transport::Envelope 에 nonce 필드 + process_inbound 검증
-  - [ ] 1.4.4.4 4단계 simpler
-  - [ ] 1.4.4.5 5단계 replay 시도 → reject 통합 테스트
-  - [ ] 1.4.4.6 6단계 완료 표시
+- [x] 1.4.1 nonce HMAC 생성·검증 함수
+  - [x] 1.4.1.1 1단계 hmac crate 의존 검토
+  - [x] 1.4.1.2 2단계 Context7 (hmac::Hmac)
+  - [x] 1.4.1.3 3단계 generate_nonce / verify_nonce 작성
+  - [x] 1.4.1.4 4단계 simpler
+  - [x] 1.4.1.5 5단계 단위 테스트 (정상 / 시간 초과 / 재사용)
+  - [x] 1.4.1.6 6단계 완료 표시
+- [x] 1.4.2 90초 슬라이딩 윈도우
+  - [x] 1.4.2.1 1단계 chrono / Instant 선택
+  - [x] 1.4.2.2 2단계 Context7 (chrono::Duration)
+  - [x] 1.4.2.3 3단계 시간 윈도우 검증
+  - [x] 1.4.2.4 4단계 simpler
+  - [x] 1.4.2.5 5단계 timing 테스트
+  - [x] 1.4.2.6 6단계 완료 표시
+- [x] 1.4.3 단일 사용 nonce 캐시 (HashMap<Vec<u8>, Instant>)
+  - [x] 1.4.3.1 1단계 메모리 캐시 → DashMap vs HashMap+Mutex
+  - [x] 1.4.3.2 2단계 Context7 (dashmap)
+  - [x] 1.4.3.3 3단계 NonceCache 구조체
+  - [x] 1.4.3.4 4단계 simpler
+  - [x] 1.4.3.5 5단계 동시 접근 테스트
+  - [x] 1.4.3.6 6단계 완료 표시
+- [x] 1.4.4 envelope 통합 — nonce 필드 + 검증 hook
+  - [x] 1.4.4.1 1단계 envelope schema 변경 영향
+  - [x] 1.4.4.2 2단계 Context7 skip
+  - [x] 1.4.4.3 3단계 transport::Envelope 에 nonce 필드 + process_inbound 검증
+  - [x] 1.4.4.4 4단계 simpler
+  - [x] 1.4.4.5 5단계 replay 시도 → reject 통합 테스트
+  - [x] 1.4.4.6 6단계 완료 표시
 
 ### 1.5 PRD-2.0.4 rate limit baseline
 
-- [ ] 1.5.1 agent 별 호출 카운터
-  - [ ] 1.5.1.1 1단계 vault_audit 활용 가능?
-  - [ ] 1.5.1.2 2단계 Context7 skip
-  - [ ] 1.5.1.3 3단계 in-memory counter (slot per minute)
-  - [ ] 1.5.1.4 4단계 simpler
-  - [ ] 1.5.1.5 5단계 단위 테스트
-  - [ ] 1.5.1.6 6단계 완료 표시
-- [ ] 1.5.2 config 임계값 (env 또는 config 파일)
-  - [ ] 1.5.2.1 1단계 하드코딩 금지 — XGRAM_RATE_LIMIT_PER_MIN env
-  - [ ] 1.5.2.2 2단계 Context7 skip
-  - [ ] 1.5.2.3 3단계 env 읽기 + default 60
-  - [ ] 1.5.2.4 4단계 simpler
-  - [ ] 1.5.2.5 5단계 검증
-  - [ ] 1.5.2.6 6단계 완료 표시
-- [ ] 1.5.3 초과 시 429 응답
-  - [ ] 1.5.3.1 1단계 axum StatusCode 활용
-  - [ ] 1.5.3.2 2단계 Context7 (axum response builder)
-  - [ ] 1.5.3.3 3단계 transport handler 통합
-  - [ ] 1.5.3.4 4단계 simpler
-  - [ ] 1.5.3.5 5단계 부하 테스트 (60 req → 60 OK / 61번째 429)
-  - [ ] 1.5.3.6 6단계 완료 표시
-- [ ] 1.5.4 metrics 노출 — openxgram_rate_limit_rejections_total
-  - [ ] 1.5.4.1 1단계 기존 metrics provider 활용
-  - [ ] 1.5.4.2 2단계 Context7 skip
-  - [ ] 1.5.4.3 3단계 counter 노출
-  - [ ] 1.5.4.4 4단계 simpler
-  - [ ] 1.5.4.5 5단계 /v1/metrics 출력 확인
-  - [ ] 1.5.4.6 6단계 완료 표시
+- [x] 1.5.1 agent 별 호출 카운터
+  - [x] 1.5.1.1 1단계 vault_audit 활용 가능?
+  - [x] 1.5.1.2 2단계 Context7 skip
+  - [x] 1.5.1.3 3단계 in-memory counter (slot per minute)
+  - [x] 1.5.1.4 4단계 simpler
+  - [x] 1.5.1.5 5단계 단위 테스트
+  - [x] 1.5.1.6 6단계 완료 표시
+- [x] 1.5.2 config 임계값 (env 또는 config 파일)
+  - [x] 1.5.2.1 1단계 하드코딩 금지 — XGRAM_RATE_LIMIT_PER_MIN env
+  - [x] 1.5.2.2 2단계 Context7 skip
+  - [x] 1.5.2.3 3단계 env 읽기 + default 60
+  - [x] 1.5.2.4 4단계 simpler
+  - [x] 1.5.2.5 5단계 검증
+  - [x] 1.5.2.6 6단계 완료 표시
+- [x] 1.5.3 초과 시 429 응답
+  - [x] 1.5.3.1 1단계 axum StatusCode 활용
+  - [x] 1.5.3.2 2단계 Context7 (axum response builder)
+  - [x] 1.5.3.3 3단계 transport handler 통합
+  - [x] 1.5.3.4 4단계 simpler
+  - [x] 1.5.3.5 5단계 부하 테스트 (60 req → 60 OK / 61번째 429)
+  - [x] 1.5.3.6 6단계 완료 표시
+- [x] 1.5.4 metrics 노출 — openxgram_rate_limit_rejections_total
+  - [x] 1.5.4.1 1단계 기존 metrics provider 활용
+  - [x] 1.5.4.2 2단계 Context7 skip
+  - [x] 1.5.4.3 3단계 counter 노출
+  - [x] 1.5.4.4 4단계 simpler
+  - [x] 1.5.4.5 5단계 /v1/metrics 출력 확인
+  - [x] 1.5.4.6 6단계 완료 표시
 
 ---
 

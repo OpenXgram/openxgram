@@ -10,6 +10,7 @@ fn sample_envelope() -> Envelope {
         payload_hex: "deadbeef".into(),
         timestamp: Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap()),
         signature_hex: "00".repeat(64),
+        nonce: None,
     }
 }
 
@@ -69,6 +70,59 @@ async fn health_endpoint_returns_status_ok() {
     // tailscale_state / tailscale_ipv4 — 환경에 따라 string 또는 null
     assert!(body["tailscale_state"].is_string() || body["tailscale_state"].is_null());
     assert!(body["tailscale_ipv4"].is_string() || body["tailscale_ipv4"].is_null());
+    server.shutdown();
+}
+
+#[tokio::test]
+async fn replay_nonce_rejected_on_duplicate() {
+    let server = spawn_server("127.0.0.1:0".parse().unwrap()).await.unwrap();
+    let url = format!("http://{}/v1/message", server.bound_addr);
+    let client = reqwest::Client::new();
+    let mut env = sample_envelope();
+    env.from = "0xReplayTest".into();
+    env.nonce = Some("nonce-1".into());
+    // 1st — OK
+    let resp = client.post(&url).json(&env).send().await.unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+    // 2nd 동일 nonce — 409 Conflict
+    let resp = client.post(&url).json(&env).send().await.unwrap();
+    assert_eq!(resp.status().as_u16(), 409);
+    server.shutdown();
+}
+
+#[tokio::test]
+async fn rate_limit_returns_429_after_threshold() {
+    // override default 60/min → 3
+    unsafe { std::env::set_var("XGRAM_RATE_LIMIT_PER_MIN", "3") };
+    let server = spawn_server("127.0.0.1:0".parse().unwrap()).await.unwrap();
+    let url = format!("http://{}/v1/message", server.bound_addr);
+    let client = reqwest::Client::new();
+    let mut env = sample_envelope();
+    env.from = "0xRateLimitTest".into();
+    // 3 OK
+    for _ in 0..3 {
+        let r = client.post(&url).json(&env).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 200);
+    }
+    // 4번째 — 429
+    let r = client.post(&url).json(&env).send().await.unwrap();
+    assert_eq!(r.status().as_u16(), 429);
+    server.shutdown();
+    unsafe { std::env::remove_var("XGRAM_RATE_LIMIT_PER_MIN") };
+}
+
+#[tokio::test]
+async fn timestamp_too_old_rejected() {
+    let server = spawn_server("127.0.0.1:0".parse().unwrap()).await.unwrap();
+    let url = format!("http://{}/v1/message", server.bound_addr);
+    let client = reqwest::Client::new();
+    let mut env = sample_envelope();
+    env.from = "0xOldTimestamp".into();
+    // 10분 전 — 90초 윈도우 초과
+    env.timestamp = (Utc::now() - chrono::Duration::minutes(10))
+        .with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
+    let r = client.post(&url).json(&env).send().await.unwrap();
+    assert_eq!(r.status().as_u16(), 408); // REQUEST_TIMEOUT
     server.shutdown();
 }
 
