@@ -15,6 +15,7 @@
 //!   "openxgram-payment-v1\n{chain}\n{payee}\n{amount_usdc_micro}\n{nonce}\n{memo}"
 
 pub mod chain;
+pub mod erc20;
 
 use chrono::{DateTime, FixedOffset};
 use openxgram_core::time::kst_now;
