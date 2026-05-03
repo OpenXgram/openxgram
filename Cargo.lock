@@ -2641,6 +2641,7 @@ name = "openxgram-cli"
 version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
+ "axum",
  "chrono",
  "clap",
  "flate2",
@@ -2657,6 +2658,7 @@ dependencies = [
  "openxgram-transport",
  "openxgram-vault",
  "ratatui",
+ "reqwest 0.13.1",
  "serde",
  "serde_json",
  "sha2",
