@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use openxgram_cli::init::{self, InitOpts};
+use openxgram_cli::uninstall::{self, UninstallOpts};
 use openxgram_keystore::{FsKeystore, Keystore};
 use openxgram_manifest::MachineRole;
 
@@ -70,11 +71,20 @@ enum Commands {
         target: Option<String>,
     },
 
-    /// OpenXgram을 제거합니다 (바이너리 및 데이터 삭제)
+    /// OpenXgram을 제거합니다 (Phase 1: --no-backup 비대화 모드)
     Uninstall {
-        /// 데이터 디렉토리도 함께 삭제
+        /// 데이터 디렉토리 (기본: ~/.openxgram)
         #[arg(long)]
-        purge: bool,
+        data_dir: Option<PathBuf>,
+        /// 백업 없이 제거 (Phase 1 유일 지원 옵션)
+        #[arg(long)]
+        no_backup: bool,
+        /// 확인 문자열 — --no-backup 시 "DELETE OPENXGRAM" 정확 일치 필요
+        #[arg(long)]
+        confirm: Option<String>,
+        /// 실제 변경 없이 작업 미리보기
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// 키페어 관리
@@ -225,16 +235,22 @@ async fn main() -> anyhow::Result<()> {
             println!("  - 적용 결과 보고");
         }
 
-        Commands::Uninstall { purge } => {
-            println!("xgram uninstall");
-            println!("  purge : {}", purge);
-            println!();
-            println!("[Phase 1 구현 예정]");
-            println!("  - 데몬 프로세스 종료");
-            if purge {
-                println!("  - ~/.openxgram/ 디렉토리 삭제 (--purge)");
-            }
-            println!("  - xgram 바이너리 제거 안내");
+        Commands::Uninstall {
+            data_dir,
+            no_backup,
+            confirm,
+            dry_run,
+        } => {
+            let opts = UninstallOpts {
+                data_dir: match data_dir {
+                    Some(p) => p,
+                    None => init::default_data_dir()?,
+                },
+                no_backup,
+                confirm,
+                dry_run,
+            };
+            uninstall::run_uninstall(&opts)?;
         }
 
         Commands::Keypair { action } => {
