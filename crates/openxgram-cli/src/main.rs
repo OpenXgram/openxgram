@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use openxgram_cli::doctor::{self, DoctorOpts};
 use openxgram_cli::init::{self, InitOpts};
+use openxgram_cli::memory::{self, MemoryAction};
 use openxgram_cli::reset::{self, ResetOpts};
 use openxgram_cli::session::{self, SessionAction};
 use openxgram_cli::status::{self, StatusOpts};
@@ -127,6 +128,14 @@ enum Commands {
         action: SessionCli,
     },
 
+    /// L2 memories (fact/decision/reference/rule) 관리
+    Memory {
+        #[arg(long, global = true)]
+        data_dir: Option<PathBuf>,
+        #[command(subcommand)]
+        action: MemoryCli,
+    },
+
     /// 인터랙티브 TUI (welcome + status)
     Tui {
         /// 데이터 디렉토리 (기본: ~/.openxgram)
@@ -189,6 +198,66 @@ impl From<SessionCli> for SessionAction {
             },
             SessionCli::Reflect { session_id } => SessionAction::Reflect { session_id },
             SessionCli::Recall { query, k } => SessionAction::Recall { query, k },
+        }
+    }
+}
+
+#[derive(Subcommand, Debug)]
+enum MemoryCli {
+    /// L2 memory 추가
+    Add {
+        #[arg(long, value_enum)]
+        kind: MemoryKindArg,
+        #[arg(long)]
+        content: String,
+        #[arg(long)]
+        session_id: Option<String>,
+    },
+    /// kind 별 list (pinned 우선)
+    List {
+        #[arg(long, value_enum)]
+        kind: MemoryKindArg,
+    },
+    /// memory pin
+    Pin { id: String },
+    /// memory unpin
+    Unpin { id: String },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum MemoryKindArg {
+    Fact,
+    Decision,
+    Reference,
+    Rule,
+}
+
+impl From<MemoryKindArg> for openxgram_memory::MemoryKind {
+    fn from(k: MemoryKindArg) -> Self {
+        match k {
+            MemoryKindArg::Fact => Self::Fact,
+            MemoryKindArg::Decision => Self::Decision,
+            MemoryKindArg::Reference => Self::Reference,
+            MemoryKindArg::Rule => Self::Rule,
+        }
+    }
+}
+
+impl From<MemoryCli> for MemoryAction {
+    fn from(c: MemoryCli) -> Self {
+        match c {
+            MemoryCli::Add {
+                kind,
+                content,
+                session_id,
+            } => MemoryAction::Add {
+                kind: kind.into(),
+                content,
+                session_id,
+            },
+            MemoryCli::List { kind } => MemoryAction::List { kind: kind.into() },
+            MemoryCli::Pin { id } => MemoryAction::Pin { id },
+            MemoryCli::Unpin { id } => MemoryAction::Unpin { id },
         }
     }
 }
@@ -371,6 +440,14 @@ async fn main() -> anyhow::Result<()> {
                 None => openxgram_core::paths::default_data_dir()?,
             };
             session::run_session(&dir, action.into())?;
+        }
+
+        Commands::Memory { data_dir, action } => {
+            let dir = match data_dir {
+                Some(p) => p,
+                None => openxgram_core::paths::default_data_dir()?,
+            };
+            memory::run_memory(&dir, action.into())?;
         }
 
         Commands::Tui { data_dir } => {

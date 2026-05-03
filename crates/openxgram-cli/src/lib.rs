@@ -4,6 +4,7 @@
 pub mod backup;
 pub mod doctor;
 pub mod init;
+pub mod memory;
 pub mod reset;
 pub mod session;
 pub mod status;
