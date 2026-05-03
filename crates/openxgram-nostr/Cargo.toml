@@ -10,7 +10,7 @@ authors.workspace = true
 [dependencies]
 openxgram-core = { path = "../openxgram-core" }
 openxgram-keystore = { path = "../openxgram-keystore" }
-nostr = { version = "0.43", default-features = false, features = ["std"] }
+nostr = { version = "0.43", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.43", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
