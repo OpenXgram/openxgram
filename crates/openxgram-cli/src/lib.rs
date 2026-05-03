@@ -12,6 +12,7 @@ pub mod memory;
 pub mod migrate;
 pub mod notify;
 pub mod patterns;
+pub mod peer;
 pub mod reset;
 pub mod session;
 pub mod status;
