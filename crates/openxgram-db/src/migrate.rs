@@ -64,6 +64,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "peers",
         sql: include_str!("../migrations/0010_peers.sql"),
     },
+    Migration {
+        version: 11,
+        name: "payment_intents",
+        sql: include_str!("../migrations/0011_payment_intents.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {
