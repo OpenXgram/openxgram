@@ -5,6 +5,7 @@ members = [
     "crates/openxgram-keystore",
     "crates/openxgram-db",
     "crates/openxgram-manifest",
+    "crates/openxgram-transport",
     "crates/openxgram-cli",
 ]
 
@@ -42,7 +43,8 @@ zeroize = { version = "1.8", features = ["derive"] }
 rusqlite = { version = "0.39", features = ["bundled"] }
 
 # HTTP
-reqwest = { version = "0.13", features = ["json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.13", features = ["json", "rustls", "webpki-roots"], default-features = false }
+axum = "0.8"
 
 # 기타
 hex = "0.4"
