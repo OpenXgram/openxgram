@@ -9,7 +9,7 @@ use anyhow::{bail, Context, Result};
 use openxgram_core::env::require_password;
 use openxgram_core::paths::db_path;
 use openxgram_db::{Db, DbConfig};
-use openxgram_vault::VaultStore;
+use openxgram_vault::{AclAction, AclPolicy, VaultStore};
 
 #[derive(Debug, Clone)]
 pub enum VaultAction {
@@ -24,6 +24,18 @@ pub enum VaultAction {
     List,
     Delete {
         key: String,
+    },
+    AclSet {
+        key_pattern: String,
+        agent: String,
+        actions: Vec<AclAction>,
+        daily_limit: i64,
+        policy: AclPolicy,
+    },
+    AclList,
+    AclDelete {
+        key_pattern: String,
+        agent: String,
     },
 }
 
@@ -66,6 +78,52 @@ pub fn run_vault(data_dir: &Path, action: VaultAction) -> Result<()> {
         VaultAction::Delete { key } => {
             store.delete(&key)?;
             println!("✓ vault entry 삭제: {key}");
+        }
+        VaultAction::AclSet {
+            key_pattern,
+            agent,
+            actions,
+            daily_limit,
+            policy,
+        } => {
+            let acl = store.upsert_acl(&key_pattern, &agent, &actions, daily_limit, policy)?;
+            println!("✓ vault ACL 저장");
+            println!("  id           : {}", acl.id);
+            println!("  key_pattern  : {}", acl.key_pattern);
+            println!("  agent        : {}", acl.agent);
+            println!(
+                "  actions      : {}",
+                acl.allowed_actions
+                    .iter()
+                    .map(|a| a.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            println!("  daily_limit  : {}", acl.daily_limit);
+            println!("  policy       : {}", acl.policy.as_str());
+        }
+        VaultAction::AclList => {
+            let entries = store.list_acl()?;
+            if entries.is_empty() {
+                println!("vault ACL 비어있음.");
+                return Ok(());
+            }
+            println!("vault ACL ({})", entries.len());
+            for e in &entries {
+                let actions: Vec<&str> = e.allowed_actions.iter().map(|a| a.as_str()).collect();
+                println!(
+                    "  {}/{} → [{}] (limit={}, policy={})",
+                    e.key_pattern,
+                    e.agent,
+                    actions.join(","),
+                    e.daily_limit,
+                    e.policy.as_str()
+                );
+            }
+        }
+        VaultAction::AclDelete { key_pattern, agent } => {
+            store.delete_acl(&key_pattern, &agent)?;
+            println!("✓ vault ACL 삭제: {key_pattern}/{agent}");
         }
     }
     Ok(())
