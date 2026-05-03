@@ -134,3 +134,85 @@ impl TextPackage {
         serde_json::from_str(s).map_err(|e| MemoryError::InvalidKind(e.to_string()))
     }
 }
+
+#[derive(Debug, Clone, Default)]
+pub struct ImportSummary {
+    pub session_id: String,
+    pub messages_inserted: usize,
+    pub episodes_inserted: usize,
+    pub memories_inserted: usize,
+}
+
+/// 새 session 으로 패키지를 흡수. 충돌 회피 위해 항상 새 ID 발급.
+/// 메시지는 embedder 로 임베딩 재생성. episode/memory 는 새 ID 로 복사.
+pub fn import_session(
+    db: &mut Db,
+    package: &TextPackage,
+    home_machine: &str,
+) -> Result<ImportSummary> {
+    if package.format != FORMAT {
+        return Err(MemoryError::InvalidKind(format!(
+            "unsupported package format: {} (expected {})",
+            package.format, FORMAT
+        )));
+    }
+
+    let session = SessionStore::new(db).create(&package.session.title, home_machine)?;
+    let new_session_id = session.id;
+
+    let embedder = DummyEmbedder;
+    let mut messages_inserted = 0;
+    {
+        let mut store = MessageStore::new(db, &embedder);
+        for msg in &package.messages {
+            store.insert(&new_session_id, &msg.sender, &msg.body, &msg.signature)?;
+            messages_inserted += 1;
+        }
+    }
+
+    let now = kst_now().to_rfc3339();
+    let mut episodes_inserted = 0;
+    for ep in &package.episodes {
+        let new_id = uuid::Uuid::new_v4().to_string();
+        let affected = db.conn().execute(
+            "INSERT INTO episodes
+                 (id, session_id, started_at, ended_at, message_count, summary, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                new_id,
+                new_session_id,
+                ep.started_at.to_rfc3339(),
+                ep.ended_at.to_rfc3339(),
+                ep.message_count,
+                ep.summary,
+                now,
+            ],
+        )?;
+        if affected != 1 {
+            return Err(MemoryError::UnexpectedRowCount {
+                expected: 1,
+                actual: affected as u64,
+            });
+        }
+        episodes_inserted += 1;
+    }
+
+    let mut memories_inserted = 0;
+    {
+        let mut store = MemoryStore::new(db);
+        for m in &package.memories {
+            let inserted = store.insert(Some(&new_session_id), m.kind, &m.content)?;
+            if m.pinned {
+                store.set_pinned(&inserted.id, true)?;
+            }
+            memories_inserted += 1;
+        }
+    }
+
+    Ok(ImportSummary {
+        session_id: new_session_id,
+        messages_inserted,
+        episodes_inserted,
+        memories_inserted,
+    })
+}
