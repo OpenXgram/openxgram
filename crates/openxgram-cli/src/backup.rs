@@ -5,10 +5,11 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
+use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use openxgram_keystore::encrypt_blob;
+use openxgram_keystore::{decrypt_blob, encrypt_blob};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone)]
@@ -16,6 +17,12 @@ pub struct BackupInfo {
     pub path: PathBuf,
     pub size_bytes: u64,
     pub sha256: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RestoreInfo {
+    pub target_dir: PathBuf,
+    pub bytes_restored: u64,
 }
 
 /// data_dir 통째로 tar.gz 후 ChaCha20-Poly1305 암호화하여 target_path 에 저장.
@@ -63,5 +70,46 @@ pub fn create_cold_backup(
         path: target_path.to_path_buf(),
         size_bytes: blob.len() as u64,
         sha256: sha,
+    })
+}
+
+/// cold backup 파일을 복호화·압축 해제하여 target_dir 로 복원.
+/// target_dir 가 비어있지 않으면 raise (--force 옵션은 후속 PR).
+pub fn restore_cold_backup(
+    backup_path: &Path,
+    target_dir: &Path,
+    password: &str,
+) -> Result<RestoreInfo> {
+    let blob = std::fs::read(backup_path)
+        .with_context(|| format!("backup 파일 읽기 실패: {}", backup_path.display()))?;
+    let bytes_restored = blob.len() as u64;
+    let plaintext = decrypt_blob(password, &blob)
+        .map_err(|e| anyhow!("backup 복호화 실패: {e}"))?;
+
+    if target_dir.exists() {
+        let mut iter = std::fs::read_dir(target_dir).with_context(|| {
+            format!("target_dir read_dir 실패: {}", target_dir.display())
+        })?;
+        if iter.next().is_some() {
+            bail!(
+                "target_dir 비어있지 않음: {} — `xgram uninstall` 또는 빈 경로 사용",
+                target_dir.display()
+            );
+        }
+    } else {
+        std::fs::create_dir_all(target_dir).with_context(|| {
+            format!("target_dir 생성 실패: {}", target_dir.display())
+        })?;
+    }
+
+    let gz = GzDecoder::new(std::io::Cursor::new(plaintext));
+    let mut archive = tar::Archive::new(gz);
+    archive
+        .unpack(target_dir)
+        .with_context(|| format!("tar.gz 해제 실패: {}", target_dir.display()))?;
+
+    Ok(RestoreInfo {
+        target_dir: target_dir.to_path_buf(),
+        bytes_restored,
     })
 }
