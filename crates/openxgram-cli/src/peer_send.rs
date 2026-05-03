@@ -25,6 +25,19 @@ pub enum SendRoute {
     },
 }
 
+/// ADR-NOSTR-FALLBACK 정책 — http 실패 시 명시적 opt-in 환경변수 + relay URL 둘 다 있어야 fallback.
+/// 둘 중 하나라도 없으면 None (silent fallback 절대 금지).
+pub fn http_fallback_nostr_relay() -> Option<String> {
+    if std::env::var("XGRAM_PEER_FALLBACK_NOSTR").ok().as_deref() != Some("1") {
+        return None;
+    }
+    let relay = std::env::var("XGRAM_PEER_FALLBACK_NOSTR_RELAY").ok()?;
+    if relay.trim().is_empty() {
+        return None;
+    }
+    Some(relay)
+}
+
 /// `nostr://relay.example.com[:port]` → `ws://relay.example.com[:port]`,
 /// `nostrs://...` → `wss://...`. http(s) 는 그대로 통과.
 pub fn parse_route(address: &str, peer_pubkey_hex: &str) -> Result<SendRoute> {
@@ -116,11 +129,23 @@ pub async fn run_peer_send(
     };
 
     match parse_route(&address, &peer.public_key_hex)? {
-        SendRoute::Http(url) => {
-            send_envelope(&url, &envelope)
-                .await
-                .with_context(|| format!("/v1/message POST 실패 ({url})"))?;
-        }
+        SendRoute::Http(url) => match send_envelope(&url, &envelope).await {
+            Ok(()) => {}
+            Err(e) => {
+                // ADR-NOSTR-FALLBACK: 명시적 opt-in 일 때만 nostr 재시도
+                if let Some(relay_ws) = http_fallback_nostr_relay() {
+                    tracing::info!(error = %e, relay = %relay_ws, "http 실패 — XGRAM_PEER_FALLBACK_NOSTR opt-in 으로 nostr 재시도");
+                    let nostr_keys =
+                        keys_from_master(&master).map_err(|e| anyhow!("nostr keys 변환 실패: {e}"))?;
+                    let sink = NostrSink::new(nostr_keys.clone());
+                    send_via_nostr(&sink, &nostr_keys, &relay_ws, &peer.public_key_hex, &envelope)
+                        .await?;
+                    sink.shutdown().await;
+                } else {
+                    return Err(e).with_context(|| format!("/v1/message POST 실패 ({url})"));
+                }
+            }
+        },
         SendRoute::Nostr {
             relay_ws,
             peer_pubkey,
@@ -258,6 +283,30 @@ mod tests {
     use super::*;
 
     const PK: &str = "0000000000000000000000000000000000000000000000000000000000000001";
+
+    use std::sync::Mutex;
+    static FALLBACK_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn http_fallback_three_cases() {
+        let _g = FALLBACK_ENV_LOCK.lock().unwrap();
+        // 1. opt-in false → None
+        std::env::remove_var("XGRAM_PEER_FALLBACK_NOSTR");
+        std::env::set_var("XGRAM_PEER_FALLBACK_NOSTR_RELAY", "ws://x");
+        assert!(http_fallback_nostr_relay().is_none(), "opt-in 없으면 None");
+
+        // 2. opt-in true 이지만 relay 미설정 → None
+        std::env::set_var("XGRAM_PEER_FALLBACK_NOSTR", "1");
+        std::env::remove_var("XGRAM_PEER_FALLBACK_NOSTR_RELAY");
+        assert!(http_fallback_nostr_relay().is_none(), "relay 미설정 None");
+
+        // 3. 둘 다 설정 → Some
+        std::env::set_var("XGRAM_PEER_FALLBACK_NOSTR_RELAY", "ws://x");
+        assert_eq!(http_fallback_nostr_relay().as_deref(), Some("ws://x"));
+
+        std::env::remove_var("XGRAM_PEER_FALLBACK_NOSTR");
+        std::env::remove_var("XGRAM_PEER_FALLBACK_NOSTR_RELAY");
+    }
 
     #[test]
     fn parse_route_http() {
