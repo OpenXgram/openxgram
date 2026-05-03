@@ -40,13 +40,18 @@ pub async fn add_reflection_job(
 
 fn run_reflection_pass(db_path: &Path) -> anyhow::Result<()> {
     use openxgram_db::{Db, DbConfig};
-    use openxgram_memory::reflect_all;
+    use openxgram_memory::{derive_traits_from_patterns, reflect_all};
     let mut db = Db::open(DbConfig {
         path: db_path.to_path_buf(),
         ..Default::default()
     })?;
     db.migrate()?;
     let episodes = reflect_all(&mut db)?;
-    tracing::info!(count = episodes.len(), "nightly reflection completed");
+    let traits = derive_traits_from_patterns(&mut db)?;
+    tracing::info!(
+        episodes = episodes.len(),
+        derived_traits = traits.len(),
+        "nightly reflection completed"
+    );
     Ok(())
 }
