@@ -20,6 +20,7 @@ openxgram-core = { path = "../openxgram-core" }
 openxgram-keystore = { path = "../openxgram-keystore" }
 openxgram-db = { path = "../openxgram-db" }
 openxgram-manifest = { path = "../openxgram-manifest" }
+openxgram-memory = { path = "../openxgram-memory" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

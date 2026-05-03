@@ -1722,6 +1722,7 @@ dependencies = [
  "openxgram-db",
  "openxgram-keystore",
  "openxgram-manifest",
+ "openxgram-memory",
  "ratatui",
  "serde",
  "serde_json",
