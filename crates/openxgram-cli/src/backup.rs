@@ -85,11 +85,31 @@ pub fn create_cold_backup(
 }
 
 /// cold backup 파일을 복호화·압축 해제하여 target_dir 로 복원.
-/// target_dir 가 비어있지 않으면 raise (--force 옵션은 후속 PR).
+/// target_dir 가 비어있지 않으면 raise — `--merge` 모드는 `restore_cold_backup_merge` 사용.
 pub fn restore_cold_backup(
     backup_path: &Path,
     target_dir: &Path,
     password: &str,
+) -> Result<RestoreInfo> {
+    restore_internal(backup_path, target_dir, password, /*merge=*/ false)
+}
+
+/// merge 모드 — 비어있지 않은 target_dir 로 백업 파일 덮어쓰기.
+/// 백업에 없는 파일은 보존, 백업에 있는 파일은 덮어씀. 위험: 양방향
+/// 충돌 무관 단순 덮어쓰기 (분쟁 해소·rename 후속).
+pub fn restore_cold_backup_merge(
+    backup_path: &Path,
+    target_dir: &Path,
+    password: &str,
+) -> Result<RestoreInfo> {
+    restore_internal(backup_path, target_dir, password, /*merge=*/ true)
+}
+
+fn restore_internal(
+    backup_path: &Path,
+    target_dir: &Path,
+    password: &str,
+    merge: bool,
 ) -> Result<RestoreInfo> {
     let blob = std::fs::read(backup_path)
         .with_context(|| format!("backup 파일 읽기 실패: {}", backup_path.display()))?;
@@ -101,9 +121,9 @@ pub fn restore_cold_backup(
         let mut iter = std::fs::read_dir(target_dir).with_context(|| {
             format!("target_dir read_dir 실패: {}", target_dir.display())
         })?;
-        if iter.next().is_some() {
+        if iter.next().is_some() && !merge {
             bail!(
-                "target_dir 비어있지 않음: {} — `xgram uninstall` 또는 빈 경로 사용",
+                "target_dir 비어있지 않음: {} — `xgram uninstall` 또는 빈 경로 사용 (또는 --merge 옵션)",
                 target_dir.display()
             );
         }
@@ -115,6 +135,7 @@ pub fn restore_cold_backup(
 
     let gz = GzDecoder::new(std::io::Cursor::new(plaintext));
     let mut archive = tar::Archive::new(gz);
+    // tar 의 unpack 은 같은 경로 파일이 있으면 기본적으로 덮어씀.
     archive
         .unpack(target_dir)
         .with_context(|| format!("tar.gz 해제 실패: {}", target_dir.display()))?;

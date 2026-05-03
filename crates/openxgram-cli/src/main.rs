@@ -3,7 +3,9 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use openxgram_cli::backup::{create_cold_backup, resolve_backup_target, restore_cold_backup};
+use openxgram_cli::backup::{
+    create_cold_backup, resolve_backup_target, restore_cold_backup, restore_cold_backup_merge,
+};
 use openxgram_cli::backup_push::{self, BackupPushOpts, BackupTarget};
 use openxgram_cli::daemon::{self, DaemonOpts};
 use openxgram_cli::doctor::{self, DoctorOpts};
@@ -258,6 +260,9 @@ enum Commands {
         /// 복원 대상 데이터 디렉토리 (기본: ~/.openxgram, 비어있어야 함)
         #[arg(long)]
         target_dir: Option<PathBuf>,
+        /// 비어있지 않은 디렉토리에 덮어쓰기 (충돌 파일 = 백업 우선, 백업에 없는 파일 보존)
+        #[arg(long)]
+        merge: bool,
     },
 
     /// 비파괴 cold backup 생성 — ChaCha20-Poly1305 + tar.gz. systemd timer/cron 으로 주기 실행 권장.
@@ -988,11 +993,19 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        Commands::Restore { input, target_dir } => {
+        Commands::Restore {
+            input,
+            target_dir,
+            merge,
+        } => {
             let dir = resolve_data_dir(target_dir)?;
             let pw = openxgram_core::env::require_password()?;
-            let info = restore_cold_backup(&input, &dir, &pw)?;
-            println!("✓ cold backup 복원 완료");
+            let info = if merge {
+                restore_cold_backup_merge(&input, &dir, &pw)?
+            } else {
+                restore_cold_backup(&input, &dir, &pw)?
+            };
+            println!("✓ cold backup 복원 완료{}", if merge { " (merge)" } else { "" });
             println!("  source       : {}", input.display());
             println!("  target_dir   : {}", info.target_dir.display());
             println!("  bytes_restored: {}", info.bytes_restored);
