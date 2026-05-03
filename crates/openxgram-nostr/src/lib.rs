@@ -21,6 +21,11 @@ use openxgram_keystore::Keypair;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod sink;
+mod source;
+pub use sink::NostrSink;
+pub use source::NostrSource;
+
 #[derive(Debug, Error)]
 pub enum NostrError {
     #[error("nostr crate error: {0}")]
