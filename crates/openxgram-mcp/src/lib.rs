@@ -52,7 +52,7 @@ pub trait ToolDispatcher: Send {
     fn dispatch(&mut self, name: &str, args: &Value) -> Result<Value, JsonRpcError>;
 }
 
-pub fn handle_request<D: ToolDispatcher>(req: JsonRpcRequest, dispatcher: &mut D) -> JsonRpcResponse {
+pub fn handle_request<D: ToolDispatcher + ?Sized>(req: JsonRpcRequest, dispatcher: &mut D) -> JsonRpcResponse {
     let id = req.id.clone();
     match req.method.as_str() {
         "initialize" => ok(id, initialize_result()),
@@ -97,7 +97,7 @@ fn initialize_result() -> Value {
     })
 }
 
-fn tools_list_value<D: ToolDispatcher>(dispatcher: &D) -> Value {
+fn tools_list_value<D: ToolDispatcher + ?Sized>(dispatcher: &D) -> Value {
     let tools: Vec<Value> = dispatcher
         .tools()
         .into_iter()
@@ -112,7 +112,7 @@ fn tools_list_value<D: ToolDispatcher>(dispatcher: &D) -> Value {
     json!({ "tools": tools })
 }
 
-fn call_tool<D: ToolDispatcher>(dispatcher: &mut D, params: &Value) -> Result<Value, JsonRpcError> {
+fn call_tool<D: ToolDispatcher + ?Sized>(dispatcher: &mut D, params: &Value) -> Result<Value, JsonRpcError> {
     let name = params
         .get("name")
         .and_then(|v| v.as_str())
