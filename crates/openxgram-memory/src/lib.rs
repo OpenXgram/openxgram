@@ -18,7 +18,7 @@ pub mod traits;
 pub mod transfer;
 mod util;
 
-pub use embed::{default_embedder, DummyEmbedder, Embedder, EMBED_DIM};
+pub use embed::{default_embedder, embedder_mode_label, DummyEmbedder, Embedder, EMBED_DIM};
 #[cfg(feature = "fastembed")]
 pub use embed::FastEmbedder;
 pub use episode::{reflect_all, reflect_session, Episode, EpisodeStore};
