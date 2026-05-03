@@ -1,0 +1,52 @@
+# Rust
+target/
+Cargo.lock
+*.rlib
+
+# Node / JS / TS
+node_modules/
+dist/
+build/
+.next/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+keystore/
+*.keystore
+*.pem
+*.key
+*.p12
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# SQLite DB (로컬 인스턴스)
+*.db
+*.db-shm
+*.db-wal
+
+# Build artifacts
+*.bin
+*.out

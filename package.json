@@ -1,0 +1,9 @@
+{
+  "name": "openxgram",
+  "version": "0.1.0.0",
+  "description": "Memory & Credential Infrastructure for Multi-Agent, Multi-Machine, Multi-LLM",
+  "private": true,
+  "scripts": {
+    "placeholder": "echo 'Phase 1 MVP 구현 중'"
+  }
+}
