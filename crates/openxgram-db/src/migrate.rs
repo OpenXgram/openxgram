@@ -39,6 +39,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "traits",
         sql: include_str!("../migrations/0005_traits.sql"),
     },
+    Migration {
+        version: 6,
+        name: "vault",
+        sql: include_str!("../migrations/0006_vault.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {
