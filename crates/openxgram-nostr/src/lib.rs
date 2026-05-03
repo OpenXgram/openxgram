@@ -24,10 +24,12 @@ use thiserror::Error;
 // 외부 crate 가 nostr 타입을 직접 import 하지 않아도 되도록 re-export
 pub use nostr::{Event as NostrEvent, Filter, Keys as NostrKeys, PublicKey, Tag as NostrTag};
 
+mod nip65;
 mod ratchet;
 mod relay;
 mod sink;
 mod source;
+pub use nip65::{dedup_relays, fetch_peer_relays, publish_relay_list, RelayEntry, RelayMetadata};
 pub use ratchet::{Ratchet, RatchetKey};
 pub use relay::{NostrRelay, RelayConfig, DEFAULT_RELAY_PORT};
 pub use sink::NostrSink;
