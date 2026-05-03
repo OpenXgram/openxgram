@@ -14,6 +14,7 @@ use openxgram_cli::notify::{self, NotifyAction};
 use openxgram_cli::reset::{self, ResetOpts};
 use openxgram_cli::session::{self, SessionAction};
 use openxgram_cli::status::{self, StatusOpts};
+use openxgram_cli::systemd::{self, UnitOpts};
 use openxgram_cli::tui::{self, TuiOpts};
 use openxgram_cli::wizard;
 use openxgram_cli::uninstall::{self, UninstallOpts};
@@ -163,6 +164,24 @@ enum Commands {
         /// reflection cron 표현식 (기본 0 0 15 * * * = 자정 KST)
         #[arg(long)]
         reflection_cron: Option<String>,
+    },
+
+    /// systemd user unit 생성/제거 (~/.config/systemd/user/openxgram-sidecar.service)
+    DaemonInstall {
+        /// xgram binary 경로 (기본: 현재 실행 중인 binary)
+        #[arg(long)]
+        binary: Option<PathBuf>,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        #[arg(long, default_value = "127.0.0.1:7300")]
+        bind: String,
+        /// unit 파일 출력 경로 (기본: ~/.config/systemd/user/openxgram-sidecar.service)
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    DaemonUninstall {
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
 
     /// MCP JSON-RPC 서버 (stdio) — Claude Code 통합용
@@ -554,6 +573,49 @@ async fn main() -> anyhow::Result<()> {
                 reflection_cron,
             })
             .await?;
+        }
+
+        Commands::DaemonInstall {
+            binary,
+            data_dir,
+            bind,
+            output,
+        } => {
+            let bin = match binary {
+                Some(p) => p,
+                None => std::env::current_exe()?.canonicalize()?,
+            };
+            let dir = resolve_data_dir(data_dir)?;
+            let target = match output {
+                Some(p) => p,
+                None => systemd::default_user_unit_path()?,
+            };
+            let opts = UnitOpts {
+                binary: bin,
+                data_dir: dir,
+                bind,
+            };
+            systemd::install_user_unit(&target, &opts)?;
+            println!("✓ systemd user unit 생성: {}", target.display());
+            println!();
+            println!("활성화:");
+            println!("  systemctl --user daemon-reload");
+            println!("  systemctl --user enable --now openxgram-sidecar.service");
+            println!();
+            println!("주의: XGRAM_KEYSTORE_PASSWORD 는 systemd-creds 또는 EnvironmentFile 로 별도 주입.");
+        }
+
+        Commands::DaemonUninstall { output } => {
+            let target = match output {
+                Some(p) => p,
+                None => systemd::default_user_unit_path()?,
+            };
+            systemd::uninstall_user_unit(&target)?;
+            println!("✓ systemd user unit 제거: {}", target.display());
+            println!();
+            println!("정리:");
+            println!("  systemctl --user disable --now openxgram-sidecar.service");
+            println!("  systemctl --user daemon-reload");
         }
 
         Commands::McpServe { data_dir } => {
