@@ -265,6 +265,45 @@ fn internal(err: impl std::fmt::Display) -> JsonRpcError {
     }
 }
 
+/// HTTP transport — POST /rpc 로 JSON-RPC 처리.
+/// 동시 요청은 dispatcher 단일 lock 직렬화 (rusqlite Connection 단일 스레드 제약).
+pub async fn run_http_serve(data_dir: &Path, addr: std::net::SocketAddr) -> Result<()> {
+    use axum::{extract::State, routing::post, Json, Router};
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    let dispatcher = OpenxgramDispatcher::open(data_dir)?;
+    let state: Arc<Mutex<OpenxgramDispatcher>> = Arc::new(Mutex::new(dispatcher));
+
+    async fn rpc_handler(
+        State(state): State<Arc<Mutex<OpenxgramDispatcher>>>,
+        Json(req): Json<JsonRpcRequest>,
+    ) -> Json<openxgram_mcp::JsonRpcResponse> {
+        let mut d = state.lock().await;
+        Json(handle_request(req, &mut *d))
+    }
+
+    async fn health_handler() -> &'static str {
+        "ok"
+    }
+
+    let app = Router::new()
+        .route("/rpc", post(rpc_handler))
+        .route("/health", axum::routing::get(health_handler))
+        .with_state(state);
+
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .context("HTTP bind 실패")?;
+    let bound = listener.local_addr()?;
+    tracing::info!(%bound, "MCP HTTP serving");
+    println!("MCP HTTP serving on http://{bound}");
+    axum::serve(listener, app)
+        .await
+        .context("MCP HTTP serve 종료 (예기치 못한 에러)")?;
+    Ok(())
+}
+
 /// stdio loop — line 단위 JSON-RPC.
 pub fn run_serve(data_dir: &Path) -> Result<()> {
     let mut dispatcher = OpenxgramDispatcher::open(data_dir)?;

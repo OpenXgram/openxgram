@@ -214,10 +214,13 @@ enum Commands {
     },
     BackupUninstall,
 
-    /// MCP JSON-RPC 서버 (stdio) — Claude Code 통합용
+    /// MCP JSON-RPC 서버 — Claude Code 통합용 (stdio 또는 --bind 시 HTTP)
     McpServe {
         #[arg(long)]
         data_dir: Option<PathBuf>,
+        /// HTTP transport bind 주소 (예: 127.0.0.1:7301). 생략 시 stdio.
+        #[arg(long)]
+        bind: Option<std::net::SocketAddr>,
     },
 
     /// 암호화 자격증명 vault (PRD §8) — set/get/list/delete
@@ -887,9 +890,12 @@ async fn main() -> anyhow::Result<()> {
             println!("  systemctl --user daemon-reload");
         }
 
-        Commands::McpServe { data_dir } => {
+        Commands::McpServe { data_dir, bind } => {
             let dir = resolve_data_dir(data_dir)?;
-            mcp_serve::run_serve(&dir)?;
+            match bind {
+                Some(addr) => mcp_serve::run_http_serve(&dir, addr).await?,
+                None => mcp_serve::run_serve(&dir)?,
+            }
         }
 
         Commands::Vault { data_dir, action } => {
