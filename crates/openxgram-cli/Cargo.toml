@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+default = []
+fastembed = ["openxgram-memory/fastembed"]
+
 [lib]
 name = "openxgram_cli"
 path = "src/lib.rs"
