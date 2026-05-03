@@ -572,6 +572,14 @@ enum PeerCli {
         #[arg(long)]
         sender: Option<String>,
     },
+    /// 여러 peer 에 동시 전송 (concurrent, 부분 실패 격리)
+    Broadcast {
+        /// 콤마 구분 alias 목록 (예: --aliases mac,gcp,laptop)
+        #[arg(long)]
+        aliases: String,
+        #[arg(long)]
+        body: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -679,7 +687,9 @@ impl From<PeerCli> for PeerAction {
             PeerCli::Show { alias } => PeerAction::Show { alias },
             PeerCli::Touch { alias } => PeerAction::Touch { alias },
             PeerCli::Delete { alias } => PeerAction::Delete { alias },
-            PeerCli::Send { .. } => unreachable!("Send 는 main.rs 에서 별도 처리"),
+            PeerCli::Send { .. } | PeerCli::Broadcast { .. } => {
+                unreachable!("Send/Broadcast 는 main.rs 에서 별도 처리")
+            }
         }
     }
 }
@@ -1316,17 +1326,39 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Peer { data_dir, action } => {
             let dir = resolve_data_dir(data_dir)?;
-            // Send 는 async/transport 필요 — 다른 액션과 분리 처리
-            if let PeerCli::Send {
-                alias,
-                body,
-                sender,
-            } = action
-            {
-                let pw = openxgram_core::env::require_password()?;
-                peer_send::run_peer_send(&dir, &alias, sender.as_deref(), &body, &pw).await?;
-            } else {
-                peer::run_peer(&dir, action.into())?;
+            // Send/Broadcast 는 async/transport 필요 — 다른 액션과 분리 처리
+            match action {
+                PeerCli::Send {
+                    alias,
+                    body,
+                    sender,
+                } => {
+                    let pw = openxgram_core::env::require_password()?;
+                    peer_send::run_peer_send(&dir, &alias, sender.as_deref(), &body, &pw).await?;
+                }
+                PeerCli::Broadcast { aliases, body } => {
+                    let pw = openxgram_core::env::require_password()?;
+                    let alias_list: Vec<String> = aliases
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect();
+                    let results =
+                        peer_send::run_peer_broadcast(&dir, &alias_list, &body, &pw).await?;
+                    let total = results.len();
+                    let succ = results.iter().filter(|(_, r)| r.is_ok()).count();
+                    println!("✓ broadcast 완료 — {succ}/{total} 성공");
+                    for (alias, res) in &results {
+                        match res {
+                            Ok(()) => println!("  ✓ {alias}"),
+                            Err(e) => println!("  ✗ {alias}: {e}"),
+                        }
+                    }
+                }
+                other => {
+                    peer::run_peer(&dir, other.into())?;
+                }
             }
         }
 
