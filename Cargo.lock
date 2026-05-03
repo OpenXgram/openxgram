@@ -1504,6 +1504,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "openxgram-memory"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "openxgram-db",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "openxgram-transport"
 version = "0.1.0-alpha.1"
 dependencies = [
