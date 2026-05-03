@@ -6,6 +6,7 @@ pub mod daemon;
 pub mod doctor;
 pub mod init;
 pub mod memory;
+pub mod notify;
 pub mod reset;
 pub mod session;
 pub mod status;
