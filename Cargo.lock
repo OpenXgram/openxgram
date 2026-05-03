@@ -2677,6 +2677,7 @@ dependencies = [
  "openxgram-manifest",
  "openxgram-mcp",
  "openxgram-memory",
+ "openxgram-payment",
  "openxgram-peer",
  "openxgram-scheduler",
  "openxgram-transport",
@@ -2779,6 +2780,25 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "openxgram-payment"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "hex",
+ "k256",
+ "openxgram-core",
+ "openxgram-db",
+ "openxgram-keystore",
+ "rusqlite",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror 1.0.69",
  "tracing",

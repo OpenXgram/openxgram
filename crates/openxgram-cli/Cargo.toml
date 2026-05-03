@@ -28,6 +28,7 @@ openxgram-adapter = { path = "../openxgram-adapter" }
 openxgram-mcp = { path = "../openxgram-mcp" }
 openxgram-memory = { path = "../openxgram-memory" }
 openxgram-peer = { path = "../openxgram-peer" }
+openxgram-payment = { path = "../openxgram-payment" }
 openxgram-scheduler = { path = "../openxgram-scheduler" }
 openxgram-transport = { path = "../openxgram-transport" }
 openxgram-vault = { path = "../openxgram-vault" }
