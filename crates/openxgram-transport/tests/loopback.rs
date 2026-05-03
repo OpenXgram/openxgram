@@ -73,6 +73,42 @@ async fn health_endpoint_returns_status_ok() {
 }
 
 #[tokio::test]
+async fn metrics_endpoint_serves_prometheus_text() {
+    let server = spawn_server("127.0.0.1:0".parse().unwrap()).await.unwrap();
+    let url = format!("http://{}/v1/metrics", server.bound_addr);
+    let resp = reqwest::Client::new().get(&url).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("openxgram_uptime_seconds"));
+    assert!(body.contains("openxgram_received_total 0"));
+    assert!(body.contains("# TYPE openxgram_uptime_seconds gauge"));
+    server.shutdown();
+}
+
+#[tokio::test]
+async fn metrics_with_provider_appends_extra_text() {
+    use openxgram_transport::spawn_server_with_metrics;
+    let provider: openxgram_transport::MetricsProvider = std::sync::Arc::new(|| {
+        "# HELP custom_test 1\n# TYPE custom_test gauge\ncustom_test 42\n".into()
+    });
+    let server = spawn_server_with_metrics("127.0.0.1:0".parse().unwrap(), Some(provider))
+        .await
+        .unwrap();
+    let url = format!("http://{}/v1/metrics", server.bound_addr);
+    let body = reqwest::Client::new()
+        .get(&url)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("custom_test 42"));
+    assert!(body.contains("openxgram_uptime_seconds")); // baseline 도 함께
+    server.shutdown();
+}
+
+#[tokio::test]
 async fn health_received_count_grows_with_messages() {
     let server = spawn_server("127.0.0.1:0".parse().unwrap()).await.unwrap();
     // 메시지 3개 보내기
