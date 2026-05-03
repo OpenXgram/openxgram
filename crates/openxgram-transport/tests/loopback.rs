@@ -55,6 +55,18 @@ async fn send_to_nonexistent_endpoint_raises() {
 }
 
 #[tokio::test]
+async fn health_endpoint_returns_status_ok() {
+    let server = spawn_server("127.0.0.1:0".parse().unwrap()).await.unwrap();
+    let url = format!("http://{}/v1/health", server.bound_addr);
+    let resp = reqwest::Client::new().get(&url).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "ok");
+    assert!(body["version"].is_string());
+    server.shutdown();
+}
+
+#[tokio::test]
 async fn send_to_wrong_path_raises_4xx() {
     let server = spawn_server("127.0.0.1:0".parse().unwrap()).await.unwrap();
     // 잘못된 경로 — 405 또는 404

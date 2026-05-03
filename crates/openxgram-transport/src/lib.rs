@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use axum::{
     extract::State,
     http::StatusCode,
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use chrono::{DateTime, FixedOffset};
@@ -85,6 +85,7 @@ pub async fn spawn_server(bind_addr: SocketAddr) -> Result<ServerHandle> {
     };
 
     let app = Router::new()
+        .route("/v1/health", get(health_check))
         .route("/v1/message", post(receive_message))
         .with_state(state);
 
@@ -102,6 +103,19 @@ pub async fn spawn_server(bind_addr: SocketAddr) -> Result<ServerHandle> {
         bound_addr,
         received,
         join,
+    })
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct HealthResponse {
+    pub status: &'static str,
+    pub version: &'static str,
+}
+
+async fn health_check() -> Json<HealthResponse> {
+    Json(HealthResponse {
+        status: "ok",
+        version: env!("CARGO_PKG_VERSION"),
     })
 }
 
