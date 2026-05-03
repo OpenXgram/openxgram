@@ -13,6 +13,9 @@ members = [
     "crates/openxgram-mcp",
     "crates/openxgram-cli",
 ]
+# ui/tauri 는 platform 의존(webkit2gtk 등) 이라 워크스페이스 외부.
+# `cd ui/tauri && cargo tauri dev` 로 별도 빌드.
+exclude = ["ui/tauri"]
 
 [workspace.package]
 version = "0.1.0"
