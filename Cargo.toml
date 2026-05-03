@@ -24,9 +24,25 @@ thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
-rusqlite = { version = "0.31", features = ["bundled"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
-# 아래 의존성은 Res 리서치 후 버전 확정 예정
-# k256 = "0.13"           # secp256k1 - Res 검토 후 추가
-# bip39 = "2"             # Res 검토 후 추가
+
+# 키페어·시드
+k256 = { version = "0.13", features = ["ecdsa"] }
+bip39 = { version = "2", features = ["rand_core"] }
+coins-bip32 = "0.13"
+sha3 = "0.10"
+
+# 암호화
+chacha20poly1305 = "0.10"
+argon2 = "0.5"
+zeroize = { version = "1.8", features = ["derive"] }
+
+# DB
+rusqlite = { version = "0.39", features = ["bundled"] }
+
+# HTTP
+reqwest = { version = "0.13", features = ["json", "rustls-tls"], default-features = false }
+
+# 기타
+hex = "0.4"
