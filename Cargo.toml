@@ -9,6 +9,7 @@ members = [
     "crates/openxgram-scheduler",
     "crates/openxgram-transport",
     "crates/openxgram-adapter",
+    "crates/openxgram-mcp",
     "crates/openxgram-cli",
 ]
 
