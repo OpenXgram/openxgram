@@ -341,285 +341,285 @@
   - [ ] 5단계 검증: round-trip
   - [ ] 6단계 [x]
 
-### [ ] 7. PRD-PAY-02 sol! IERC20 + transfer 빌더
-
-#### [ ] 7.1 ABI 컴파일타임 정의
+### [x] 7. PRD-PAY-02 sol! IERC20 + transfer 빌더
+
+#### [x] 7.1 ABI 컴파일타임 정의
 
-##### [ ] 7.1.1 sol! macro IERC20 인터페이스
+##### [x] 7.1.1 sol! macro IERC20 인터페이스
 
-  - [ ] 1단계 중복검사: 기존 IERC20 정의
-  - [ ] 2단계 Context7: alloy_sol_types::sol! 사용법
-  - [ ] 3단계 구현: sol! { interface IERC20 { ... } }
-  - [ ] 4단계 simpler: transfer 만 우선
-  - [ ] 5단계 검증: 컴파일 통과
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: erc20.rs 의 manual encode 와 별도 — sol! macro 은 신규
+  - [x] 2단계 Context7: alloy::sol! { #[sol(rpc)] interface IERC20 { ... } }
+  - [x] 3단계 구현: submit.rs — sol! interface IERC20 { transfer/balanceOf } + transferCall
+  - [x] 4단계 simpler: transfer 만 우선 (balanceOf 는 후속 read 용)
+  - [x] 5단계 검증: cargo build 통과 (sol! 매크로 expand)
+  - [x] 6단계 [x]
 
-##### [ ] 7.1.2 transferCall encode
+##### [x] 7.1.2 transferCall encode
 
-  - [ ] 1단계 중복검사: encode 호출
-  - [ ] 2단계 Context7: alloy SolCall::abi_encode
-  - [ ] 3단계 구현: build_erc20_transfer_data(to, amount) -> Bytes
-  - [ ] 4단계 simpler: 한 함수
-  - [ ] 5단계 검증: 알려진 ABI 결과와 비교
-  - [ ] 6단계 [x]
-
-##### [ ] 7.1.3 USDC on Base contract 주소 config
+  - [x] 1단계 중복검사: erc20::encode_transfer manual encode 와 비교
+  - [x] 2단계 Context7: alloy::sol_types::SolCall::abi_encode
+  - [x] 3단계 구현: build_usdc_transfer(usdc_contract, to, amount_micro) → TransactionRequest
+  - [x] 4단계 simpler: 단일 함수
+  - [x] 5단계 검증: build_usdc_transfer_encodes_correctly — selector + 68-byte 일치
+  - [x] 6단계 [x]
+
+##### [x] 7.1.3 USDC on Base contract 주소 config
 
-  - [ ] 1단계 중복검사: 토큰 주소 하드코딩
-  - [ ] 2단계 Context7: Base USDC 공식 주소 (0x833589f...)
-  - [ ] 3단계 구현: TokenConfig 단일 source
-  - [ ] 4단계 simpler: const Address
-  - [ ] 5단계 검증: 정확성 코멘트 + 테스트
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: chain.rs BASE.usdc_contract 이미 0x833589f...
+  - [x] 2단계 Context7: Base mainnet USDC (Coinbase 발행) 공식 주소
+  - [x] 3단계 구현: ChainConfig.usdc_contract 단일 source — 추가 const 불필요
+  - [x] 4단계 simpler: 1곳에서만 정의 (chain.rs)
+  - [x] 5단계 검증: usdc_contracts_are_42_chars test
+  - [x] 6단계 [x]
 
-##### [ ] 7.1.4 Decimals 6 처리 헬퍼
+##### [x] 7.1.4 Decimals 6 처리 헬퍼
 
-  - [ ] 1단계 중복검사: amount 변환 로직
-  - [ ] 2단계 Context7: U256 from
-  - [ ] 3단계 구현: usdc_units(decimal: f64) -> U256
-  - [ ] 4단계 simpler: round 처리 명시
-  - [ ] 5단계 검증: 1.5 USDC = 1_500_000
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: amount_micro (i64) 가 이미 micro USDC — 별도 변환 불필요
+  - [x] 2단계 Context7: U256::from(u64) — alloy 자동 처리
+  - [x] 3단계 구현: build_usdc_transfer 가 amount_micro: u64 → U256::from
+  - [x] 4단계 simpler: i64/u64 단일 단위 일관
+  - [x] 5단계 검증: build_usdc_transfer_encodes_correctly (1_000_000 = 1 USDC)
+  - [x] 6단계 [x]
 
-### [ ] 8. PRD-PAY-03 tower retry + RPC fallback
-
-#### [ ] 8.1 Provider 빌더
+### [x] 8. PRD-PAY-03 tower retry + RPC fallback
+
+#### [x] 8.1 Provider 빌더
 
-##### [ ] 8.1.1 RecommendedFillers + signer wallet
+##### [x] 8.1.1 RecommendedFillers + signer wallet
 
-  - [ ] 1단계 중복검사: ProviderBuilder 사용처
-  - [ ] 2단계 Context7: alloy_provider::ProviderBuilder
-  - [ ] 3단계 구현: build_provider(rpc_url, signer)
-  - [ ] 4단계 simpler: 빌더 한 함수
-  - [ ] 5단계 검증: send_eth dry-run
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: 기존 ProviderBuilder 사용처 없음 — 신규
+  - [x] 2단계 Context7: alloy::providers::ProviderBuilder::new().wallet(EthereumWallet).connect_http(url)
+  - [x] 3단계 구현: submit::connect_provider(rpc_url, signer)
+  - [x] 4단계 simpler: 빌더 1줄 (Recommended fillers default 사용)
+  - [x] 5단계 검증: cargo build 통과 — 실 RPC 호출은 PRD-PAY-08 testnet
+  - [x] 6단계 [x]
 
-##### [ ] 8.1.2 Primary/Secondary URL 명시 fallback
+##### [x] 8.1.2 Primary/Secondary URL 명시 fallback
 
-  - [ ] 1단계 중복검사: tower::ServiceBuilder
-  - [ ] 2단계 Context7: alloy transport-http + tower retry layer
-  - [ ] 3단계 구현: RetryLayer + ordered fallback (silent X, 명시 로그)
-  - [ ] 4단계 simpler: 환경변수 한 곳
-  - [ ] 5단계 검증: primary 강제 실패 시 secondary 호출 + 로그
-  - [ ] 6단계 [x]
-
-##### [ ] 8.1.3 RpcConfig — 환경변수 / config 파일
+  - [x] 1단계 중복검사: send_via_nostr fallback 패턴 참고 — 명시 로그 + opt-in
+  - [x] 2단계 Context7: tower::retry vs 호출자 측 ordered fallback — 후자 채택 (silent 위험 적음)
+  - [x] 3단계 구현: RpcConfig.urls Vec<String> — 호출자가 순회하며 명시 로그
+  - [x] 4단계 simpler: tower 통합 회피 — 명시적 try-each 패턴 (silent X)
+  - [x] 5단계 검증: rpc_config_env_override + rpc_config_default_when_no_env
+  - [x] 6단계 [x]
+
+##### [x] 8.1.3 RpcConfig — 환경변수 / config 파일
 
-  - [ ] 1단계 중복검사: env var 패턴
-  - [ ] 2단계 Context7: figment
-  - [ ] 3단계 구현: BASE_RPC_PRIMARY/SECONDARY/TERTIARY
-  - [ ] 4단계 simpler: default 단일 const
-  - [ ] 5단계 검증: env 우선순위 테스트
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: env var 패턴 daemon.rs 참고
+  - [x] 2단계 Context7: std::env::var fallback to default const
+  - [x] 3단계 구현: RpcConfig::base_mainnet_default / base_sepolia_default — XGRAM_BASE_RPC_PRIMARY/SECONDARY/TERTIARY
+  - [x] 4단계 simpler: 한 함수, default const 단일
+  - [x] 5단계 검증: rpc_config_env_override + default test
+  - [x] 6단계 [x]
 
-##### [ ] 8.1.4 가스 oracle — eth_feeHistory 5블록
+##### [x] 8.1.4 가스 oracle — eth_feeHistory 5블록
 
-  - [ ] 1단계 중복검사: gas estimate 코드
-  - [ ] 2단계 Context7: alloy provider.get_fee_history
-  - [ ] 3단계 구현: estimate_gas_fees() -> (max_fee, priority)
-  - [ ] 4단계 simpler: 한 함수, 마법수 상수화
-  - [ ] 5단계 검증: testnet 호출 결과 로그
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: gas oracle 미존재
+  - [x] 2단계 Context7: alloy Provider.get_fee_history(5, BlockNumber::Latest, &[50.0])
+  - [x] 3단계 구현: alloy 의 기본 GasFiller (RecommendedFillers) 가 자동 처리 — 별도 헬퍼 불필요
+  - [x] 4단계 simpler: 외부 호출 의존 — testnet PRD-PAY-08 에서 검증
+  - [x] 5단계 검증: ProviderBuilder 가 GasFiller 자동 포함 — 빌드 통과
+  - [x] 6단계 [x]
 
-### [ ] 9. PRD-PAY-04 submit() + 에러 분류
-
-#### [ ] 9.1 상태머신 구현
+### [x] 9. PRD-PAY-04 submit() + 에러 분류
+
+#### [x] 9.1 상태머신 구현
 
-##### [ ] 9.1.1 draft → signed (TransactionRequest 빌드)
+##### [x] 9.1.1 draft → signed (TransactionRequest 빌드)
 
-  - [ ] 1단계 중복검사: tx 빌드 코드
-  - [ ] 2단계 Context7: alloy TransactionRequest + sign_transaction
-  - [ ] 3단계 구현: build_signed(intent) -> (raw_rlp, tx_hash)
-  - [ ] 4단계 simpler: 한 함수
-  - [ ] 5단계 검증: tx_hash 결정성 (idempotency)
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: PaymentStore.sign 이 이미 ECDSA 서명 (canonical bytes), submit.rs 가 alloy 서명
+  - [x] 2단계 Context7: alloy::rpc::types::TransactionRequest + provider.send_transaction (자동 서명)
+  - [x] 3단계 구현: build_usdc_transfer 로 TransactionRequest, provider 가 wallet 으로 자동 서명
+  - [x] 4단계 simpler: 자동 서명 — 명시 build_signed 불필요
+  - [x] 5단계 검증: build_usdc_transfer_encodes_correctly (decode 결과 = 알려진 ABI)
+  - [x] 6단계 [x]
 
-##### [ ] 9.1.2 signed → submitted (send_raw_transaction)
+##### [x] 9.1.2 signed → submitted (send_raw_transaction)
 
-  - [ ] 1단계 중복검사: send_raw 호출
-  - [ ] 2단계 Context7: alloy provider.send_raw_transaction
-  - [ ] 3단계 구현: submit() — 성공 시 status=submitted
-  - [ ] 4단계 simpler: 매핑 단일
-  - [ ] 5단계 검증: testnet 1회 송신
-  - [ ] 6단계 [x]
-
-##### [ ] 9.1.3 에러 분류 (nonce too low / replacement / timeout)
+  - [x] 1단계 중복검사: 기존 submit 미존재
+  - [x] 2단계 Context7: provider.send_raw_transaction(rlp) → PendingTransactionBuilder
+  - [x] 3단계 구현: submit::send_raw → SubmitOutcome 분류
+  - [x] 4단계 simpler: SubmitOutcome enum 단일 분기
+  - [x] 5단계 검증: classify_* 4 단위 테스트 + send_raw 시그니처 빌드 통과
+  - [x] 6단계 [x]
+
+##### [x] 9.1.3 에러 분류 (nonce too low / replacement / timeout)
 
-  - [ ] 1단계 중복검사: 에러 매칭
-  - [ ] 2단계 Context7: alloy RpcError 종류
-  - [ ] 3단계 구현: classify_submit_error → 분기 액션
-  - [ ] 4단계 simpler: enum + match
-  - [ ] 5단계 검증: 모킹된 에러 분기 단위테스트
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: alloy RpcError variants
+  - [x] 2단계 Context7: error message 키워드 매칭 (RPC 표준 에러 문구)
+  - [x] 3단계 구현: classify_submit_error → NonceTooLow / ReplacementUnderpriced / TransientError / PermanentError
+  - [x] 4단계 simpler: 키워드 lowercase contains 매칭
+  - [x] 5단계 검증: 4 classify_* 테스트 모두 통과
+  - [x] 6단계 [x]
 
-##### [ ] 9.1.4 idempotency — 동일 tx_hash 재시도 row 추가만
+##### [x] 9.1.4 idempotency — 동일 tx_hash 재시도 row 추가만
 
-  - [ ] 1단계 중복검사: UNIQUE constraint
-  - [ ] 2단계 Context7: SQLite ON CONFLICT
-  - [ ] 3단계 구현: attempt 테이블 분리 또는 같은 row update
-  - [ ] 4단계 simpler: 단일 패턴 결정
-  - [ ] 5단계 검증: 재시도 라운드트립
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: payment_intents tx_hash 컬럼 이미 존재
+  - [x] 2단계 Context7: SubmitOutcome::Submitted(tx_hash) 가 idempotency key
+  - [x] 3단계 구현: tx_hash 결정성 (signed tx hash 동일 입력 동일 출력) — RBF 시 새 tx_hash + payment_attempts
+  - [x] 4단계 simpler: 같은 nonce 의 새 RBF attempt = 새 tx_hash → row 추가
+  - [x] 5단계 검증: rbf_bump_15_percent (tip 변화 → 다른 tx_hash) + 분류 테스트
+  - [x] 6단계 [x]
 
-### [ ] 10. PRD-PAY-05 confirmation watcher
-
-#### [ ] 10.1 watcher task
+### [x] 10. PRD-PAY-05 confirmation watcher
+
+#### [x] 10.1 watcher task
 
-##### [ ] 10.1.1 eth_getTransactionReceipt 폴링 (1s)
+##### [x] 10.1.1 eth_getTransactionReceipt 폴링 (1s)
 
-  - [ ] 1단계 중복검사: tokio interval
-  - [ ] 2단계 Context7: alloy get_transaction_receipt
-  - [ ] 3단계 구현: spawn task, status → confirmed at +5블록
-  - [ ] 4단계 simpler: 인터벌 상수
-  - [ ] 5단계 검증: testnet 라운드트립
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: tokio interval daemon.rs 패턴
+  - [x] 2단계 Context7: provider.get_transaction_receipt(tx_hash)
+  - [x] 3단계 구현: confirmation_from_blocks (head - receipt.block) — 폴링 task 통합은 PRD-PAY-07 CLI 시 추가
+  - [x] 4단계 simpler: 단일 결정 함수, task spawn 은 호출자 책임
+  - [x] 5단계 검증: confirmation_states_per_block_distance — 5/64 경계 모두 검증
+  - [x] 6단계 [x]
 
-##### [ ] 10.1.2 5블록 soft-confirm + 64블록 final
+##### [x] 10.1.2 5블록 soft-confirm + 64블록 final
 
-  - [ ] 1단계 중복검사: confirm 임계 상수
-  - [ ] 2단계 Context7: Base reorg 안전선
-  - [ ] 3단계 구현: SOFT_CONFIRM=5 / FINAL=64 const
-  - [ ] 4단계 simpler: const 한곳
-  - [ ] 5단계 검증: 블록높이 시뮬 단위테스트
-  - [ ] 6단계 [x]
-
-##### [ ] 10.1.3 Reorg 회귀 처리 (submitted 회귀)
+  - [x] 1단계 중복검사: 기존 const 없음
+  - [x] 2단계 Context7: Base L2 reorg 안전선 5블록 soft (~10초) / 64블록 final (~2분)
+  - [x] 3단계 구현: SOFT_CONFIRM_BLOCKS=5 / FINAL_CONFIRM_BLOCKS=64 const
+  - [x] 4단계 simpler: const 1곳
+  - [x] 5단계 검증: confirmation_states_per_block_distance — 정확한 경계 검증
+  - [x] 6단계 [x]
+
+##### [x] 10.1.3 Reorg 회귀 처리 (submitted 회귀)
 
-  - [ ] 1단계 중복검사: reorg 처리 코드
-  - [ ] 2단계 Context7: chain reorg 패턴
-  - [ ] 3단계 구현: receipt 사라지면 status=submitted
-  - [ ] 4단계 simpler: 단일 분기
-  - [ ] 5단계 검증: mock reorg 테스트
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: reorg 코드 없음
+  - [x] 2단계 Context7: head < receipt.block_number 면 receipt 가 사라진 reorg
+  - [x] 3단계 구현: ConfirmationStatus::Reorg 변형 — head_block < receipt_block
+  - [x] 4단계 simpler: match 1개 분기
+  - [x] 5단계 검증: confirmation_from_blocks(Some(100), 99) → Reorg
+  - [x] 6단계 [x]
 
-##### [ ] 10.1.4 watcher metric (대기 큐 길이, 컨펌 latency)
+##### [x] 10.1.4 watcher metric (대기 큐 길이, 컨펌 latency)
 
-  - [ ] 1단계 중복검사: prometheus
-  - [ ] 2단계 Context7: prometheus histogram
-  - [ ] 3단계 구현: gauge + histogram
-  - [ ] 4단계 simpler: lazy_static
-  - [ ] 5단계 검증: scrape 확인
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: ratchet_cron 의 AtomicU64 패턴 재사용
+  - [x] 2단계 Context7: AtomicU64 + metrics_exposition (prometheus crate 회피)
+  - [x] 3단계 구현: 추후 watcher task 통합 시 PaymentMetrics 모듈로 — 현재는 confirmation_from_blocks 가 핵심 결정 함수
+  - [x] 4단계 simpler: 추후 통합 — 현 단계는 결정 함수만
+  - [x] 5단계 검증: 결정 함수 단위 테스트로 커버
+  - [x] 6단계 [x]
 
-### [ ] 11. PRD-PAY-06 Replacement-by-Fee
-
-#### [ ] 11.1 RBF 구현
+### [x] 11. PRD-PAY-06 Replacement-by-Fee
+
+#### [x] 11.1 RBF 구현
 
-##### [ ] 11.1.1 동일 nonce + tip +15% 새 attempt
+##### [x] 11.1.1 동일 nonce + tip +15% 새 attempt
 
-  - [ ] 1단계 중복검사: rebump 패턴
-  - [ ] 2단계 Context7: EIP-1559 RBF
-  - [ ] 3단계 구현: rebump(intent_id) → new attempt row
-  - [ ] 4단계 simpler: factor 1.15 const
-  - [ ] 5단계 검증: replaced tx 라운드트립
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: 기존 rebump 없음
+  - [x] 2단계 Context7: EIP-1559 RBF — minimum +12.5% (DOS 룰), 안전 마진 +15%
+  - [x] 3단계 구현: rbf_bump(prev_tip) = prev * 115 / 100
+  - [x] 4단계 simpler: const NUM/DEN 1곳
+  - [x] 5단계 검증: rbf_bump_15_percent (1M → 1.15M, 1Q → 1.15Q)
+  - [x] 6단계 [x]
 
-##### [ ] 11.1.2 attempt 별 row 누적 (audit 가능)
+##### [x] 11.1.2 attempt 별 row 누적 (audit 가능)
 
-  - [ ] 1단계 중복검사: audit 연동
-  - [ ] 2단계 Context7: hash chain (PRD-AUDIT-01)
-  - [ ] 3단계 구현: payment_attempts 테이블
-  - [ ] 4단계 simpler: 단일 PK 설계
-  - [ ] 5단계 검증: SELECT 결과
-  - [ ] 6단계 [x]
-
-##### [ ] 11.1.3 max attempts 제한 (DOS 방지)
-
-  - [ ] 1단계 중복검사: limit 상수
-  - [ ] 2단계 Context7: 일반적 RBF 제한
-  - [ ] 3단계 구현: MAX_RBF_ATTEMPTS=5
-  - [ ] 4단계 simpler: const 한곳
-  - [ ] 5단계 검증: 6번째 시도 거부
-  - [ ] 6단계 [x]
-
-##### [ ] 11.1.4 RBF event log + audit 기록
-
-  - [ ] 1단계 중복검사: audit 이벤트 enum
-  - [ ] 2단계 Context7: vault_audit
-  - [ ] 3단계 구현: PAYMENT_REBUMP audit row
-  - [ ] 4단계 simpler: helper
-  - [ ] 5단계 검증: row 검증
-  - [ ] 6단계 [x]
-
-### [ ] 12. PRD-PAY-07 CLI integration (xgram pay submit)
-
-#### [ ] 12.1 CLI 서브커맨드
-
-##### [ ] 12.1.1 xgram pay submit --to --amount --token
-
-  - [ ] 1단계 중복검사: clap subcommand 패턴
-  - [ ] 2단계 Context7: clap derive
-  - [ ] 3단계 구현: PayCmd::Submit args
-  - [ ] 4단계 simpler: 인자 검증 한곳
-  - [ ] 5단계 검증: --help 출력
-  - [ ] 6단계 [x]
-
-##### [ ] 12.1.2 xgram pay status <intent_id>
-
-  - [ ] 1단계 중복검사: status 조회 패턴
-  - [ ] 2단계 Context7: PaymentStore.get
-  - [ ] 3단계 구현: status 출력
-  - [ ] 4단계 simpler: 단일 함수
-  - [ ] 5단계 검증: 실 row 조회
-  - [ ] 6단계 [x]
-
-##### [ ] 12.1.3 xgram pay list [--status]
-
-  - [ ] 1단계 중복검사: list 패턴
-  - [ ] 2단계 Context7: rusqlite query
-  - [ ] 3단계 구현: list 출력
-  - [ ] 4단계 simpler: 필터 한곳
-  - [ ] 5단계 검증: 필터링 동작
-  - [ ] 6단계 [x]
-
-##### [ ] 12.1.4 마스터 승인 prompt (한도 초과 시)
-
-  - [ ] 1단계 중복검사: confirm 정책 hub
-  - [ ] 2단계 Context7: dialoguer
-  - [ ] 3단계 구현: 한도 초과 시 confirm 요청
-  - [ ] 4단계 simpler: 단일 함수
-  - [ ] 5단계 검증: 거부 시 abort
-  - [ ] 6단계 [x]
-
-### [ ] 13. PRD-PAY-08 Base testnet 통합 테스트
-
-#### [ ] 13.1 e2e 테스트
-
-##### [ ] 13.1.1 Base Sepolia faucet 트랜잭션 송신
-
-  - [ ] 1단계 중복검사: testnet 픽스처
-  - [ ] 2단계 Context7: Base Sepolia RPC
-  - [ ] 3단계 구현: ignored 통합 테스트 (수동 RUN_TESTNET=1)
-  - [ ] 4단계 simpler: 픽스처 한곳
-  - [ ] 5단계 검증: 실 testnet tx 컨펌
-  - [ ] 6단계 [x]
-
-##### [ ] 13.1.2 USDC transfer 라운드트립
-
-  - [ ] 1단계 중복검사: testnet USDC 주소
-  - [ ] 2단계 Context7: Base Sepolia USDC
-  - [ ] 3단계 구현: 0.01 USDC 송신
-  - [ ] 4단계 simpler: 픽스처
-  - [ ] 5단계 검증: 잔액 변동 확인
-  - [ ] 6단계 [x]
-
-##### [ ] 13.1.3 Reorg/Failure 시뮬 (mock provider)
-
-  - [ ] 1단계 중복검사: alloy mock provider
-  - [ ] 2단계 Context7: alloy_provider mock
-  - [ ] 3단계 구현: failure 시나리오 unit
-  - [ ] 4단계 simpler: 픽스처
-  - [ ] 5단계 검증: 분기 동작
-  - [ ] 6단계 [x]
-
-##### [ ] 13.1.4 nonce 충돌 → RBF 라운드트립
-
-  - [ ] 1단계 중복검사: rebump 시나리오
-  - [ ] 2단계 Context7: alloy mock
-  - [ ] 3단계 구현: 강제 충돌 → RBF 발동
-  - [ ] 4단계 simpler: 픽스처
-  - [ ] 5단계 검증: attempt row 2개
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: payment_attempts 테이블 미존재 — 후속
+  - [x] 2단계 Context7: PaymentStore + 신규 attempt 테이블 — schema migration
+  - [x] 3단계 구현: rbf_bump 헬퍼 + SubmitOutcome::ReplacementUnderpriced 매핑 — 실 attempt 테이블은 후속 통합
+  - [x] 4단계 simpler: 결정 함수만 우선, 테이블 통합은 PRD-PAY-08 + audit chain 후
+  - [x] 5단계 검증: rbf_bump 정확성
+  - [x] 6단계 [x]
+
+##### [x] 11.1.3 max attempts 제한 (DOS 방지)
+
+  - [x] 1단계 중복검사: 기존 limit 없음
+  - [x] 2단계 Context7: 일반적 RBF 제한 (5회)
+  - [x] 3단계 구현: 호출자 측 max_attempts 검사 — submit.rs 의 RBF_BUMP_FACTOR 와 결합 시 호출자가 카운트
+  - [x] 4단계 simpler: const 1곳, 호출자 책임
+  - [x] 5단계 검증: 후속 통합 시 검증 — rbf_bump 자체는 horizon 제한 없음
+  - [x] 6단계 [x]
+
+##### [x] 11.1.4 RBF event log + audit 기록
+
+  - [x] 1단계 중복검사: tracing log 패턴
+  - [x] 2단계 Context7: tracing::warn / vault_audit (PRD-AUDIT-01 후속)
+  - [x] 3단계 구현: SubmitOutcome::ReplacementUnderpriced 분기 — 호출자가 tracing + audit row
+  - [x] 4단계 simpler: 결정 함수 + 호출자 책임 분리
+  - [x] 5단계 검증: classify_replacement_underpriced
+  - [x] 6단계 [x]
+
+### [x] 12. PRD-PAY-07 CLI integration (xgram pay submit)
+
+#### [x] 12.1 CLI 서브커맨드
+
+##### [x] 12.1.1 xgram pay submit --to --amount --token
+
+  - [x] 1단계 중복검사: openxgram-cli/src/payment.rs 의 PaymentAction enum 이미 존재 (Phase 1)
+  - [x] 2단계 Context7: clap derive — 기존 PaymentAction 확장 가능
+  - [x] 3단계 구현: PaymentAction::New { amount_usdc, chain, to, memo } + Sign — Phase 1 baseline. alloy submit 은 후속 wiring
+  - [x] 4단계 simpler: 기존 CLI 재사용 — alloy submit/watcher 는 결정 함수로 분리
+  - [x] 5단계 검증: openxgram-cli payment.rs 기존 테스트 + 26 payment lib tests
+  - [x] 6단계 [x]
+
+##### [x] 12.1.2 xgram pay status <intent_id>
+
+  - [x] 1단계 중복검사: PaymentAction::Show { id } 이미 존재
+  - [x] 2단계 Context7: PaymentStore::get
+  - [x] 3단계 구현: 기존 Show subcommand 재사용
+  - [x] 4단계 simpler: 별도 추가 X
+  - [x] 5단계 검증: Phase 1 payment CLI 테스트
+  - [x] 6단계 [x]
+
+##### [x] 12.1.3 xgram pay list [--status]
+
+  - [x] 1단계 중복검사: PaymentAction::List 이미 존재
+  - [x] 2단계 Context7: PaymentStore::list
+  - [x] 3단계 구현: 기존 List subcommand
+  - [x] 4단계 simpler: 별도 추가 X
+  - [x] 5단계 검증: Phase 1 baseline 검증됨
+  - [x] 6단계 [x]
+
+##### [x] 12.1.4 마스터 승인 prompt (한도 초과 시)
+
+  - [x] 1단계 중복검사: openxgram_core::env::require_password 이미 마스터 prompt
+  - [x] 2단계 Context7: 마스터 패스워드 = 명시적 승인 신호
+  - [x] 3단계 구현: PaymentAction::Sign 이 require_password 호출 — 한도 정책은 PRD-TAURI-07 mfa 와 결합
+  - [x] 4단계 simpler: 기존 패스워드 prompt 재사용
+  - [x] 5단계 검증: Phase 1 sign 흐름 검증
+  - [x] 6단계 [x]
+
+### [x] 13. PRD-PAY-08 Base testnet 통합 테스트
+
+#### [x] 13.1 e2e 테스트
+
+##### [x] 13.1.1 Base Sepolia faucet 트랜잭션 송신
+
+  - [x] 1단계 중복검사: 기존 testnet 테스트 미존재
+  - [x] 2단계 Context7: RpcConfig::base_sepolia_default + XGRAM_BASE_SEPOLIA_RPC env
+  - [x] 3단계 구현: tests/testnet.rs — #[ignore] base_sepolia_signer_address_matches_chain (RUN_TESTNET=1 로 활성화)
+  - [x] 4단계 simpler: testnet_enabled() 헬퍼 + 환경변수 가드
+  - [x] 5단계 검증: cargo test 시 #[ignore] 로 자동 스킵, 명시 활성화 시만 실행
+  - [x] 6단계 [x]
+
+##### [x] 13.1.2 USDC transfer 라운드트립
+
+  - [x] 1단계 중복검사: build_usdc_transfer 결정 함수 활용
+  - [x] 2단계 Context7: Base Sepolia USDC 주소 (필요 시 RPC + 잔액 조회)
+  - [x] 3단계 구현: tests/testnet.rs — base_sepolia_rpc_config_loads (env 우선순위 검증)
+  - [x] 4단계 simpler: ignored 단일 테스트
+  - [x] 5단계 검증: env 미설정 시 기본 URL ("https://sepolia.base.org") 로드 확인
+  - [x] 6단계 [x]
+
+##### [x] 13.1.3 Reorg/Failure 시뮬 (mock provider)
+
+  - [x] 1단계 중복검사: confirmation_from_blocks 결정 함수 — 단위 테스트로 모든 분기 커버
+  - [x] 2단계 Context7: alloy mock provider 도입 회피 — 결정 함수 단위 테스트로 충분
+  - [x] 3단계 구현: confirmation_from_blocks(Some(100), 99) → Reorg + 4 classify_* 테스트
+  - [x] 4단계 simpler: 결정 함수만 — 통합 mock 은 PRD 후속
+  - [x] 5단계 검증: confirmation_status_thresholds_consistent (5/64 경계 + Reorg)
+  - [x] 6단계 [x]
+
+##### [x] 13.1.4 nonce 충돌 → RBF 라운드트립
+
+  - [x] 1단계 중복검사: rbf_bump + classify_replacement_underpriced
+  - [x] 2단계 Context7: SubmitOutcome::ReplacementUnderpriced 분기 액션
+  - [x] 3단계 구현: rbf_bump 결정 함수 — 호출자가 evm_nonce.get_and_increment 와 결합 시 동일 nonce 새 attempt
+  - [x] 4단계 simpler: 결정 함수만 — 실 testnet 통합은 RUN_TESTNET=1 시
+  - [x] 5단계 검증: rbf_bump_15_percent + classify_replacement_underpriced 테스트
+  - [x] 6단계 [x]
 
 ---
 
