@@ -19,6 +19,7 @@ pub enum SessionAction {
     Show { id: String },
     Message { session_id: String, sender: String, body: String },
     Reflect { session_id: String },
+    Recall { query: String, k: usize },
 }
 
 pub fn run_session(data_dir: &Path, action: SessionAction) -> Result<()> {
@@ -33,6 +34,7 @@ pub fn run_session(data_dir: &Path, action: SessionAction) -> Result<()> {
             body,
         } => cmd_message(&mut db, &session_id, &sender, &body),
         SessionAction::Reflect { session_id } => cmd_reflect(&mut db, &session_id),
+        SessionAction::Recall { query, k } => cmd_recall(&mut db, &query, k),
     }
 }
 
@@ -113,6 +115,28 @@ fn cmd_message(db: &mut Db, session_id: &str, sender: &str, body: &str) -> Resul
     println!("  session   : {}", msg.session_id);
     println!("  sender    : {}", msg.sender);
     println!("  timestamp : {}", msg.timestamp);
+    Ok(())
+}
+
+fn cmd_recall(db: &mut Db, query: &str, k: usize) -> Result<()> {
+    let embedder = DummyEmbedder;
+    let hits = MessageStore::new(db, &embedder).recall_top_k(query, k)?;
+    if hits.is_empty() {
+        println!("일치하는 메시지 없음.");
+        return Ok(());
+    }
+    println!("recall top-{} for {:?}", hits.len(), query);
+    for (i, hit) in hits.iter().enumerate() {
+        println!(
+            "  [{:>2}] dist={:.4} session={} sender={} ts={}",
+            i + 1,
+            hit.distance,
+            hit.message.session_id,
+            hit.message.sender,
+            hit.message.timestamp,
+        );
+        println!("       body: {}", hit.message.body);
+    }
     Ok(())
 }
 

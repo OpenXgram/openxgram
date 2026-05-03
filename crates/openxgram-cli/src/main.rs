@@ -163,6 +163,13 @@ enum SessionCli {
         #[arg(long)]
         session_id: String,
     },
+    /// 쿼리와 가장 유사한 메시지 K 개 검색 (sqlite-vec KNN)
+    Recall {
+        #[arg(long)]
+        query: String,
+        #[arg(long, default_value_t = 5)]
+        k: usize,
+    },
 }
 
 impl From<SessionCli> for SessionAction {
@@ -181,6 +188,7 @@ impl From<SessionCli> for SessionAction {
                 body,
             },
             SessionCli::Reflect { session_id } => SessionAction::Reflect { session_id },
+            SessionCli::Recall { query, k } => SessionAction::Recall { query, k },
         }
     }
 }

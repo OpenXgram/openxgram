@@ -121,6 +121,74 @@ fn message_to_unknown_session_raises() {
 }
 
 #[test]
+fn recall_returns_results_after_messages() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    // session + 메시지 3개
+    run_session(
+        &data_dir,
+        SessionAction::New {
+            title: "recall-test".into(),
+        },
+    )
+    .unwrap();
+
+    use openxgram_core::paths::db_path;
+    use openxgram_db::{Db, DbConfig};
+    use openxgram_memory::SessionStore;
+    let mut db = Db::open(DbConfig {
+        path: db_path(&data_dir),
+        ..Default::default()
+    })
+    .unwrap();
+    db.migrate().unwrap();
+    let sid = SessionStore::new(&mut db).list().unwrap()[0].id.clone();
+    drop(db);
+
+    for body in &["hello world", "foo bar", "openxgram memory"] {
+        run_session(
+            &data_dir,
+            SessionAction::Message {
+                session_id: sid.clone(),
+                sender: "0xtest".into(),
+                body: body.to_string(),
+            },
+        )
+        .unwrap();
+    }
+
+    // recall — 자기 자신이 포함된 결과 K=2
+    run_session(
+        &data_dir,
+        SessionAction::Recall {
+            query: "hello world".into(),
+            k: 2,
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn recall_empty_db_returns_no_results() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+    // 메시지 0건 상태에서 recall — 결과 0건이지만 raise 안 함
+    run_session(
+        &data_dir,
+        SessionAction::Recall {
+            query: "anything".into(),
+            k: 5,
+        },
+    )
+    .unwrap();
+}
+
+#[test]
 fn show_unknown_session_raises() {
     set_env();
     let tmp = tempdir().unwrap();
