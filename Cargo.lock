@@ -1743,6 +1743,8 @@ dependencies = [
  "openxgram-keystore",
  "openxgram-manifest",
  "openxgram-memory",
+ "openxgram-scheduler",
+ "openxgram-transport",
  "ratatui",
  "serde",
  "serde_json",

@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use openxgram_cli::daemon::{self, DaemonOpts};
 use openxgram_cli::doctor::{self, DoctorOpts};
 use openxgram_cli::init::{self, InitOpts};
 use openxgram_cli::memory::{self, MemoryAction};
@@ -134,6 +135,18 @@ enum Commands {
         data_dir: Option<PathBuf>,
         #[command(subcommand)]
         action: MemoryCli,
+    },
+
+    /// 사이드카 데몬 — scheduler + transport server foreground 실행
+    Daemon {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        /// transport bind 주소 (기본 127.0.0.1:7300)
+        #[arg(long)]
+        bind: Option<std::net::SocketAddr>,
+        /// reflection cron 표현식 (기본 0 0 15 * * * = 자정 KST)
+        #[arg(long)]
+        reflection_cron: Option<String>,
     },
 
     /// 인터랙티브 TUI (welcome + status)
@@ -470,6 +483,23 @@ async fn main() -> anyhow::Result<()> {
                 None => openxgram_core::paths::default_data_dir()?,
             };
             memory::run_memory(&dir, action.into())?;
+        }
+
+        Commands::Daemon {
+            data_dir,
+            bind,
+            reflection_cron,
+        } => {
+            let dir = match data_dir {
+                Some(p) => p,
+                None => openxgram_core::paths::default_data_dir()?,
+            };
+            daemon::run_daemon(DaemonOpts {
+                data_dir: dir,
+                bind_addr: bind,
+                reflection_cron,
+            })
+            .await?;
         }
 
         Commands::Tui { data_dir } => {
