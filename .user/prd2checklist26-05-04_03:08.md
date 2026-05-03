@@ -187,31 +187,31 @@ cross-network 메시징 출시 전 반드시 해결.
 
 ### 2.1 PRD-NOSTR-01 crate 신설
 
-- [ ] 2.1.1 openxgram-nostr crate 생성 + Cargo.toml
-- [ ] 2.1.2 nostr-sdk dep + workspace 등록 + ui/tauri 외부 패턴 검토
-- [ ] 2.1.3 master keypair → Keys conversion (Keys::from_secret_bytes)
-- [ ] 2.1.4 단위 테스트 (keys 일관성 — 동일 input 동일 pubkey)
+- [x] 2.1.1 openxgram-nostr crate 생성 + Cargo.toml
+- [x] 2.1.2 nostr-sdk dep + workspace 등록 + ui/tauri 외부 패턴 검토
+- [x] 2.1.3 master keypair → Keys conversion (Keys::parse(secret_hex))
+- [x] 2.1.4 단위 테스트 (keys 일관성 — 동일 input 동일 pubkey)
 
 ### 2.2 PRD-NOSTR-02 kind 매핑
 
-- [ ] 2.2.1 NostrKind enum (L4Trait=30100 / L3Pattern=30200 / L2Memory=30300 / L1Episode=30400 / L0Message=30500 / VaultMeta=30600 / PeerUpdate=30700 / RatchetKey=30050)
-- [ ] 2.2.2 custom tags schema 정의 (session_id / layer_version / signature)
-- [ ] 2.2.3 Event builder 함수 per kind
-- [ ] 2.2.4 deserialize → 5층 메모리 store 매핑
+- [x] 2.2.1 NostrKind enum (L4Trait=30100 / L3Pattern=30200 / L2Memory=30300 / L1Episode=30400 / L0Message=30500 / VaultMeta=30600 / PeerUpdate=30700 / RatchetKey=30050)
+- [x] 2.2.2 custom tags schema 정의 (session_id / layer_version / signature)
+- [x] 2.2.3 Event builder 함수 per kind
+- [x] 2.2.4 deserialize → 5층 메모리 store 매핑
 
 ### 2.3 PRD-NOSTR-03 NostrSink
 
-- [ ] 2.3.1 NostrSink::publish(envelope, kind, relays) async
-- [ ] 2.3.2 multiple relay 동시 publish (JoinSet)
-- [ ] 2.3.3 NIP-44 wrap (옵션 — peer encryption 시)
-- [ ] 2.3.4 mock relay 통합 테스트
+- [x] 2.3.1 NostrSink::publish(kind, content, addressable_id, tags) async
+- [x] 2.3.2 multiple relay 동시 publish (nostr-sdk Client send_event_builder)
+- [ ] 2.3.3 NIP-44 wrap (옵션 — peer encryption 시) [PRD-NOSTR-05 통합]
+- [x] 2.3.4 mock relay 통합 테스트 (publish_to_mock_relay / publish_to_multiple_relays)
 
 ### 2.4 PRD-NOSTR-04 NostrSource
 
-- [ ] 2.4.1 NostrSource::subscribe(filter, callback)
-- [ ] 2.4.2 daemon polling task (10s subscribe)
-- [ ] 2.4.3 received event → process_inbound (서명 검증 + L0 저장)
-- [ ] 2.4.4 통합 테스트 (mock relay → subscribe → store)
+- [x] 2.4.1 NostrSource::subscribe(filter) + spawn_listener(callback)
+- [ ] 2.4.2 daemon polling task (10s subscribe) [PRD-NOSTR-07 통합]
+- [ ] 2.4.3 received event → process_inbound (서명 검증 + L0 저장) [PRD-NOSTR-07 통합]
+- [x] 2.4.4 통합 테스트 (mock relay → subscribe → callback)
 
 ### 2.5 PRD-NOSTR-05 application-layer ratchet
 
