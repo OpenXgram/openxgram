@@ -1,0 +1,19 @@
+[package]
+name = "openxgram-keystore"
+description = "Keypair management for OpenXgram agents (secp256k1 + BIP-39)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+openxgram-core = { path = "../openxgram-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+# TODO(Phase 2): Res 검토 후 추가
+# k256 = { workspace = true }
+# bip39 = { workspace = true }

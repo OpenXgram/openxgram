@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/openxgram-core",
+    "crates/openxgram-keystore",
+    "crates/openxgram-db",
+    "crates/openxgram-manifest",
+    "crates/openxgram-cli",
+]
+
+[workspace.package]
+version = "0.1.0-alpha.1"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/OpenXgram/openxgram"
+authors = ["OpenXgram Contributors"]
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+# 아래 의존성은 Res 리서치 후 버전 확정 예정
+# k256 = "0.13"           # secp256k1 - Res 검토 후 추가
+# bip39 = "2"             # Res 검토 후 추가
+# rusqlite = "0.31"       # Res 검토 후 추가

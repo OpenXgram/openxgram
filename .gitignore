@@ -1,7 +1,13 @@
 # Rust
 target/
-Cargo.lock
+# Cargo.lock: 바이너리 crate(openxgram-cli)는 commit, 라이브러리는 무시
+# 우리는 xgram 바이너리를 포함하므로 Cargo.lock을 commit함 (아래 주석 처리)
+# Cargo.lock
 *.rlib
+
+# OpenXgram 로컬 데이터 디렉토리 (실수로 commit 방지)
+.openxgram/
+**/.openxgram/
 
 # Node / JS / TS
 node_modules/
@@ -50,3 +56,11 @@ logs/
 # Build artifacts
 *.bin
 *.out
+
+# Editor swap files
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,19 @@
+[profile.dev]
+# 개발 빌드: 빠른 컴파일, 디버그 심볼 포함
+opt-level = 0
+debug = true
+incremental = true
+
+[profile.release]
+# 릴리즈 빌드: 최적화 + LTO
+opt-level = 3
+debug = false
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.release-debug]
+# 릴리즈 빌드 + 디버그 심볼 (성능 프로파일링용)
+inherits = "release"
+debug = true
+strip = "none"
