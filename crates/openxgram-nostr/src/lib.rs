@@ -21,8 +21,10 @@ use openxgram_keystore::Keypair;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod ratchet;
 mod sink;
 mod source;
+pub use ratchet::{Ratchet, RatchetKey};
 pub use sink::NostrSink;
 pub use source::NostrSource;
 

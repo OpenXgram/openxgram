@@ -215,10 +215,10 @@ cross-network 메시징 출시 전 반드시 해결.
 
 ### 2.5 PRD-NOSTR-05 application-layer ratchet
 
-- [ ] 2.5.1 ratchet key 생성·회전 (kind 30050)
-- [ ] 2.5.2 메시지 본문 ratchet 키로 wrap
-- [ ] 2.5.3 1주 회전 cron job (scheduler 통합)
-- [ ] 2.5.4 forward secrecy 회귀 테스트 (옛 ratchet 키로 복호화 실패)
+- [x] 2.5.1 ratchet key 생성·회전 (Ratchet::current/rotate_now, kind 30050 build_announce)
+- [x] 2.5.2 메시지 본문 ratchet 키로 wrap (NIP-44 v2 wrap/unwrap)
+- [ ] 2.5.3 1주 회전 cron job (scheduler 통합) — Phase 2.4 cron crate 통합 시 처리
+- [x] 2.5.4 forward secrecy 회귀 테스트 (sender 옛 secret 폐기 후 unwrap 실패)
 
 ### 2.6 PRD-NOSTR-06 self-host relay
 
