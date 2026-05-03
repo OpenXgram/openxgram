@@ -14,6 +14,7 @@ pub mod message;
 pub mod pattern;
 pub mod session;
 pub mod stats;
+pub mod traits;
 pub mod transfer;
 mod util;
 
@@ -26,6 +27,7 @@ pub use message::{Message, MessageStore, RecallHit};
 pub use pattern::{Classification, Pattern, PatternStore};
 pub use session::{Session, SessionStore};
 pub use stats::{store_stats, StoreStats};
+pub use traits::{AgentTrait, TraitSource, TraitStore};
 pub use transfer::{export_session, import_session, ImportSummary, TextPackage};
 
 use thiserror::Error;
