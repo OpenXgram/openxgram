@@ -108,6 +108,20 @@ impl<'a> MemoryStore<'a> {
         })
     }
 
+    pub fn list_for_session(&mut self, session_id: &str) -> Result<Vec<Memory>> {
+        let mut stmt = self.db.conn().prepare(
+            "SELECT id, session_id, kind, content, pinned, importance,
+                    access_count, created_at, last_accessed
+             FROM memories WHERE session_id = ?1 ORDER BY created_at",
+        )?;
+        let rows = stmt.query_map([session_id], row_to_memory)?;
+        rows.collect::<rusqlite::Result<Vec<RawMemory>>>()
+            .map_err(MemoryError::from)?
+            .into_iter()
+            .map(raw_to_memory)
+            .collect()
+    }
+
     pub fn list_by_kind(&mut self, kind: MemoryKind) -> Result<Vec<Memory>> {
         let mut stmt = self.db.conn().prepare(
             "SELECT id, session_id, kind, content, pinned, importance,

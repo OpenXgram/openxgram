@@ -96,6 +96,37 @@ impl<'a, E: Embedder> MessageStore<'a, E> {
         })
     }
 
+    /// session 내 모든 메시지 (timestamp 오름차순).
+    pub fn list_for_session(&mut self, session_id: &str) -> Result<Vec<Message>> {
+        let mut stmt = self.db.conn().prepare(
+            "SELECT id, session_id, sender, body, signature, timestamp
+             FROM messages WHERE session_id = ?1 ORDER BY timestamp",
+        )?;
+        let rows = stmt.query_map([session_id], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, session_id, sender, body, signature, ts) = row?;
+            out.push(Message {
+                id,
+                session_id,
+                sender,
+                body,
+                signature,
+                timestamp: parse_ts(&ts)?,
+            });
+        }
+        Ok(out)
+    }
+
     /// 쿼리 텍스트와 가장 유사한 K 개 메시지 (sqlite-vec KNN).
     pub fn recall_top_k(&mut self, query_text: &str, k: usize) -> Result<Vec<RecallHit>> {
         let q_bytes = floats_to_bytes(&self.embedder.embed(query_text));
