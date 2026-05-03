@@ -1,0 +1,30 @@
+# OpenXgram Tauri Desktop — Phase 2 baseline.
+#
+# 워크스페이스 분리: cargo test / clippy --workspace 가 webkit2gtk 등 GUI 의존을
+# 끌어오지 않도록 separate Cargo project. 빌드 시:
+#   cd ui/tauri && cargo tauri build
+#
+# Linux 의존: libwebkit2gtk-4.1-dev, libgtk-3-dev, libsoup-3.0-dev
+# macOS: 추가 의존 없음 (Apple WebKit 사용)
+# Windows: WebView2 (Edge 기반) — 보통 OS 기본 포함
+
+[package]
+name = "openxgram-desktop"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "openxgram_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+default = []
