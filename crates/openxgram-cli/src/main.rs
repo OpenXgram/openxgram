@@ -379,10 +379,7 @@ async fn main() -> anyhow::Result<()> {
             let opts = InitOpts {
                 alias,
                 role: role.into(),
-                data_dir: match data_dir {
-                    Some(p) => p,
-                    None => openxgram_core::paths::default_data_dir()?,
-                },
+                data_dir: resolve_data_dir(data_dir)?,
                 force,
                 dry_run,
                 import,
@@ -392,20 +389,14 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Status { data_dir } => {
             let opts = StatusOpts {
-                data_dir: match data_dir {
-                    Some(p) => p,
-                    None => openxgram_core::paths::default_data_dir()?,
-                },
+                data_dir: resolve_data_dir(data_dir)?,
             };
             status::run_status(&opts)?;
         }
 
         Commands::Doctor { data_dir } => {
             let opts = DoctorOpts {
-                data_dir: match data_dir {
-                    Some(p) => p,
-                    None => openxgram_core::paths::default_data_dir()?,
-                },
+                data_dir: resolve_data_dir(data_dir)?,
             };
             let report = doctor::run_doctor(&opts)?;
             report.print();
@@ -419,10 +410,7 @@ async fn main() -> anyhow::Result<()> {
             dry_run,
         } => {
             let opts = ResetOpts {
-                data_dir: match data_dir {
-                    Some(p) => p,
-                    None => openxgram_core::paths::default_data_dir()?,
-                },
+                data_dir: resolve_data_dir(data_dir)?,
                 hard,
                 confirm,
                 dry_run,
@@ -451,10 +439,7 @@ async fn main() -> anyhow::Result<()> {
             dry_run,
         } => {
             let opts = UninstallOpts {
-                data_dir: match data_dir {
-                    Some(p) => p,
-                    None => openxgram_core::paths::default_data_dir()?,
-                },
+                data_dir: resolve_data_dir(data_dir)?,
                 cold_backup_to,
                 no_backup,
                 confirm,
@@ -470,18 +455,12 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Session { data_dir, action } => {
-            let dir = match data_dir {
-                Some(p) => p,
-                None => openxgram_core::paths::default_data_dir()?,
-            };
+            let dir = resolve_data_dir(data_dir)?;
             session::run_session(&dir, action.into())?;
         }
 
         Commands::Memory { data_dir, action } => {
-            let dir = match data_dir {
-                Some(p) => p,
-                None => openxgram_core::paths::default_data_dir()?,
-            };
+            let dir = resolve_data_dir(data_dir)?;
             memory::run_memory(&dir, action.into())?;
         }
 
@@ -490,10 +469,7 @@ async fn main() -> anyhow::Result<()> {
             bind,
             reflection_cron,
         } => {
-            let dir = match data_dir {
-                Some(p) => p,
-                None => openxgram_core::paths::default_data_dir()?,
-            };
+            let dir = resolve_data_dir(data_dir)?;
             daemon::run_daemon(DaemonOpts {
                 data_dir: dir,
                 bind_addr: bind,
@@ -504,16 +480,20 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Tui { data_dir } => {
             let opts = TuiOpts {
-                data_dir: match data_dir {
-                    Some(p) => p,
-                    None => openxgram_core::paths::default_data_dir()?,
-                },
+                data_dir: resolve_data_dir(data_dir)?,
             };
             tui::run_tui(&opts)?;
         }
     }
 
     Ok(())
+}
+
+fn resolve_data_dir(arg: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+    match arg {
+        Some(p) => Ok(p),
+        None => Ok(openxgram_core::paths::default_data_dir()?),
+    }
 }
 
 fn handle_keypair(ks: FsKeystore, action: KeypairAction) -> anyhow::Result<()> {
