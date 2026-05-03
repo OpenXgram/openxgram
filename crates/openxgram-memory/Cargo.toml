@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+default = []
+fastembed = ["dep:fastembed"]
+
 [dependencies]
 openxgram-core = { path = "../openxgram-core" }
 openxgram-db = { path = "../openxgram-db" }
@@ -19,6 +23,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
 sha2 = "0.10"
+fastembed = { version = "5", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
