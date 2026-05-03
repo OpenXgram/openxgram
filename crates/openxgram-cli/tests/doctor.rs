@@ -168,6 +168,22 @@ fn doctor_reports_vault_layer_counts() {
 }
 
 #[test]
+fn doctor_includes_tailscale_check() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+    let report = run_doctor(&doctor_opts(data_dir)).unwrap();
+    let ts = report
+        .checks
+        .iter()
+        .find(|c| c.name == "Tailscale")
+        .expect("Tailscale check");
+    // 환경에 따라 Ok/Warn 둘 다 가능 — 검사가 패닉 없이 도는지만 확인
+    assert!(matches!(ts.verdict, Verdict::Ok | Verdict::Warn));
+}
+
+#[test]
 fn doctor_includes_embedder_mode_check() {
     set_env();
     let tmp = tempdir().unwrap();

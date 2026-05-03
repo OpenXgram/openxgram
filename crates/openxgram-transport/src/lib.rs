@@ -9,6 +9,8 @@
 //!   - PRD §4 자동 라우팅 (localhost → Tailscale → XMTP)
 //!   - 서명 검증 (현재는 transport 책임 외, 호출자/keystore 영역)
 
+pub mod tailscale;
+
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 

@@ -18,12 +18,21 @@ pub struct DaemonOpts {
     pub data_dir: PathBuf,
     pub bind_addr: Option<SocketAddr>,
     pub reflection_cron: Option<String>,
+    /// true 시 `tailscale ip --4` 결과를 기본 bind IP 로 사용. mTLS 는 WireGuard
+    /// 터널이 네트워크 레이어에서 제공.
+    pub tailscale: bool,
 }
 
 pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
-    let bind = opts
-        .bind_addr
-        .unwrap_or_else(|| DEFAULT_BIND.parse().expect("DEFAULT_BIND parses"));
+    let bind = if let Some(addr) = opts.bind_addr {
+        addr
+    } else if opts.tailscale {
+        let ip = openxgram_transport::tailscale::local_ipv4()
+            .context("--tailscale 요청 — `tailscale ip --4` 실패")?;
+        SocketAddr::new(std::net::IpAddr::V4(ip), 7300)
+    } else {
+        DEFAULT_BIND.parse().expect("DEFAULT_BIND parses")
+    };
     let cron = opts
         .reflection_cron
         .unwrap_or_else(|| NIGHTLY_REFLECTION_CRON.to_string());

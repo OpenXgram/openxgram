@@ -175,12 +175,15 @@ enum Commands {
     Daemon {
         #[arg(long)]
         data_dir: Option<PathBuf>,
-        /// transport bind 주소 (기본 127.0.0.1:7300)
+        /// transport bind 주소 (기본 127.0.0.1:7300, --tailscale 우선)
         #[arg(long)]
         bind: Option<std::net::SocketAddr>,
         /// reflection cron 표현식 (기본 0 0 15 * * * = 자정 KST)
         #[arg(long)]
         reflection_cron: Option<String>,
+        /// tailscale IPv4 로 자동 bind (WireGuard mTLS 활용 — PRD §15)
+        #[arg(long)]
+        tailscale: bool,
     },
 
     /// systemd user unit 생성/제거 (~/.config/systemd/user/openxgram-sidecar.service)
@@ -875,12 +878,14 @@ async fn main() -> anyhow::Result<()> {
             data_dir,
             bind,
             reflection_cron,
+            tailscale,
         } => {
             let dir = resolve_data_dir(data_dir)?;
             daemon::run_daemon(DaemonOpts {
                 data_dir: dir,
                 bind_addr: bind,
                 reflection_cron,
+                tailscale,
             })
             .await?;
         }
