@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[lib]
+name = "openxgram_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "xgram"
 path = "src/main.rs"
@@ -23,4 +27,8 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 clap = { workspace = true }
+chrono = { workspace = true }
 hex = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

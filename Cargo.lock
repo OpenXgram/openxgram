@@ -886,6 +886,7 @@ name = "openxgram-cli"
 version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "hex",
  "openxgram-core",
@@ -894,6 +895,7 @@ dependencies = [
  "openxgram-manifest",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
