@@ -102,6 +102,16 @@ fn get_unknown_raises() {
 }
 
 #[test]
+fn derive_runs_without_patterns() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+    // ROUTINE 없음 → 0 도출 OK
+    run_traits(&data_dir, TraitsAction::Derive).unwrap();
+}
+
+#[test]
 fn requires_init_first() {
     let tmp = tempdir().unwrap();
     let err = run_traits(
