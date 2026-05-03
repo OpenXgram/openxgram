@@ -313,6 +313,22 @@ enum Commands {
         action: PaymentCli,
     },
 
+    /// 자체 호스팅 Nostr relay (PRD-NOSTR-06) — 다른 머신과 메시지 중계
+    Relay {
+        /// bind 주소 (default 127.0.0.1)
+        #[arg(long, default_value = "127.0.0.1")]
+        bind: String,
+        /// bind 포트 (default 7400)
+        #[arg(long, default_value_t = openxgram_nostr::DEFAULT_RELAY_PORT)]
+        port: u16,
+        /// NIP-13 PoW 최소 difficulty (0~32)
+        #[arg(long)]
+        min_pow: Option<u8>,
+        /// 동시 연결 제한
+        #[arg(long)]
+        max_connections: Option<usize>,
+    },
+
     /// 쉘 자동 완성 스크립트 출력 (bash/zsh/fish/elvish/powershell)
     Completions {
         #[arg(value_enum)]
@@ -1365,6 +1381,31 @@ async fn main() -> anyhow::Result<()> {
         Commands::Payment { data_dir, action } => {
             let dir = resolve_data_dir(data_dir)?;
             payment::run_payment(&dir, action.into())?;
+        }
+
+        Commands::Relay {
+            bind,
+            port,
+            min_pow,
+            max_connections,
+        } => {
+            let addr: std::net::IpAddr = bind
+                .parse()
+                .map_err(|e| anyhow::anyhow!("invalid bind addr {bind}: {e}"))?;
+            let cfg = openxgram_nostr::RelayConfig {
+                addr,
+                port,
+                min_pow,
+                max_connections,
+            };
+            let relay = openxgram_nostr::NostrRelay::serve(cfg).await?;
+            println!("openxgram relay listening at {}", relay.url());
+            // SIGINT 까지 블록
+            tokio::signal::ctrl_c()
+                .await
+                .map_err(|e| anyhow::anyhow!("ctrl_c handler: {e}"))?;
+            println!("shutting down relay");
+            relay.shutdown();
         }
 
         Commands::Completions { shell } => {

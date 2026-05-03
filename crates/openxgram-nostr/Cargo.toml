@@ -12,6 +12,7 @@ openxgram-core = { path = "../openxgram-core" }
 openxgram-keystore = { path = "../openxgram-keystore" }
 nostr = { version = "0.43", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.43", default-features = false }
+nostr-relay-builder = "0.43"
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
@@ -23,5 +24,4 @@ k256 = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
-nostr-relay-builder = "0.43"
 tokio = { workspace = true }
