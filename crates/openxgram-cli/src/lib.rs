@@ -7,6 +7,7 @@ pub mod daemon;
 pub mod doctor;
 pub mod init;
 pub mod mcp_serve;
+pub mod mcp_tokens;
 pub mod memory;
 pub mod migrate;
 pub mod notify;

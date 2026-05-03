@@ -2657,6 +2657,7 @@ dependencies = [
  "chrono",
  "clap",
  "flate2",
+ "getrandom 0.3.4",
  "hex",
  "k256",
  "openxgram-adapter",
@@ -2671,6 +2672,7 @@ dependencies = [
  "openxgram-vault",
  "ratatui",
  "reqwest 0.13.1",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2",
@@ -2679,6 +2681,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
