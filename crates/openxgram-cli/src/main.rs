@@ -228,6 +228,14 @@ enum Commands {
         bind: Option<std::net::SocketAddr>,
     },
 
+    /// MCP HTTP caller 인증 토큰 관리 (Bearer)
+    McpToken {
+        #[arg(long, global = true)]
+        data_dir: Option<PathBuf>,
+        #[command(subcommand)]
+        action: McpTokenCli,
+    },
+
     /// 암호화 자격증명 vault (PRD §8) — set/get/list/delete
     Vault {
         #[arg(long, global = true)]
@@ -467,6 +475,25 @@ impl From<MemoryCli> for MemoryAction {
             MemoryCli::Unpin { id } => MemoryAction::Unpin { id },
         }
     }
+}
+
+#[derive(Subcommand, Debug)]
+enum McpTokenCli {
+    /// 새 Bearer 토큰 발급 (64자 hex). 평문은 발급 직후 1회만 표시.
+    Create {
+        #[arg(long)]
+        agent: String,
+        /// 마스터 메모용 (예: "claude-code-laptop")
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// 토큰 목록 (평문 노출 안 함)
+    List,
+    /// 토큰 폐기
+    Revoke {
+        #[arg(long)]
+        id: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -986,6 +1013,43 @@ async fn main() -> anyhow::Result<()> {
             match bind {
                 Some(addr) => mcp_serve::run_http_serve(&dir, addr).await?,
                 None => mcp_serve::run_serve(&dir)?,
+            }
+        }
+
+        Commands::McpToken { data_dir, action } => {
+            let dir = resolve_data_dir(data_dir)?;
+            let mut db = openxgram_cli::mcp_tokens::open_db(&dir)?;
+            match action {
+                McpTokenCli::Create { agent, label } => {
+                    let (id, plain) =
+                        openxgram_cli::mcp_tokens::create_token(&mut db, &agent, label.as_deref())?;
+                    println!("✓ MCP 토큰 발급 (이 값은 다시 표시되지 않습니다)");
+                    println!("  id    : {id}");
+                    println!("  agent : {agent}");
+                    println!("  token : {plain}");
+                    println!();
+                    println!("클라이언트 헤더 사용 예: `Authorization: Bearer {plain}`");
+                }
+                McpTokenCli::List => {
+                    let entries = openxgram_cli::mcp_tokens::list_tokens(&mut db)?;
+                    if entries.is_empty() {
+                        println!("MCP 토큰 없음.");
+                    } else {
+                        println!("MCP 토큰 ({})", entries.len());
+                        for e in &entries {
+                            let last = e.last_used.as_deref().unwrap_or("(미사용)");
+                            let label = e.label.as_deref().unwrap_or("");
+                            println!(
+                                "  {} — agent={} label={:?} created={} last_used={}",
+                                e.id, e.agent, label, e.created_at, last
+                            );
+                        }
+                    }
+                }
+                McpTokenCli::Revoke { id } => {
+                    openxgram_cli::mcp_tokens::revoke_token(&mut db, &id)?;
+                    println!("✓ MCP 토큰 폐기: {id}");
+                }
             }
         }
 

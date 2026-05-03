@@ -25,6 +25,8 @@ pub struct OpenxgramDispatcher {
     db: Db,
     /// XGRAM_KEYSTORE_PASSWORD 환경변수가 있으면 저장. vault tools 활성 여부의 키.
     vault_password: Option<String>,
+    /// HTTP transport 측에서 Bearer 토큰 검증 후 주입. None 이면 master 호출 가정.
+    current_agent: Option<String>,
 }
 
 impl OpenxgramDispatcher {
@@ -40,7 +42,27 @@ impl OpenxgramDispatcher {
         .context("DB open 실패")?;
         db.migrate().context("DB migrate 실패")?;
         let vault_password = openxgram_core::env::require_password().ok();
-        Ok(Self { db, vault_password })
+        Ok(Self {
+            db,
+            vault_password,
+            current_agent: None,
+        })
+    }
+
+    pub fn set_current_agent(&mut self, agent: Option<String>) {
+        self.current_agent = agent;
+    }
+
+    /// Bearer 토큰 검증 — 매칭 시 agent 반환. None 이면 폐기/미발급 토큰.
+    pub fn verify_bearer(&mut self, token: &str) -> Result<Option<String>> {
+        crate::mcp_tokens::verify_token(&mut self.db, token)
+    }
+
+    /// 현재 호출자 — Bearer 검증된 agent 또는 fallback master.
+    fn caller_agent(&self) -> &str {
+        self.current_agent
+            .as_deref()
+            .unwrap_or(openxgram_vault::MASTER_AGENT)
     }
 }
 
@@ -196,9 +218,15 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 let key = args
                     .get("key")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| invalid("missing 'key'"))?;
+                    .ok_or_else(|| invalid("missing 'key'"))?
+                    .to_string();
+                let mfa = args
+                    .get("mfa_code")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let agent = self.caller_agent().to_string();
                 let bytes = VaultStore::new(&mut self.db)
-                    .get(key, &pw)
+                    .get_as_authed(&key, &pw, &agent, mfa.as_deref())
                     .map_err(internal)?;
                 let value = std::str::from_utf8(&bytes)
                     .map(str::to_string)
@@ -226,8 +254,13 @@ impl ToolDispatcher for OpenxgramDispatcher {
                             .collect()
                     })
                     .unwrap_or_default();
+                let mfa = args
+                    .get("mfa_code")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let agent = self.caller_agent().to_string();
                 let entry = VaultStore::new(&mut self.db)
-                    .set(&key, value.as_bytes(), &pw, &tags)
+                    .set_as_authed(&key, value.as_bytes(), &pw, &tags, &agent, mfa.as_deref())
                     .map_err(internal)?;
                 Ok(json!({"id": entry.id, "key": entry.key, "tags": entry.tags}))
             }
@@ -274,9 +307,61 @@ pub async fn run_http_serve(data_dir: &Path, addr: std::net::SocketAddr) -> Resu
 
     async fn rpc_handler(
         State(state): State<Arc<Mutex<OpenxgramDispatcher>>>,
+        headers: axum::http::HeaderMap,
         Json(req): Json<JsonRpcRequest>,
     ) -> Json<openxgram_mcp::JsonRpcResponse> {
+        let bearer = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.strip_prefix("Bearer "))
+            .map(str::to_string);
+
         let mut d = state.lock().await;
+        let agent = match bearer.as_deref() {
+            Some(token) => match d.verify_bearer(token) {
+                Ok(Some(a)) => Some(a),
+                Ok(None) => {
+                    // 토큰 형태이나 매칭 없음 — 거부 (master 폴백 X). agent 식별 실패.
+                    return Json(openxgram_mcp::JsonRpcResponse {
+                        jsonrpc: "2.0",
+                        id: req.id,
+                        result: None,
+                        error: Some(openxgram_mcp::JsonRpcError {
+                            code: openxgram_mcp::ERR_INVALID_PARAMS,
+                            message: "invalid bearer token".into(),
+                        }),
+                    });
+                }
+                Err(e) => {
+                    return Json(openxgram_mcp::JsonRpcResponse {
+                        jsonrpc: "2.0",
+                        id: req.id,
+                        result: None,
+                        error: Some(openxgram_mcp::JsonRpcError {
+                            code: openxgram_mcp::ERR_INTERNAL,
+                            message: format!("token verify 실패: {e}"),
+                        }),
+                    });
+                }
+            },
+            None => {
+                // 헤더 없음 → master 폴백 (현재 모드). XGRAM_MCP_REQUIRE_AUTH=1 시 reject.
+                if std::env::var("XGRAM_MCP_REQUIRE_AUTH").as_deref() == Ok("1") {
+                    return Json(openxgram_mcp::JsonRpcResponse {
+                        jsonrpc: "2.0",
+                        id: req.id,
+                        result: None,
+                        error: Some(openxgram_mcp::JsonRpcError {
+                            code: openxgram_mcp::ERR_INVALID_PARAMS,
+                            message: "Authorization Bearer 토큰 필요 (XGRAM_MCP_REQUIRE_AUTH=1)"
+                                .into(),
+                        }),
+                    });
+                }
+                None
+            }
+        };
+        d.set_current_agent(agent);
         Json(handle_request(req, &mut *d))
     }
 
