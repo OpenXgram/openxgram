@@ -20,8 +20,10 @@ use openxgram_core::ports::RPC_PORT;
 use openxgram_core::time::kst_now;
 use openxgram_db::{Db, DbConfig};
 use openxgram_manifest::{detect_drift, InstallManifest};
+use serde::Serialize;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Verdict {
     Ok,
     Warn,
@@ -39,7 +41,7 @@ impl std::fmt::Display for Verdict {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CheckResult {
     pub name: &'static str,
     pub verdict: Verdict,
@@ -51,7 +53,7 @@ pub struct DoctorOpts {
     pub data_dir: PathBuf,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct DoctorReport {
     pub checks: Vec<CheckResult>,
 }
@@ -76,6 +78,17 @@ impl DoctorReport {
         } else {
             0
         }
+    }
+
+    pub fn to_json(&self) -> Result<String> {
+        Ok(serde_json::to_string_pretty(&serde_json::json!({
+            "checks": &self.checks,
+            "summary": {
+                "ok": self.ok_count(),
+                "warn": self.warn_count(),
+                "fail": self.fail_count(),
+            },
+        }))?)
     }
 
     pub fn print(&self) {

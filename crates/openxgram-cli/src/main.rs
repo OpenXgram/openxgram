@@ -67,11 +67,14 @@ enum Commands {
         data_dir: Option<PathBuf>,
     },
 
-    /// 환경 진단을 실행합니다 (Phase 1: manifest·DB·keystore·drift 점검)
+    /// 환경 진단을 실행합니다 (Phase 1: manifest·DB·keystore·drift·transport 점검)
     Doctor {
         /// 데이터 디렉토리 (기본: ~/.openxgram)
         #[arg(long)]
         data_dir: Option<PathBuf>,
+        /// JSON 형식으로 출력 (다른 도구 통합용)
+        #[arg(long)]
+        json: bool,
     },
 
     /// 모든 데이터를 초기화합니다 (Phase 1: --hard, 주의: 복구 불가)
@@ -444,12 +447,16 @@ async fn main() -> anyhow::Result<()> {
             status::run_status(&opts)?;
         }
 
-        Commands::Doctor { data_dir } => {
+        Commands::Doctor { data_dir, json } => {
             let opts = DoctorOpts {
                 data_dir: resolve_data_dir(data_dir)?,
             };
             let report = doctor::run_doctor(&opts)?;
-            report.print();
+            if json {
+                println!("{}", report.to_json()?);
+            } else {
+                report.print();
+            }
             std::process::exit(report.exit_code());
         }
 
