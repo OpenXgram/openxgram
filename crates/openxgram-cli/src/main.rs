@@ -179,6 +179,14 @@ enum SessionCli {
         #[arg(long, default_value_t = 5)]
         k: usize,
     },
+    /// session 통째로 export — JSON text-package-v1 (PRD §17)
+    Export {
+        #[arg(long)]
+        session_id: String,
+        /// 출력 파일 경로 (생략 시 stdout)
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 impl From<SessionCli> for SessionAction {
@@ -198,6 +206,7 @@ impl From<SessionCli> for SessionAction {
             },
             SessionCli::Reflect { session_id } => SessionAction::Reflect { session_id },
             SessionCli::Recall { query, k } => SessionAction::Recall { query, k },
+            SessionCli::Export { session_id, out } => SessionAction::Export { session_id, out },
         }
     }
 }

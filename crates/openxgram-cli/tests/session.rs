@@ -189,6 +189,86 @@ fn recall_empty_db_returns_no_results() {
 }
 
 #[test]
+fn export_roundtrip_via_json() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    use openxgram_core::paths::db_path;
+    use openxgram_db::{Db, DbConfig};
+    use openxgram_memory::{export_session, SessionStore, TextPackage};
+
+    // session + 메시지 2건
+    run_session(
+        &data_dir,
+        SessionAction::New {
+            title: "export-test".into(),
+        },
+    )
+    .unwrap();
+    let mut db = Db::open(DbConfig {
+        path: db_path(&data_dir),
+        ..Default::default()
+    })
+    .unwrap();
+    db.migrate().unwrap();
+    let sid = SessionStore::new(&mut db).list().unwrap()[0].id.clone();
+    drop(db);
+
+    for body in &["첫 메시지", "두번째"] {
+        run_session(
+            &data_dir,
+            SessionAction::Message {
+                session_id: sid.clone(),
+                sender: "0xtest".into(),
+                body: body.to_string(),
+            },
+        )
+        .unwrap();
+    }
+    run_session(
+        &data_dir,
+        SessionAction::Reflect {
+            session_id: sid.clone(),
+        },
+    )
+    .unwrap();
+
+    // export → 파일 저장
+    let out_path = tmp.path().join("export.json");
+    run_session(
+        &data_dir,
+        SessionAction::Export {
+            session_id: sid.clone(),
+            out: Some(out_path.clone()),
+        },
+    )
+    .unwrap();
+
+    // JSON parse round-trip
+    let json = std::fs::read_to_string(&out_path).unwrap();
+    let pkg = TextPackage::from_json(&json).unwrap();
+    assert_eq!(pkg.format, "text-package-v1");
+    assert_eq!(pkg.session.id, sid);
+    assert_eq!(pkg.session.title, "export-test");
+    assert_eq!(pkg.messages.len(), 2);
+    assert_eq!(pkg.messages[0].body, "첫 메시지");
+    assert_eq!(pkg.episodes.len(), 1);
+    assert_eq!(pkg.episodes[0].message_count, 2);
+
+    // 같은 결과를 export_session 직접 호출로도 검증
+    let mut db = Db::open(DbConfig {
+        path: db_path(&data_dir),
+        ..Default::default()
+    })
+    .unwrap();
+    db.migrate().unwrap();
+    let pkg2 = export_session(&mut db, &sid, "test-host").unwrap();
+    assert_eq!(pkg2.messages.len(), pkg.messages.len());
+}
+
+#[test]
 fn show_unknown_session_raises() {
     set_env();
     let tmp = tempdir().unwrap();
