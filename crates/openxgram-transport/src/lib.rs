@@ -64,9 +64,15 @@ pub struct ServerHandle {
 }
 
 impl ServerHandle {
-    /// 지금까지 수신한 모든 envelope (clone).
+    /// 지금까지 수신한 모든 envelope (clone). 큐에서 제거 안 함.
     pub fn received(&self) -> Vec<Envelope> {
         self.received.lock().expect("poisoned").clone()
+    }
+
+    /// 큐를 비우고 모든 envelope 반환. 처리 중 빈 큐 보장.
+    pub fn drain_received(&self) -> Vec<Envelope> {
+        let mut guard = self.received.lock().expect("poisoned");
+        std::mem::take(&mut *guard)
     }
 
     /// 서버 종료 (현재는 task abort — graceful shutdown 은 후속).
