@@ -187,6 +187,12 @@ enum SessionCli {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// text-package-v1 JSON 을 새 session 으로 import (PRD §20 F)
+    Import {
+        /// 입력 파일 경로 (생략 시 stdin)
+        #[arg(long)]
+        input: Option<PathBuf>,
+    },
 }
 
 impl From<SessionCli> for SessionAction {
@@ -207,6 +213,7 @@ impl From<SessionCli> for SessionAction {
             SessionCli::Reflect { session_id } => SessionAction::Reflect { session_id },
             SessionCli::Recall { query, k } => SessionAction::Recall { query, k },
             SessionCli::Export { session_id, out } => SessionAction::Export { session_id, out },
+            SessionCli::Import { input } => SessionAction::Import { input },
         }
     }
 }

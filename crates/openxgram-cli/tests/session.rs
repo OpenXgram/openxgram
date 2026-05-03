@@ -269,6 +269,109 @@ fn export_roundtrip_via_json() {
 }
 
 #[test]
+fn export_then_import_into_fresh_install_preserves_messages() {
+    set_env();
+    use openxgram_core::paths::db_path;
+    use openxgram_db::{Db, DbConfig};
+    use openxgram_memory::SessionStore;
+
+    // 머신 A — export
+    let tmp_a = tempdir().unwrap();
+    let dir_a = tmp_a.path().join("openxgram");
+    let mut o_a = init_opts(dir_a.clone());
+    o_a.alias = "machine-a".into();
+    run_init(&o_a).unwrap();
+
+    run_session(
+        &dir_a,
+        SessionAction::New {
+            title: "transfer-test".into(),
+        },
+    )
+    .unwrap();
+    let mut db_a = Db::open(DbConfig {
+        path: db_path(&dir_a),
+        ..Default::default()
+    })
+    .unwrap();
+    db_a.migrate().unwrap();
+    let sid_a = SessionStore::new(&mut db_a).list().unwrap()[0].id.clone();
+    drop(db_a);
+
+    for body in &["alpha", "beta", "gamma"] {
+        run_session(
+            &dir_a,
+            SessionAction::Message {
+                session_id: sid_a.clone(),
+                sender: "0xtest".into(),
+                body: body.to_string(),
+            },
+        )
+        .unwrap();
+    }
+    run_session(
+        &dir_a,
+        SessionAction::Reflect {
+            session_id: sid_a.clone(),
+        },
+    )
+    .unwrap();
+
+    let pkg_path = tmp_a.path().join("pkg.json");
+    run_session(
+        &dir_a,
+        SessionAction::Export {
+            session_id: sid_a.clone(),
+            out: Some(pkg_path.clone()),
+        },
+    )
+    .unwrap();
+
+    // 머신 B — import (별도 data_dir)
+    let tmp_b = tempdir().unwrap();
+    let dir_b = tmp_b.path().join("openxgram");
+    let mut o_b = init_opts(dir_b.clone());
+    o_b.alias = "machine-b".into();
+    run_init(&o_b).unwrap();
+
+    run_session(
+        &dir_b,
+        SessionAction::Import {
+            input: Some(pkg_path),
+        },
+    )
+    .unwrap();
+
+    // 검증: 머신 B 에 새 session 이 1개 + 메시지 3개
+    let mut db_b = Db::open(DbConfig {
+        path: db_path(&dir_b),
+        ..Default::default()
+    })
+    .unwrap();
+    db_b.migrate().unwrap();
+    let sessions_b = SessionStore::new(&mut db_b).list().unwrap();
+    assert_eq!(sessions_b.len(), 1);
+    assert_eq!(sessions_b[0].title, "transfer-test");
+
+    use openxgram_memory::{DummyEmbedder, EpisodeStore, MessageStore};
+    let sid_b = sessions_b[0].id.clone();
+    let embedder = DummyEmbedder;
+    let messages_b = MessageStore::new(&mut db_b, &embedder)
+        .list_for_session(&sid_b)
+        .unwrap();
+    assert_eq!(messages_b.len(), 3);
+    let bodies: Vec<&str> = messages_b.iter().map(|m| m.body.as_str()).collect();
+    assert!(bodies.contains(&"alpha"));
+    assert!(bodies.contains(&"beta"));
+    assert!(bodies.contains(&"gamma"));
+
+    let episodes_b = EpisodeStore::new(&mut db_b)
+        .list_for_session(&sid_b)
+        .unwrap();
+    assert_eq!(episodes_b.len(), 1);
+}
+
+#[test]
 fn show_unknown_session_raises() {
     set_env();
     let tmp = tempdir().unwrap();

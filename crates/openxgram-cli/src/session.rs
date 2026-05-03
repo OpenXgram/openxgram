@@ -9,7 +9,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use openxgram_core::paths::db_path;
 use openxgram_db::{Db, DbConfig};
 use openxgram_memory::{
-    export_session, reflect_session, DummyEmbedder, EpisodeStore, MessageStore, SessionStore,
+    export_session, import_session, reflect_session, DummyEmbedder, EpisodeStore, MessageStore,
+    SessionStore, TextPackage,
 };
 
 #[derive(Debug, Clone)]
@@ -21,6 +22,7 @@ pub enum SessionAction {
     Reflect { session_id: String },
     Recall { query: String, k: usize },
     Export { session_id: String, out: Option<std::path::PathBuf> },
+    Import { input: Option<std::path::PathBuf> },
 }
 
 pub fn run_session(data_dir: &Path, action: SessionAction) -> Result<()> {
@@ -37,6 +39,7 @@ pub fn run_session(data_dir: &Path, action: SessionAction) -> Result<()> {
         SessionAction::Reflect { session_id } => cmd_reflect(&mut db, &session_id),
         SessionAction::Recall { query, k } => cmd_recall(&mut db, &query, k),
         SessionAction::Export { session_id, out } => cmd_export(&mut db, &session_id, out.as_deref()),
+        SessionAction::Import { input } => cmd_import(&mut db, input.as_deref()),
     }
 }
 
@@ -162,6 +165,30 @@ fn cmd_export(
             println!("{json}");
         }
     }
+    Ok(())
+}
+
+fn cmd_import(db: &mut Db, input: Option<&Path>) -> Result<()> {
+    use std::io::Read;
+    let json = match input {
+        Some(p) => std::fs::read_to_string(p)
+            .with_context(|| format!("입력 파일 읽기 실패: {}", p.display()))?,
+        None => {
+            let mut buf = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .context("stdin 읽기 실패")?;
+            buf
+        }
+    };
+    let pkg = TextPackage::from_json(&json)?;
+    let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".into());
+    let summary = import_session(db, &pkg, &host)?;
+    println!("✓ session import 완료");
+    println!("  new session id    : {}", summary.session_id);
+    println!("  messages_inserted : {}", summary.messages_inserted);
+    println!("  episodes_inserted : {}", summary.episodes_inserted);
+    println!("  memories_inserted : {}", summary.memories_inserted);
     Ok(())
 }
 

@@ -22,7 +22,7 @@ pub use memory::{Memory, MemoryKind, MemoryStore};
 pub use message::{Message, MessageStore, RecallHit};
 pub use session::{Session, SessionStore};
 pub use stats::{store_stats, StoreStats};
-pub use transfer::{export_session, TextPackage};
+pub use transfer::{export_session, import_session, ImportSummary, TextPackage};
 
 use thiserror::Error;
 
