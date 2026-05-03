@@ -222,10 +222,10 @@ cross-network 메시징 출시 전 반드시 해결.
 
 ### 2.6 PRD-NOSTR-06 self-host relay
 
-- [ ] 2.6.1 nostr-relay-builder dep
-- [ ] 2.6.2 `xgram relay serve` 명령 + bind addr (default :7400)
-- [ ] 2.6.3 NIP-13 PoW anti-spam
-- [ ] 2.6.4 통합 테스트 (자체 relay 띄우기 + publish + subscribe)
+- [x] 2.6.1 nostr-relay-builder dep (main 의존성)
+- [x] 2.6.2 `xgram relay serve` 명령 + bind addr (default 127.0.0.1:7400)
+- [x] 2.6.3 NIP-13 PoW anti-spam (--min-pow 옵션)
+- [x] 2.6.4 통합 테스트 (serve_localhost_random_port_publish_round_trip)
 
 ### 2.7 PRD-NOSTR-07 peer scheme 인식
 

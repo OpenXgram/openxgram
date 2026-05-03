@@ -22,9 +22,11 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 mod ratchet;
+mod relay;
 mod sink;
 mod source;
 pub use ratchet::{Ratchet, RatchetKey};
+pub use relay::{NostrRelay, RelayConfig, DEFAULT_RELAY_PORT};
 pub use sink::NostrSink;
 pub use source::NostrSource;
 
