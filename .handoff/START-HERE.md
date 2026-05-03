@@ -81,3 +81,29 @@ D+A를 Pip에게 동시 요청 → B → C → E 순으로 진행.
 위 1번 파일들 읽은 후 마스터에게 한 줄:
 
 "컨텍스트 흡수 완료. {다음 작업} 시작합니다."
+
+---
+
+## 8. 이미 기동 중인 claude 세션에 컨텍스트만 주입할 때
+
+새 세션 시작이 아니라 이미 떠 있는 claude에 컨텍스트만 넣고 싶을 때:
+
+방법 A — 짧은 명령:
+  claude 입력창에 다음 한 줄:
+  > @.handoff/INJECT.md 읽고 그대로 실행
+
+방법 B — 클립보드 자동 복사:
+  $ ./.handoff/inject.sh
+  클립보드에 컨텍스트 주입 프롬프트 복사됨
+  -> claude 창으로 가서 Cmd+V -> 엔터
+
+방법 C — alias 등록 (편의):
+  ~/.bashrc 또는 ~/.zshrc에:
+  alias xginject='/home/llm/projects/openxgram/.handoff/inject.sh'
+
+  사용:
+  $ xginject  # 어디서든 복사
+  -> claude 창에 Cmd+V
+
+이 방법은 OpenXgram MVP가 자동화할 작업의 1차 수동 시뮬레이션.
+Phase 1 완성 후엔: $ xgram session push --to claude-current

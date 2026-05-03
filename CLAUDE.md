@@ -1,4 +1,5 @@
 > **새 세션 시작 시**: `.handoff/START-HERE.md` 먼저 읽기. 7시간 토론 컨텍스트가 자동 복원됨.
+> **이미 기동 중인 claude에 컨텍스트만 주입**: `@.handoff/INJECT.md 읽고 그대로 실행` 한 줄
 
 # OpenXgram — 에이전트 작업 지침
 
