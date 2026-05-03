@@ -1738,6 +1738,7 @@ dependencies = [
  "clap",
  "flate2",
  "hex",
+ "openxgram-adapter",
  "openxgram-core",
  "openxgram-db",
  "openxgram-keystore",
@@ -1815,6 +1816,16 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "openxgram-mcp"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]
