@@ -27,11 +27,13 @@ fn doctor_opts(data_dir: PathBuf) -> DoctorOpts {
 fn set_env() {
     unsafe {
         std::env::set_var("XGRAM_KEYSTORE_PASSWORD", TEST_PASSWORD);
+        std::env::set_var("XGRAM_SKIP_PORT_PRECHECK", "1");
         std::env::remove_var("XGRAM_SEED");
     }
 }
 
 #[test]
+#[serial_test::file_serial]
 fn doctor_after_fresh_init_all_ok() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -54,6 +56,7 @@ fn doctor_after_fresh_init_all_ok() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn doctor_without_install_returns_fail() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -66,6 +69,7 @@ fn doctor_without_install_returns_fail() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn doctor_detects_corrupted_db() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -92,6 +96,7 @@ fn doctor_detects_corrupted_db() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn doctor_to_json_is_parseable() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -109,6 +114,7 @@ fn doctor_to_json_is_parseable() {
 
 #[cfg(unix)]
 #[test]
+#[serial_test::file_serial]
 fn doctor_warns_on_wrong_keystore_mode() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -131,6 +137,7 @@ fn doctor_warns_on_wrong_keystore_mode() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn doctor_reports_memory_layer_counts() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -153,6 +160,7 @@ fn doctor_reports_memory_layer_counts() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn doctor_reports_vault_layer_counts() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -172,6 +180,7 @@ fn doctor_reports_vault_layer_counts() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn doctor_includes_tailscale_check() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -188,6 +197,7 @@ fn doctor_includes_tailscale_check() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn doctor_includes_embedder_mode_check() {
     set_env();
     let tmp = tempdir().unwrap();

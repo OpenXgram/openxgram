@@ -22,11 +22,13 @@ fn init_opts(data_dir: PathBuf) -> InitOpts {
 fn set_env() {
     unsafe {
         std::env::set_var("XGRAM_KEYSTORE_PASSWORD", "test-password-12345");
+        std::env::set_var("XGRAM_SKIP_PORT_PRECHECK", "1");
         std::env::remove_var("XGRAM_SEED");
     }
 }
 
 #[test]
+#[serial_test::file_serial]
 fn observe_then_list_classifies_by_frequency() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -87,6 +89,7 @@ fn observe_then_list_classifies_by_frequency() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn list_empty_classification_ok() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -103,6 +106,7 @@ fn list_empty_classification_ok() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn requires_init_first() {
     let tmp = tempdir().unwrap();
     let err = run_patterns(

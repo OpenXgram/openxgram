@@ -25,6 +25,7 @@ fn enter_text(state: WizardState, text: &str) -> WizardState {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn welcome_to_done_via_full_9_steps() {
     let mut state = WizardState::initial();
     assert_eq!(state, WizardState::Welcome);
@@ -73,6 +74,7 @@ fn welcome_to_done_via_full_9_steps() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn welcome_esc_cancels() {
     let state = WizardState::initial().handle(KeyCode::Esc);
     assert_eq!(state, WizardState::Cancelled);
@@ -80,12 +82,14 @@ fn welcome_esc_cancels() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn welcome_q_cancels() {
     let state = WizardState::initial().handle(KeyCode::Char('q'));
     assert_eq!(state, WizardState::Cancelled);
 }
 
 #[test]
+#[serial_test::file_serial]
 fn alias_empty_does_not_advance() {
     let state = WizardState::initial()
         .handle(KeyCode::Enter)
@@ -94,6 +98,7 @@ fn alias_empty_does_not_advance() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn alias_backspace_removes_char() {
     let state =
         enter_text(WizardState::initial().handle(KeyCode::Enter), "abc").handle(KeyCode::Backspace);
@@ -105,6 +110,7 @@ fn alias_backspace_removes_char() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn alias_esc_returns_to_welcome() {
     let state = WizardState::initial()
         .handle(KeyCode::Enter)
@@ -114,6 +120,7 @@ fn alias_esc_returns_to_welcome() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn role_keys_select_correctly() {
     let mut state =
         enter_text(WizardState::initial().handle(KeyCode::Enter), "a").handle(KeyCode::Enter);
@@ -132,6 +139,7 @@ fn role_keys_select_correctly() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn adapter_toggle_d_t() {
     // Welcome → Alias → Role → DataDir → SeedMode → Adapter
     let state = enter_text(WizardState::initial().handle(KeyCode::Enter), "a")
@@ -151,6 +159,7 @@ fn adapter_toggle_d_t() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn confirm_back_returns_to_backup_preserving_cfg() {
     // 끝까지 가서 Confirm 도달 후 b → Backup, cfg 보존
     let mut state = WizardState::initial().handle(KeyCode::Enter);
@@ -174,6 +183,7 @@ fn confirm_back_returns_to_backup_preserving_cfg() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn render_each_state_shows_step_marker() {
     let cfg = WizardConfig {
         alias: "test".into(),
@@ -204,6 +214,7 @@ fn render_each_state_shows_step_marker() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn render_done_includes_init_command_and_optional_steps() {
     let mut cfg = WizardConfig {
         alias: "gcp-main".into(),

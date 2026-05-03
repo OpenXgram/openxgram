@@ -23,11 +23,13 @@ fn init_opts(data_dir: PathBuf) -> InitOpts {
 fn set_env() {
     unsafe {
         std::env::set_var("XGRAM_KEYSTORE_PASSWORD", TEST_PASSWORD);
+        std::env::set_var("XGRAM_SKIP_PORT_PRECHECK", "1");
         std::env::remove_var("XGRAM_SEED");
     }
 }
 
 #[test]
+#[serial_test::file_serial]
 fn session_requires_init_first() {
     let tmp = tempdir().unwrap();
     let data_dir = tmp.path().join("absent");
@@ -36,6 +38,7 @@ fn session_requires_init_first() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn full_flow_new_message_reflect_show() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -96,6 +99,7 @@ fn full_flow_new_message_reflect_show() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn message_to_unknown_session_raises() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -115,6 +119,7 @@ fn message_to_unknown_session_raises() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn recall_returns_results_after_messages() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -166,6 +171,7 @@ fn recall_returns_results_after_messages() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn recall_empty_db_returns_no_results() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -183,6 +189,7 @@ fn recall_empty_db_returns_no_results() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn export_roundtrip_via_json() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -263,6 +270,7 @@ fn export_roundtrip_via_json() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn export_then_import_into_fresh_install_preserves_messages() {
     set_env();
     use openxgram_core::paths::db_path;
@@ -367,6 +375,7 @@ fn export_then_import_into_fresh_install_preserves_messages() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn delete_session_cascades_messages() {
     set_env();
     use openxgram_core::paths::db_path;
@@ -426,6 +435,7 @@ fn delete_session_cascades_messages() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn delete_unknown_session_raises() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -442,6 +452,7 @@ fn delete_unknown_session_raises() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn reflect_all_processes_multiple_sessions() {
     set_env();
     use openxgram_core::paths::db_path;
@@ -503,6 +514,7 @@ fn reflect_all_processes_multiple_sessions() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn export_with_password_includes_master_public_key_and_verify_passes() {
     set_env();
     use openxgram_core::paths::db_path;
@@ -576,6 +588,7 @@ fn export_with_password_includes_master_public_key_and_verify_passes() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn import_verify_fails_when_master_public_key_missing() {
     set_env();
     use openxgram_memory::TextPackage;
@@ -619,6 +632,7 @@ fn import_verify_fails_when_master_public_key_missing() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn show_unknown_session_raises() {
     set_env();
     let tmp = tempdir().unwrap();
