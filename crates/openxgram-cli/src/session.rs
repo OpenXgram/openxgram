@@ -24,7 +24,7 @@ pub enum SessionAction {
     Reflect { session_id: String },
     Recall { query: String, k: usize },
     Export { session_id: String, out: Option<std::path::PathBuf> },
-    Import { input: Option<std::path::PathBuf> },
+    Import { input: Option<std::path::PathBuf>, verify: bool },
     Delete { id: String },
     ReflectAll,
 }
@@ -42,8 +42,10 @@ pub fn run_session(data_dir: &Path, action: SessionAction) -> Result<()> {
         } => cmd_message(&mut db, data_dir, &session_id, &sender, &body),
         SessionAction::Reflect { session_id } => cmd_reflect(&mut db, &session_id),
         SessionAction::Recall { query, k } => cmd_recall(&mut db, &query, k),
-        SessionAction::Export { session_id, out } => cmd_export(&mut db, &session_id, out.as_deref()),
-        SessionAction::Import { input } => cmd_import(&mut db, input.as_deref()),
+        SessionAction::Export { session_id, out } => {
+            cmd_export(&mut db, data_dir, &session_id, out.as_deref())
+        }
+        SessionAction::Import { input, verify } => cmd_import(&mut db, input.as_deref(), verify),
         SessionAction::Delete { id } => cmd_delete(&mut db, &id),
         SessionAction::ReflectAll => cmd_reflect_all(&mut db),
     }
@@ -185,11 +187,21 @@ fn cmd_recall(db: &mut Db, query: &str, k: usize) -> Result<()> {
 
 fn cmd_export(
     db: &mut Db,
+    data_dir: &Path,
     session_id: &str,
     out: Option<&Path>,
 ) -> Result<()> {
     let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".into());
-    let pkg = export_session(db, session_id, &host)?;
+    // 환경변수 패스워드가 있으면 master public key 동봉 — 수신측이 검증 가능.
+    let master_pk_hex = std::env::var(openxgram_core::env::PASSWORD_ENV)
+        .ok()
+        .and_then(|pw| {
+            let ks = FsKeystore::new(keystore_dir(data_dir));
+            ks.load(MASTER_KEY_NAME, &pw)
+                .ok()
+                .map(|kp| hex::encode(kp.public_key_bytes()))
+        });
+    let pkg = export_session(db, session_id, &host, master_pk_hex)?;
     let json = pkg.to_json()?;
     match out {
         Some(p) => {
@@ -206,7 +218,7 @@ fn cmd_export(
     Ok(())
 }
 
-fn cmd_import(db: &mut Db, input: Option<&Path>) -> Result<()> {
+fn cmd_import(db: &mut Db, input: Option<&Path>, verify: bool) -> Result<()> {
     use std::io::Read;
     let json = match input {
         Some(p) => std::fs::read_to_string(p)
@@ -220,6 +232,12 @@ fn cmd_import(db: &mut Db, input: Option<&Path>) -> Result<()> {
         }
     };
     let pkg = TextPackage::from_json(&json)?;
+
+    if verify {
+        verify_package_signatures(&pkg)?;
+        println!("✓ {} 메시지 signature 모두 검증 통과", pkg.messages.len());
+    }
+
     let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".into());
     let summary = import_session(db, &pkg, &host)?;
     println!("✓ session import 완료");
@@ -227,6 +245,28 @@ fn cmd_import(db: &mut Db, input: Option<&Path>) -> Result<()> {
     println!("  messages_inserted : {}", summary.messages_inserted);
     println!("  episodes_inserted : {}", summary.episodes_inserted);
     println!("  memories_inserted : {}", summary.memories_inserted);
+    Ok(())
+}
+
+fn verify_package_signatures(pkg: &TextPackage) -> Result<()> {
+    use k256::ecdsa::{signature::Verifier, Signature, VerifyingKey};
+
+    let pk_hex = pkg
+        .master_public_key
+        .as_deref()
+        .ok_or_else(|| anyhow!("패키지에 master_public_key 없음 — 검증 불가"))?;
+    let pk_bytes = hex::decode(pk_hex).context("master_public_key hex decode 실패")?;
+    let vk = VerifyingKey::from_sec1_bytes(&pk_bytes)
+        .map_err(|_| anyhow!("master_public_key 형식 오류 (33B SEC1 압축 기대)"))?;
+
+    for msg in &pkg.messages {
+        let sig_bytes = hex::decode(&msg.signature)
+            .with_context(|| format!("msg {} signature hex decode 실패", msg.id))?;
+        let sig = Signature::from_slice(&sig_bytes)
+            .map_err(|_| anyhow!("msg {} signature 형식 오류", msg.id))?;
+        vk.verify(msg.body.as_bytes(), &sig)
+            .map_err(|_| anyhow!("msg {} signature 불일치", msg.id))?;
+    }
     Ok(())
 }
 

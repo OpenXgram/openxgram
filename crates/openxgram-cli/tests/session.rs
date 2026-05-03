@@ -264,7 +264,7 @@ fn export_roundtrip_via_json() {
     })
     .unwrap();
     db.migrate().unwrap();
-    let pkg2 = export_session(&mut db, &sid, "test-host").unwrap();
+    let pkg2 = export_session(&mut db, &sid, "test-host", None).unwrap();
     assert_eq!(pkg2.messages.len(), pkg.messages.len());
 }
 
@@ -338,6 +338,7 @@ fn export_then_import_into_fresh_install_preserves_messages() {
         &dir_b,
         SessionAction::Import {
             input: Some(pkg_path),
+            verify: false,
         },
     )
     .unwrap();
@@ -506,6 +507,119 @@ fn reflect_all_processes_multiple_sessions() {
         let eps = EpisodeStore::new(&mut db).list_for_session(sid).unwrap();
         assert_eq!(eps.len(), 1);
     }
+}
+
+#[test]
+fn export_with_password_includes_master_public_key_and_verify_passes() {
+    set_env();
+    use openxgram_core::paths::db_path;
+    use openxgram_db::{Db, DbConfig};
+    use openxgram_memory::{SessionStore, TextPackage};
+
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    run_session(
+        &data_dir,
+        SessionAction::New {
+            title: "verify-test".into(),
+        },
+    )
+    .unwrap();
+    let mut db = Db::open(DbConfig {
+        path: db_path(&data_dir),
+        ..Default::default()
+    })
+    .unwrap();
+    db.migrate().unwrap();
+    let sid = SessionStore::new(&mut db).list().unwrap()[0].id.clone();
+    drop(db);
+
+    for body in &["alpha", "beta"] {
+        run_session(
+            &data_dir,
+            SessionAction::Message {
+                session_id: sid.clone(),
+                sender: "0xtest".into(),
+                body: body.to_string(),
+            },
+        )
+        .unwrap();
+    }
+
+    let pkg_path = tmp.path().join("pkg.json");
+    run_session(
+        &data_dir,
+        SessionAction::Export {
+            session_id: sid,
+            out: Some(pkg_path.clone()),
+        },
+    )
+    .unwrap();
+
+    let json = std::fs::read_to_string(&pkg_path).unwrap();
+    let pkg = TextPackage::from_json(&json).unwrap();
+    assert!(pkg.master_public_key.is_some(), "패스워드 환경 → public key 동봉");
+
+    // 머신 B 에서 --verify import
+    let tmp_b = tempdir().unwrap();
+    let dir_b = tmp_b.path().join("openxgram");
+    let mut o_b = init_opts(dir_b.clone());
+    o_b.alias = "machine-b".into();
+    run_init(&o_b).unwrap();
+
+    run_session(
+        &dir_b,
+        SessionAction::Import {
+            input: Some(pkg_path),
+            verify: true,
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn import_verify_fails_when_master_public_key_missing() {
+    set_env();
+    use openxgram_memory::TextPackage;
+
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    // 패스워드 없이 export 한 상태를 시뮬레이션 — master_public_key None 인 패키지
+    let pkg = TextPackage {
+        format: "text-package-v1".into(),
+        exported_at: chrono::Utc::now()
+            .with_timezone(&chrono::FixedOffset::east_opt(9 * 3600).unwrap()),
+        source_machine: "x".into(),
+        session: openxgram_memory::transfer::PkgSession {
+            id: "s".into(),
+            title: "t".into(),
+            created_at: chrono::Utc::now()
+                .with_timezone(&chrono::FixedOffset::east_opt(9 * 3600).unwrap()),
+            last_active: chrono::Utc::now()
+                .with_timezone(&chrono::FixedOffset::east_opt(9 * 3600).unwrap()),
+            home_machine: "x".into(),
+        },
+        messages: vec![],
+        episodes: vec![],
+        memories: vec![],
+        master_public_key: None,
+    };
+    let pkg_path = tmp.path().join("nopk.json");
+    std::fs::write(&pkg_path, pkg.to_json().unwrap()).unwrap();
+
+    let err = run_session(
+        &data_dir,
+        SessionAction::Import {
+            input: Some(pkg_path),
+            verify: true,
+        },
+    )
+    .unwrap_err();
+    assert!(format!("{err:#}").contains("master_public_key"));
 }
 
 #[test]
