@@ -11,7 +11,7 @@ use openxgram_core::paths::{db_path, keystore_dir, MASTER_KEY_NAME};
 use openxgram_db::{Db, DbConfig};
 use openxgram_keystore::{FsKeystore, Keystore};
 use openxgram_memory::{
-    export_session, import_session, reflect_all, reflect_session, DummyEmbedder, EpisodeStore,
+    default_embedder, export_session, import_session, reflect_all, reflect_session, EpisodeStore,
     MessageStore, SessionStore, TextPackage,
 };
 
@@ -152,8 +152,8 @@ fn cmd_message(
         .context("master 키 로드 실패 — keystore 패스워드 확인")?;
     let signature_hex = hex::encode(kp.sign(body.as_bytes()));
 
-    let embedder = DummyEmbedder;
-    let msg = MessageStore::new(db, &embedder).insert(session_id, sender, body, &signature_hex)?;
+    let embedder = default_embedder()?;
+    let msg = MessageStore::new(db, embedder.as_ref()).insert(session_id, sender, body, &signature_hex)?;
     println!("✓ 메시지 저장 (서명: secp256k1 ECDSA, master)");
     println!("  id        : {}", msg.id);
     println!("  session   : {}", msg.session_id);
@@ -164,8 +164,8 @@ fn cmd_message(
 }
 
 fn cmd_recall(db: &mut Db, query: &str, k: usize) -> Result<()> {
-    let embedder = DummyEmbedder;
-    let hits = MessageStore::new(db, &embedder).recall_top_k(query, k)?;
+    let embedder = default_embedder()?;
+    let hits = MessageStore::new(db, embedder.as_ref()).recall_top_k(query, k)?;
     if hits.is_empty() {
         println!("일치하는 메시지 없음.");
         return Ok(());
