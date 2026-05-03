@@ -303,6 +303,9 @@ L0  messages  ← 원시 메시지 + 임베딩 + 서명
 - 시간대 KST: 모든 타임스탬프 Asia/Seoul 기준
 - 표 사용 금지: 보고서·문서 모두 목록으로
 - 서브에이전트 디스코드 가시성: 작업 시작·완료 시 디스코드 보고 필수
+- 라이선스: MIT
+- 오픈소스: private (MVP 완료 후 public)
+- 데이터 디렉토리: `~/.openxgram/` (변경 불가. 마스터 결정 2026-04-30)
 
 ---
 
@@ -356,12 +359,11 @@ L0  messages  ← 원시 메시지 + 임베딩 + 서명
 추출 형식 4종:
 - Text Package (Markdown + JSON 본체) — 토론·검토용
 - 단일 파일 (.md / .json / .yaml) — 첨부·아카이브
-- 코드 추출 (.py / .ts / .sql / .nginx / .conf) — 결정·설정 → 실행 코드
+- 코드 추출 (.py / .ts / .sql / .nginx / .conf) — 결정·설정 → 실행 코드. LLM 어댑터 패턴(Gemini/Claude/OpenAI/Ollama/Template) 사용자 선택. 마스터 결정 2026-04-30.
 - Webhook Payload — 자동 송수신용 (서명 + 타임스탬프)
 
-전송 통로 4종:
+전송 통로 3종 (이메일 영구 제외. 마스터 결정 2026-04-30):
 - 클립보드 (수동, 가장 빠름)
-- 이메일 (SMTP)
 - Telegram (@starianbot 1:1)
 - Discord (봇 + Webhook, 이미 운영 중 12+ 채널)
 
@@ -402,9 +404,13 @@ L0  messages  ← 원시 메시지 + 임베딩 + 서명
 - 사이드카가 만든 것만 사이드카가 책임 (managed vs unmanaged)
 - install-manifest.json 시드 서명으로 무결성 보장
 - 셸 통합·외부 리소스도 정확히 추적·정리
-- 흔적 0건 검증
+- 흔적 0건 검증 (홈 기본, `--scan-system`으로 전체 확장. 마스터 결정 2026-04-30)
 - Idempotent: 여러 번 실행해도 안전
 - 마스터 메모리 규칙 적용: fallback 금지, 롤백 가능 후 승인
+- OS 등록: 대화형 `[Y/n]`, 기본 Y (마스터 결정 2026-04-30)
+- BIP39: 24단어 표시 + Y/N 확인 + 재입력 권장 (마스터 결정 2026-04-30)
+- trash: Rust `trash` 크레이트 (크로스 OS, 마스터 결정 2026-04-30)
+- sync 인증: Tailscale mTLS + 시드 서명 이중 방어 (마스터 결정 2026-04-30)
 
 명령:
 - `xgram init` — 대화형 설치 9단계
@@ -415,8 +421,9 @@ L0  messages  ← 원시 메시지 + 임베딩 + 서명
 - `xgram uninstall` — 제거 (백업 옵션 4종)
 
 설치 매니페스트:
-- 위치: `~/.starian/install-manifest.json`
+- 위치: **`~/.openxgram/install-manifest.json`** (마스터 결정 2026-04-30)
 - 생성된 모든 항목 추적: 파일·디렉토리·서비스·바이너리·셸 통합·외부 리소스·키페어·포트·OS 키체인
+- 신규 필드: `selected_extractors`, `inbound_webhook_port` (14921), `backup_schedule` (기본 null)
 
 제거 백업 옵션 4종:
 - Full backup: 다른 사이드카로 sync
@@ -506,7 +513,7 @@ L0  messages  ← 원시 메시지 + 임베딩 + 서명
 
 1. `xgram init` 실행 → 9단계 완료 → 서비스 등록·파일 생성·셸 통합 모두 완료
 2. `xgram uninstall` 실행 → "DELETE OPENXGRAM" 입력 확인 → 역순 정리
-3. find 패턴으로 흔적 검사: `~/.xgram`, `~/.starian`, 셸 rc 파일, systemd/launchd 등록 여부
+3. find 패턴으로 흔적 검사: `~/.xgram`, `~/.openxgram`, 셸 rc 파일, systemd/launchd 등록 여부
 4. 기대: 흔적 0건. manifest에 기록된 항목 전부 정리 완료. 셸 rc에 마커 블록 없음.
 
 ### 시나리오 I — install → reset --hard → 즉시 재사용
