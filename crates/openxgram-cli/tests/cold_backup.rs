@@ -125,6 +125,58 @@ fn uninstall_rejects_neither_backup_option() {
 }
 
 #[test]
+fn restore_round_trip_after_uninstall() {
+    use openxgram_cli::backup::restore_cold_backup;
+    use openxgram_core::paths::manifest_path;
+
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    let backup_path = tmp.path().join("snap.enc");
+    let restore_dir = tmp.path().join("restored");
+
+    // init → cold-backup uninstall → 디렉토리 사라짐
+    run_init(&init_opts(data_dir.clone())).unwrap();
+    let manifest_before = std::fs::read(manifest_path(&data_dir)).unwrap();
+    run_uninstall(&UninstallOpts {
+        data_dir: data_dir.clone(),
+        cold_backup_to: Some(backup_path.clone()),
+        no_backup: false,
+        confirm: None,
+        dry_run: false,
+    })
+    .unwrap();
+    assert!(!data_dir.exists());
+
+    // restore → 새 위치에 복원
+    let info = restore_cold_backup(&backup_path, &restore_dir, TEST_PASSWORD).unwrap();
+    assert_eq!(info.target_dir, restore_dir);
+    assert!(restore_dir.join("install-manifest.json").exists());
+    assert!(restore_dir.join("db.sqlite").exists());
+    assert!(restore_dir.join("keystore").join("master.json").exists());
+
+    // manifest 내용 동일
+    let manifest_after = std::fs::read(manifest_path(&restore_dir)).unwrap();
+    assert_eq!(manifest_before, manifest_after);
+}
+
+#[test]
+fn restore_into_nonempty_dir_raises() {
+    use openxgram_cli::backup::restore_cold_backup;
+
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+    let backup_path = tmp.path().join("snap.enc");
+    create_cold_backup(&data_dir, &backup_path, TEST_PASSWORD).unwrap();
+
+    // 비어있지 않은 디렉토리 (data_dir 자체) 로 복원 시도 → raise
+    let err = restore_cold_backup(&backup_path, &data_dir, TEST_PASSWORD).unwrap_err();
+    assert!(format!("{err:#}").contains("비어있지 않음"));
+}
+
+#[test]
 fn cold_backup_decrypt_with_wrong_password_fails() {
     set_env();
     let tmp = tempdir().unwrap();

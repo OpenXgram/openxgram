@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use openxgram_cli::backup::restore_cold_backup;
 use openxgram_cli::daemon::{self, DaemonOpts};
 use openxgram_cli::doctor::{self, DoctorOpts};
 use openxgram_cli::init::{self, InitOpts};
@@ -165,6 +166,16 @@ enum Commands {
 
     /// 인터랙티브 init 마법사 (state machine — Welcome/MachineId/Confirm/Done)
     Wizard,
+
+    /// cold backup 파일 복원 — ChaCha20-Poly1305 복호화 + tar.gz 해제
+    Restore {
+        /// 백업 파일 경로
+        #[arg(long)]
+        input: PathBuf,
+        /// 복원 대상 데이터 디렉토리 (기본: ~/.openxgram, 비어있어야 함)
+        #[arg(long)]
+        target_dir: Option<PathBuf>,
+    },
 
     /// 인터랙티브 TUI (welcome + status)
     Tui {
@@ -549,6 +560,16 @@ async fn main() -> anyhow::Result<()> {
                     println!("취소됨.");
                 }
             }
+        }
+
+        Commands::Restore { input, target_dir } => {
+            let dir = resolve_data_dir(target_dir)?;
+            let pw = openxgram_core::env::require_password()?;
+            let info = restore_cold_backup(&input, &dir, &pw)?;
+            println!("✓ cold backup 복원 완료");
+            println!("  source       : {}", input.display());
+            println!("  target_dir   : {}", info.target_dir.display());
+            println!("  bytes_restored: {}", info.bytes_restored);
         }
 
         Commands::Tui { data_dir } => {
