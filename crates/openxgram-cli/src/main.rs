@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use openxgram_cli::doctor::{self, DoctorOpts};
 use openxgram_cli::init::{self, InitOpts};
+use openxgram_cli::reset::{self, ResetOpts};
+use openxgram_cli::status::{self, StatusOpts};
 use openxgram_cli::uninstall::{self, UninstallOpts};
 use openxgram_keystore::{FsKeystore, Keystore};
 use openxgram_manifest::MachineRole;
@@ -52,8 +54,12 @@ enum Commands {
         import: bool,
     },
 
-    /// 현재 OpenXgram 상태를 출력합니다
-    Status,
+    /// 현재 OpenXgram 상태를 출력합니다 (manifest 기반)
+    Status {
+        /// 데이터 디렉토리 (기본: ~/.openxgram)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
 
     /// 환경 진단을 실행합니다 (Phase 1: manifest·DB·keystore·drift 점검)
     Doctor {
@@ -62,11 +68,20 @@ enum Commands {
         data_dir: Option<PathBuf>,
     },
 
-    /// 모든 데이터를 초기화합니다 (주의: 복구 불가)
+    /// 모든 데이터를 초기화합니다 (Phase 1: --hard, 주의: 복구 불가)
     Reset {
-        /// 확인 없이 진행
+        /// 데이터 디렉토리 (기본: ~/.openxgram)
         #[arg(long)]
-        force: bool,
+        data_dir: Option<PathBuf>,
+        /// 데이터 + 키 모두 삭제 (Phase 1 유일 지원 옵션)
+        #[arg(long)]
+        hard: bool,
+        /// 확인 문자열 — --hard 시 "RESET OPENXGRAM" 정확 일치 필요
+        #[arg(long)]
+        confirm: Option<String>,
+        /// 실제 변경 없이 작업 미리보기
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// DB 마이그레이션을 실행합니다
@@ -192,14 +207,14 @@ async fn main() -> anyhow::Result<()> {
             init::run_init(&opts)?;
         }
 
-        Commands::Status => {
-            println!("xgram status");
-            println!();
-            println!("[Phase 1 구현 예정]");
-            println!("  - 에이전트 신원 (공개키, 별칭)");
-            println!("  - 데몬 실행 상태");
-            println!("  - DB 크기 및 메모리 레이어 통계");
-            println!("  - Tailscale / XMTP 연결 상태");
+        Commands::Status { data_dir } => {
+            let opts = StatusOpts {
+                data_dir: match data_dir {
+                    Some(p) => p,
+                    None => init::default_data_dir()?,
+                },
+            };
+            status::run_status(&opts)?;
         }
 
         Commands::Doctor { data_dir } => {
@@ -214,18 +229,22 @@ async fn main() -> anyhow::Result<()> {
             std::process::exit(report.exit_code());
         }
 
-        Commands::Reset { force } => {
-            if force {
-                println!("xgram reset --force");
-                println!();
-                println!("[Phase 1 구현 예정]");
-                println!("  - ~/.openxgram/ 전체 삭제 후 재초기화");
-            } else {
-                println!("xgram reset");
-                println!();
-                println!("경고: 모든 데이터가 삭제됩니다. --force 플래그로 확인하세요.");
-                println!("[Phase 1 구현 예정]");
-            }
+        Commands::Reset {
+            data_dir,
+            hard,
+            confirm,
+            dry_run,
+        } => {
+            let opts = ResetOpts {
+                data_dir: match data_dir {
+                    Some(p) => p,
+                    None => init::default_data_dir()?,
+                },
+                hard,
+                confirm,
+                dry_run,
+            };
+            reset::run_reset(&opts)?;
         }
 
         Commands::Migrate { target } => {
