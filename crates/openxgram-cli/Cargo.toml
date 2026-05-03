@@ -29,6 +29,9 @@ tracing-subscriber = { workspace = true }
 clap = { workspace = true }
 chrono = { workspace = true }
 hex = { workspace = true }
+sha2 = "0.10"
+tar = "0.4"
+flate2 = "1"
 
 [dev-dependencies]
 tempfile = "3"

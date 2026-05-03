@@ -45,6 +45,7 @@ pub fn run_reset(opts: &ResetOpts) -> Result<()> {
     run_uninstall(&UninstallOpts {
         data_dir: opts.data_dir.clone(),
         no_backup: true,
+        cold_backup_to: None,
         confirm: Some("DELETE OPENXGRAM".into()),
         dry_run: opts.dry_run,
     })?;

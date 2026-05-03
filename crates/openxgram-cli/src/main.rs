@@ -91,12 +91,15 @@ enum Commands {
         target: Option<String>,
     },
 
-    /// OpenXgram을 제거합니다 (Phase 1: --no-backup 비대화 모드)
+    /// OpenXgram을 제거합니다 (cold backup 또는 --no-backup)
     Uninstall {
         /// 데이터 디렉토리 (기본: ~/.openxgram)
         #[arg(long)]
         data_dir: Option<PathBuf>,
-        /// 백업 없이 제거 (Phase 1 유일 지원 옵션)
+        /// Cold backup 대상 경로 (ChaCha20-Poly1305 + tar.gz). XGRAM_KEYSTORE_PASSWORD 사용.
+        #[arg(long)]
+        cold_backup_to: Option<PathBuf>,
+        /// 백업 없이 제거 (cold-backup-to 와 상호 배타)
         #[arg(long)]
         no_backup: bool,
         /// 확인 문자열 — --no-backup 시 "DELETE OPENXGRAM" 정확 일치 필요
@@ -262,6 +265,7 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Uninstall {
             data_dir,
+            cold_backup_to,
             no_backup,
             confirm,
             dry_run,
@@ -271,6 +275,7 @@ async fn main() -> anyhow::Result<()> {
                     Some(p) => p,
                     None => init::default_data_dir()?,
                 },
+                cold_backup_to,
                 no_backup,
                 confirm,
                 dry_run,

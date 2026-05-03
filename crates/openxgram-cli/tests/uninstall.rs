@@ -26,6 +26,7 @@ fn init_opts(data_dir: PathBuf) -> InitOpts {
 fn uninstall_opts(data_dir: PathBuf) -> UninstallOpts {
     UninstallOpts {
         data_dir,
+        cold_backup_to: None,
         no_backup: true,
         confirm: Some(CONFIRM.into()),
         dry_run: false,
