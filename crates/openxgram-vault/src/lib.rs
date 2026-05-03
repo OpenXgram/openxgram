@@ -5,6 +5,9 @@
 //! MFA 정책은 vault_acl.policy 컬럼에 저장 (Phase 1 enforcement 는 auto 만 즉시).
 //! 머신 화이트리스트는 후속 PR.
 
+pub mod audit_chain;
+pub mod kek_rotation;
+
 use chrono::{DateTime, FixedOffset};
 use openxgram_core::time::kst_now;
 use openxgram_db::{Db, DbError};

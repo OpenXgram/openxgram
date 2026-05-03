@@ -65,3 +65,5 @@ tower = { version = "0.5", features = ["retry"] }
 
 # 기타
 hex = "0.4"
+sha2 = "0.10"
+rs_merkle = "1"
