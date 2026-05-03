@@ -31,18 +31,62 @@ fn set_env() {
 }
 
 #[test]
-fn dispatcher_lists_three_tools() {
-    set_env();
+fn dispatcher_lists_db_and_vault_tools_when_password_present() {
+    set_env(); // sets XGRAM_KEYSTORE_PASSWORD
     let tmp = tempdir().unwrap();
     let data_dir = tmp.path().join("openxgram");
     run_init(&init_opts(data_dir.clone())).unwrap();
 
     let dispatcher = OpenxgramDispatcher::open(&data_dir).unwrap();
-    let tools = dispatcher.tools();
-    let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-    assert!(names.contains(&"list_sessions"));
-    assert!(names.contains(&"recall_messages"));
-    assert!(names.contains(&"list_memories_by_kind"));
+    let names: Vec<String> = dispatcher.tools().iter().map(|t| t.name.clone()).collect();
+    assert!(names.contains(&"list_sessions".to_string()));
+    assert!(names.contains(&"recall_messages".to_string()));
+    assert!(names.contains(&"list_memories_by_kind".to_string()));
+    assert!(names.contains(&"vault_list".to_string()));
+    assert!(names.contains(&"vault_get".to_string()));
+    assert!(names.contains(&"vault_set".to_string()));
+}
+
+#[test]
+fn dispatcher_omits_vault_tools_when_no_password() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    // open 후 환경에서 password 제거 — open 시점에 이미 캐시됨
+    // 따라서 password 없는 상태로 새로 open
+    unsafe { std::env::remove_var("XGRAM_KEYSTORE_PASSWORD"); }
+    let dispatcher = OpenxgramDispatcher::open(&data_dir).unwrap();
+    let names: Vec<String> = dispatcher.tools().iter().map(|t| t.name.clone()).collect();
+    assert_eq!(names.len(), 3, "vault 미노출 → db tools 3개만");
+    assert!(!names.iter().any(|n| n.starts_with("vault_")));
+    set_env(); // 다른 테스트에 영향 차단
+}
+
+#[test]
+fn dispatcher_vault_set_get_round_trip() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    let mut dispatcher = OpenxgramDispatcher::open(&data_dir).unwrap();
+    dispatcher
+        .dispatch(
+            "vault_set",
+            &json!({"key": "discord/bot", "value": "TOKEN", "tags": ["discord"]}),
+        )
+        .unwrap();
+    let got = dispatcher
+        .dispatch("vault_get", &json!({"key": "discord/bot"}))
+        .unwrap();
+    assert_eq!(got["value"], "TOKEN");
+
+    let listed = dispatcher
+        .dispatch("vault_list", &json!({}))
+        .unwrap();
+    assert_eq!(listed["count"], 1);
 }
 
 #[test]

@@ -18,10 +18,13 @@ use openxgram_mcp::{
     ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND,
 };
 use openxgram_memory::{DummyEmbedder, MemoryKind, MemoryStore, MessageStore, SessionStore};
+use openxgram_vault::VaultStore;
 use serde_json::{json, Value};
 
 pub struct OpenxgramDispatcher {
     db: Db,
+    /// XGRAM_KEYSTORE_PASSWORD 환경변수가 있으면 저장. vault tools 활성 여부의 키.
+    vault_password: Option<String>,
 }
 
 impl OpenxgramDispatcher {
@@ -39,13 +42,14 @@ impl OpenxgramDispatcher {
         })
         .context("DB open 실패")?;
         db.migrate().context("DB migrate 실패")?;
-        Ok(Self { db })
+        let vault_password = openxgram_core::env::require_password().ok();
+        Ok(Self { db, vault_password })
     }
 }
 
 impl ToolDispatcher for OpenxgramDispatcher {
     fn tools(&self) -> Vec<ToolSpec> {
-        vec![
+        let mut tools = vec![
             ToolSpec {
                 name: "list_sessions".into(),
                 description: "OpenXgram session 목록".into(),
@@ -74,7 +78,41 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     "required": ["kind"]
                 }),
             },
-        ]
+        ];
+
+        // vault tools — XGRAM_KEYSTORE_PASSWORD 환경에 있을 때만 노출
+        if self.vault_password.is_some() {
+            tools.extend([
+                ToolSpec {
+                    name: "vault_list".into(),
+                    description: "Vault entries 메타데이터 list (값 노출 안 함)".into(),
+                    input_schema: json!({"type": "object", "properties": {}}),
+                },
+                ToolSpec {
+                    name: "vault_get".into(),
+                    description: "Vault entry 평문 값 조회".into(),
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": { "key": {"type": "string"} },
+                        "required": ["key"]
+                    }),
+                },
+                ToolSpec {
+                    name: "vault_set".into(),
+                    description: "Vault entry 저장 (ChaCha20-Poly1305 암호화)".into(),
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "key": {"type": "string"},
+                            "value": {"type": "string"},
+                            "tags": {"type": "array", "items": {"type": "string"}}
+                        },
+                        "required": ["key", "value"]
+                    }),
+                },
+            ]);
+        }
+        tools
     }
 
     fn dispatch(&mut self, name: &str, args: &Value) -> Result<Value, JsonRpcError> {
@@ -141,11 +179,75 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     .collect();
                 Ok(json!({"memories": items, "count": items.len()}))
             }
+            "vault_list" => {
+                self.require_vault()?;
+                let entries = VaultStore::new(&mut self.db).list().map_err(internal)?;
+                let items: Vec<Value> = entries
+                    .iter()
+                    .map(|e| {
+                        json!({
+                            "id": e.id, "key": e.key, "tags": e.tags,
+                            "created_at": e.created_at.to_rfc3339(),
+                            "last_accessed": e.last_accessed.to_rfc3339(),
+                        })
+                    })
+                    .collect();
+                Ok(json!({"entries": items, "count": items.len()}))
+            }
+            "vault_get" => {
+                let pw = self.require_vault()?.to_string();
+                let key = args
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'key'"))?;
+                let bytes = VaultStore::new(&mut self.db)
+                    .get(key, &pw)
+                    .map_err(internal)?;
+                let value = std::str::from_utf8(&bytes)
+                    .map(str::to_string)
+                    .unwrap_or_else(|_| hex::encode(&bytes));
+                Ok(json!({"key": key, "value": value}))
+            }
+            "vault_set" => {
+                let pw = self.require_vault()?.to_string();
+                let key = args
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'key'"))?
+                    .to_string();
+                let value = args
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'value'"))?
+                    .to_string();
+                let tags: Vec<String> = args
+                    .get("tags")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let entry = VaultStore::new(&mut self.db)
+                    .set(&key, value.as_bytes(), &pw, &tags)
+                    .map_err(internal)?;
+                Ok(json!({"id": entry.id, "key": entry.key, "tags": entry.tags}))
+            }
             other => Err(JsonRpcError {
                 code: ERR_METHOD_NOT_FOUND,
                 message: format!("unknown tool: {other}"),
             }),
         }
+    }
+}
+
+impl OpenxgramDispatcher {
+    fn require_vault(&self) -> Result<&str, JsonRpcError> {
+        self.vault_password.as_deref().ok_or_else(|| JsonRpcError {
+            code: ERR_INVALID_PARAMS,
+            message: "vault_* tool 사용 시 XGRAM_KEYSTORE_PASSWORD 환경변수 필요".into(),
+        })
     }
 }
 
