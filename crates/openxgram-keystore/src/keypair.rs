@@ -109,6 +109,23 @@ impl Keypair {
     }
 }
 
+/// 외부 공개키 (compressed sec1 33 bytes hex) 로 ECDSA 서명 검증.
+/// inbound envelope 검증·peer 인증·payment intent 검증 공용.
+pub fn verify_with_pubkey(
+    public_key_hex: &str,
+    message: &[u8],
+    signature: &[u8],
+) -> Result<(), KeystoreError> {
+    use k256::ecdsa::{signature::Verifier, VerifyingKey};
+    let pk_bytes = hex::decode(public_key_hex)
+        .map_err(|e| KeystoreError::Crypto(format!("invalid public key hex: {e}")))?;
+    let vk = VerifyingKey::from_sec1_bytes(&pk_bytes)
+        .map_err(|_| KeystoreError::Crypto("invalid public key".into()))?;
+    let sig = Signature::from_slice(signature).map_err(|_| KeystoreError::SignatureVerification)?;
+    vk.verify(message, &sig)
+        .map_err(|_| KeystoreError::SignatureVerification)
+}
+
 impl Drop for Keypair {
     fn drop(&mut self) {
         // signing_key 내부 바이트를 명시적으로 덮어쓰기

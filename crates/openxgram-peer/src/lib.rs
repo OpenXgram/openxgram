@@ -189,6 +189,15 @@ impl<'a> PeerStore<'a> {
         Ok(())
     }
 
+    pub fn get_by_eth_address(&mut self, eth_address: &str) -> Result<Option<Peer>> {
+        Self::row_to_opt(self.db.conn().query_row(
+            "SELECT id, alias, public_key_hex, address, role, last_seen, created_at, notes, eth_address
+             FROM peers WHERE eth_address = ?1",
+            [eth_address],
+            row_to_tuple,
+        ))
+    }
+
     /// inbound message 수신 후 호출 — public_key 로 peer 찾아 last_seen 갱신.
     /// 미등록 peer (anonymous) 는 0 반환 (에러 아님 — 등록 안 된 envelope 도 정상 도착 가능).
     /// 매칭 성공 시 1 반환.

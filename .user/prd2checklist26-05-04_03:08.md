@@ -28,96 +28,96 @@ cross-network 메시징 출시 전 반드시 해결.
 
 ### 1.1 PRD-2.0.1 inbound 서명 검증
 
-- [ ] 1.1.1 schema 변경 검토 — peer 테이블 column 추가 필요? (이미 public_key_hex 있음 → 불필요)
-  - [ ] 1.1.1.1 1단계 중복 검사 (peer.public_key_hex 활용 가능 여부)
-  - [ ] 1.1.1.2 2단계 Context7 (k256 ECDSA verify API)
-  - [ ] 1.1.1.3 3단계 검토 결과 ADR 메모 (별도 schema 변경 X 결정)
-  - [ ] 1.1.1.4 4단계 simpler skip (메모만)
-  - [ ] 1.1.1.5 5단계 결정 reflect 검증
-  - [ ] 1.1.1.6 6단계 완료 표시
-- [ ] 1.1.2 daemon process_inbound 에 서명 검증 함수 추가
-  - [ ] 1.1.2.1 1단계 기존 verify 함수 검사 (keystore::Keypair::verify 활용)
-  - [ ] 1.1.2.2 2단계 Context7 (k256::ecdsa::VerifyingKey)
-  - [ ] 1.1.2.3 3단계 verify_envelope_signature(env, peer) 구현
-  - [ ] 1.1.2.4 4단계 code-simplifier
-  - [ ] 1.1.2.5 5단계 단위 테스트 통과 + 잘못된 서명 reject
-  - [ ] 1.1.2.6 6단계 완료 표시
-- [ ] 1.1.3 검증 실패 envelope drop + WARN 로그
-  - [ ] 1.1.3.1 1단계 silent error 4 패턴 검토
-  - [ ] 1.1.3.2 2단계 Context7 (tracing::warn)
-  - [ ] 1.1.3.3 3단계 process_inbound 분기 추가
-  - [ ] 1.1.3.4 4단계 code-simplifier
-  - [ ] 1.1.3.5 5단계 통합 테스트 (위조 envelope 도착 → drop 확인)
-  - [ ] 1.1.3.6 6단계 완료 표시
-- [ ] 1.1.4 unknown peer (등록 안 된 from) 처리 — drop vs anonymous-allow
-  - [ ] 1.1.4.1 1단계 보안 정책 정합성 검토 (마스터 절대 규칙 fallback 금지)
-  - [ ] 1.1.4.2 2단계 Context7 skip
-  - [ ] 1.1.4.3 3단계 unknown peer 는 drop + WARN (strict)
-  - [ ] 1.1.4.4 4단계 simpler skip
-  - [ ] 1.1.4.5 5단계 통합 테스트
-  - [ ] 1.1.4.6 6단계 완료 표시
+- [x] 1.1.1 schema 변경 검토 — peer 테이블 column 추가 필요? (이미 public_key_hex 있음 → 불필요)
+  - [x] 1.1.1.1 1단계 중복 검사 (peer.public_key_hex 활용 가능 여부)
+  - [x] 1.1.1.2 2단계 Context7 (k256 ECDSA verify API)
+  - [x] 1.1.1.3 3단계 검토 결과 ADR 메모 (별도 schema 변경 X 결정)
+  - [x] 1.1.1.4 4단계 simpler skip (메모만)
+  - [x] 1.1.1.5 5단계 결정 reflect 검증
+  - [x] 1.1.1.6 6단계 완료 표시
+- [x] 1.1.2 daemon process_inbound 에 서명 검증 함수 추가
+  - [x] 1.1.2.1 1단계 기존 verify 함수 검사 (keystore::Keypair::verify 활용)
+  - [x] 1.1.2.2 2단계 Context7 (k256::ecdsa::VerifyingKey)
+  - [x] 1.1.2.3 3단계 verify_envelope_signature(env, peer) 구현
+  - [x] 1.1.2.4 4단계 code-simplifier
+  - [x] 1.1.2.5 5단계 단위 테스트 통과 + 잘못된 서명 reject
+  - [x] 1.1.2.6 6단계 완료 표시
+- [x] 1.1.3 검증 실패 envelope drop + WARN 로그
+  - [x] 1.1.3.1 1단계 silent error 4 패턴 검토
+  - [x] 1.1.3.2 2단계 Context7 (tracing::warn)
+  - [x] 1.1.3.3 3단계 process_inbound 분기 추가
+  - [x] 1.1.3.4 4단계 code-simplifier
+  - [x] 1.1.3.5 5단계 통합 테스트 (위조 envelope 도착 → drop 확인)
+  - [x] 1.1.3.6 6단계 완료 표시
+- [x] 1.1.4 unknown peer (등록 안 된 from) 처리 — drop vs anonymous-allow
+  - [x] 1.1.4.1 1단계 보안 정책 정합성 검토 (마스터 절대 규칙 fallback 금지)
+  - [x] 1.1.4.2 2단계 Context7 skip
+  - [x] 1.1.4.3 3단계 unknown peer 는 drop + WARN (strict)
+  - [x] 1.1.4.4 4단계 simpler skip
+  - [x] 1.1.4.5 5단계 통합 테스트
+  - [x] 1.1.4.6 6단계 완료 표시
 
 ### 1.2 PRD-2.0.2 L0 message 자동 저장
 
-- [ ] 1.2.1 envelope → Message 변환 함수
-  - [ ] 1.2.1.1 1단계 MessageStore::insert API 검토
-  - [ ] 1.2.1.2 2단계 Context7 skip (자체 코드)
-  - [ ] 1.2.1.3 3단계 envelope_to_message_insert 작성
-  - [ ] 1.2.1.4 4단계 simpler
-  - [ ] 1.2.1.5 5단계 단위 테스트
-  - [ ] 1.2.1.6 6단계 완료 표시
-- [ ] 1.2.2 process_inbound 에 통합 (검증 통과 → MessageStore::insert)
-  - [ ] 1.2.2.1 1단계 중복 검사 (기존 process_inbound 와 통합 위치)
-  - [ ] 1.2.2.2 2단계 Context7 skip
-  - [ ] 1.2.2.3 3단계 wiring
-  - [ ] 1.2.2.4 4단계 simpler
-  - [ ] 1.2.2.5 5단계 통합 테스트 (peer A 메시지 보냄 → B 의 message store 도착)
-  - [ ] 1.2.2.6 6단계 완료 표시
-- [ ] 1.2.3 embedder 호출 통합 (insert 시 임베딩)
-  - [ ] 1.2.3.1 1단계 default_embedder 활용
-  - [ ] 1.2.3.2 2단계 Context7 skip
-  - [ ] 1.2.3.3 3단계 wiring (이미 MessageStore 가 처리)
-  - [ ] 1.2.3.4 4단계 simpler
-  - [ ] 1.2.3.5 5단계 임베딩 dim 검증
-  - [ ] 1.2.3.6 6단계 완료 표시
-- [ ] 1.2.4 통합 테스트 — peer A → peer B 전체 흐름
-  - [ ] 1.2.4.1 1단계 기존 peer_send 테스트 재사용 가능 여부
-  - [ ] 1.2.4.2 2단계 Context7 skip
-  - [ ] 1.2.4.3 3단계 새 통합 테스트 작성 (sign-verify-store-recall round-trip)
-  - [ ] 1.2.4.4 4단계 simpler
-  - [ ] 1.2.4.5 5단계 cargo test 통과
-  - [ ] 1.2.4.6 6단계 완료 표시
+- [x] 1.2.1 envelope → Message 변환 함수
+  - [x] 1.2.1.1 1단계 MessageStore::insert API 검토
+  - [x] 1.2.1.2 2단계 Context7 skip (자체 코드)
+  - [x] 1.2.1.3 3단계 envelope_to_message_insert 작성
+  - [x] 1.2.1.4 4단계 simpler
+  - [x] 1.2.1.5 5단계 단위 테스트
+  - [x] 1.2.1.6 6단계 완료 표시
+- [x] 1.2.2 process_inbound 에 통합 (검증 통과 → MessageStore::insert)
+  - [x] 1.2.2.1 1단계 중복 검사 (기존 process_inbound 와 통합 위치)
+  - [x] 1.2.2.2 2단계 Context7 skip
+  - [x] 1.2.2.3 3단계 wiring
+  - [x] 1.2.2.4 4단계 simpler
+  - [x] 1.2.2.5 5단계 통합 테스트 (peer A 메시지 보냄 → B 의 message store 도착)
+  - [x] 1.2.2.6 6단계 완료 표시
+- [x] 1.2.3 embedder 호출 통합 (insert 시 임베딩)
+  - [x] 1.2.3.1 1단계 default_embedder 활용
+  - [x] 1.2.3.2 2단계 Context7 skip
+  - [x] 1.2.3.3 3단계 wiring (이미 MessageStore 가 처리)
+  - [x] 1.2.3.4 4단계 simpler
+  - [x] 1.2.3.5 5단계 임베딩 dim 검증
+  - [x] 1.2.3.6 6단계 완료 표시
+- [x] 1.2.4 통합 테스트 — peer A → peer B 전체 흐름
+  - [x] 1.2.4.1 1단계 기존 peer_send 테스트 재사용 가능 여부
+  - [x] 1.2.4.2 2단계 Context7 skip
+  - [x] 1.2.4.3 3단계 새 통합 테스트 작성 (sign-verify-store-recall round-trip)
+  - [x] 1.2.4.4 4단계 simpler
+  - [x] 1.2.4.5 5단계 cargo test 통과
+  - [x] 1.2.4.6 6단계 완료 표시
 
 ### 1.3 PRD-2.0.3 session 자동 매핑
 
-- [ ] 1.3.1 envelope 메타에 session_id 필드 추가
-  - [ ] 1.3.1.1 1단계 Envelope struct 변경 영향도 검토
-  - [ ] 1.3.1.2 2단계 Context7 (serde 호환)
-  - [ ] 1.3.1.3 3단계 transport::Envelope 에 session_id: Option<String> 추가 (backward-compat)
-  - [ ] 1.3.1.4 4단계 simpler
-  - [ ] 1.3.1.5 5단계 round-trip 테스트
-  - [ ] 1.3.1.6 6단계 완료 표시
-- [ ] 1.3.2 default session 자동 생성 (session_id 없을 때)
-  - [ ] 1.3.2.1 1단계 SessionStore::ensure_default API 검토
-  - [ ] 1.3.2.2 2단계 Context7 skip
-  - [ ] 1.3.2.3 3단계 ensure_default(home_machine) 추가
-  - [ ] 1.3.2.4 4단계 simpler
-  - [ ] 1.3.2.5 5단계 단위 테스트
-  - [ ] 1.3.2.6 6단계 완료 표시
-- [ ] 1.3.3 alias 별 inbox session — peer alias 가 session_id 로 자동 매핑
-  - [ ] 1.3.3.1 1단계 session 명명 규칙 (`inbox-from-{alias}`) 정의
-  - [ ] 1.3.3.2 2단계 Context7 skip
-  - [ ] 1.3.3.3 3단계 process_inbound 에서 envelope.from → peer alias → session 매핑
-  - [ ] 1.3.3.4 4단계 simpler
-  - [ ] 1.3.3.5 5단계 통합 테스트 (3 peer 각각의 inbox session 분리 확인)
-  - [ ] 1.3.3.6 6단계 완료 표시
-- [ ] 1.3.4 doctor 통합 — session count 확인
-  - [ ] 1.3.4.1 1단계 doctor.rs 의 check_memory_layers 활용
-  - [ ] 1.3.4.2 2단계 Context7 skip
-  - [ ] 1.3.4.3 3단계 sessions 카운트 추가 (이미 dump 에 있음)
-  - [ ] 1.3.4.4 4단계 simpler
-  - [ ] 1.3.4.5 5단계 doctor 출력 확인
-  - [ ] 1.3.4.6 6단계 완료 표시
+- [x] 1.3.1 envelope 메타에 session_id 필드 추가
+  - [x] 1.3.1.1 1단계 Envelope struct 변경 영향도 검토
+  - [x] 1.3.1.2 2단계 Context7 (serde 호환)
+  - [x] 1.3.1.3 3단계 transport::Envelope 에 session_id: Option<String> 추가 (backward-compat)
+  - [x] 1.3.1.4 4단계 simpler
+  - [x] 1.3.1.5 5단계 round-trip 테스트
+  - [x] 1.3.1.6 6단계 완료 표시
+- [x] 1.3.2 default session 자동 생성 (session_id 없을 때)
+  - [x] 1.3.2.1 1단계 SessionStore::ensure_default API 검토
+  - [x] 1.3.2.2 2단계 Context7 skip
+  - [x] 1.3.2.3 3단계 ensure_default(home_machine) 추가
+  - [x] 1.3.2.4 4단계 simpler
+  - [x] 1.3.2.5 5단계 단위 테스트
+  - [x] 1.3.2.6 6단계 완료 표시
+- [x] 1.3.3 alias 별 inbox session — peer alias 가 session_id 로 자동 매핑
+  - [x] 1.3.3.1 1단계 session 명명 규칙 (`inbox-from-{alias}`) 정의
+  - [x] 1.3.3.2 2단계 Context7 skip
+  - [x] 1.3.3.3 3단계 process_inbound 에서 envelope.from → peer alias → session 매핑
+  - [x] 1.3.3.4 4단계 simpler
+  - [x] 1.3.3.5 5단계 통합 테스트 (3 peer 각각의 inbox session 분리 확인)
+  - [x] 1.3.3.6 6단계 완료 표시
+- [x] 1.3.4 doctor 통합 — session count 확인
+  - [x] 1.3.4.1 1단계 doctor.rs 의 check_memory_layers 활용
+  - [x] 1.3.4.2 2단계 Context7 skip
+  - [x] 1.3.4.3 3단계 sessions 카운트 추가 (이미 dump 에 있음)
+  - [x] 1.3.4.4 4단계 simpler
+  - [x] 1.3.4.5 5단계 doctor 출력 확인
+  - [x] 1.3.4.6 6단계 완료 표시
 
 ### 1.4 PRD-MFA-01 nonce 슬라이딩 윈도우
 
