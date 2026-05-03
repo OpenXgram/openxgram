@@ -27,12 +27,12 @@ pub struct RecallHit {
     pub distance: f32,
 }
 
-pub struct MessageStore<'a, E: Embedder> {
+pub struct MessageStore<'a, E: Embedder + ?Sized> {
     db: &'a mut Db,
     embedder: &'a E,
 }
 
-impl<'a, E: Embedder> MessageStore<'a, E> {
+impl<'a, E: Embedder + ?Sized> MessageStore<'a, E> {
     pub fn new(db: &'a mut Db, embedder: &'a E) -> Self {
         Self { db, embedder }
     }
