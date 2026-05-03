@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use openxgram_cli::backup::restore_cold_backup;
+use openxgram_cli::backup::{create_cold_backup, resolve_backup_target, restore_cold_backup};
 use openxgram_cli::backup_push::{self, BackupPushOpts, BackupTarget};
 use openxgram_cli::daemon::{self, DaemonOpts};
 use openxgram_cli::doctor::{self, DoctorOpts};
@@ -240,6 +240,16 @@ enum Commands {
         /// 복원 대상 데이터 디렉토리 (기본: ~/.openxgram, 비어있어야 함)
         #[arg(long)]
         target_dir: Option<PathBuf>,
+    },
+
+    /// 비파괴 cold backup 생성 — ChaCha20-Poly1305 + tar.gz. systemd timer/cron 으로 주기 실행 권장.
+    Backup {
+        /// 데이터 디렉토리 (기본: ~/.openxgram)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        /// 백업 파일 경로 (디렉토리면 timestamped 파일 생성, 파일이면 정확 그 경로)
+        #[arg(long)]
+        to: PathBuf,
     },
 
     /// 인터랙티브 TUI (welcome + status)
@@ -858,6 +868,18 @@ async fn main() -> anyhow::Result<()> {
             println!("  source       : {}", input.display());
             println!("  target_dir   : {}", info.target_dir.display());
             println!("  bytes_restored: {}", info.bytes_restored);
+        }
+
+        Commands::Backup { data_dir, to } => {
+            let dir = resolve_data_dir(data_dir)?;
+            let pw = openxgram_core::env::require_password()?;
+            let target = resolve_backup_target(&to)?;
+            let info = create_cold_backup(&dir, &target, &pw)?;
+            println!("✓ cold backup 생성");
+            println!("  source     : {}", dir.display());
+            println!("  path       : {}", info.path.display());
+            println!("  size_bytes : {}", info.size_bytes);
+            println!("  sha256     : {}", info.sha256);
         }
 
         Commands::Tui { data_dir } => {

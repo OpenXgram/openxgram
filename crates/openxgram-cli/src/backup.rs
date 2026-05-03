@@ -5,6 +5,17 @@
 
 use std::path::{Path, PathBuf};
 
+/// `to` 가 기존 디렉토리면 KST timestamp 파일명을 생성, 아니면 그대로 사용.
+/// systemd timer 가 동일 디렉토리로 반복 호출할 때 파일 충돌을 회피.
+pub fn resolve_backup_target(to: &Path) -> anyhow::Result<PathBuf> {
+    if to.is_dir() {
+        let ts = openxgram_core::time::kst_now().format("%Y%m%d-%H%M%S");
+        Ok(to.join(format!("openxgram-{ts}.cbk")))
+    } else {
+        Ok(to.to_path_buf())
+    }
+}
+
 use anyhow::{anyhow, bail, Context, Result};
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
