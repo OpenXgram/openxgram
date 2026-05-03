@@ -298,6 +298,13 @@ enum Commands {
         #[arg(value_enum)]
         shell: clap_complete::Shell,
     },
+
+    /// 빌드 정보 출력 (버전 / target / 활성 feature / 의존 crate)
+    Version {
+        /// JSON 으로 출력 (다른 도구 통합용)
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1132,9 +1139,58 @@ async fn main() -> anyhow::Result<()> {
             let bin_name = cmd.get_name().to_string();
             clap_complete::generate(shell, &mut cmd, bin_name, &mut std::io::stdout());
         }
+
+        Commands::Version { json } => {
+            let info = build_info();
+            if json {
+                println!("{}", serde_json::to_string_pretty(&info)?);
+            } else {
+                println!("xgram {} ({})", info.version, info.target);
+                println!();
+                println!("features:");
+                for f in &info.features {
+                    println!("  - {f}");
+                }
+                println!();
+                println!("주요 의존 crate:");
+                for (name, ver) in &info.deps {
+                    println!("  {name} {ver}");
+                }
+            }
+        }
     }
 
     Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct BuildInfo {
+    version: &'static str,
+    target: String,
+    features: Vec<&'static str>,
+    deps: Vec<(&'static str, &'static str)>,
+}
+
+fn build_info() -> BuildInfo {
+    let mut features: Vec<&'static str> = vec!["base"];
+    if cfg!(feature = "fastembed") {
+        features.push("fastembed");
+    }
+    BuildInfo {
+        version: env!("CARGO_PKG_VERSION"),
+        target: format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS),
+        features,
+        deps: vec![
+            ("axum", "0.8"),
+            ("reqwest", "0.13"),
+            ("rusqlite", "0.39"),
+            ("tokio", "1"),
+            ("clap", "4"),
+            ("ratatui", "0.29"),
+            ("k256", "0.13"),
+            ("totp-rs", "5"),
+        ],
+    }
 }
 
 fn resolve_data_dir(arg: Option<PathBuf>) -> anyhow::Result<PathBuf> {
