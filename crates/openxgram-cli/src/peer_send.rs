@@ -1,4 +1,5 @@
-//! peer-aware send — alias 로 peer 조회 → /v1/message POST → last_seen touch.
+//! peer-aware send — alias 로 peer 조회 → 주소 scheme 별 라우팅 → last_seen touch.
+//! 지원 scheme: http(s):// (transport /v1/message), nostr(s):// (NostrSink publish).
 
 use std::path::Path;
 
@@ -7,8 +8,64 @@ use openxgram_core::paths::{db_path, keystore_dir, MASTER_KEY_NAME};
 use openxgram_core::time::kst_now;
 use openxgram_db::{Db, DbConfig};
 use openxgram_keystore::{FsKeystore, Keystore};
+use openxgram_nostr::{keys_from_master, NostrKind, NostrSink, NostrTag, PublicKey};
 use openxgram_peer::PeerStore;
 use openxgram_transport::{send_envelope, Envelope};
+
+/// 주소 scheme 별 라우트.
+#[derive(Debug, Clone)]
+pub enum SendRoute {
+    Http(String),
+    /// (relay ws URL, peer pubkey hex)
+    Nostr {
+        relay_ws: String,
+        peer_pubkey: String,
+    },
+}
+
+/// `nostr://relay.example.com[:port]` → `ws://relay.example.com[:port]`,
+/// `nostrs://...` → `wss://...`. http(s) 는 그대로 통과.
+pub fn parse_route(address: &str, peer_pubkey_hex: &str) -> Result<SendRoute> {
+    if let Some(rest) = address.strip_prefix("nostr://") {
+        return Ok(SendRoute::Nostr {
+            relay_ws: format!("ws://{rest}"),
+            peer_pubkey: peer_pubkey_hex.to_string(),
+        });
+    }
+    if let Some(rest) = address.strip_prefix("nostrs://") {
+        return Ok(SendRoute::Nostr {
+            relay_ws: format!("wss://{rest}"),
+            peer_pubkey: peer_pubkey_hex.to_string(),
+        });
+    }
+    if address.starts_with("http://") || address.starts_with("https://") {
+        return Ok(SendRoute::Http(address.to_string()));
+    }
+    Err(anyhow!(
+        "address scheme 미지원: {address} (지원: http(s)://, nostr(s)://)"
+    ))
+}
+
+/// envelope 을 nostr event 로 wrap 하여 relay 에 publish.
+/// content = envelope JSON, kind = L0Message (30500), p-tag = peer_pubkey.
+async fn send_via_nostr(
+    sink: &NostrSink,
+    relay_ws: &str,
+    peer_pubkey_hex: &str,
+    envelope: &Envelope,
+) -> Result<()> {
+    sink.add_relays([relay_ws])
+        .await
+        .map_err(|e| anyhow!("relay 추가 실패: {e}"))?;
+    let body = serde_json::to_string(envelope).context("envelope 직렬화 실패")?;
+    let p_tag = NostrTag::public_key(
+        PublicKey::from_hex(peer_pubkey_hex).map_err(|e| anyhow!("peer pubkey 파싱 실패: {e}"))?,
+    );
+    sink.publish(NostrKind::L0Message, &body, None, vec![p_tag])
+        .await
+        .map_err(|e| anyhow!("nostr publish 실패: {e}"))?;
+    Ok(())
+}
 
 pub async fn run_peer_send(
     data_dir: &Path,
@@ -46,16 +103,23 @@ pub async fn run_peer_send(
         nonce: Some(uuid::Uuid::new_v4().to_string()),
     };
 
-    if !address.starts_with("http://") && !address.starts_with("https://") {
-        return Err(anyhow!(
-            "address scheme 미지원: {} — 현재 http(s)://host:port 만 지원 (xmtp:// 등은 후속)",
-            address
-        ));
+    match parse_route(&address, &peer.public_key_hex)? {
+        SendRoute::Http(url) => {
+            send_envelope(&url, &envelope)
+                .await
+                .with_context(|| format!("/v1/message POST 실패 ({url})"))?;
+        }
+        SendRoute::Nostr {
+            relay_ws,
+            peer_pubkey,
+        } => {
+            let nostr_keys =
+                keys_from_master(&master).map_err(|e| anyhow!("nostr keys 변환 실패: {e}"))?;
+            let sink = NostrSink::new(nostr_keys);
+            send_via_nostr(&sink, &relay_ws, &peer_pubkey, &envelope).await?;
+            sink.shutdown().await;
+        }
     }
-
-    send_envelope(&address, &envelope)
-        .await
-        .with_context(|| format!("/v1/message POST 실패 ({address})"))?;
 
     // 통신 성공 → last_seen 갱신
     store.touch(alias)?;
@@ -99,32 +163,46 @@ pub async fn run_peer_broadcast(
     }
     drop(db);
 
-    // 2. concurrent send (각 send 는 reqwest blocking-async). JoinSet 으로 결과 수집
+    // 2. concurrent send (scheme 별 라우팅). JoinSet 으로 결과 수집
+    let nostr_keys = keys_from_master(&master).map_err(|e| anyhow!("nostr keys 변환 실패: {e}"))?;
     let mut joinset = tokio::task::JoinSet::new();
     for (alias, address, public_key_hex) in targets {
-        if !address.starts_with("http://") && !address.starts_with("https://") {
-            joinset.spawn(async move {
-                (
-                    alias,
-                    Err(format!("scheme 미지원: {address} (현재 http(s):// 만)")),
-                )
-            });
-            continue;
-        }
+        let route = match parse_route(&address, &public_key_hex) {
+            Ok(r) => r,
+            Err(e) => {
+                joinset.spawn(async move { (alias, Err(e.to_string())) });
+                continue;
+            }
+        };
         let env = Envelope {
             from: sender_addr.clone(),
-            to: public_key_hex,
+            to: public_key_hex.clone(),
             payload_hex: payload_hex.clone(),
             timestamp: now,
             signature_hex: signature_hex.clone(),
             nonce: Some(uuid::Uuid::new_v4().to_string()),
         };
-        joinset.spawn(async move {
-            let res = send_envelope(&address, &env)
-                .await
-                .map_err(|e| format!("{e}"));
-            (alias, res)
-        });
+        match route {
+            SendRoute::Http(url) => {
+                joinset.spawn(async move {
+                    let res = send_envelope(&url, &env).await.map_err(|e| format!("{e}"));
+                    (alias, res)
+                });
+            }
+            SendRoute::Nostr {
+                relay_ws,
+                peer_pubkey,
+            } => {
+                let sink = NostrSink::new(nostr_keys.clone());
+                joinset.spawn(async move {
+                    let res = send_via_nostr(&sink, &relay_ws, &peer_pubkey, &env)
+                        .await
+                        .map_err(|e| e.to_string());
+                    sink.shutdown().await;
+                    (alias, res)
+                });
+            }
+        }
     }
 
     let mut results = Vec::with_capacity(aliases.len());
@@ -160,4 +238,79 @@ fn open_db(data_dir: &Path) -> Result<Db> {
     .context("DB open 실패")?;
     db.migrate().context("DB migrate 실패")?;
     Ok(db)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PK: &str = "0000000000000000000000000000000000000000000000000000000000000001";
+
+    #[test]
+    fn parse_route_http() {
+        let r = parse_route("http://127.0.0.1:7300", PK).unwrap();
+        assert!(matches!(r, SendRoute::Http(ref u) if u == "http://127.0.0.1:7300"));
+    }
+
+    #[test]
+    fn parse_route_https() {
+        let r = parse_route("https://example.com", PK).unwrap();
+        assert!(matches!(r, SendRoute::Http(_)));
+    }
+
+    #[test]
+    fn parse_route_nostr_to_ws() {
+        let r = parse_route("nostr://relay.example.com:7400", PK).unwrap();
+        match r {
+            SendRoute::Nostr {
+                relay_ws,
+                peer_pubkey,
+            } => {
+                assert_eq!(relay_ws, "ws://relay.example.com:7400");
+                assert_eq!(peer_pubkey, PK);
+            }
+            _ => panic!("expected nostr route"),
+        }
+    }
+
+    #[test]
+    fn parse_route_nostrs_to_wss() {
+        let r = parse_route("nostrs://relay.example.com", PK).unwrap();
+        match r {
+            SendRoute::Nostr { relay_ws, .. } => assert_eq!(relay_ws, "wss://relay.example.com"),
+            _ => panic!("expected nostr route"),
+        }
+    }
+
+    #[test]
+    fn parse_route_unknown_scheme_errors() {
+        let err = parse_route("xmtp://foo", PK).unwrap_err();
+        assert!(err.to_string().contains("scheme 미지원"));
+    }
+
+    #[tokio::test]
+    async fn send_via_nostr_publishes_to_mock_relay() {
+        // 실제 nostr 라우팅이 MockRelay 와 통신하는지 검증.
+        let relay = nostr_relay_builder::MockRelay::run().await.unwrap();
+        let url = relay.url();
+        let ws_url = url.clone();
+
+        // 가짜 master key 로 sink 생성
+        let keys = openxgram_nostr::NostrKeys::generate();
+        let peer_pubkey = openxgram_nostr::NostrKeys::generate().public_key().to_hex();
+        let sink = NostrSink::new(keys);
+
+        let env = Envelope {
+            from: "0xAAA".into(),
+            to: peer_pubkey.clone(),
+            payload_hex: "deadbeef".into(),
+            timestamp: kst_now(),
+            signature_hex: "00".repeat(64),
+            nonce: Some("n1".into()),
+        };
+        send_via_nostr(&sink, &ws_url, &peer_pubkey, &env)
+            .await
+            .unwrap();
+        sink.shutdown().await;
+    }
 }

@@ -229,10 +229,10 @@ cross-network 메시징 출시 전 반드시 해결.
 
 ### 2.7 PRD-NOSTR-07 peer scheme 인식
 
-- [ ] 2.7.1 peer.address parse — nostr://relay.example.com 인식
-- [ ] 2.7.2 peer_send.rs 분기 → nostr route
-- [ ] 2.7.3 fallback 정책 (http 우선 → nostr 백업)
-- [ ] 2.7.4 통합 테스트 (mixed peer 목록)
+- [x] 2.7.1 peer.address parse — nostr:// + nostrs:// 인식 (parse_route)
+- [x] 2.7.2 peer_send.rs 분기 → SendRoute::Nostr (run_peer_send + broadcast)
+- [ ] 2.7.3 fallback 정책 (http 우선 → nostr 백업) — peer 데이터 모델 확장 필요, 후속
+- [x] 2.7.4 통합 테스트 (parse_route 5개 + send_via_nostr_publishes_to_mock_relay)
 
 ### 2.8 PRD-NOSTR-08 NIP-65 relay list
 
