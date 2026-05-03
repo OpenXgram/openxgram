@@ -330,3 +330,45 @@ fn sha256_of(path: &Path) -> std::io::Result<String> {
     hasher.update(&bytes);
     Ok(hex::encode(hasher.finalize()))
 }
+
+// Display impls — serde rename_all 과 동일한 표기. 사용자 출력·로그에 사용.
+impl std::fmt::Display for MachineRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Primary => "primary",
+            Self::Secondary => "secondary",
+            Self::Worker => "worker",
+        })
+    }
+}
+
+impl std::fmt::Display for OsKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Linux => "linux",
+            Self::Macos => "macos",
+            Self::Windows => "windows",
+        })
+    }
+}
+
+impl std::fmt::Display for ServiceType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::SystemdUser => "systemd-user",
+            Self::SystemdSystem => "systemd-system",
+            Self::LaunchdUser => "launchd-user",
+            Self::LaunchdSystem => "launchd-system",
+            Self::WindowsService => "windows-service",
+        })
+    }
+}
+
+impl std::fmt::Display for PortProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Tcp => "tcp",
+            Self::Udp => "udp",
+        })
+    }
+}
