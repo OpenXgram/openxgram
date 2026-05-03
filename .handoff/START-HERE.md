@@ -107,3 +107,23 @@ D+A를 Pip에게 동시 요청 → B → C → E 순으로 진행.
 
 이 방법은 OpenXgram MVP가 자동화할 작업의 1차 수동 시뮬레이션.
 Phase 1 완성 후엔: $ xgram session push --to claude-current
+
+### worktree 환경에서 사용
+
+worktree에서 작업 중인 경우 동일한 명령이 자동 작동:
+
+```bash
+$ cd /home/llm/projects/openxgram-worktrees/<your-worktree>
+$ ./.handoff/inject.sh
+# 또는
+$ xginject
+
+# 또는 claude 입력창에서 (절대 경로 필요):
+> @/home/llm/projects/openxgram/.handoff/INJECT.md 읽고 그대로 실행
+```
+
+inject.sh가 git worktree list로 메인 저장소를 자동 해결하므로
+worktree 어디에서든 동일하게 작동한다.
+
+INJECT.md 자체도 1.5절에서 메인 저장소 경로를 동적 해결한 후
+모든 파일을 그 경로 기준으로 읽으므로 worktree에 .handoff/이 없어도 OK.

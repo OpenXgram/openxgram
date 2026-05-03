@@ -10,11 +10,22 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INJECT_FILE="${SCRIPT_DIR}/INJECT.md"
+# 메인 저장소 자동 해결 (worktree 어디에서든 작동)
+# git worktree list 결과의 첫 줄이 항상 메인 저장소
+if MAIN_REPO=$(git worktree list 2>/dev/null | head -1 | awk '{print $1}'); then
+  if [[ -z "$MAIN_REPO" || ! -d "$MAIN_REPO" ]]; then
+    echo "ERROR: git worktree list 결과 비어있음. 메인 저장소를 찾을 수 없음." >&2
+    exit 1
+  fi
+else
+  echo "ERROR: git 저장소가 아닌 곳에서 실행됨. cd <openxgram-or-worktree> 후 재시도." >&2
+  exit 1
+fi
+
+INJECT_FILE="${MAIN_REPO}/.handoff/INJECT.md"
 
 if [[ ! -f "$INJECT_FILE" ]]; then
-  echo "ERROR: INJECT.md가 ${SCRIPT_DIR}에 없다" >&2
+  echo "ERROR: ${INJECT_FILE} 없음. 메인 저장소가 최신 main 브랜치 상태인지 확인." >&2
   exit 1
 fi
 

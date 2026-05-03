@@ -237,3 +237,14 @@
 - [ ] CLI 사용법 (docs/usage/lifecycle.md)
 - [ ] 온보딩 가이드 (스크린샷 또는 ASCII)
 - [ ] 트러블슈팅 (uninstall 부분 실패 복구)
+
+### worktree 통합 (0.5일)
+
+- [ ] xgram worktree add <branch> 명령
+  - git worktree add 래핑
+  - .handoff/ 심볼릭 링크 자동 생성 (메인 저장소 참조)
+- [ ] xgram worktree list 명령 (사용자 친화 출력)
+- [ ] xgram worktree remove <branch> 명령
+  - .handoff 링크 정리
+  - git worktree remove
+- [ ] worktree 환경에서 xgram 모든 명령 작동 검증
