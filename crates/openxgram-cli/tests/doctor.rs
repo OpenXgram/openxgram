@@ -91,6 +91,22 @@ fn doctor_detects_corrupted_db() {
     assert!(report.exit_code() >= 1);
 }
 
+#[test]
+fn doctor_to_json_is_parseable() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    let report = run_doctor(&doctor_opts(data_dir)).unwrap();
+    let json = report.to_json().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(v["checks"].is_array());
+    assert!(v["summary"]["ok"].is_number());
+    assert!(v["summary"]["warn"].is_number());
+    assert!(v["summary"]["fail"].is_number());
+}
+
 #[cfg(unix)]
 #[test]
 fn doctor_warns_on_wrong_keystore_mode() {
