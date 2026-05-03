@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use openxgram_cli::doctor::{self, DoctorOpts};
 use openxgram_cli::init::{self, InitOpts};
 use openxgram_cli::reset::{self, ResetOpts};
+use openxgram_cli::session::{self, SessionAction};
 use openxgram_cli::status::{self, StatusOpts};
 use openxgram_cli::tui::{self, TuiOpts};
 use openxgram_cli::uninstall::{self, UninstallOpts};
@@ -117,12 +118,71 @@ enum Commands {
         action: KeypairAction,
     },
 
+    /// 대화 session 관리 (new/list/show/message/reflect)
+    Session {
+        /// 데이터 디렉토리 (기본: ~/.openxgram)
+        #[arg(long, global = true)]
+        data_dir: Option<PathBuf>,
+        #[command(subcommand)]
+        action: SessionCli,
+    },
+
     /// 인터랙티브 TUI (welcome + status)
     Tui {
         /// 데이터 디렉토리 (기본: ~/.openxgram)
         #[arg(long)]
         data_dir: Option<PathBuf>,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum SessionCli {
+    /// 새 session 생성
+    New {
+        #[arg(long)]
+        title: String,
+    },
+    /// session 목록
+    List,
+    /// session 상세 (episodes 포함)
+    Show {
+        /// session ID
+        id: String,
+    },
+    /// session 에 메시지 추가
+    Message {
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        sender: String,
+        #[arg(long)]
+        body: String,
+    },
+    /// session 의 messages 를 episode 로 reflection
+    Reflect {
+        #[arg(long)]
+        session_id: String,
+    },
+}
+
+impl From<SessionCli> for SessionAction {
+    fn from(c: SessionCli) -> Self {
+        match c {
+            SessionCli::New { title } => SessionAction::New { title },
+            SessionCli::List => SessionAction::List,
+            SessionCli::Show { id } => SessionAction::Show { id },
+            SessionCli::Message {
+                session_id,
+                sender,
+                body,
+            } => SessionAction::Message {
+                session_id,
+                sender,
+                body,
+            },
+            SessionCli::Reflect { session_id } => SessionAction::Reflect { session_id },
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -295,6 +355,14 @@ async fn main() -> anyhow::Result<()> {
             let ks_dir = FsKeystore::default_path();
             let ks = FsKeystore::new(&ks_dir);
             handle_keypair(ks, action)?;
+        }
+
+        Commands::Session { data_dir, action } => {
+            let dir = match data_dir {
+                Some(p) => p,
+                None => openxgram_core::paths::default_data_dir()?,
+            };
+            session::run_session(&dir, action.into())?;
         }
 
         Commands::Tui { data_dir } => {
