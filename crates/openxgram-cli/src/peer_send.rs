@@ -43,6 +43,7 @@ pub async fn run_peer_send(
         payload_hex,
         timestamp: kst_now(),
         signature_hex,
+        nonce: Some(uuid::Uuid::new_v4().to_string()),
     };
 
     if !address.starts_with("http://") && !address.starts_with("https://") {
@@ -116,6 +117,7 @@ pub async fn run_peer_broadcast(
             payload_hex: payload_hex.clone(),
             timestamp: now,
             signature_hex: signature_hex.clone(),
+            nonce: Some(uuid::Uuid::new_v4().to_string()),
         };
         joinset.spawn(async move {
             let res = send_envelope(&address, &env)
