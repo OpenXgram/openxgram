@@ -236,10 +236,10 @@ cross-network 메시징 출시 전 반드시 해결.
 
 ### 2.8 PRD-NOSTR-08 NIP-65 relay list
 
-- [ ] 2.8.1 relay list event publish
-- [ ] 2.8.2 peer discovery 자동 (= peer-add 자동화)
-- [ ] 2.8.3 dedup 로직
-- [ ] 2.8.4 통합 테스트
+- [x] 2.8.1 publish_relay_list — kind 10002 event 발행
+- [x] 2.8.2 fetch_peer_relays — peer pubkey 로 자동 discovery
+- [x] 2.8.3 dedup_relays — URL 기준, 신규 metadata 우선
+- [x] 2.8.4 통합 테스트 (publish_then_fetch_round_trip / fetch_returns_empty / dedup_keeps_first)
 
 ---
 
