@@ -2,6 +2,24 @@
 
 OpenXgram 의 변경 이력. 모든 시간은 KST(Asia/Seoul). [Semantic Versioning](https://semver.org/) + BUILD 자동 증가 (CI/CD 갱신, 수동 변경 금지).
 
+## [0.1.0] — 2026-05-04 KST (Phase 1 GA)
+
+rc.1 + rc.2 누적 — 기억·자격 인프라 첫 정식 릴리스. 외부 사용 가능 안정 표면.
+세부 변경은 아래 [0.1.0-rc.2] / [0.1.0-rc.1] 섹션 참조.
+
+핵심 표면:
+- 5층 메모리 (L0 messages → L1 episodes → L2 memories → L3 patterns → L4 traits)
+- L3 → L4 자동 도출 (nightly reflection 통합)
+- Vault 4단계 보안 (ACL × 일일한도 × 감사로그 × auto/confirm/mfa 정책)
+- MCP transport 2종 (stdio + HTTP Bearer 인증)
+- Tailscale 자동 bind (mTLS = WireGuard 레이어)
+- 비파괴 backup + systemd .timer 자동화 + restore --merge
+- 9단계 interactive wizard
+- doctor 10 체크 + JSON 출력
+- 런타임 임베더 선택 (fastembed/dummy)
+- 쉘 자동 완성 (bash/zsh/fish/elvish/powershell)
+- 구조화 JSON 로그 (XGRAM_LOG_FORMAT=json)
+
 ## [0.1.0-rc.2] — 2026-05-04 KST (Phase 1 RC2 — vault notify + MCP HTTP auth)
 
 ### Added
