@@ -2872,6 +2872,7 @@ dependencies = [
  "getrandom 0.3.4",
  "hex",
  "k256",
+ "nostr-relay-builder",
  "openxgram-adapter",
  "openxgram-core",
  "openxgram-db",
