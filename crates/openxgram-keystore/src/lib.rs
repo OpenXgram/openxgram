@@ -14,6 +14,6 @@ mod storage;
 pub use blob::{decrypt_blob, encrypt_blob};
 pub use error::KeystoreError;
 pub use hd::{derive_keypair, DerivationPath};
-pub use keypair::{AgentAddress, Keypair};
+pub use keypair::{verify_with_pubkey, AgentAddress, Keypair};
 pub use mnemonic::{Mnemonic, MnemonicLanguage};
 pub use storage::{FsKeystore, Keystore, KeystoreEntry};
