@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use openxgram_cli::backup::create_cold_backup;
+use openxgram_cli::backup::{create_cold_backup, resolve_backup_target};
 use openxgram_cli::init::{run_init, InitOpts};
 use openxgram_cli::uninstall::{run_uninstall, UninstallOpts};
 use openxgram_keystore::decrypt_blob;
@@ -190,4 +190,40 @@ fn cold_backup_decrypt_with_wrong_password_fails() {
     let err = decrypt_blob("wrong-password-1234", &bytes).unwrap_err();
     let msg = format!("{err}");
     assert!(msg.contains("invalid password") || msg.contains("decrypt"));
+}
+
+#[test]
+fn resolve_backup_target_dir_creates_timestamped_filename() {
+    let tmp = tempdir().unwrap();
+    // 디렉토리 → openxgram-<ts>.cbk 생성
+    let target = resolve_backup_target(tmp.path()).unwrap();
+    assert_eq!(target.parent(), Some(tmp.path()));
+    let name = target.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(name.starts_with("openxgram-"));
+    assert!(name.ends_with(".cbk"));
+}
+
+#[test]
+fn resolve_backup_target_file_path_passes_through() {
+    let tmp = tempdir().unwrap();
+    let explicit = tmp.path().join("manual-name.enc");
+    let target = resolve_backup_target(&explicit).unwrap();
+    assert_eq!(target, explicit);
+}
+
+#[test]
+fn backup_round_trip_into_directory() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    // backup 디렉토리로 to 지정 — timestamped 파일 생성
+    let backup_dir = tmp.path().join("backups");
+    std::fs::create_dir_all(&backup_dir).unwrap();
+    let target = resolve_backup_target(&backup_dir).unwrap();
+    let info = create_cold_backup(&data_dir, &target, TEST_PASSWORD).unwrap();
+    assert!(info.path.exists());
+    assert!(info.size_bytes > 0);
+    assert_eq!(info.sha256.len(), 64);
 }
