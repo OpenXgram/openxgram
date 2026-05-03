@@ -199,6 +199,21 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
+    /// systemd backup .service + .timer 생성 (주기 cold backup 자동화)
+    BackupInstall {
+        #[arg(long)]
+        binary: Option<PathBuf>,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        /// cold backup 출력 디렉토리 (timestamped 파일 생성)
+        #[arg(long)]
+        backup_dir: PathBuf,
+        /// systemd OnCalendar 표현식 (기본 "Sun 03:00:00")
+        #[arg(long)]
+        on_calendar: Option<String>,
+    },
+    BackupUninstall,
+
     /// MCP JSON-RPC 서버 (stdio) — Claude Code 통합용
     McpServe {
         #[arg(long)]
@@ -812,6 +827,51 @@ async fn main() -> anyhow::Result<()> {
             println!("  systemctl --user enable --now openxgram-sidecar.service");
             println!();
             println!("주의: XGRAM_KEYSTORE_PASSWORD 는 systemd-creds 또는 EnvironmentFile 로 별도 주입.");
+        }
+
+        Commands::BackupInstall {
+            binary,
+            data_dir,
+            backup_dir,
+            on_calendar,
+        } => {
+            let bin = match binary {
+                Some(p) => p,
+                None => std::env::current_exe()?.canonicalize()?,
+            };
+            let dir = resolve_data_dir(data_dir)?;
+            let opts = systemd::BackupUnitOpts {
+                binary: bin,
+                data_dir: dir,
+                backup_dir,
+                on_calendar: on_calendar
+                    .unwrap_or_else(|| systemd::DEFAULT_BACKUP_ON_CALENDAR.to_string()),
+            };
+            let svc = systemd::default_backup_service_path()?;
+            let tim = systemd::default_backup_timer_path()?;
+            systemd::install_backup_units(&svc, &tim, &opts)?;
+            println!("✓ systemd backup units 생성");
+            println!("  service: {}", svc.display());
+            println!("  timer  : {}", tim.display());
+            println!();
+            println!("활성화:");
+            println!("  systemctl --user daemon-reload");
+            println!("  systemctl --user enable --now openxgram-backup.timer");
+            println!();
+            println!("주의: XGRAM_KEYSTORE_PASSWORD 는 systemd-creds 또는 EnvironmentFile 로 별도 주입.");
+        }
+
+        Commands::BackupUninstall => {
+            let svc = systemd::default_backup_service_path()?;
+            let tim = systemd::default_backup_timer_path()?;
+            systemd::uninstall_backup_units(&svc, &tim)?;
+            println!("✓ systemd backup units 제거");
+            println!("  service: {}", svc.display());
+            println!("  timer  : {}", tim.display());
+            println!();
+            println!("정리:");
+            println!("  systemctl --user disable --now openxgram-backup.timer");
+            println!("  systemctl --user daemon-reload");
         }
 
         Commands::DaemonUninstall { output } => {
