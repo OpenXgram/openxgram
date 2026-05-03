@@ -25,6 +25,7 @@ openxgram-mcp = { path = "../openxgram-mcp" }
 openxgram-memory = { path = "../openxgram-memory" }
 openxgram-scheduler = { path = "../openxgram-scheduler" }
 openxgram-transport = { path = "../openxgram-transport" }
+openxgram-vault = { path = "../openxgram-vault" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

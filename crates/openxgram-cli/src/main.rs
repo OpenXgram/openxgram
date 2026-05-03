@@ -19,6 +19,7 @@ use openxgram_cli::systemd::{self, UnitOpts};
 use openxgram_cli::tui::{self, TuiOpts};
 use openxgram_cli::wizard;
 use openxgram_cli::uninstall::{self, UninstallOpts};
+use openxgram_cli::vault::{self, VaultAction};
 use openxgram_keystore::{FsKeystore, Keystore};
 use openxgram_manifest::MachineRole;
 
@@ -199,6 +200,14 @@ enum Commands {
     McpServe {
         #[arg(long)]
         data_dir: Option<PathBuf>,
+    },
+
+    /// 암호화 자격증명 vault (PRD §8) — set/get/list/delete
+    Vault {
+        #[arg(long, global = true)]
+        data_dir: Option<PathBuf>,
+        #[command(subcommand)]
+        action: VaultCli,
     },
 
     /// 인터랙티브 init 마법사 (state machine — Welcome/MachineId/Confirm/Done)
@@ -401,6 +410,52 @@ impl From<MemoryCli> for MemoryAction {
             MemoryCli::List { kind } => MemoryAction::List { kind: kind.into() },
             MemoryCli::Pin { id } => MemoryAction::Pin { id },
             MemoryCli::Unpin { id } => MemoryAction::Unpin { id },
+        }
+    }
+}
+
+#[derive(Subcommand, Debug)]
+enum VaultCli {
+    /// 자격증명 저장 (XGRAM_KEYSTORE_PASSWORD 로 암호화)
+    Set {
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        value: String,
+        /// 콤마(,) 로 구분된 태그 목록
+        #[arg(long, default_value = "")]
+        tags: String,
+    },
+    /// 자격증명 평문 출력
+    Get {
+        #[arg(long)]
+        key: String,
+    },
+    /// 메타데이터 list (값은 노출 안 함)
+    List,
+    /// 자격증명 제거
+    Delete {
+        #[arg(long)]
+        key: String,
+    },
+}
+
+impl From<VaultCli> for VaultAction {
+    fn from(c: VaultCli) -> Self {
+        match c {
+            VaultCli::Set { key, value, tags } => VaultAction::Set {
+                key,
+                value,
+                tags: tags
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect(),
+            },
+            VaultCli::Get { key } => VaultAction::Get { key },
+            VaultCli::List => VaultAction::List,
+            VaultCli::Delete { key } => VaultAction::Delete { key },
         }
     }
 }
@@ -663,6 +718,11 @@ async fn main() -> anyhow::Result<()> {
         Commands::McpServe { data_dir } => {
             let dir = resolve_data_dir(data_dir)?;
             mcp_serve::run_serve(&dir)?;
+        }
+
+        Commands::Vault { data_dir, action } => {
+            let dir = resolve_data_dir(data_dir)?;
+            vault::run_vault(&dir, action.into())?;
         }
 
         Commands::Wizard => {
