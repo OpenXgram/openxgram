@@ -9,6 +9,7 @@ use openxgram_cli::backup::{
 use openxgram_cli::backup_push::{self, BackupPushOpts, BackupTarget};
 use openxgram_cli::daemon::{self, DaemonOpts};
 use openxgram_cli::doctor::{self, DoctorOpts};
+use openxgram_cli::dump;
 use openxgram_cli::init::{self, InitOpts};
 use openxgram_cli::mcp_serve;
 use openxgram_cli::memory::{self, MemoryAction};
@@ -315,6 +316,13 @@ enum Commands {
     Completions {
         #[arg(value_enum)]
         shell: clap_complete::Shell,
+    },
+
+    /// JSON 통합 출력 — Tauri/스크립트/Prometheus 친화. kind: sessions/episodes/memories/patterns/traits/vault/acl/pending/peers/payments/mcp-tokens
+    Dump {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        kind: String,
     },
 
     /// 빌드 정보 출력 (버전 / target / 활성 feature / 의존 crate)
@@ -1309,6 +1317,11 @@ async fn main() -> anyhow::Result<()> {
             let mut cmd = Cli::command();
             let bin_name = cmd.get_name().to_string();
             clap_complete::generate(shell, &mut cmd, bin_name, &mut std::io::stdout());
+        }
+
+        Commands::Dump { data_dir, kind } => {
+            let dir = resolve_data_dir(data_dir)?;
+            dump::run_dump(&dir, &kind)?;
         }
 
         Commands::Version { json } => {
