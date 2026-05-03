@@ -27,7 +27,10 @@ pub use message::{Message, MessageStore, RecallHit};
 pub use pattern::{Classification, Pattern, PatternStore};
 pub use session::{Session, SessionStore};
 pub use stats::{store_stats, StoreStats};
-pub use traits::{AgentTrait, TraitSource, TraitStore};
+pub use traits::{
+    derive_traits_from_patterns, pattern_to_trait_name, AgentTrait, TraitSource, TraitStore,
+    DERIVED_TRAIT_PREFIX,
+};
 pub use transfer::{export_session, import_session, ImportSummary, TextPackage};
 
 use thiserror::Error;

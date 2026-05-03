@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use openxgram_core::paths::db_path;
 use openxgram_db::{Db, DbConfig};
-use openxgram_memory::{TraitSource, TraitStore};
+use openxgram_memory::{derive_traits_from_patterns, TraitSource, TraitStore};
 
 #[derive(Debug, Clone)]
 pub enum TraitsAction {
@@ -21,12 +21,27 @@ pub enum TraitsAction {
         name: String,
     },
     List,
+    /// L3 ROUTINE pattern 을 derived trait 로 즉시 도출 (야간 reflection 외 수동 트리거)
+    Derive,
 }
 
 pub fn run_traits(data_dir: &Path, action: TraitsAction) -> Result<()> {
     let mut db = open_db(data_dir)?;
-    let mut store = TraitStore::new(&mut db);
+    // Derive 는 두 store 를 순차 사용하므로 outer match 에서 분기.
+    if matches!(action, TraitsAction::Derive) {
+        let traits = derive_traits_from_patterns(&mut db)?;
+        if traits.is_empty() {
+            println!("derived 0 traits — ROUTINE pattern 없음 (frequency 5+).");
+            return Ok(());
+        }
+        println!("derived {} traits (ROUTINE → L4):", traits.len());
+        for t in &traits {
+            println!("  {} — refs={:?}", t.name, t.source_refs);
+        }
+        return Ok(());
+    }
 
+    let mut store = TraitStore::new(&mut db);
     match action {
         TraitsAction::Set {
             name,
@@ -74,6 +89,7 @@ pub fn run_traits(data_dir: &Path, action: TraitsAction) -> Result<()> {
                 );
             }
         }
+        TraitsAction::Derive => unreachable!("handled above"),
     }
     Ok(())
 }
