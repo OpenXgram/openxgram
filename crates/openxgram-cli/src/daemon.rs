@@ -53,6 +53,26 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
         .await
         .context("transport server bind 실패")?;
     println!("  ✓ transport server bound: http://{}", server.bound_addr);
+
+    // inbound processor — 1초 주기로 server.drain_received() 한 후 envelope.from 매칭으로
+    // peer.touch_by_eth_address. 매칭 실패는 silent (anonymous envelope 도 정상 도착).
+    let data_dir_clone = opts.data_dir.clone();
+    let received_arc = std::sync::Arc::new(server);
+    let received_for_task = received_arc.clone();
+    let processor = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+            let envelopes = received_for_task.drain_received();
+            if envelopes.is_empty() {
+                continue;
+            }
+            if let Err(e) = process_inbound(&data_dir_clone, &envelopes) {
+                tracing::warn!(error = %e, "inbound processor 처리 실패");
+            }
+        }
+    });
+    println!("  ✓ inbound processor running (1s interval)");
     println!();
     println!("Ctrl-C 로 종료.");
 
@@ -64,8 +84,41 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
         .shutdown()
         .await
         .context("scheduler shutdown 실패")?;
-    server.shutdown();
+    processor.abort();
+    if let Ok(server) = std::sync::Arc::try_unwrap(received_arc) {
+        server.shutdown();
+    }
 
     println!("✓ daemon stopped");
+    Ok(())
+}
+
+/// drain 된 envelope 들을 한 번의 DB open 으로 처리 (silent error 패턴).
+fn process_inbound(
+    data_dir: &std::path::Path,
+    envelopes: &[openxgram_transport::Envelope],
+) -> Result<()> {
+    use openxgram_db::{Db, DbConfig};
+    use openxgram_peer::PeerStore;
+    let mut db = Db::open(DbConfig {
+        path: db_path(data_dir),
+        ..Default::default()
+    })
+    .context("DB open (inbound) 실패")?;
+    db.migrate().context("DB migrate (inbound) 실패")?;
+    let mut store = PeerStore::new(&mut db);
+    for env in envelopes {
+        match store.touch_by_eth_address(&env.from) {
+            Ok(0) => {
+                tracing::debug!(from = %env.from, "anonymous inbound (peer 미등록)");
+            }
+            Ok(_) => {
+                tracing::info!(from = %env.from, "peer last_seen 갱신");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, from = %env.from, "peer.touch 실패");
+            }
+        }
+    }
     Ok(())
 }
