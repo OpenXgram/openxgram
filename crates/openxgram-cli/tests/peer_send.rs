@@ -2,7 +2,7 @@
 
 use openxgram_cli::init::{run_init, InitOpts};
 use openxgram_cli::peer::{run_peer, PeerAction};
-use openxgram_cli::peer_send::run_peer_send;
+use openxgram_cli::peer_send::{run_peer_broadcast, run_peer_send};
 use openxgram_manifest::MachineRole;
 use openxgram_peer::PeerRole;
 use openxgram_transport::spawn_server;
@@ -82,6 +82,57 @@ async fn send_to_unknown_peer_raises() {
         .await
         .unwrap_err();
     assert!(format!("{err:#}").contains("nonexistent"));
+}
+
+#[tokio::test]
+#[serial_test::file_serial]
+async fn broadcast_to_multiple_peers_partial_failure() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    // peer A — 정상
+    let server_a = spawn_server("127.0.0.1:0".parse().unwrap()).await.unwrap();
+    let addr_a = format!("http://{}", server_a.bound_addr);
+    run_peer(
+        &data_dir,
+        PeerAction::Add {
+            alias: "alpha".into(),
+            public_key_hex: "01".repeat(33),
+            address: addr_a,
+            role: PeerRole::Worker,
+            notes: None,
+        },
+    )
+    .unwrap();
+
+    // peer B — 잘못된 주소 (closed port)
+    run_peer(
+        &data_dir,
+        PeerAction::Add {
+            alias: "beta".into(),
+            public_key_hex: "02".repeat(33),
+            address: "http://127.0.0.1:1".into(), // 거의 확실히 닫힘
+            role: PeerRole::Worker,
+            notes: None,
+        },
+    )
+    .unwrap();
+
+    let aliases = vec!["alpha".to_string(), "beta".to_string()];
+    let results = run_peer_broadcast(&data_dir, &aliases, "broadcast test", TEST_PASSWORD)
+        .await
+        .unwrap();
+    assert_eq!(results.len(), 2);
+    let alpha_result = results.iter().find(|(a, _)| a == "alpha").unwrap();
+    let beta_result = results.iter().find(|(a, _)| a == "beta").unwrap();
+    assert!(alpha_result.1.is_ok(), "alpha 성공 기대");
+    assert!(beta_result.1.is_err(), "beta 실패 (port 닫힘) 기대");
+
+    // alpha 만 received
+    assert_eq!(server_a.received().len(), 1);
+    server_a.shutdown();
 }
 
 #[tokio::test]
