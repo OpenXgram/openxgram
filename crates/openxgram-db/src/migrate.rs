@@ -59,6 +59,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "mcp_tokens",
         sql: include_str!("../migrations/0009_mcp_tokens.sql"),
     },
+    Migration {
+        version: 10,
+        name: "peers",
+        sql: include_str!("../migrations/0010_peers.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {
