@@ -22,10 +22,18 @@ OpenXgram 의 변경 이력. 모든 시간은 KST(Asia/Seoul). [Semantic Version
 - **Transport baseline** — axum HTTP `POST /v1/message` + `GET /v1/health`
 - **Adapter** — Discord webhook + Telegram bot (wire-level wiremock 검증)
 - **Scheduler** — tokio-cron-scheduler 야간 reflection job (`0 0 15 * * *` UTC = 자정 KST)
-- **MCP 서버** — JSON-RPC stdio + db tools 3종 (`list_sessions`/`recall_messages`/`list_memories_by_kind`) + vault tools 3종 (`vault_list`/`vault_get`/`vault_set`, `XGRAM_KEYSTORE_PASSWORD` 환경 시 노출)
-- **TUI** — ratatui welcome 화면 + 9단계 wizard state machine baseline (Welcome → MachineId → Confirm → Done, Esc/B 이전단계)
+- **MCP 서버** — JSON-RPC stdio + HTTP (`mcp-serve --bind`) + db tools 3종 (`list_sessions`/`recall_messages`/`list_memories_by_kind`) + vault tools 3종 (`vault_list`/`vault_get`/`vault_set`, `XGRAM_KEYSTORE_PASSWORD` 환경 시 노출)
+- **TUI** — ratatui 9단계 wizard (alias/role/data_dir/seed/adapter/bind/daemon/backup → confirm → done, Esc/B 이전단계, cfg 보존)
 - **systemd user units** — sidecar daemon `.service` + cold backup `.service` + `.timer` 자동화 (기본 OnCalendar=Sun 03:00:00, Persistent=true)
 - **비파괴 cold backup** — `xgram backup` 명령 + 디렉토리 입력 시 KST timestamped 파일명 자동 생성
+- **restore --merge** — 비어있지 않은 target_dir 에 백업 덮어쓰기 (target only 파일 보존)
+- **Vault ACL · 감사 로그 · 일일 한도** — agent × key 패턴 매칭, vault_audit 전수 기록, 정책 (auto/confirm/mfa)
+- **Vault confirm 정책** — pending 큐 + 마스터 승인 (`vault pending`/`approve`/`deny`) + 1회 소비
+- **Vault mfa 정책** — RFC 6238 TOTP (SHA1/6자리/30s) + base32 secret 발급 (`vault mfa-issue`)
+- **L3 → L4 traits 자동 도출** — ROUTINE pattern 을 derived trait 로 upsert (nightly reflection 통합 + 수동 `traits derive`)
+- **Tailscale 통합** — `xgram daemon --tailscale` 자동 bind, doctor BackendState 검사 (mTLS = WireGuard 레이어)
+- **default_embedder() factory** — `--features fastembed` + `XGRAM_EMBEDDER!=dummy` → FastEmbedder, 그 외 → DummyEmbedder. MessageStore 가 `?Sized` 로 Box<dyn Embedder> 수용
+- **doctor 9 체크** — manifest / data_dir / sqlite / keystore / drift / transport / memory / vault / embedder / tailscale
 - **fastembed optional feature** — multilingual-e5-small ONNX 모델 (`--features fastembed`)
 
 ### Quality
@@ -34,14 +42,11 @@ OpenXgram 의 변경 이력. 모든 시간은 KST(Asia/Seoul). [Semantic Version
 - **Silent error 4패턴** 전 crate 적용 — reqwest `.error_for_status()?` / rusqlite `affected_rows()` / tokio-cron-scheduler panic 핸들러 / keyring round-trip
 - **마스터 코드 작성 규칙** 준수 — 응집도 분리, 중복 금지(core hub), 중앙화(paths/time/env/confirm/ports), 하드코딩 제거, 모듈화 4원칙
 
-### Phase 1.5+ 잔여
-- 9 단계 wizard 추가 단계 (시드 / 패스워드 / 외부 어댑터 / Transport / 데몬 등록)
-- Tailscale 실 IP / mTLS transport
-- HTTP MCP transport
-- fastembed 활성 시 MessageStore embedder 통합 (현재 DummyEmbedder)
-- L3 → L4 traits 자동 도출 (야간 reflection)
-- Vault ACL · 일일 한도 · MFA 정책 + 침투 테스트
-- restore 병합 모드
+### Phase 2+ 후속
+- 통합 테스트 격리 강화 (serial_test 또는 동적 포트 → CI 병렬화)
+- MCP HTTP caller 인증 (현재 master-context 가정 — agent 식별용 token/header)
+- daemon 측 vault pending Discord/Telegram 알림 (#57 후속)
+- Tauri GUI · XMTP 어댑터 · USDC 결제 (PRD §16)
 
 ---
 
