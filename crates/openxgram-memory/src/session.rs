@@ -53,6 +53,33 @@ impl<'a> SessionStore<'a> {
         })
     }
 
+    /// title 로 session 찾고 없으면 생성. inbound peer 별 inbox session 자동 생성에 활용.
+    pub fn ensure_by_title(&mut self, title: &str, home_machine: &str) -> Result<Session> {
+        let existing: Option<(String, String, String, String)> = self
+            .db
+            .conn()
+            .query_row(
+                "SELECT id, created_at, last_active, home_machine FROM sessions WHERE title = ?1",
+                [title],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok::<_, MemoryError>(None),
+                other => Err(other.into()),
+            })?;
+        if let Some((id, created, active, hm)) = existing {
+            return Ok(Session {
+                id,
+                title: title.into(),
+                created_at: parse_ts(&created)?,
+                last_active: parse_ts(&active)?,
+                home_machine: hm,
+            });
+        }
+        self.create(title, home_machine)
+    }
+
     pub fn list(&mut self) -> Result<Vec<Session>> {
         let mut stmt = self.db.conn().prepare(
             "SELECT id, title, created_at, last_active, home_machine
