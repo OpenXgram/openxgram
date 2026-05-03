@@ -1,0 +1,25 @@
+[package]
+name = "openxgram-payment"
+description = "Payment infra — USDC payment intent 데이터 구조 + 서명 검증 (PRD §16)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+openxgram-core = { path = "../openxgram-core" }
+openxgram-db = { path = "../openxgram-db" }
+openxgram-keystore = { path = "../openxgram-keystore" }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+hex = { workspace = true }
+k256 = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
