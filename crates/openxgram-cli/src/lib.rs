@@ -11,6 +11,7 @@ pub mod mcp_serve;
 pub mod mcp_tokens;
 pub mod memory;
 pub mod migrate;
+pub mod nostr_inbound;
 pub mod notify;
 pub mod patterns;
 pub mod payment;
