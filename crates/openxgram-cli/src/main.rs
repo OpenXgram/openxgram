@@ -16,12 +16,14 @@ use openxgram_cli::reset::{self, ResetOpts};
 use openxgram_cli::session::{self, SessionAction};
 use openxgram_cli::status::{self, StatusOpts};
 use openxgram_cli::systemd::{self, UnitOpts};
+use openxgram_cli::traits::{self, TraitsAction};
 use openxgram_cli::tui::{self, TuiOpts};
 use openxgram_cli::wizard;
 use openxgram_cli::uninstall::{self, UninstallOpts};
 use openxgram_cli::vault::{self, VaultAction};
 use openxgram_keystore::{FsKeystore, Keystore};
 use openxgram_manifest::MachineRole;
+use openxgram_memory::TraitSource;
 
 /// xgram — OpenXgram CLI
 ///
@@ -208,6 +210,14 @@ enum Commands {
         data_dir: Option<PathBuf>,
         #[command(subcommand)]
         action: VaultCli,
+    },
+
+    /// L4 traits (정체성·성향) — set/get/list (manual source 만 CLI 노출)
+    Traits {
+        #[arg(long, global = true)]
+        data_dir: Option<PathBuf>,
+        #[command(subcommand)]
+        action: TraitsCli,
     },
 
     /// 인터랙티브 init 마법사 (state machine — Welcome/MachineId/Confirm/Done)
@@ -438,6 +448,47 @@ enum VaultCli {
         #[arg(long)]
         key: String,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum TraitsCli {
+    /// trait set (manual). 같은 name 이 있으면 value 갱신
+    Set {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        value: String,
+        /// 도출 근거 (콤마(,) 구분 — memory id, episode id 등)
+        #[arg(long, default_value = "")]
+        refs: String,
+    },
+    /// trait 단건 조회
+    Get {
+        #[arg(long)]
+        name: String,
+    },
+    /// 모든 trait list (updated_at DESC)
+    List,
+}
+
+impl From<TraitsCli> for TraitsAction {
+    fn from(c: TraitsCli) -> Self {
+        match c {
+            TraitsCli::Set { name, value, refs } => TraitsAction::Set {
+                name,
+                value,
+                source: TraitSource::Manual,
+                refs: refs
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect(),
+            },
+            TraitsCli::Get { name } => TraitsAction::Get { name },
+            TraitsCli::List => TraitsAction::List,
+        }
+    }
 }
 
 impl From<VaultCli> for VaultAction {
@@ -723,6 +774,11 @@ async fn main() -> anyhow::Result<()> {
         Commands::Vault { data_dir, action } => {
             let dir = resolve_data_dir(data_dir)?;
             vault::run_vault(&dir, action.into())?;
+        }
+
+        Commands::Traits { data_dir, action } => {
+            let dir = resolve_data_dir(data_dir)?;
+            traits::run_traits(&dir, action.into())?;
         }
 
         Commands::Wizard => {
