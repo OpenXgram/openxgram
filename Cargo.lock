@@ -952,9 +952,14 @@ dependencies = [
 name = "openxgram-manifest"
 version = "0.1.0-alpha.1"
 dependencies = [
- "anyhow",
+ "chrono",
+ "hex",
+ "k256",
+ "openxgram-keystore",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
  "thiserror 1.0.69",
 ]
 
