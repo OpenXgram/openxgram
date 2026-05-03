@@ -1,8 +1,11 @@
 # OpenXgram
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/OpenXgram/openxgram/ci.yml?branch=main)](https://github.com/OpenXgram/openxgram/actions)
-[![Version](https://img.shields.io/badge/version-0.1.0--alpha.1-blue)](./version.json)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/OpenXgram/openxgram/blob/main/LICENSE)
+![CI](https://github.com/OpenXgram/openxgram/actions/workflows/ci.yml/badge.svg)
+[![Version](https://img.shields.io/badge/version-0.1.0--alpha.1-blue)](https://github.com/OpenXgram/openxgram/blob/main/version.json)
+
+**Repository**: https://github.com/OpenXgram/openxgram  
+**Homepage**: https://openxgram.org
 
 **OpenXgram — Memory & Credential Infrastructure for Multi-Agent, Multi-Machine, Multi-LLM**
 
