@@ -630,6 +630,9 @@ impl<'a> VaultStore<'a> {
              VALUES (?1, ?2, ?3, ?4, 'pending', ?5)",
             rusqlite::params![id, key, agent, action.as_str(), now_rfc],
         )?;
+        // 마스터 알림 — DISCORD_WEBHOOK_URL 환경 시 fire-and-forget POST.
+        // 실패해도 vault 흐름 차단 안 함 (silent error 패턴, tracing 으로 기록).
+        notify_pending_via_discord(&id, key, agent, action);
         Ok(id)
     }
 
@@ -807,4 +810,77 @@ fn parse_actions(s: &str) -> Result<Vec<AclAction>> {
 
 fn parse_ts(s: &str) -> Result<DateTime<FixedOffset>> {
     DateTime::parse_from_rfc3339(s).map_err(|e| VaultError::InvalidTimestamp(e.to_string()))
+}
+
+/// `DISCORD_WEBHOOK_URL` 환경 시 새 pending 을 알림. fire-and-forget — 실패는 tracing
+/// 으로만 기록하고 vault 흐름 차단 안 함. timeout 5초.
+///
+/// silent error 패턴: 마스터 알림 실패가 vault 동작 자체를 차단하지 않도록.
+///
+/// 테스트 회피: `XGRAM_VAULT_NOTIFY=off` 환경 시 skip (CI/integration test 친화).
+fn notify_pending_via_discord(id: &str, key: &str, agent: &str, action: AclAction) {
+    if std::env::var("XGRAM_VAULT_NOTIFY").as_deref() == Ok("off") {
+        return;
+    }
+    let Ok(url) = std::env::var("DISCORD_WEBHOOK_URL") else {
+        return;
+    };
+    let body = serde_json::json!({
+        "content": format!(
+            "🔐 OpenXgram vault confirm 요청\n• action: {}\n• key: {}\n• agent: {}\n• id: `{}`\n• 승인: `xgram vault approve {id}`  / 거부: `xgram vault deny {id}`",
+            action.as_str(),
+            key,
+            agent,
+            id,
+        ),
+    });
+    // fire-and-forget — 같은 스레드에서 sync POST (blocking client). 실패해도 라이즈 안 함.
+    match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(client) => {
+            if let Err(e) = client.post(&url).json(&body).send() {
+                tracing::warn!(error = %e, id = %id, "vault pending discord notify 실패");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "discord client 생성 실패");
+        }
+    }
+}
+
+#[cfg(test)]
+mod notify_tests {
+    use super::*;
+
+    /// 환경변수 미설정 → 즉시 return, 패닉 없음.
+    #[test]
+    fn notify_skips_when_env_unset() {
+        // 다른 테스트가 set 했을 가능성 차단
+        unsafe { std::env::remove_var("DISCORD_WEBHOOK_URL") };
+        notify_pending_via_discord("id1", "k", "0xA", AclAction::Get);
+    }
+
+    /// XGRAM_VAULT_NOTIFY=off 면 url 있어도 skip.
+    #[test]
+    fn notify_off_overrides_url() {
+        unsafe {
+            std::env::set_var("DISCORD_WEBHOOK_URL", "http://127.0.0.1:1");
+            std::env::set_var("XGRAM_VAULT_NOTIFY", "off");
+        }
+        notify_pending_via_discord("id2", "k", "0xA", AclAction::Get);
+        unsafe {
+            std::env::remove_var("DISCORD_WEBHOOK_URL");
+            std::env::remove_var("XGRAM_VAULT_NOTIFY");
+        }
+    }
+
+    /// 잘못된 url 도 panic 없이 silent error.
+    #[test]
+    fn notify_swallows_bad_url() {
+        unsafe { std::env::set_var("DISCORD_WEBHOOK_URL", "http://127.0.0.1:1") };
+        notify_pending_via_discord("id3", "k", "0xA", AclAction::Get);
+        unsafe { std::env::remove_var("DISCORD_WEBHOOK_URL") };
+    }
 }
