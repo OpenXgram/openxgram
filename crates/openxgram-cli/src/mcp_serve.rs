@@ -17,7 +17,7 @@ use openxgram_mcp::{
     handle_request, JsonRpcError, JsonRpcRequest, ToolDispatcher, ToolSpec, ERR_INTERNAL,
     ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND,
 };
-use openxgram_memory::{DummyEmbedder, MemoryKind, MemoryStore, MessageStore, SessionStore};
+use openxgram_memory::{default_embedder, MemoryKind, MemoryStore, MessageStore, SessionStore};
 use openxgram_vault::VaultStore;
 use serde_json::{json, Value};
 
@@ -138,8 +138,8 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| invalid("missing 'query'"))?;
                 let k = args.get("k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
-                let embedder = DummyEmbedder;
-                let hits = MessageStore::new(&mut self.db, &embedder)
+                let embedder = default_embedder().map_err(internal)?;
+                let hits = MessageStore::new(&mut self.db, embedder.as_ref())
                     .recall_top_k(query, k)
                     .map_err(internal)?;
                 let items: Vec<Value> = hits
