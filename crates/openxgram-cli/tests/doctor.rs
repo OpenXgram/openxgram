@@ -129,3 +129,57 @@ fn doctor_warns_on_wrong_keystore_mode() {
         .unwrap();
     assert_eq!(ks_check.verdict, Verdict::Warn);
 }
+
+#[test]
+fn doctor_reports_memory_layer_counts() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+    let report = run_doctor(&doctor_opts(data_dir)).unwrap();
+    let mem = report
+        .checks
+        .iter()
+        .find(|c| c.name == "Memory layers")
+        .expect("Memory layers check");
+    assert_eq!(mem.verdict, Verdict::Ok);
+    for table in ["messages", "episodes", "memories", "patterns", "traits"] {
+        assert!(mem.detail.contains(table), "missing {table} in detail: {}", mem.detail);
+    }
+}
+
+#[test]
+fn doctor_reports_vault_layer_counts() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+    let report = run_doctor(&doctor_opts(data_dir)).unwrap();
+    let v = report
+        .checks
+        .iter()
+        .find(|c| c.name == "Vault layers")
+        .expect("Vault layers check");
+    assert_eq!(v.verdict, Verdict::Ok);
+    assert!(v.detail.contains("entries=0"));
+    assert!(v.detail.contains("acl=0"));
+    assert!(v.detail.contains("audit=0"));
+    assert!(v.detail.contains("denied_today=0"));
+}
+
+#[test]
+fn doctor_includes_embedder_mode_check() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+    let report = run_doctor(&doctor_opts(data_dir)).unwrap();
+    let emb = report
+        .checks
+        .iter()
+        .find(|c| c.name == "Embedder mode")
+        .expect("Embedder mode check");
+    // dummy 빌드 (기본) → WARN, fastembed 빌드 → OK
+    assert!(matches!(emb.verdict, Verdict::Ok | Verdict::Warn));
+    assert!(emb.detail.contains("Embedder") || emb.detail.contains("fastembed") || emb.detail.contains("Dummy"));
+}
