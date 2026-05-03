@@ -99,85 +99,85 @@
   - [x] 5단계 검증: 별도 PRD-NOSTR-11 (1.2.x → process_inbound) 에서 통합 검증
   - [x] 6단계 [x]
 
-### [ ] 2. PRD-NOSTR-10 daemon 10s polling task (deferred 2.4.2)
+### [x] 2. PRD-NOSTR-10 daemon 10s polling task (deferred 2.4.2)
 
-#### [ ] 2.1 daemon main loop 통합
+#### [x] 2.1 daemon main loop 통합
 
-##### [ ] 2.1.1 NostrSource subscription 시작 위치 결정
+##### [x] 2.1.1 NostrSource subscription 시작 위치 결정
 
-  - [ ] 1단계 중복검사: daemon main / start 함수 분석
-  - [ ] 2단계 Context7: tokio::spawn 패턴
-  - [ ] 3단계 구현: daemon 기동 시 NostrSource init + subscribe
-  - [ ] 4단계 simpler: 기동 헬퍼 함수
-  - [ ] 5단계 검증: daemon 기동 후 Nostr task 활성 확인 (로그)
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: daemon.rs run_daemon 시작부 inbound processor 위치 확인
+  - [x] 2단계 Context7: tokio::spawn + watch::channel shutdown
+  - [x] 3단계 구현: nostr_inbound::spawn_nostr_inbound_processor — daemon main 에서 env opt-in 시 spawn
+  - [x] 4단계 simpler: 신규 모듈 분리, daemon main 변경 최소
+  - [x] 5단계 검증: shutdown_signal_terminates_processor — MockRelay + spawn + shutdown 라운드트립
+  - [x] 6단계 [x]
 
-##### [ ] 2.1.2 10초 polling tick (notifications 채널 + interval)
+##### [x] 2.1.2 10초 polling tick (notifications 채널 + interval)
 
-  - [ ] 1단계 중복검사: tokio::time::interval 사용처
-  - [ ] 2단계 Context7: nostr-sdk Client.notifications
-  - [ ] 3단계 구현: interval(Duration::from_secs(10)) tick + drain
-  - [ ] 4단계 simpler: 마법수 상수 분리
-  - [ ] 5단계 검증: 통합 테스트 with MockRelay 이벤트 수신
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: tokio::time::interval — daemon 의 1s loop 와 동일 패턴
+  - [x] 2단계 Context7: nostr-sdk Client.notifications + spawn_listener (broadcast Receiver 검증됨)
+  - [x] 3단계 구현: spawn_listener 콜백 → mpsc::unbounded_channel → tick 마다 drain_into_batch + process_inbound
+  - [x] 4단계 simpler: DEFAULT_POLL_SECS=10 상수, drain helper 단일 함수
+  - [x] 5단계 검증: shutdown 테스트 + drain_into_batch ciphertext 복호 + JSON 파싱 단일 진입
+  - [x] 6단계 [x]
 
-##### [ ] 2.1.3 graceful shutdown — ctrl_c 시 task abort
+##### [x] 2.1.3 graceful shutdown — ctrl_c 시 task abort
 
-  - [ ] 1단계 중복검사: shutdown 신호 처리 grep
-  - [ ] 2단계 Context7: tokio::signal::ctrl_c
-  - [ ] 3단계 구현: select! 로 ctrl_c + tick 동시 대기
-  - [ ] 4단계 simpler: 종료 코드 단일화
-  - [ ] 5단계 검증: SIGINT 후 task 종료 로그
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: tokio::signal::ctrl_c daemon 에 이미 존재
+  - [x] 2단계 Context7: tokio::sync::watch — 일대다 shutdown signal
+  - [x] 3단계 구현: select! { shutdown_rx.changed | tick } — true 시 break + 잔여 drain + source.shutdown()
+  - [x] 4단계 simpler: 종료 코드 1곳 (break)
+  - [x] 5단계 검증: shutdown_signal_terminates_processor — 200ms 후 신호, 1s 내 종료
+  - [x] 6단계 [x]
 
-##### [ ] 2.1.4 polling interval config 노출
+##### [x] 2.1.4 polling interval config 노출
 
-  - [ ] 1단계 중복검사: 하드코딩 10s 검색
-  - [ ] 2단계 Context7: figment/config crate
-  - [ ] 3단계 구현: NostrPollConfig.interval_secs 설정
-  - [ ] 4단계 simpler: default 상수 단일 위치
-  - [ ] 5단계 검증: env override 테스트
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: 하드코딩 10s 없음 (DEFAULT_POLL_SECS 단일 const)
+  - [x] 2단계 Context7: env var XGRAM_NOSTR_POLL_SECS — 표준 패턴
+  - [x] 3단계 구현: NostrInboundConfig::from_env — XGRAM_NOSTR_POLL_SECS 우선, default 10s
+  - [x] 4단계 simpler: const + parse fallback 한 줄
+  - [x] 5단계 검증: config_from_env_csv_default_and_none_paths — 3 경로 검증
+  - [x] 6단계 [x]
 
-### [ ] 3. PRD-NOSTR-11 received event → process_inbound (deferred 2.4.3)
+### [x] 3. PRD-NOSTR-11 received event → process_inbound (deferred 2.4.3)
 
-#### [ ] 3.1 Event → envelope 변환
+#### [x] 3.1 Event → envelope 변환
 
-##### [ ] 3.1.1 kind 30500 (L0Message) 만 process_inbound 라우팅
+##### [x] 3.1.1 kind 30500 (L0Message) 만 process_inbound 라우팅
 
-  - [ ] 1단계 중복검사: process_inbound signature 확인
-  - [ ] 2단계 Context7: Event.kind 매칭
-  - [ ] 3단계 구현: kind 매칭 분기
-  - [ ] 4단계 simpler: match 한곳
-  - [ ] 5단계 검증: 다른 kind 무시 테스트
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: nostr_inbound.rs Filter::new().kind(L0Message) 단일 kind subscribe
+  - [x] 2단계 Context7: Filter.kind 는 다른 kind 자동 제외 (relay 측 필터링)
+  - [x] 3단계 구현: subscribe 시 kind 제한 — process_inbound 진입 전 kind 매칭 불필요
+  - [x] 4단계 simpler: relay 측 필터로 클라이언트 분기 제거
+  - [x] 5단계 검증: source.rs filter_kind_excludes_other_kinds 가 동일 패턴 검증 (다른 kind 콜백 0회)
+  - [x] 6단계 [x]
 
-##### [ ] 3.1.2 envelope 검증 (signature_hex + peer pubkey)
+##### [x] 3.1.2 envelope 검증 (signature_hex + peer pubkey)
 
-  - [ ] 1단계 중복검사: 기존 verify 로직 재사용 확인
-  - [ ] 2단계 Context7: k256 verify
-  - [ ] 3단계 구현: process_inbound 진입 전 verify_event 호출
-  - [ ] 4단계 simpler: 검증 헬퍼 단일화
-  - [ ] 5단계 검증: 위조 이벤트 drop 테스트
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: process_inbound 가 이미 verify_with_pubkey 호출
+  - [x] 2단계 Context7: k256 verify_with_pubkey — Phase 1 PRD-2.0.1 검증 완료
+  - [x] 3단계 구현: nostr_inbound 가 envelope 을 batch 로 process_inbound 전달 — 동일 검증 경로 통과
+  - [x] 4단계 simpler: 검증 로직 중복 추가 X
+  - [x] 5단계 검증: 위조 envelope 은 process_inbound 의 verify_with_pubkey 가 drop + WARN
+  - [x] 6단계 [x]
 
-##### [ ] 3.1.3 MessageStore::insert 호출
+##### [x] 3.1.3 MessageStore::insert 호출
 
-  - [ ] 1단계 중복검사: MessageStore API
-  - [ ] 2단계 Context7: 내부 store 모듈
-  - [ ] 3단계 구현: envelope → MessageRow 매핑
-  - [ ] 4단계 simpler: 매퍼 헬퍼
-  - [ ] 5단계 검증: DB row 존재 확인
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: process_inbound 가 MessageStore::insert 호출
+  - [x] 2단계 Context7: openxgram_memory::MessageStore — Phase 1 검증 완료
+  - [x] 3단계 구현: 별도 추가 X — 기존 호출 재사용
+  - [x] 4단계 simpler: 단일 store 진입점
+  - [x] 5단계 검증: process_inbound 통합 테스트가 row 존재 검증
+  - [x] 6단계 [x]
 
-##### [ ] 3.1.4 session 자동 매핑 (메타 추출 / default 생성)
+##### [x] 3.1.4 session 자동 매핑 (메타 추출 / default 생성)
 
-  - [ ] 1단계 중복검사: session 자동매핑 기존 코드 (PRD-2.0.3)
-  - [ ] 2단계 Context7: 내부 session 모듈
-  - [ ] 3단계 구현: 메타 → session_id, 없으면 default 생성
-  - [ ] 4단계 simpler: 분기 단일화
-  - [ ] 5단계 검증: 두 케이스 통합 테스트
-  - [ ] 6단계 [x]
+  - [x] 1단계 중복검사: process_inbound 가 SessionStore::ensure_by_title("inbox-from-{alias}") 호출
+  - [x] 2단계 Context7: SessionStore.ensure_by_title — Phase 1 검증
+  - [x] 3단계 구현: 별도 추가 X — 동일 함수 재사용 (Nostr 도착도 동일 inbox session)
+  - [x] 4단계 simpler: 매핑 1곳 (process_inbound)
+  - [x] 5단계 검증: process_inbound 가 ensure_by_title 로 미존재 시 자동 생성 — Phase 1 테스트 검증
+  - [x] 6단계 [x]
 
 ### [ ] 4. PRD-NOSTR-12 ratchet 1주 cron 회전 (deferred 2.5.3)
 

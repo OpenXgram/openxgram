@@ -17,14 +17,15 @@
 //! - PRD-NOSTR-06 self-host relay (nostr-relay-builder)
 
 use nostr::nips::nip44::{self, Version};
-use nostr::{Event, EventBuilder, Keys, Kind, SecretKey, Tag};
+use nostr::{Event, EventBuilder, Keys, Kind, Tag};
 use openxgram_keystore::Keypair;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 // 외부 crate 가 nostr 타입을 직접 import 하지 않아도 되도록 re-export
 pub use nostr::{
-    Event as NostrEvent, Filter, Keys as NostrKeys, Kind as NostrKindRaw, PublicKey, Tag as NostrTag,
+    Event as NostrEvent, Filter, Keys as NostrKeys, Kind as NostrKindRaw, PublicKey, SecretKey,
+    Tag as NostrTag,
 };
 pub use nostr_sdk::RelayPoolNotification;
 
