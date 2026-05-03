@@ -5,6 +5,7 @@ pub mod backup;
 pub mod daemon;
 pub mod doctor;
 pub mod init;
+pub mod mcp_serve;
 pub mod memory;
 pub mod migrate;
 pub mod notify;

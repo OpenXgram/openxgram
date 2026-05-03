@@ -1,8 +1,7 @@
-//! openxgram-mcp — Model Context Protocol JSON-RPC server (Phase 1 baseline).
+//! openxgram-mcp — Model Context Protocol JSON-RPC server.
 //!
-//! 자체 JSON-RPC 2.0 구현. stdio·HTTP transport 와 db/memory 통합 tools 는
-//! 후속 PR. Phase 1 first PR: pure handle_request + initialize/tools/list/
-//! tools/call (echo tool).
+//! Phase 1: pure handle_request + ToolDispatcher trait. EchoDispatcher 는
+//! baseline 예시. db/memory 통합 dispatcher 는 cli/src/mcp_serve.rs.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -13,6 +12,7 @@ pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub const ERR_METHOD_NOT_FOUND: i32 = -32601;
 pub const ERR_INVALID_PARAMS: i32 = -32602;
+pub const ERR_INTERNAL: i32 = -32603;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct JsonRpcRequest {
@@ -39,14 +39,27 @@ pub struct JsonRpcError {
     pub message: String,
 }
 
-pub fn handle_request(req: JsonRpcRequest) -> JsonRpcResponse {
+#[derive(Debug, Clone)]
+pub struct ToolSpec {
+    pub name: String,
+    pub description: String,
+    pub input_schema: Value,
+}
+
+/// MCP tools 의 단일 dispatch 인터페이스. 각 환경(echo / db+memory) 별로 구현.
+pub trait ToolDispatcher: Send {
+    fn tools(&self) -> Vec<ToolSpec>;
+    fn dispatch(&mut self, name: &str, args: &Value) -> Result<Value, JsonRpcError>;
+}
+
+pub fn handle_request<D: ToolDispatcher>(req: JsonRpcRequest, dispatcher: &mut D) -> JsonRpcResponse {
     let id = req.id.clone();
     match req.method.as_str() {
         "initialize" => ok(id, initialize_result()),
-        "tools/list" => ok(id, tools_list_result()),
-        "tools/call" => match dispatch_tool(&req.params) {
-            Ok(value) => ok(id, value),
-            Err(err) => error(id, err),
+        "tools/list" => ok(id, tools_list_value(dispatcher)),
+        "tools/call" => match call_tool(dispatcher, &req.params) {
+            Ok(v) => ok(id, v),
+            Err(e) => error(id, e),
         },
         other => error(
             id,
@@ -84,21 +97,22 @@ fn initialize_result() -> Value {
     })
 }
 
-fn tools_list_result() -> Value {
-    json!({
-        "tools": [{
-            "name": "echo",
-            "description": "단순 echo — Phase 1 baseline (db/memory 통합 tool 은 후속 PR)",
-            "inputSchema": {
-                "type": "object",
-                "properties": { "text": { "type": "string" } },
-                "required": ["text"],
-            },
-        }],
-    })
+fn tools_list_value<D: ToolDispatcher>(dispatcher: &D) -> Value {
+    let tools: Vec<Value> = dispatcher
+        .tools()
+        .into_iter()
+        .map(|t| {
+            json!({
+                "name": t.name,
+                "description": t.description,
+                "inputSchema": t.input_schema,
+            })
+        })
+        .collect();
+    json!({ "tools": tools })
 }
 
-fn dispatch_tool(params: &Value) -> Result<Value, JsonRpcError> {
+fn call_tool<D: ToolDispatcher>(dispatcher: &mut D, params: &Value) -> Result<Value, JsonRpcError> {
     let name = params
         .get("name")
         .and_then(|v| v.as_str())
@@ -106,23 +120,42 @@ fn dispatch_tool(params: &Value) -> Result<Value, JsonRpcError> {
             code: ERR_INVALID_PARAMS,
             message: "missing 'name'".into(),
         })?;
-    match name {
-        "echo" => {
-            let text = params
-                .get("arguments")
-                .and_then(|a| a.get("text"))
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| JsonRpcError {
-                    code: ERR_INVALID_PARAMS,
-                    message: "echo: missing arguments.text".into(),
-                })?;
-            Ok(json!({
-                "content": [{ "type": "text", "text": text }],
-            }))
+    let args = params.get("arguments").cloned().unwrap_or(Value::Null);
+    dispatcher.dispatch(name, &args)
+}
+
+/// baseline dispatcher — echo tool 만. 통합 테스트·예시용.
+pub struct EchoDispatcher;
+
+impl ToolDispatcher for EchoDispatcher {
+    fn tools(&self) -> Vec<ToolSpec> {
+        vec![ToolSpec {
+            name: "echo".into(),
+            description: "단순 echo — Phase 1 baseline".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "text": { "type": "string" } },
+                "required": ["text"],
+            }),
+        }]
+    }
+
+    fn dispatch(&mut self, name: &str, args: &Value) -> Result<Value, JsonRpcError> {
+        if name != "echo" {
+            return Err(JsonRpcError {
+                code: ERR_METHOD_NOT_FOUND,
+                message: format!("unknown tool: {name}"),
+            });
         }
-        other => Err(JsonRpcError {
-            code: ERR_METHOD_NOT_FOUND,
-            message: format!("unknown tool: {other}"),
-        }),
+        let text = args
+            .get("text")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| JsonRpcError {
+                code: ERR_INVALID_PARAMS,
+                message: "echo: missing arguments.text".into(),
+            })?;
+        Ok(json!({
+            "content": [{ "type": "text", "text": text }],
+        }))
     }
 }

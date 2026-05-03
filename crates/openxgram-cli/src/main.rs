@@ -7,6 +7,7 @@ use openxgram_cli::backup::restore_cold_backup;
 use openxgram_cli::daemon::{self, DaemonOpts};
 use openxgram_cli::doctor::{self, DoctorOpts};
 use openxgram_cli::init::{self, InitOpts};
+use openxgram_cli::mcp_serve;
 use openxgram_cli::memory::{self, MemoryAction};
 use openxgram_cli::migrate::{self, MigrateOpts};
 use openxgram_cli::notify::{self, NotifyAction};
@@ -162,6 +163,12 @@ enum Commands {
         /// reflection cron 표현식 (기본 0 0 15 * * * = 자정 KST)
         #[arg(long)]
         reflection_cron: Option<String>,
+    },
+
+    /// MCP JSON-RPC 서버 (stdio) — Claude Code 통합용
+    McpServe {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
     },
 
     /// 인터랙티브 init 마법사 (state machine — Welcome/MachineId/Confirm/Done)
@@ -547,6 +554,11 @@ async fn main() -> anyhow::Result<()> {
                 reflection_cron,
             })
             .await?;
+        }
+
+        Commands::McpServe { data_dir } => {
+            let dir = resolve_data_dir(data_dir)?;
+            mcp_serve::run_serve(&dir)?;
         }
 
         Commands::Wizard => {
