@@ -12,6 +12,7 @@ use openxgram_cli::mcp_serve;
 use openxgram_cli::memory::{self, MemoryAction};
 use openxgram_cli::migrate::{self, MigrateOpts};
 use openxgram_cli::notify::{self, NotifyAction};
+use openxgram_cli::patterns::{self, PatternsAction};
 use openxgram_cli::reset::{self, ResetOpts};
 use openxgram_cli::session::{self, SessionAction};
 use openxgram_cli::status::{self, StatusOpts};
@@ -23,7 +24,7 @@ use openxgram_cli::uninstall::{self, UninstallOpts};
 use openxgram_cli::vault::{self, VaultAction};
 use openxgram_keystore::{FsKeystore, Keystore};
 use openxgram_manifest::MachineRole;
-use openxgram_memory::TraitSource;
+use openxgram_memory::{Classification, TraitSource};
 
 /// xgram — OpenXgram CLI
 ///
@@ -218,6 +219,14 @@ enum Commands {
         data_dir: Option<PathBuf>,
         #[command(subcommand)]
         action: TraitsCli,
+    },
+
+    /// L3 patterns (행동/발화 분류) — observe/list (NEW/RECURRING/ROUTINE)
+    Patterns {
+        #[arg(long, global = true)]
+        data_dir: Option<PathBuf>,
+        #[command(subcommand)]
+        action: PatternsCli,
     },
 
     /// 인터랙티브 init 마법사 (state machine — Welcome/MachineId/Confirm/Done)
@@ -487,6 +496,48 @@ impl From<TraitsCli> for TraitsAction {
             },
             TraitsCli::Get { name } => TraitsAction::Get { name },
             TraitsCli::List => TraitsAction::List,
+        }
+    }
+}
+
+#[derive(Subcommand, Debug)]
+enum PatternsCli {
+    /// pattern observe — 같은 text 면 frequency+1, 없으면 NEW 로 insert
+    Observe {
+        #[arg(long)]
+        text: String,
+    },
+    /// classification 별 list (frequency DESC)
+    List {
+        #[arg(long, value_enum)]
+        classification: ClassificationArg,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum ClassificationArg {
+    New,
+    Recurring,
+    Routine,
+}
+
+impl From<ClassificationArg> for Classification {
+    fn from(c: ClassificationArg) -> Self {
+        match c {
+            ClassificationArg::New => Self::New,
+            ClassificationArg::Recurring => Self::Recurring,
+            ClassificationArg::Routine => Self::Routine,
+        }
+    }
+}
+
+impl From<PatternsCli> for PatternsAction {
+    fn from(c: PatternsCli) -> Self {
+        match c {
+            PatternsCli::Observe { text } => PatternsAction::Observe { text },
+            PatternsCli::List { classification } => PatternsAction::List {
+                classification: classification.into(),
+            },
         }
     }
 }
@@ -779,6 +830,11 @@ async fn main() -> anyhow::Result<()> {
         Commands::Traits { data_dir, action } => {
             let dir = resolve_data_dir(data_dir)?;
             traits::run_traits(&dir, action.into())?;
+        }
+
+        Commands::Patterns { data_dir, action } => {
+            let dir = resolve_data_dir(data_dir)?;
+            patterns::run_patterns(&dir, action.into())?;
         }
 
         Commands::Wizard => {
