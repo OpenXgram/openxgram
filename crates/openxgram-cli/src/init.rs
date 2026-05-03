@@ -111,6 +111,11 @@ fn precheck(opts: &InitOpts) -> Result<()> {
             mp.display()
         );
     }
+    // 통합 테스트 병렬 실행 시 동일 포트 contention 회피용 escape hatch.
+    // CI · 사용자 init 에서는 set 되지 않음 → 정상 점검.
+    if std::env::var("XGRAM_SKIP_PORT_PRECHECK").is_ok() {
+        return Ok(());
+    }
     for &port in REQUIRED_PORTS {
         match TcpListener::bind(("127.0.0.1", port)) {
             Ok(l) => drop(l),
