@@ -2,7 +2,7 @@
 
 OpenXgram 의 변경 이력. 모든 시간은 KST(Asia/Seoul). [Semantic Versioning](https://semver.org/) + BUILD 자동 증가 (CI/CD 갱신, 수동 변경 금지).
 
-## [Unreleased] — Phase 1 MVP
+## [0.1.0-rc.1] — 2026-05-04 KST (Phase 1 MVP RC)
 
 ### Added
 - **11 crate 워크스페이스** — core / keystore / db / manifest / memory / transport / adapter / scheduler / mcp / vault / cli
