@@ -6,6 +6,7 @@ members = [
     "crates/openxgram-db",
     "crates/openxgram-manifest",
     "crates/openxgram-memory",
+    "crates/openxgram-vault",
     "crates/openxgram-scheduler",
     "crates/openxgram-transport",
     "crates/openxgram-adapter",
