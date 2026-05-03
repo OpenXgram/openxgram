@@ -1,7 +1,11 @@
 //! xgram — OpenXgram command-line interface
 
-use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+
+use clap::{Parser, Subcommand, ValueEnum};
+use openxgram_cli::init::{self, InitOpts};
 use openxgram_keystore::{FsKeystore, Keystore};
+use openxgram_manifest::MachineRole;
 
 /// xgram — OpenXgram CLI
 ///
@@ -24,14 +28,26 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// 현재 머신에 OpenXgram을 초기화합니다
+    /// 현재 머신에 OpenXgram을 초기화합니다 (9단계 비대화 워크플로우, Phase 1: Step 1-6 + manifest)
     Init {
-        /// 에이전트 별칭 (예: akashic)
+        /// 머신 별칭 (예: gcp-main)
         #[arg(long)]
-        alias: Option<String>,
+        alias: String,
+        /// 머신 역할
+        #[arg(long, value_enum, default_value_t = RoleArg::Primary)]
+        role: RoleArg,
         /// 데이터 디렉토리 경로 (기본: ~/.openxgram)
         #[arg(long)]
-        data_dir: Option<String>,
+        data_dir: Option<PathBuf>,
+        /// 기존 설치 덮어쓰기
+        #[arg(long)]
+        force: bool,
+        /// 실제 변경 없이 작업 목록만 출력 (keystore/DB/manifest 미생성)
+        #[arg(long)]
+        dry_run: bool,
+        /// 다른 머신에서 시드를 import — XGRAM_SEED 환경변수 사용
+        #[arg(long)]
+        import: bool,
     },
 
     /// 현재 OpenXgram 상태를 출력합니다
@@ -66,6 +82,23 @@ enum Commands {
         #[command(subcommand)]
         action: KeypairAction,
     },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum RoleArg {
+    Primary,
+    Secondary,
+    Worker,
+}
+
+impl From<RoleArg> for MachineRole {
+    fn from(r: RoleArg) -> Self {
+        match r {
+            RoleArg::Primary => Self::Primary,
+            RoleArg::Secondary => Self::Secondary,
+            RoleArg::Worker => Self::Worker,
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -122,18 +155,26 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
-        Commands::Init { alias, data_dir } => {
-            println!("xgram init");
-            println!("  alias    : {}", alias.as_deref().unwrap_or("(not set)"));
-            println!(
-                "  data_dir : {}",
-                data_dir.as_deref().unwrap_or("~/.openxgram (default)")
-            );
-            println!();
-            println!("[Phase 1 구현 예정]");
-            println!("  - secp256k1 HD 키페어 생성 (BIP-39 mnemonic)");
-            println!("  - ~/.openxgram/ 디렉토리 초기화");
-            println!("  - SQLite DB 생성 및 마이그레이션 적용");
+        Commands::Init {
+            alias,
+            role,
+            data_dir,
+            force,
+            dry_run,
+            import,
+        } => {
+            let opts = InitOpts {
+                alias,
+                role: role.into(),
+                data_dir: match data_dir {
+                    Some(p) => p,
+                    None => init::default_data_dir()?,
+                },
+                force,
+                dry_run,
+                import,
+            };
+            init::run_init(&opts)?;
         }
 
         Commands::Status => {
