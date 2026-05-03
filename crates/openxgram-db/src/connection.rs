@@ -111,4 +111,19 @@ impl Db {
             .query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
         Ok(result)
     }
+
+    /// `schema_migrations` 적용 기록 (version 오름차순).
+    pub fn list_applied_migrations(&mut self) -> Result<Vec<crate::MigrationRecord>, DbError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT version, name, applied_at FROM schema_migrations ORDER BY version",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(crate::MigrationRecord {
+                version: r.get::<_, u32>(0)?,
+                name: r.get::<_, String>(1)?,
+                applied_at: r.get::<_, String>(2)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
 }

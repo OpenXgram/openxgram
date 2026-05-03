@@ -7,6 +7,7 @@ use openxgram_cli::daemon::{self, DaemonOpts};
 use openxgram_cli::doctor::{self, DoctorOpts};
 use openxgram_cli::init::{self, InitOpts};
 use openxgram_cli::memory::{self, MemoryAction};
+use openxgram_cli::migrate::{self, MigrateOpts};
 use openxgram_cli::notify::{self, NotifyAction};
 use openxgram_cli::reset::{self, ResetOpts};
 use openxgram_cli::session::{self, SessionAction};
@@ -89,9 +90,11 @@ enum Commands {
         dry_run: bool,
     },
 
-    /// DB 마이그레이션을 실행합니다
+    /// DB 마이그레이션을 실행합니다 (Phase 1: latest 까지)
     Migrate {
-        /// 적용할 마이그레이션 버전 (기본: latest)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        /// 적용할 마이그레이션 버전 (Phase 1.5+ 지원, 현재는 무시)
         #[arg(long)]
         target: Option<String>,
     },
@@ -465,17 +468,12 @@ async fn main() -> anyhow::Result<()> {
             reset::run_reset(&opts)?;
         }
 
-        Commands::Migrate { target } => {
-            println!("xgram migrate");
-            println!(
-                "  target : {}",
-                target.as_deref().unwrap_or("latest (default)")
-            );
-            println!();
-            println!("[Phase 1 구현 예정]");
-            println!("  - 현재 DB 스키마 버전 확인");
-            println!("  - 미적용 마이그레이션 순차 적용");
-            println!("  - 적용 결과 보고");
+        Commands::Migrate { data_dir, target } => {
+            let opts = MigrateOpts {
+                data_dir: resolve_data_dir(data_dir)?,
+                target,
+            };
+            migrate::run_migrate(&opts)?;
         }
 
         Commands::Uninstall {

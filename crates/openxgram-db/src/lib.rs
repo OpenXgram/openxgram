@@ -9,4 +9,4 @@ pub mod schema;
 
 pub use connection::{Db, DbConfig, JournalMode};
 pub use error::DbError;
-pub use migrate::{Migration, MigrationRunner};
+pub use migrate::{Migration, MigrationRecord, MigrationRunner};
