@@ -150,6 +150,37 @@ fn delete_removes_peer() {
 }
 
 #[test]
+fn add_with_eth_address_and_touch_by_eth() {
+    let tmp = tempdir().unwrap();
+    let mut db = open_db(tmp.path());
+    let mut store = PeerStore::new(&mut db);
+    let p = store
+        .add_with_eth(
+            "with-eth",
+            &"42".repeat(33),
+            "http://x",
+            Some("0xDeadBeef000000000000000000000000DEadBEEf"),
+            PeerRole::Worker,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        p.eth_address.as_deref(),
+        Some("0xDeadBeef000000000000000000000000DEadBEEf")
+    );
+    // 매칭 1
+    let n = store
+        .touch_by_eth_address("0xDeadBeef000000000000000000000000DEadBEEf")
+        .unwrap();
+    assert_eq!(n, 1);
+    let after = store.get_by_alias("with-eth").unwrap().unwrap();
+    assert!(after.last_seen.is_some());
+    // 미등록 주소 — 0
+    let n = store.touch_by_eth_address("0xunknown").unwrap();
+    assert_eq!(n, 0);
+}
+
+#[test]
 fn get_by_public_key_works() {
     let tmp = tempdir().unwrap();
     let mut db = open_db(tmp.path());
