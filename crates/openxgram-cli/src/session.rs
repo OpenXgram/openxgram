@@ -6,8 +6,10 @@
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
-use openxgram_core::paths::db_path;
+use openxgram_core::env::require_password;
+use openxgram_core::paths::{db_path, keystore_dir, MASTER_KEY_NAME};
 use openxgram_db::{Db, DbConfig};
+use openxgram_keystore::{FsKeystore, Keystore};
 use openxgram_memory::{
     export_session, import_session, reflect_all, reflect_session, DummyEmbedder, EpisodeStore,
     MessageStore, SessionStore, TextPackage,
@@ -37,7 +39,7 @@ pub fn run_session(data_dir: &Path, action: SessionAction) -> Result<()> {
             session_id,
             sender,
             body,
-        } => cmd_message(&mut db, &session_id, &sender, &body),
+        } => cmd_message(&mut db, data_dir, &session_id, &sender, &body),
         SessionAction::Reflect { session_id } => cmd_reflect(&mut db, &session_id),
         SessionAction::Recall { query, k } => cmd_recall(&mut db, &query, k),
         SessionAction::Export { session_id, out } => cmd_export(&mut db, &session_id, out.as_deref()),
@@ -129,18 +131,32 @@ fn cmd_show(db: &mut Db, id: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_message(db: &mut Db, session_id: &str, sender: &str, body: &str) -> Result<()> {
+fn cmd_message(
+    db: &mut Db,
+    data_dir: &Path,
+    session_id: &str,
+    sender: &str,
+    body: &str,
+) -> Result<()> {
     if SessionStore::new(db).get_by_id(session_id)?.is_none() {
         bail!("session 없음: {session_id}. `xgram session new` 으로 생성.");
     }
-    // signature 는 Phase 1 단순 placeholder. 실 서명은 keystore.load + sign 필요 — 후속 PR.
-    let signature = "placeholder";
+
+    // 마스터 키로 body 서명 — XGRAM_KEYSTORE_PASSWORD 환경변수 필수.
+    let password = require_password()?;
+    let ks = FsKeystore::new(keystore_dir(data_dir));
+    let kp = ks
+        .load(MASTER_KEY_NAME, &password)
+        .context("master 키 로드 실패 — keystore 패스워드 확인")?;
+    let signature_hex = hex::encode(kp.sign(body.as_bytes()));
+
     let embedder = DummyEmbedder;
-    let msg = MessageStore::new(db, &embedder).insert(session_id, sender, body, signature)?;
-    println!("✓ 메시지 저장");
+    let msg = MessageStore::new(db, &embedder).insert(session_id, sender, body, &signature_hex)?;
+    println!("✓ 메시지 저장 (서명: secp256k1 ECDSA, master)");
     println!("  id        : {}", msg.id);
     println!("  session   : {}", msg.session_id);
     println!("  sender    : {}", msg.sender);
+    println!("  signature : {}…{}", &signature_hex[..16], &signature_hex[signature_hex.len() - 16..]);
     println!("  timestamp : {}", msg.timestamp);
     Ok(())
 }
