@@ -139,8 +139,132 @@ pub fn run_doctor(opts: &DoctorOpts) -> Result<DoctorReport> {
     checks.push(check_keystore(&opts.data_dir));
     checks.push(check_drift(manifest.as_ref()));
     checks.push(check_transport());
+    checks.push(check_memory_layers(&opts.data_dir));
+    checks.push(check_vault_layers(&opts.data_dir));
+    checks.push(check_embedder_mode());
 
     Ok(DoctorReport { checks })
+}
+
+fn check_memory_layers(data_dir: &Path) -> CheckResult {
+    let path = db_path(data_dir);
+    if !path.exists() {
+        return CheckResult {
+            name: "Memory layers",
+            verdict: Verdict::Fail,
+            detail: format!("DB 미존재: {}", path.display()),
+        };
+    }
+    let mut db = match Db::open(DbConfig {
+        path,
+        ..Default::default()
+    }) {
+        Ok(d) => d,
+        Err(e) => {
+            return CheckResult {
+                name: "Memory layers",
+                verdict: Verdict::Fail,
+                detail: format!("DB open 실패: {e}"),
+            };
+        }
+    };
+    let conn = db.conn();
+    let counts = ["messages", "episodes", "memories", "patterns", "traits"]
+        .iter()
+        .map(|t| {
+            let n: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {t}"), [], |r| r.get(0))
+                .unwrap_or(-1);
+            (t, n)
+        })
+        .collect::<Vec<_>>();
+    let detail = counts
+        .iter()
+        .map(|(t, n)| format!("{t}={n}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    CheckResult {
+        name: "Memory layers",
+        verdict: Verdict::Ok,
+        detail,
+    }
+}
+
+fn check_vault_layers(data_dir: &Path) -> CheckResult {
+    let path = db_path(data_dir);
+    if !path.exists() {
+        return CheckResult {
+            name: "Vault layers",
+            verdict: Verdict::Fail,
+            detail: format!("DB 미존재: {}", path.display()),
+        };
+    }
+    let mut db = match Db::open(DbConfig {
+        path,
+        ..Default::default()
+    }) {
+        Ok(d) => d,
+        Err(e) => {
+            return CheckResult {
+                name: "Vault layers",
+                verdict: Verdict::Fail,
+                detail: format!("DB open 실패: {e}"),
+            };
+        }
+    };
+    let conn = db.conn();
+    let entries: i64 = conn
+        .query_row("SELECT COUNT(*) FROM vault_entries", [], |r| r.get(0))
+        .unwrap_or(-1);
+    let acl: i64 = conn
+        .query_row("SELECT COUNT(*) FROM vault_acl", [], |r| r.get(0))
+        .unwrap_or(-1);
+    let audit: i64 = conn
+        .query_row("SELECT COUNT(*) FROM vault_audit", [], |r| r.get(0))
+        .unwrap_or(-1);
+    let denied_today: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM vault_audit
+             WHERE allowed = 0 AND timestamp >= date('now', 'localtime')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(-1);
+
+    // 오늘 거부 5건 이상 = WARN — 비정상 호출 패턴 의심
+    let verdict = if denied_today >= 5 {
+        Verdict::Warn
+    } else {
+        Verdict::Ok
+    };
+    CheckResult {
+        name: "Vault layers",
+        verdict,
+        detail: format!(
+            "entries={entries}, acl={acl}, audit={audit}, denied_today={denied_today}"
+        ),
+    }
+}
+
+fn check_embedder_mode() -> CheckResult {
+    use openxgram_memory::embedder_mode_label;
+    match embedder_mode_label() {
+        "fastembed" => CheckResult {
+            name: "Embedder mode",
+            verdict: Verdict::Ok,
+            detail: "FastEmbedder (multilingual-e5-small) 활성".to_string(),
+        },
+        "fastembed-overridden-dummy" => CheckResult {
+            name: "Embedder mode",
+            verdict: Verdict::Warn,
+            detail: "fastembed 빌드되어 있으나 XGRAM_EMBEDDER=dummy 로 비활성".to_string(),
+        },
+        _ => CheckResult {
+            name: "Embedder mode",
+            verdict: Verdict::Warn,
+            detail: "DummyEmbedder (CI/test 결정성) — `--features fastembed` 빌드 시 의미 임베딩 활성".to_string(),
+        },
+    }
 }
 
 fn check_transport() -> CheckResult {
