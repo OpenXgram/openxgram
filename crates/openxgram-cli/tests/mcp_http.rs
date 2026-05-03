@@ -44,9 +44,57 @@ async fn spawn_http_server(data_dir: PathBuf) -> (String, tokio::task::JoinHandl
     type SharedDispatcher = std::sync::Arc<tokio::sync::Mutex<mcp_serve::OpenxgramDispatcher>>;
     async fn rpc_handler(
         State(state): State<SharedDispatcher>,
+        headers: axum::http::HeaderMap,
         Json(req): Json<JsonRpcRequest>,
     ) -> Json<JsonRpcResponse> {
+        let bearer = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.strip_prefix("Bearer "))
+            .map(str::to_string);
         let mut d = state.lock().await;
+        let agent = match bearer.as_deref() {
+            Some(token) => match d.verify_bearer(token) {
+                Ok(Some(a)) => Some(a),
+                Ok(None) => {
+                    return Json(JsonRpcResponse {
+                        jsonrpc: "2.0",
+                        id: req.id,
+                        result: None,
+                        error: Some(openxgram_mcp::JsonRpcError {
+                            code: openxgram_mcp::ERR_INVALID_PARAMS,
+                            message: "invalid bearer token".into(),
+                        }),
+                    });
+                }
+                Err(e) => {
+                    return Json(JsonRpcResponse {
+                        jsonrpc: "2.0",
+                        id: req.id,
+                        result: None,
+                        error: Some(openxgram_mcp::JsonRpcError {
+                            code: openxgram_mcp::ERR_INTERNAL,
+                            message: format!("token verify 실패: {e}"),
+                        }),
+                    });
+                }
+            },
+            None => {
+                if std::env::var("XGRAM_MCP_REQUIRE_AUTH").as_deref() == Ok("1") {
+                    return Json(JsonRpcResponse {
+                        jsonrpc: "2.0",
+                        id: req.id,
+                        result: None,
+                        error: Some(openxgram_mcp::JsonRpcError {
+                            code: openxgram_mcp::ERR_INVALID_PARAMS,
+                            message: "Authorization Bearer 토큰 필요".into(),
+                        }),
+                    });
+                }
+                None
+            }
+        };
+        d.set_current_agent(agent);
         Json(handle_request(req, &mut *d))
     }
 
@@ -133,6 +181,55 @@ async fn http_tools_call_list_sessions_returns_zero_count() {
     assert_eq!(resp["result"]["count"], 0);
 
     handle.abort();
+}
+
+#[tokio::test]
+async fn http_invalid_bearer_returns_invalid_params() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    let (url, handle) = spawn_http_server(data_dir).await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&url)
+        .header("Authorization", "Bearer nonexistent-token")
+        .json(&json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(resp["error"]["code"], -32602);
+    assert!(resp["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("invalid bearer"));
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn http_require_auth_blocks_no_bearer() {
+    set_env();
+    unsafe { std::env::set_var("XGRAM_MCP_REQUIRE_AUTH", "1") };
+
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    let (url, handle) = spawn_http_server(data_dir).await;
+    let resp = rpc(&url, "initialize", json!({})).await;
+    assert_eq!(resp["error"]["code"], -32602);
+    assert!(resp["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("Bearer"));
+
+    handle.abort();
+    unsafe { std::env::remove_var("XGRAM_MCP_REQUIRE_AUTH") };
 }
 
 #[tokio::test]
