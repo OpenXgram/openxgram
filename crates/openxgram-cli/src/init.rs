@@ -49,8 +49,7 @@ pub fn run_init(opts: &InitOpts) -> Result<()> {
 
     println!(
         "[2/6] 머신 식별 — alias={}, role={}",
-        opts.alias,
-        role_str(opts.role)
+        opts.alias, opts.role
     );
     let machine = build_machine(opts)?;
 
@@ -270,14 +269,6 @@ fn sign_manifest(
 fn kst_now() -> DateTime<FixedOffset> {
     let kst = FixedOffset::east_opt(9 * 3600).expect("KST offset valid");
     Utc::now().with_timezone(&kst)
-}
-
-fn role_str(r: MachineRole) -> &'static str {
-    match r {
-        MachineRole::Primary => "primary",
-        MachineRole::Secondary => "secondary",
-        MachineRole::Worker => "worker",
-    }
 }
 
 pub fn default_data_dir() -> Result<PathBuf> {
