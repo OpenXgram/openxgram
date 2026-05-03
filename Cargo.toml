@@ -6,6 +6,7 @@ members = [
     "crates/openxgram-db",
     "crates/openxgram-manifest",
     "crates/openxgram-memory",
+    "crates/openxgram-scheduler",
     "crates/openxgram-transport",
     "crates/openxgram-adapter",
     "crates/openxgram-cli",
@@ -47,6 +48,7 @@ rusqlite = { version = "0.39", features = ["bundled"] }
 # HTTP
 reqwest = { version = "0.13", features = ["json", "rustls", "webpki-roots"], default-features = false }
 axum = "0.8"
+tokio-cron-scheduler = "0.13"
 
 # 기타
 hex = "0.4"

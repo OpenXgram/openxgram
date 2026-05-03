@@ -1,0 +1,20 @@
+[package]
+name = "openxgram-scheduler"
+description = "Cron-based job scheduler for OpenXgram (nightly reflection, etc.)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+openxgram-db = { path = "../openxgram-db" }
+openxgram-memory = { path = "../openxgram-memory" }
+tokio = { workspace = true }
+tokio-cron-scheduler = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
