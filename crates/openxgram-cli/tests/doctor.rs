@@ -47,11 +47,7 @@ fn doctor_after_fresh_init_all_ok() {
         .map(|c| format!("  {} {} — {}", c.verdict, c.name, c.detail))
         .collect::<Vec<_>>()
         .join("\n");
-    assert_eq!(
-        report.fail_count(),
-        0,
-        "FAIL 0건 기대\n{summary}"
-    );
+    assert_eq!(report.fail_count(), 0, "FAIL 0건 기대\n{summary}");
     // daemon 안 떠있으면 transport 항목 WARN — exit_code 1(FAIL) 만 아니면 OK
     assert_ne!(report.exit_code(), 1, "FAIL 없음 가정");
     assert!(report.ok_count() >= 4, "OK 4건 이상");
@@ -87,7 +83,11 @@ fn doctor_detects_corrupted_db() {
         .iter()
         .find(|c| c.name == "SQLite 무결성")
         .expect("SQLite 점검 결과 존재");
-    assert_eq!(db_check.verdict, Verdict::Fail, "변조 DB → FAIL: {db_check:?}");
+    assert_eq!(
+        db_check.verdict,
+        Verdict::Fail,
+        "변조 DB → FAIL: {db_check:?}"
+    );
     assert!(report.exit_code() >= 1);
 }
 
@@ -144,7 +144,11 @@ fn doctor_reports_memory_layer_counts() {
         .expect("Memory layers check");
     assert_eq!(mem.verdict, Verdict::Ok);
     for table in ["messages", "episodes", "memories", "patterns", "traits"] {
-        assert!(mem.detail.contains(table), "missing {table} in detail: {}", mem.detail);
+        assert!(
+            mem.detail.contains(table),
+            "missing {table} in detail: {}",
+            mem.detail
+        );
     }
 }
 
@@ -197,5 +201,9 @@ fn doctor_includes_embedder_mode_check() {
         .expect("Embedder mode check");
     // dummy 빌드 (기본) → WARN, fastembed 빌드 → OK
     assert!(matches!(emb.verdict, Verdict::Ok | Verdict::Warn));
-    assert!(emb.detail.contains("Embedder") || emb.detail.contains("fastembed") || emb.detail.contains("Dummy"));
+    assert!(
+        emb.detail.contains("Embedder")
+            || emb.detail.contains("fastembed")
+            || emb.detail.contains("Dummy")
+    );
 }

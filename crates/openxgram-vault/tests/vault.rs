@@ -39,7 +39,12 @@ fn set_then_get_round_trip() {
 
     let secret = b"DISCORD_BOT_TOKEN=abc123";
     store
-        .set("discord/bot", secret, PW, &["discord".into(), "prod".into()])
+        .set(
+            "discord/bot",
+            secret,
+            PW,
+            &["discord".into(), "prod".into()],
+        )
         .unwrap();
 
     let got = store.get("discord/bot", PW).unwrap();

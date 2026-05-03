@@ -56,7 +56,9 @@ fn dispatcher_omits_vault_tools_when_no_password() {
 
     // open 후 환경에서 password 제거 — open 시점에 이미 캐시됨
     // 따라서 password 없는 상태로 새로 open
-    unsafe { std::env::remove_var("XGRAM_KEYSTORE_PASSWORD"); }
+    unsafe {
+        std::env::remove_var("XGRAM_KEYSTORE_PASSWORD");
+    }
     let dispatcher = OpenxgramDispatcher::open(&data_dir).unwrap();
     let names: Vec<String> = dispatcher.tools().iter().map(|t| t.name.clone()).collect();
     assert_eq!(names.len(), 3, "vault 미노출 → db tools 3개만");
@@ -83,9 +85,7 @@ fn dispatcher_vault_set_get_round_trip() {
         .unwrap();
     assert_eq!(got["value"], "TOKEN");
 
-    let listed = dispatcher
-        .dispatch("vault_list", &json!({}))
-        .unwrap();
+    let listed = dispatcher.dispatch("vault_list", &json!({})).unwrap();
     assert_eq!(listed["count"], 1);
 }
 

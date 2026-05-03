@@ -64,7 +64,13 @@ fn list_by_classification_buckets_correctly() {
         store.observe("일상").unwrap();
     }
 
-    assert_eq!(store.list_by_classification(Classification::New).unwrap().len(), 1);
+    assert_eq!(
+        store
+            .list_by_classification(Classification::New)
+            .unwrap()
+            .len(),
+        1
+    );
     assert_eq!(
         store
             .list_by_classification(Classification::Recurring)

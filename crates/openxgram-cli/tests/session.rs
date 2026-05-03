@@ -31,13 +31,7 @@ fn set_env() {
 fn session_requires_init_first() {
     let tmp = tempdir().unwrap();
     let data_dir = tmp.path().join("absent");
-    let err = run_session(
-        &data_dir,
-        SessionAction::New {
-            title: "x".into(),
-        },
-    )
-    .unwrap_err();
+    let err = run_session(&data_dir, SessionAction::New { title: "x".into() }).unwrap_err();
     assert!(format!("{err:#}").contains("미존재"));
 }
 
@@ -61,8 +55,8 @@ fn full_flow_new_message_reflect_show() {
     .unwrap();
 
     // memory crate 로 직접 첫 session id 조회
-    use openxgram_db::{Db, DbConfig};
     use openxgram_core::paths::db_path;
+    use openxgram_db::{Db, DbConfig};
     use openxgram_memory::SessionStore;
     let mut db = Db::open(DbConfig {
         path: db_path(&data_dir),
@@ -411,11 +405,7 @@ fn delete_session_cascades_messages() {
         .unwrap();
     }
 
-    run_session(
-        &data_dir,
-        SessionAction::Delete { id: sid.clone() },
-    )
-    .unwrap();
+    run_session(&data_dir, SessionAction::Delete { id: sid.clone() }).unwrap();
 
     // CASCADE 검증
     let mut db = Db::open(DbConfig {
@@ -424,7 +414,10 @@ fn delete_session_cascades_messages() {
     })
     .unwrap();
     db.migrate().unwrap();
-    assert!(SessionStore::new(&mut db).get_by_id(&sid).unwrap().is_none());
+    assert!(SessionStore::new(&mut db)
+        .get_by_id(&sid)
+        .unwrap()
+        .is_none());
     let embedder = DummyEmbedder;
     let messages = MessageStore::new(&mut db, &embedder)
         .list_for_session(&sid)
@@ -560,7 +553,10 @@ fn export_with_password_includes_master_public_key_and_verify_passes() {
 
     let json = std::fs::read_to_string(&pkg_path).unwrap();
     let pkg = TextPackage::from_json(&json).unwrap();
-    assert!(pkg.master_public_key.is_some(), "패스워드 환경 → public key 동봉");
+    assert!(
+        pkg.master_public_key.is_some(),
+        "패스워드 환경 → public key 동봉"
+    );
 
     // 머신 B 에서 --verify import
     let tmp_b = tempdir().unwrap();

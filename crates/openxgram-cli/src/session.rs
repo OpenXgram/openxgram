@@ -17,15 +17,36 @@ use openxgram_memory::{
 
 #[derive(Debug, Clone)]
 pub enum SessionAction {
-    New { title: String },
+    New {
+        title: String,
+    },
     List,
-    Show { id: String },
-    Message { session_id: String, sender: String, body: String },
-    Reflect { session_id: String },
-    Recall { query: String, k: usize },
-    Export { session_id: String, out: Option<std::path::PathBuf> },
-    Import { input: Option<std::path::PathBuf>, verify: bool },
-    Delete { id: String },
+    Show {
+        id: String,
+    },
+    Message {
+        session_id: String,
+        sender: String,
+        body: String,
+    },
+    Reflect {
+        session_id: String,
+    },
+    Recall {
+        query: String,
+        k: usize,
+    },
+    Export {
+        session_id: String,
+        out: Option<std::path::PathBuf>,
+    },
+    Import {
+        input: Option<std::path::PathBuf>,
+        verify: bool,
+    },
+    Delete {
+        id: String,
+    },
     ReflectAll,
 }
 
@@ -153,12 +174,21 @@ fn cmd_message(
     let signature_hex = hex::encode(kp.sign(body.as_bytes()));
 
     let embedder = default_embedder()?;
-    let msg = MessageStore::new(db, embedder.as_ref()).insert(session_id, sender, body, &signature_hex)?;
+    let msg = MessageStore::new(db, embedder.as_ref()).insert(
+        session_id,
+        sender,
+        body,
+        &signature_hex,
+    )?;
     println!("✓ 메시지 저장 (서명: secp256k1 ECDSA, master)");
     println!("  id        : {}", msg.id);
     println!("  session   : {}", msg.session_id);
     println!("  sender    : {}", msg.sender);
-    println!("  signature : {}…{}", &signature_hex[..16], &signature_hex[signature_hex.len() - 16..]);
+    println!(
+        "  signature : {}…{}",
+        &signature_hex[..16],
+        &signature_hex[signature_hex.len() - 16..]
+    );
     println!("  timestamp : {}", msg.timestamp);
     Ok(())
 }
@@ -185,12 +215,7 @@ fn cmd_recall(db: &mut Db, query: &str, k: usize) -> Result<()> {
     Ok(())
 }
 
-fn cmd_export(
-    db: &mut Db,
-    data_dir: &Path,
-    session_id: &str,
-    out: Option<&Path>,
-) -> Result<()> {
+fn cmd_export(db: &mut Db, data_dir: &Path, session_id: &str, out: Option<&Path>) -> Result<()> {
     let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".into());
     // 환경변수 패스워드가 있으면 master public key 동봉 — 수신측이 검증 가능.
     let master_pk_hex = std::env::var(openxgram_core::env::PASSWORD_ENV)

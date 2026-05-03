@@ -121,10 +121,7 @@ async fn health_check() -> Json<HealthResponse> {
     })
 }
 
-async fn receive_message(
-    State(state): State<AppState>,
-    Json(env): Json<Envelope>,
-) -> StatusCode {
+async fn receive_message(State(state): State<AppState>, Json(env): Json<Envelope>) -> StatusCode {
     state.received.lock().expect("poisoned").push(env);
     StatusCode::OK
 }

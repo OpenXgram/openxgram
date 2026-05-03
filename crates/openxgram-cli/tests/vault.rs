@@ -57,11 +57,7 @@ fn set_then_list_and_delete() {
 #[test]
 fn requires_init_first() {
     let tmp = tempdir().unwrap();
-    let err = run_vault(
-        &tmp.path().join("absent"),
-        VaultAction::List,
-    )
-    .unwrap_err();
+    let err = run_vault(&tmp.path().join("absent"), VaultAction::List).unwrap_err();
     assert!(format!("{err:#}").contains("미존재"));
 }
 

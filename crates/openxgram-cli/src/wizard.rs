@@ -141,7 +141,9 @@ impl WizardState {
             (s @ (Self::Done { .. } | Self::Cancelled), _) => s,
 
             // Welcome
-            (Self::Welcome, KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q')) => Self::Cancelled,
+            (Self::Welcome, KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q')) => {
+                Self::Cancelled
+            }
             (Self::Welcome, KeyCode::Enter) => Self::Alias {
                 cfg: WizardConfig::default(),
             },
@@ -280,7 +282,10 @@ pub fn draw(frame: &mut Frame, state: &WizardState) {
         .split(frame.area());
 
     let title = Paragraph::new(Line::from(vec![
-        Span::styled("xgram wizard", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "xgram wizard",
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" — OpenXgram init"),
     ]))
     .block(Block::default().borders(Borders::ALL).title("OpenXgram"));
@@ -417,10 +422,14 @@ pub fn render_done(cfg: &WizardConfig) -> String {
     if cfg.adapter_discord || cfg.adapter_telegram {
         out.push_str("3) 어댑터 자격증명 vault 저장:\n");
         if cfg.adapter_discord {
-            out.push_str("   xgram vault set --key discord/webhook --value '<URL>' --tags discord\n");
+            out.push_str(
+                "   xgram vault set --key discord/webhook --value '<URL>' --tags discord\n",
+            );
         }
         if cfg.adapter_telegram {
-            out.push_str("   xgram vault set --key telegram/bot --value '<TOKEN>' --tags telegram\n");
+            out.push_str(
+                "   xgram vault set --key telegram/bot --value '<TOKEN>' --tags telegram\n",
+            );
         }
         out.push('\n');
     }

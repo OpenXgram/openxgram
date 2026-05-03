@@ -40,12 +40,7 @@ fn insert_and_get_by_name() {
     let mut store = TraitStore::new(&mut db);
 
     let t = store
-        .insert_or_update(
-            "language_preference",
-            "ko",
-            TraitSource::Manual,
-            &[],
-        )
+        .insert_or_update("language_preference", "ko", TraitSource::Manual, &[])
         .unwrap();
     assert_eq!(t.name, "language_preference");
     assert_eq!(t.value, "ko");

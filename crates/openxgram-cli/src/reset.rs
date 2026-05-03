@@ -27,13 +27,12 @@ pub fn run_reset(opts: &ResetOpts) -> Result<()> {
         bail!("Phase 1 은 --hard 만 지원합니다. --keep-keys/--keep-config 는 후속 PR.");
     }
 
-    let confirm = opts.confirm.as_deref().ok_or_else(|| {
-        anyhow!("--hard 사용 시 --confirm \"{RESET_CONFIRM}\" 정확 일치 필요")
-    })?;
+    let confirm = opts
+        .confirm
+        .as_deref()
+        .ok_or_else(|| anyhow!("--hard 사용 시 --confirm \"{RESET_CONFIRM}\" 정확 일치 필요"))?;
     if confirm != RESET_CONFIRM {
-        bail!(
-            "확인 문자열 불일치. 정확히 \"{RESET_CONFIRM}\" 입력 필요 (대소문자 포함)"
-        );
+        bail!("확인 문자열 불일치. 정확히 \"{RESET_CONFIRM}\" 입력 필요 (대소문자 포함)");
     }
 
     println!("xgram reset --hard");

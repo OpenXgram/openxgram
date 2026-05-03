@@ -31,10 +31,7 @@ impl OpenxgramDispatcher {
     pub fn open(data_dir: &Path) -> Result<Self> {
         let path = db_path(data_dir);
         if !path.exists() {
-            bail!(
-                "DB 미존재 ({}). `xgram init` 먼저 실행.",
-                path.display()
-            );
+            bail!("DB 미존재 ({}). `xgram init` 먼저 실행.", path.display());
         }
         let mut db = Db::open(DbConfig {
             path,
@@ -315,8 +312,8 @@ pub fn run_serve(data_dir: &Path) -> Result<()> {
         if line.trim().is_empty() {
             continue;
         }
-        let req: JsonRpcRequest = serde_json::from_str(&line)
-            .context(format!("JSON-RPC parse 실패: {line}"))?;
+        let req: JsonRpcRequest =
+            serde_json::from_str(&line).context(format!("JSON-RPC parse 실패: {line}"))?;
         let resp = handle_request(req, &mut dispatcher);
         let json = serde_json::to_string(&resp).context("response serialize 실패")?;
         writeln!(out, "{json}")?;

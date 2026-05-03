@@ -114,10 +114,6 @@ fn derive_runs_without_patterns() {
 #[test]
 fn requires_init_first() {
     let tmp = tempdir().unwrap();
-    let err = run_traits(
-        &tmp.path().join("absent"),
-        TraitsAction::List,
-    )
-    .unwrap_err();
+    let err = run_traits(&tmp.path().join("absent"), TraitsAction::List).unwrap_err();
     assert!(format!("{err:#}").contains("미존재"));
 }
