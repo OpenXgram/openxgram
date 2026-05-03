@@ -59,5 +59,9 @@ reqwest = { version = "0.13", features = ["json", "rustls", "webpki-roots"], def
 axum = "0.8"
 tokio-cron-scheduler = "0.13"
 
+# Payment RPC (PRD-PAY-01~08)
+alloy = { version = "2", default-features = false, features = ["std", "rpc-types", "providers", "transport-http", "transports", "signer-local", "network", "consensus", "sol-types", "contract", "reqwest-rustls-tls"] }
+tower = { version = "0.5", features = ["retry"] }
+
 # 기타
 hex = "0.4"
