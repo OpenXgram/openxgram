@@ -43,10 +43,7 @@ pub fn create_cold_backup(
     password: &str,
 ) -> Result<BackupInfo> {
     if !data_dir.exists() {
-        return Err(anyhow!(
-            "데이터 디렉토리 미존재: {}",
-            data_dir.display()
-        ));
+        return Err(anyhow!("데이터 디렉토리 미존재: {}", data_dir.display()));
     }
 
     // 1. tar.gz 메모리에 작성
@@ -58,15 +55,14 @@ pub fn create_cold_backup(
     let plaintext = gz.finish().context("gzip 마감 실패")?;
 
     // 2. ChaCha20-Poly1305 암호화
-    let blob = encrypt_blob(password, &plaintext)
-        .map_err(|e| anyhow!("backup 암호화 실패: {e}"))?;
+    let blob =
+        encrypt_blob(password, &plaintext).map_err(|e| anyhow!("backup 암호화 실패: {e}"))?;
 
     // 3. 파일 저장 (parent 디렉토리 생성 보장)
     if let Some(parent) = target_path.parent() {
         if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!("backup 부모 디렉토리 생성 실패: {}", parent.display())
-            })?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("backup 부모 디렉토리 생성 실패: {}", parent.display()))?;
         }
     }
     std::fs::write(target_path, &blob)
@@ -114,13 +110,12 @@ fn restore_internal(
     let blob = std::fs::read(backup_path)
         .with_context(|| format!("backup 파일 읽기 실패: {}", backup_path.display()))?;
     let bytes_restored = blob.len() as u64;
-    let plaintext = decrypt_blob(password, &blob)
-        .map_err(|e| anyhow!("backup 복호화 실패: {e}"))?;
+    let plaintext =
+        decrypt_blob(password, &blob).map_err(|e| anyhow!("backup 복호화 실패: {e}"))?;
 
     if target_dir.exists() {
-        let mut iter = std::fs::read_dir(target_dir).with_context(|| {
-            format!("target_dir read_dir 실패: {}", target_dir.display())
-        })?;
+        let mut iter = std::fs::read_dir(target_dir)
+            .with_context(|| format!("target_dir read_dir 실패: {}", target_dir.display()))?;
         if iter.next().is_some() && !merge {
             bail!(
                 "target_dir 비어있지 않음: {} — `xgram uninstall` 또는 빈 경로 사용 (또는 --merge 옵션)",
@@ -128,9 +123,8 @@ fn restore_internal(
             );
         }
     } else {
-        std::fs::create_dir_all(target_dir).with_context(|| {
-            format!("target_dir 생성 실패: {}", target_dir.display())
-        })?;
+        std::fs::create_dir_all(target_dir)
+            .with_context(|| format!("target_dir 생성 실패: {}", target_dir.display()))?;
     }
 
     let gz = GzDecoder::new(std::io::Cursor::new(plaintext));

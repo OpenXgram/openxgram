@@ -35,4 +35,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: cargo test
-        run: cargo test --workspace --all-targets
+        # 통합 테스트가 환경변수 + 고정 포트(7300/7301) 공유 → 단일 스레드 필수.
+        # init.rs docstring 가이드 — crates/openxgram-cli/tests/init.rs 참조.
+        run: cargo test --workspace --all-targets -- --test-threads=1

@@ -1,9 +1,7 @@
 //! Vault ACL · 일일 한도 · 감사 로그 통합 테스트.
 
 use openxgram_db::{Db, DbConfig};
-use openxgram_vault::{
-    AclAction, AclPolicy, VaultError, VaultStore, MASTER_AGENT,
-};
+use openxgram_vault::{AclAction, AclPolicy, VaultError, VaultStore, MASTER_AGENT};
 use tempfile::tempdir;
 
 const PW: &str = "vault-test-password-12345";
@@ -62,8 +60,14 @@ fn exact_acl_grants_get() {
     let mut db = open_db(tmp.path());
     let mut v = VaultStore::new(&mut db);
     v.set("discord/bot", b"TOK", PW, &[]).unwrap();
-    v.upsert_acl("discord/bot", "0xAlice", &[AclAction::Get], 0, AclPolicy::Auto)
-        .unwrap();
+    v.upsert_acl(
+        "discord/bot",
+        "0xAlice",
+        &[AclAction::Get],
+        0,
+        AclPolicy::Auto,
+    )
+    .unwrap();
 
     let bytes = v.get_as("discord/bot", PW, "0xAlice").unwrap();
     assert_eq!(bytes, b"TOK");
@@ -76,7 +80,8 @@ fn action_not_in_allowed_actions_is_denied() {
     let mut v = VaultStore::new(&mut db);
     v.set("k", b"V", PW, &[]).unwrap();
     // Get 만 허용
-    v.upsert_acl("k", "0xAlice", &[AclAction::Get], 0, AclPolicy::Auto).unwrap();
+    v.upsert_acl("k", "0xAlice", &[AclAction::Get], 0, AclPolicy::Auto)
+        .unwrap();
 
     let err = v.delete_as("k", "0xAlice").unwrap_err();
     assert!(format!("{err}").contains("action delete not allowed"));
@@ -88,7 +93,8 @@ fn wildcard_agent_acl_matches_any_agent() {
     let mut db = open_db(tmp.path());
     let mut v = VaultStore::new(&mut db);
     v.set("k", b"V", PW, &[]).unwrap();
-    v.upsert_acl("k", "*", &[AclAction::Get], 0, AclPolicy::Auto).unwrap();
+    v.upsert_acl("k", "*", &[AclAction::Get], 0, AclPolicy::Auto)
+        .unwrap();
 
     assert_eq!(v.get_as("k", PW, "0xAlice").unwrap(), b"V");
     assert_eq!(v.get_as("k", PW, "0xBob").unwrap(), b"V");
@@ -100,7 +106,8 @@ fn daily_limit_enforced_per_agent() {
     let mut db = open_db(tmp.path());
     let mut v = VaultStore::new(&mut db);
     v.set("k", b"V", PW, &[]).unwrap();
-    v.upsert_acl("k", "0xAlice", &[AclAction::Get], 2, AclPolicy::Auto).unwrap();
+    v.upsert_acl("k", "0xAlice", &[AclAction::Get], 2, AclPolicy::Auto)
+        .unwrap();
 
     assert_eq!(v.get_as("k", PW, "0xAlice").unwrap(), b"V");
     assert_eq!(v.get_as("k", PW, "0xAlice").unwrap(), b"V");
@@ -114,7 +121,8 @@ fn audit_log_records_allowed_and_denied() {
     let mut db = open_db(tmp.path());
     let mut v = VaultStore::new(&mut db);
     v.set("k", b"V", PW, &[]).unwrap();
-    v.upsert_acl("k", "0xAlice", &[AclAction::Get], 0, AclPolicy::Auto).unwrap();
+    v.upsert_acl("k", "0xAlice", &[AclAction::Get], 0, AclPolicy::Auto)
+        .unwrap();
 
     // 1번 allowed, 1번 denied (액션 없음)
     v.get_as("k", PW, "0xAlice").unwrap();
@@ -140,7 +148,8 @@ fn upsert_acl_replaces_existing() {
     let tmp = tempdir().unwrap();
     let mut db = open_db(tmp.path());
     let mut v = VaultStore::new(&mut db);
-    v.upsert_acl("k", "0xAlice", &[AclAction::Get], 5, AclPolicy::Auto).unwrap();
+    v.upsert_acl("k", "0xAlice", &[AclAction::Get], 5, AclPolicy::Auto)
+        .unwrap();
     v.upsert_acl(
         "k",
         "0xAlice",
@@ -161,7 +170,8 @@ fn delete_acl_idempotent_only_when_present() {
     let tmp = tempdir().unwrap();
     let mut db = open_db(tmp.path());
     let mut v = VaultStore::new(&mut db);
-    v.upsert_acl("k", "0xAlice", &[AclAction::Get], 0, AclPolicy::Auto).unwrap();
+    v.upsert_acl("k", "0xAlice", &[AclAction::Get], 0, AclPolicy::Auto)
+        .unwrap();
     v.delete_acl("k", "0xAlice").unwrap();
     let err = v.delete_acl("k", "0xAlice").unwrap_err();
     assert!(matches!(err, VaultError::NotFound(_)));

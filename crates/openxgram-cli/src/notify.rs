@@ -38,7 +38,9 @@ pub async fn run_notify(action: NotifyAction) -> Result<()> {
         } => {
             let token = resolve(bot_token, TELEGRAM_TOKEN_ENV, "--bot-token")?;
             let chat = resolve(chat_id, TELEGRAM_CHAT_ENV, "--chat-id")?;
-            TelegramBotAdapter::new(token, chat).send_text(&text).await?;
+            TelegramBotAdapter::new(token, chat)
+                .send_text(&text)
+                .await?;
             println!("✓ Telegram 전송 완료 ({} chars)", text.chars().count());
         }
     }

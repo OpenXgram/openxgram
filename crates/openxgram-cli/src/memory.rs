@@ -41,7 +41,10 @@ pub fn run_memory(data_dir: &Path, action: MemoryAction) -> Result<()> {
             println!("✓ memory 저장");
             println!("  id        : {}", m.id);
             println!("  kind      : {}", m.kind);
-            println!("  session   : {}", m.session_id.as_deref().unwrap_or("(none)"));
+            println!(
+                "  session   : {}",
+                m.session_id.as_deref().unwrap_or("(none)")
+            );
             println!("  created_at: {}", m.created_at);
         }
         MemoryAction::List { kind } => {

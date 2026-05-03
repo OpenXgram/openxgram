@@ -66,10 +66,9 @@ impl Db {
                 *mut *mut i8,
                 *const rusqlite::ffi::sqlite3_api_routines,
             ) -> i32;
-            let ep: SqliteExtEntryPoint =
-                std::mem::transmute::<*const (), SqliteExtEntryPoint>(
-                    sqlite_vec::sqlite3_vec_init as *const (),
-                );
+            let ep: SqliteExtEntryPoint = std::mem::transmute::<*const (), SqliteExtEntryPoint>(
+                sqlite_vec::sqlite3_vec_init as *const (),
+            );
             rusqlite::ffi::sqlite3_auto_extension(Some(ep));
         }
 
@@ -114,9 +113,9 @@ impl Db {
 
     /// `schema_migrations` 적용 기록 (version 오름차순).
     pub fn list_applied_migrations(&mut self) -> Result<Vec<crate::MigrationRecord>, DbError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT version, name, applied_at FROM schema_migrations ORDER BY version",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT version, name, applied_at FROM schema_migrations ORDER BY version")?;
         let rows = stmt.query_map([], |r| {
             Ok(crate::MigrationRecord {
                 version: r.get::<_, u32>(0)?,

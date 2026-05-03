@@ -60,7 +60,10 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
     println!();
     println!("종료 신호 수신 — shutdown 중...");
 
-    scheduler.shutdown().await.context("scheduler shutdown 실패")?;
+    scheduler
+        .shutdown()
+        .await
+        .context("scheduler shutdown 실패")?;
     server.shutdown();
 
     println!("✓ daemon stopped");

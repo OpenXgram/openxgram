@@ -1,9 +1,7 @@
 //! Vault confirm/mfa policy enforcement 통합 테스트.
 
 use openxgram_db::{Db, DbConfig};
-use openxgram_vault::{
-    AclAction, AclPolicy, PendingStatus, VaultError, VaultStore,
-};
+use openxgram_vault::{AclAction, AclPolicy, PendingStatus, VaultError, VaultStore};
 use tempfile::tempdir;
 
 const PW: &str = "policy-test-12345";
@@ -69,7 +67,8 @@ fn deny_blocks_subsequent_calls() {
     let mut db = open_db(tmp.path());
     let mut v = VaultStore::new(&mut db);
     v.set("k", b"V", PW, &[]).unwrap();
-    v.upsert_acl("k", "0xA", &[AclAction::Get], 0, AclPolicy::Confirm).unwrap();
+    v.upsert_acl("k", "0xA", &[AclAction::Get], 0, AclPolicy::Confirm)
+        .unwrap();
 
     let _ = v.get_as("k", PW, "0xA");
     let id = v.list_pending().unwrap()[0].id.clone();
@@ -96,7 +95,8 @@ fn approve_already_decided_raises() {
     let mut db = open_db(tmp.path());
     let mut v = VaultStore::new(&mut db);
     v.set("k", b"V", PW, &[]).unwrap();
-    v.upsert_acl("k", "0xA", &[AclAction::Get], 0, AclPolicy::Confirm).unwrap();
+    v.upsert_acl("k", "0xA", &[AclAction::Get], 0, AclPolicy::Confirm)
+        .unwrap();
     let _ = v.get_as("k", PW, "0xA");
     let id = v.list_pending().unwrap()[0].id.clone();
     v.approve_confirmation(&id).unwrap();
@@ -111,7 +111,8 @@ fn mfa_policy_requires_code() {
     let mut db = open_db(tmp.path());
     let mut v = VaultStore::new(&mut db);
     v.set("k", b"V", PW, &[]).unwrap();
-    v.upsert_acl("k", "0xA", &[AclAction::Get], 0, AclPolicy::Mfa).unwrap();
+    v.upsert_acl("k", "0xA", &[AclAction::Get], 0, AclPolicy::Mfa)
+        .unwrap();
 
     let err = v.get_as("k", PW, "0xA").unwrap_err();
     assert!(format!("{err}").contains("TOTP 코드 필요"));
@@ -123,7 +124,8 @@ fn mfa_validates_correct_code_and_rejects_wrong() {
     let mut db = open_db(tmp.path());
     let mut v = VaultStore::new(&mut db);
     v.set("k", b"V", PW, &[]).unwrap();
-    v.upsert_acl("k", "0xA", &[AclAction::Get], 0, AclPolicy::Mfa).unwrap();
+    v.upsert_acl("k", "0xA", &[AclAction::Get], 0, AclPolicy::Mfa)
+        .unwrap();
 
     let secret_b32 = v.issue_mfa_secret("0xA").unwrap();
     // 직접 TOTP 도구로 현재 코드 계산 → 검증 통과
@@ -154,7 +156,8 @@ fn mfa_unregistered_agent_raises() {
     let mut db = open_db(tmp.path());
     let mut v = VaultStore::new(&mut db);
     v.set("k", b"V", PW, &[]).unwrap();
-    v.upsert_acl("k", "0xA", &[AclAction::Get], 0, AclPolicy::Mfa).unwrap();
+    v.upsert_acl("k", "0xA", &[AclAction::Get], 0, AclPolicy::Mfa)
+        .unwrap();
     let err = v.get_as_authed("k", PW, "0xA", Some("123456")).unwrap_err();
     assert!(format!("{err}").contains("mfa secret 미등록"));
 }
@@ -165,7 +168,8 @@ fn auto_policy_unaffected() {
     let mut db = open_db(tmp.path());
     let mut v = VaultStore::new(&mut db);
     v.set("k", b"V", PW, &[]).unwrap();
-    v.upsert_acl("k", "0xA", &[AclAction::Get], 0, AclPolicy::Auto).unwrap();
+    v.upsert_acl("k", "0xA", &[AclAction::Get], 0, AclPolicy::Auto)
+        .unwrap();
     // auto 는 즉시 통과
     assert_eq!(v.get_as("k", PW, "0xA").unwrap(), b"V");
 }
