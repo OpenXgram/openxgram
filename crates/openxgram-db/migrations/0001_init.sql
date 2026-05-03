@@ -1,71 +1,69 @@
--- OpenXgram DB 초기화 마이그레이션
--- Phase 1: 스키마 정의 (placeholder). Phase 2에서 rusqlite 연동 시 적용.
+-- OpenXgram 초기 스키마 (Phase 1 MVP)
+-- sessions, messages, memories, contacts, share_policy
+-- 모든 timestamp: ISO8601 with KST offset (+09:00)
 
--- 에이전트 신원 테이블
-CREATE TABLE IF NOT EXISTS agent_identities (
-    id          TEXT PRIMARY KEY,       -- 공개키 해시 (hex)
-    alias       TEXT,                   -- 사람이 읽을 수 있는 별칭
-    pubkey_hex  TEXT NOT NULL,          -- secp256k1 공개키 (hex)
-    created_at  INTEGER NOT NULL        -- Unix timestamp (UTC)
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    participants TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    last_active TEXT NOT NULL,
+    home_machine TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}'
 );
 
--- L0: 원시 메시지
-CREATE TABLE IF NOT EXISTS memory_messages (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    agent_id    TEXT NOT NULL REFERENCES agent_identities(id),
-    role        TEXT NOT NULL,          -- 'user' | 'assistant' | 'system'
-    content     TEXT NOT NULL,
-    ts          INTEGER NOT NULL        -- Unix timestamp (UTC)
+CREATE INDEX idx_sessions_last_active ON sessions(last_active);
+
+CREATE TABLE messages (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    sender TEXT NOT NULL,
+    body TEXT NOT NULL,
+    signature TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    parent_message_id TEXT,
+    metadata TEXT NOT NULL DEFAULT '{}'
 );
 
--- L1: 에피소드 (컨텍스트 묶음)
-CREATE TABLE IF NOT EXISTS memory_episodes (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    agent_id    TEXT NOT NULL REFERENCES agent_identities(id),
-    summary     TEXT NOT NULL,
-    start_ts    INTEGER NOT NULL,
-    end_ts      INTEGER NOT NULL
+CREATE INDEX idx_messages_session ON messages(session_id, timestamp);
+CREATE INDEX idx_messages_sender ON messages(sender, timestamp);
+
+CREATE TABLE memories (
+    id TEXT PRIMARY KEY,
+    session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('fact', 'decision', 'reference', 'rule')),
+    content TEXT NOT NULL,
+    pinned INTEGER NOT NULL DEFAULT 0,
+    importance REAL NOT NULL DEFAULT 0.5,
+    access_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    last_accessed TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}'
 );
 
--- L2: 의미 기억 (임베딩 벡터 — sqlite-vec 확장 필요)
--- TODO(Phase 2): CREATE VIRTUAL TABLE memory_vectors USING vec0(...)
-CREATE TABLE IF NOT EXISTS memory_semantic_placeholder (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    agent_id    TEXT NOT NULL,
-    text        TEXT NOT NULL,
-    embedding   BLOB                    -- f32 벡터 (sqlite-vec 연동 전 BLOB)
+CREATE INDEX idx_memories_session ON memories(session_id);
+CREATE INDEX idx_memories_kind_pinned ON memories(kind, pinned);
+
+CREATE TABLE contacts (
+    address TEXT PRIMARY KEY,
+    alias TEXT NOT NULL UNIQUE,
+    role TEXT,
+    machine TEXT,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}'
 );
 
--- L3: 패턴
-CREATE TABLE IF NOT EXISTS memory_patterns (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    agent_id    TEXT NOT NULL REFERENCES agent_identities(id),
-    pattern     TEXT NOT NULL,
-    weight      REAL NOT NULL DEFAULT 1.0,
-    updated_at  INTEGER NOT NULL
-);
+CREATE INDEX idx_contacts_alias ON contacts(alias);
+CREATE INDEX idx_contacts_role ON contacts(role);
 
--- L4: 특성 (장기 페르소나)
-CREATE TABLE IF NOT EXISTS memory_traits (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    agent_id    TEXT NOT NULL REFERENCES agent_identities(id),
-    trait_key   TEXT NOT NULL,
-    trait_value TEXT NOT NULL,
-    updated_at  INTEGER NOT NULL
+CREATE TABLE share_policy (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_agent TEXT NOT NULL,
+    target_agent TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK (direction IN ('push', 'pull', 'both', 'none')),
+    scope TEXT NOT NULL DEFAULT 'all',
+    realtime INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    UNIQUE (source_agent, target_agent, scope)
 );
-
--- Vault: 암호화 자격증명
-CREATE TABLE IF NOT EXISTS vault_entries (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    agent_id    TEXT NOT NULL REFERENCES agent_identities(id),
-    key_name    TEXT NOT NULL,
-    ciphertext  BLOB NOT NULL,          -- AES-256-GCM 암호화 (Phase 2 구현)
-    tags        TEXT,                   -- JSON 배열
-    created_at  INTEGER NOT NULL,
-    UNIQUE(agent_id, key_name)
-);
-
--- 인덱스
-CREATE INDEX IF NOT EXISTS idx_messages_agent ON memory_messages(agent_id, ts DESC);
-CREATE INDEX IF NOT EXISTS idx_episodes_agent ON memory_episodes(agent_id, end_ts DESC);
-CREATE INDEX IF NOT EXISTS idx_vault_agent ON vault_entries(agent_id, key_name);

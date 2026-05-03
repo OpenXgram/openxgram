@@ -1,0 +1,104 @@
+use crate::error::DbError;
+use crate::migrate::MigrationRunner;
+use std::path::PathBuf;
+
+#[derive(Debug, Clone)]
+pub enum JournalMode {
+    Wal,
+    Delete,
+    Truncate,
+    Persist,
+    Memory,
+}
+
+impl JournalMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Wal => "WAL",
+            Self::Delete => "DELETE",
+            Self::Truncate => "TRUNCATE",
+            Self::Persist => "PERSIST",
+            Self::Memory => "MEMORY",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DbConfig {
+    /// DB 파일 경로 (기본: ~/.openxgram/db.sqlite)
+    pub path: PathBuf,
+    pub journal_mode: JournalMode,
+    /// rusqlite busy_timeout (ms)
+    pub busy_timeout_ms: u32,
+    pub foreign_keys: bool,
+}
+
+impl Default for DbConfig {
+    fn default() -> Self {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        Self {
+            path: PathBuf::from(home).join(".openxgram").join("db.sqlite"),
+            journal_mode: JournalMode::Wal,
+            busy_timeout_ms: 5000,
+            foreign_keys: true,
+        }
+    }
+}
+
+pub struct Db {
+    conn: rusqlite::Connection,
+    config: DbConfig,
+}
+
+impl Db {
+    pub fn open(config: DbConfig) -> Result<Self, DbError> {
+        // 1. 부모 디렉토리 생성
+        if let Some(parent) = config.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        // 2. sqlite-vec를 auto_extension으로 등록 (Connection 열기 전에 등록해야 적용됨)
+        unsafe {
+            type SqliteExtEntryPoint = unsafe extern "C" fn(
+                *mut rusqlite::ffi::sqlite3,
+                *mut *const i8,
+                *const rusqlite::ffi::sqlite3_api_routines,
+            ) -> i32;
+            let ep: SqliteExtEntryPoint =
+                std::mem::transmute::<*const (), SqliteExtEntryPoint>(
+                    sqlite_vec::sqlite3_vec_init as *const (),
+                );
+            rusqlite::ffi::sqlite3_auto_extension(Some(ep));
+        }
+
+        // 3. Connection 열기 (auto_extension이 자동으로 sqlite-vec 로드)
+        let conn = rusqlite::Connection::open(&config.path)?;
+
+        // 4. sqlite-vec 로드 검증
+        conn.query_row("SELECT vec_version()", [], |r| r.get::<_, String>(0))
+            .map_err(|e| DbError::VecExtension(format!("vec_version() failed: {e}")))?;
+
+        // 5. PRAGMA 적용
+        let mut db = Db { conn, config };
+        db.apply_pragmas()?;
+        Ok(db)
+    }
+
+    fn apply_pragmas(&mut self) -> Result<(), DbError> {
+        self.conn
+            .pragma_update(None, "journal_mode", self.config.journal_mode.as_str())?;
+        self.conn
+            .pragma_update(None, "busy_timeout", self.config.busy_timeout_ms as i64)?;
+        self.conn
+            .pragma_update(None, "foreign_keys", self.config.foreign_keys as i64)?;
+        Ok(())
+    }
+
+    pub fn migrate(&mut self) -> Result<(), DbError> {
+        MigrationRunner::new(&mut self.conn).run_all()
+    }
+
+    pub fn conn(&mut self) -> &mut rusqlite::Connection {
+        &mut self.conn
+    }
+}

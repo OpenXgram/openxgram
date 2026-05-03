@@ -24,7 +24,9 @@ thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 # 아래 의존성은 Res 리서치 후 버전 확정 예정
 # k256 = "0.13"           # secp256k1 - Res 검토 후 추가
 # bip39 = "2"             # Res 검토 후 추가
-# rusqlite = "0.31"       # Res 검토 후 추가

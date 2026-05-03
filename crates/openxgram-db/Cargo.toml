@@ -9,12 +9,15 @@ authors.workspace = true
 
 [dependencies]
 openxgram-core = { path = "../openxgram-core" }
+rusqlite = { workspace = true }
+sqlite-vec = "0.1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-tokio = { workspace = true }
-# TODO(Phase 2): Res 검토 후 추가
-# rusqlite = { workspace = true }
-# sqlite-vec = "0.1"    # 벡터 검색 확장
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
