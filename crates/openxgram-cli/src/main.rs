@@ -7,6 +7,7 @@ use openxgram_cli::daemon::{self, DaemonOpts};
 use openxgram_cli::doctor::{self, DoctorOpts};
 use openxgram_cli::init::{self, InitOpts};
 use openxgram_cli::memory::{self, MemoryAction};
+use openxgram_cli::notify::{self, NotifyAction};
 use openxgram_cli::reset::{self, ResetOpts};
 use openxgram_cli::session::{self, SessionAction};
 use openxgram_cli::status::{self, StatusOpts};
@@ -137,6 +138,12 @@ enum Commands {
         action: MemoryCli,
     },
 
+    /// Discord/Telegram 으로 텍스트 알림 전송
+    Notify {
+        #[command(subcommand)]
+        target: NotifyCli,
+    },
+
     /// 사이드카 데몬 — scheduler + transport server foreground 실행
     Daemon {
         #[arg(long)]
@@ -233,6 +240,46 @@ impl From<SessionCli> for SessionAction {
             SessionCli::Import { input } => SessionAction::Import { input },
             SessionCli::Delete { id } => SessionAction::Delete { id },
             SessionCli::ReflectAll => SessionAction::ReflectAll,
+        }
+    }
+}
+
+#[derive(Subcommand, Debug)]
+enum NotifyCli {
+    /// Discord webhook
+    Discord {
+        /// Webhook URL (생략 시 DISCORD_WEBHOOK_URL 환경변수)
+        #[arg(long)]
+        webhook_url: Option<String>,
+        #[arg(long)]
+        text: String,
+    },
+    /// Telegram bot
+    Telegram {
+        /// Bot token (생략 시 TELEGRAM_BOT_TOKEN 환경변수)
+        #[arg(long)]
+        bot_token: Option<String>,
+        /// Chat ID (생략 시 TELEGRAM_CHAT_ID 환경변수)
+        #[arg(long)]
+        chat_id: Option<String>,
+        #[arg(long)]
+        text: String,
+    },
+}
+
+impl From<NotifyCli> for NotifyAction {
+    fn from(c: NotifyCli) -> Self {
+        match c {
+            NotifyCli::Discord { webhook_url, text } => NotifyAction::Discord { webhook_url, text },
+            NotifyCli::Telegram {
+                bot_token,
+                chat_id,
+                text,
+            } => NotifyAction::Telegram {
+                bot_token,
+                chat_id,
+                text,
+            },
         }
     }
 }
@@ -462,6 +509,10 @@ async fn main() -> anyhow::Result<()> {
         Commands::Memory { data_dir, action } => {
             let dir = resolve_data_dir(data_dir)?;
             memory::run_memory(&dir, action.into())?;
+        }
+
+        Commands::Notify { target } => {
+            notify::run_notify(target.into()).await?;
         }
 
         Commands::Daemon {
