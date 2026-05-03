@@ -79,3 +79,21 @@ impl Embedder for FastEmbedder {
             .expect("fastembed returned empty result")
     }
 }
+
+/// 런타임 임베더 선택. `fastembed` feature 가 빌드되어 있으면 FastEmbedder,
+/// 그렇지 않거나 `XGRAM_EMBEDDER=dummy` 면 DummyEmbedder.
+///
+/// 첫 호출 시 ONNX 모델 (~560MB) 다운로드 — daemon 시작 시 1회 lazy.
+#[allow(unused_variables)] // dummy fallback path doesn't use feature flags
+pub fn default_embedder() -> anyhow::Result<Box<dyn Embedder + Send + Sync>> {
+    let force_dummy = std::env::var("XGRAM_EMBEDDER").as_deref() == Ok("dummy");
+
+    #[cfg(feature = "fastembed")]
+    if !force_dummy {
+        let fe = FastEmbedder::new()
+            .map_err(|e| anyhow::anyhow!("fastembed init 실패: {e}"))?;
+        return Ok(Box::new(fe));
+    }
+
+    Ok(Box::new(DummyEmbedder))
+}
