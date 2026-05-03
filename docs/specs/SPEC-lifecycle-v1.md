@@ -582,7 +582,7 @@ DRIFT 또는 MISSING 항목이 있으면 uninstall 전에 마스터에게 목록
 
 옵션 2 — Cold backup (암호화 zip)
 - 백업 파일 생성: `~/.openxgram-backup-YYYYMMDD-HHMMSS.tar.gz.enc` (KST 기준)
-- AES-256-GCM으로 암호화. 키: 마스터 시드에서 파생
+- ChaCha20-Poly1305로 암호화 (마스터 결정 2026-04-30 — keystore §12.6 와 통일). 키: 패스워드(`XGRAM_KEYSTORE_PASSWORD`) → Argon2id KDF
 - 백업 파일 SHA256 출력 (마스터가 기록 가능)
 - 백업 파일 크기 및 위치 출력 후 마스터 확인
 
