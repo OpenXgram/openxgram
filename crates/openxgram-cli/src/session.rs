@@ -9,7 +9,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use openxgram_core::paths::db_path;
 use openxgram_db::{Db, DbConfig};
 use openxgram_memory::{
-    reflect_session, DummyEmbedder, EpisodeStore, MessageStore, SessionStore,
+    export_session, reflect_session, DummyEmbedder, EpisodeStore, MessageStore, SessionStore,
 };
 
 #[derive(Debug, Clone)]
@@ -20,6 +20,7 @@ pub enum SessionAction {
     Message { session_id: String, sender: String, body: String },
     Reflect { session_id: String },
     Recall { query: String, k: usize },
+    Export { session_id: String, out: Option<std::path::PathBuf> },
 }
 
 pub fn run_session(data_dir: &Path, action: SessionAction) -> Result<()> {
@@ -35,6 +36,7 @@ pub fn run_session(data_dir: &Path, action: SessionAction) -> Result<()> {
         } => cmd_message(&mut db, &session_id, &sender, &body),
         SessionAction::Reflect { session_id } => cmd_reflect(&mut db, &session_id),
         SessionAction::Recall { query, k } => cmd_recall(&mut db, &query, k),
+        SessionAction::Export { session_id, out } => cmd_export(&mut db, &session_id, out.as_deref()),
     }
 }
 
@@ -136,6 +138,29 @@ fn cmd_recall(db: &mut Db, query: &str, k: usize) -> Result<()> {
             hit.message.timestamp,
         );
         println!("       body: {}", hit.message.body);
+    }
+    Ok(())
+}
+
+fn cmd_export(
+    db: &mut Db,
+    session_id: &str,
+    out: Option<&Path>,
+) -> Result<()> {
+    let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".into());
+    let pkg = export_session(db, session_id, &host)?;
+    let json = pkg.to_json()?;
+    match out {
+        Some(p) => {
+            std::fs::write(p, &json).with_context(|| format!("저장 실패: {}", p.display()))?;
+            println!("✓ session export → {}", p.display());
+            println!("  messages : {}", pkg.messages.len());
+            println!("  episodes : {}", pkg.episodes.len());
+            println!("  memories : {}", pkg.memories.len());
+        }
+        None => {
+            println!("{json}");
+        }
     }
     Ok(())
 }
