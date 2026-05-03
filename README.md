@@ -135,18 +135,56 @@ xgram vault delete --key discord/bot
 기본 tool 3종: `list_sessions`, `recall_messages`, `list_memories_by_kind`.
 `XGRAM_KEYSTORE_PASSWORD` 환경 시 추가 노출: `vault_list`, `vault_get`, `vault_set`.
 
+다른 클라이언트(비-Claude Code)는 HTTP transport 사용:
+
+```bash
+xgram mcp-serve --bind 127.0.0.1:7301
+# POST http://127.0.0.1:7301/rpc — JSON-RPC 2.0 (initialize / tools/list / tools/call)
+# GET  http://127.0.0.1:7301/health
+```
+
+### Tailscale 자동 bind (PRD §15)
+
+WireGuard 터널이 네트워크 레이어에서 mTLS 제공 — axum-level TLS 불필요.
+
+```bash
+xgram daemon --tailscale            # `tailscale ip --4` 결과로 자동 bind
+xgram doctor                        # Tailscale 상태(BackendState + IPv4) 검사
+```
+
+### Vault ACL · 일일 한도 · 감사 로그 · 정책
+
+```bash
+# 1. ACL 등록 — agent 가 실수로 vault 를 조작하지 못하도록
+xgram vault acl-set \
+    --key-pattern 'discord/*' --agent 0xAlice \
+    --actions get,set --daily-limit 10 --policy auto
+
+# 2. confirm 정책 — 마스터 승인 큐
+xgram vault acl-set --key-pattern secret-key --agent 0xAlice \
+    --actions get --policy confirm
+xgram vault pending                  # 대기열 확인
+xgram vault approve <id>             # 1회 승인 (consume)
+xgram vault deny <id>
+
+# 3. mfa 정책 — TOTP (RFC 6238, SHA1, 6자리, 30s)
+xgram vault acl-set --key-pattern secret-key --agent 0xAlice \
+    --actions get --policy mfa
+xgram vault mfa-issue --agent 0xAlice  # base32 secret 발급 (Authenticator 등록)
+```
+
 ### 인터랙티브 마법사
 
 ```bash
-xgram wizard   # ratatui state machine: Welcome → MachineId → Confirm
+xgram wizard   # 9단계: Welcome → Alias → Role → DataDir → SeedMode → Adapter → Bind → Daemon → Backup → Confirm → Done
 ```
 
 ## 명령 매트릭스 (Phase 1)
 
 설치 / 운영:
 - `init` / `uninstall` / `reset` / `migrate` / `doctor` / `status`
-- `daemon` / `daemon-install` / `daemon-uninstall`
-- `backup` (비파괴 cold backup) / `restore`
+- `daemon` (`--tailscale` 자동 bind) / `daemon-install` / `daemon-uninstall`
+- `backup` (비파괴 cold backup) / `restore` (`--merge` non-empty 덮어쓰기)
 - `backup-install` / `backup-uninstall` (systemd .timer 기반 주기 백업)
 
 데이터:
@@ -154,41 +192,48 @@ xgram wizard   # ratatui state machine: Welcome → MachineId → Confirm
 - `session new/list/show/message/reflect/recall/export/import/delete/reflect-all`
 - `memory add/list/pin/unpin`
 - `patterns observe/list` (L3 — NEW/RECURRING/ROUTINE)
-- `traits set/get/list` (L4 — 정체성·성향, manual source)
+- `traits set/get/list/derive` (L4 — manual + L3 ROUTINE 자동 도출)
 - `vault set/get/list/delete` (ChaCha20 암호화 자격증명)
+- `vault acl-set/acl-list/acl-delete` (agent 권한 + 일일 한도 + 정책)
+- `vault pending/approve/deny` (confirm 정책 승인 큐)
+- `vault mfa-issue --agent <agent>` (TOTP secret 발급)
 
 통합:
-- `mcp-serve` — Claude Code MCP (db tools 3종 + vault tools 3종, 패스워드 환경 시)
+- `mcp-serve` (stdio) / `mcp-serve --bind <ADDR>` (HTTP transport)
+- MCP tools: `list_sessions` · `recall_messages` · `list_memories_by_kind` · (vault: `vault_list` · `vault_get` · `vault_set`)
 - `notify discord/telegram` — webhook/bot 알림
 - `backup-push` — Discord/Telegram 으로 session 통계 push
-- `wizard` / `tui` — 인터랙티브 화면
+- `wizard` (9단계) / `tui` — 인터랙티브 화면
 
 ## Phase 1 MVP 진행률
 
 - ✅ 11 crate 워크스페이스 (core / keystore / db / manifest / memory / transport / adapter / scheduler / mcp / vault / cli)
 - ✅ MVP 코어 명령 6/6 (init / uninstall / doctor / status / reset / migrate)
-- ✅ 5층 메모리 CLI: L0 messages / L1 episodes / L2 memories / L3 patterns / L4 traits
-- ✅ sqlite-vec KNN, BGE-small (fastembed optional feature)
+- ✅ 5층 메모리 CLI 표면: L0 messages / L1 episodes / L2 memories / L3 patterns / L4 traits
+- ✅ L3 ROUTINE → L4 traits 자동 도출 (nightly reflection 통합 + 수동 트리거 `xgram traits derive`)
+- ✅ sqlite-vec KNN + 런타임 임베더 선택 (`default_embedder()` — `--features fastembed` 빌드 시 multilingual-e5-small, 그 외 DummyEmbedder)
 - ✅ secp256k1 ECDSA 서명·검증 (메시지 / install-manifest)
-- ✅ ChaCha20-Poly1305 keystore + cold backup + restore
-- ✅ vault: ChaCha20-Poly1305 자격증명 저장소 (set/get/list/delete + MCP tool)
+- ✅ ChaCha20-Poly1305 keystore + cold backup + restore (`--merge` non-empty 덮어쓰기)
+- ✅ Vault — ChaCha20-Poly1305 자격증명 저장소
+- ✅ Vault ACL — agent × key 패턴 매칭 + 일일 한도 + 감사 로그 (vault_audit)
+- ✅ Vault confirm 정책 — pending 큐 + 마스터 승인 / 거부 / 1회 소비
+- ✅ Vault mfa 정책 — RFC 6238 TOTP (SHA1, 6자리, 30s) + base32 secret 발급
 - ✅ axum + reqwest localhost transport / `/v1/health`
 - ✅ Discord webhook + Telegram bot
-- ✅ tokio-cron-scheduler nightly reflection
+- ✅ tokio-cron-scheduler nightly reflection (reflect_all + derive_traits)
 - ✅ MCP JSON-RPC stdio 서버 (db tools 3종 + vault tools 3종)
-- ✅ ratatui wizard state machine (3 화면)
-- ✅ systemd user unit 생성기 (sidecar daemon + backup .timer)
+- ✅ MCP HTTP transport (`xgram mcp-serve --bind <ADDR>`)
+- ✅ Tailscale 통합 — `xgram daemon --tailscale`, doctor 점검
+- ✅ ratatui wizard 9단계 state machine (alias/role/data_dir/seed/adapter/bind/daemon/backup)
+- ✅ systemd user unit 생성기 (sidecar daemon + backup .service/.timer 자동화)
 - ✅ session export/import 라운드트립 + ECDSA 검증
-- ✅ 비파괴 `xgram backup` + systemd timer 자동화
+- ✅ doctor — 9 체크 (manifest · data_dir · sqlite · keystore · drift · transport · memory · vault · embedder · tailscale)
 
-후속 (Phase 1.5+):
-- restore 병합 모드
-- 9단계 wizard 추가 단계 (시드/패스워드/외부 어댑터 등)
-- Tailscale 실 IP / mTLS
-- HTTP MCP transport
-- fastembed 활성 시 MessageStore embedder 통합 (현재 DummyEmbedder)
-- L3 → L4 traits 자동 도출 (야간 reflection)
-- Vault ACL · 일일 한도 · MFA
+후속 (Phase 2):
+- 통합 테스트 격리 강화 (serial_test 또는 동적 포트 → CI 병렬화)
+- MCP HTTP caller 인증 (현재 master-context 가정)
+- daemon 측 vault pending Discord/Telegram 알림
+- Tauri GUI · XMTP 어댑터 · USDC 결제 (PRD §16)
 
 ## 빌드 환경 의존성
 
