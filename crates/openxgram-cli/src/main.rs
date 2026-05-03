@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use openxgram_cli::doctor::{self, DoctorOpts};
 use openxgram_cli::init::{self, InitOpts};
 use openxgram_cli::uninstall::{self, UninstallOpts};
 use openxgram_keystore::{FsKeystore, Keystore};
@@ -54,8 +55,12 @@ enum Commands {
     /// 현재 OpenXgram 상태를 출력합니다
     Status,
 
-    /// 환경 진단을 실행합니다 (의존성, 설정, 연결 상태)
-    Doctor,
+    /// 환경 진단을 실행합니다 (Phase 1: manifest·DB·keystore·drift 점검)
+    Doctor {
+        /// 데이터 디렉토리 (기본: ~/.openxgram)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
 
     /// 모든 데이터를 초기화합니다 (주의: 복구 불가)
     Reset {
@@ -197,15 +202,16 @@ async fn main() -> anyhow::Result<()> {
             println!("  - Tailscale / XMTP 연결 상태");
         }
 
-        Commands::Doctor => {
-            println!("xgram doctor");
-            println!();
-            println!("[Phase 1 구현 예정]");
-            println!("  - Rust 버전 확인");
-            println!("  - ~/.openxgram/ 디렉토리 권한 확인");
-            println!("  - SQLite WAL 모드 확인");
-            println!("  - Tailscale 설치 여부 확인");
-            println!("  - 네트워크 연결 테스트");
+        Commands::Doctor { data_dir } => {
+            let opts = DoctorOpts {
+                data_dir: match data_dir {
+                    Some(p) => p,
+                    None => init::default_data_dir()?,
+                },
+            };
+            let report = doctor::run_doctor(&opts)?;
+            report.print();
+            std::process::exit(report.exit_code());
         }
 
         Commands::Reset { force } => {
