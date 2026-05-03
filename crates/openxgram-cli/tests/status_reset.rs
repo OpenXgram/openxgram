@@ -24,11 +24,13 @@ fn init_opts(data_dir: PathBuf) -> InitOpts {
 fn set_env() {
     unsafe {
         std::env::set_var("XGRAM_KEYSTORE_PASSWORD", TEST_PASSWORD);
+        std::env::set_var("XGRAM_SKIP_PORT_PRECHECK", "1");
         std::env::remove_var("XGRAM_SEED");
     }
 }
 
 #[test]
+#[serial_test::file_serial]
 fn status_after_init_succeeds() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -42,6 +44,7 @@ fn status_after_init_succeeds() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn status_without_install_is_idempotent() {
     let tmp = tempdir().unwrap();
     // 미설치 디렉토리 — 안내 출력 후 OK 반환
@@ -52,6 +55,7 @@ fn status_without_install_is_idempotent() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn reset_hard_round_trip_then_init_again() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -75,6 +79,7 @@ fn reset_hard_round_trip_then_init_again() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn reset_requires_hard() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -93,6 +98,7 @@ fn reset_requires_hard() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn reset_requires_confirm_string() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -123,6 +129,7 @@ fn reset_requires_confirm_string() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn reset_dry_run_makes_no_changes() {
     set_env();
     let tmp = tempdir().unwrap();

@@ -26,11 +26,13 @@ fn init_opts(data_dir: PathBuf) -> InitOpts {
 fn set_env() {
     unsafe {
         std::env::set_var("XGRAM_KEYSTORE_PASSWORD", TEST_PASSWORD);
+        std::env::set_var("XGRAM_SKIP_PORT_PRECHECK", "1");
         std::env::remove_var("XGRAM_SEED");
     }
 }
 
 #[test]
+#[serial_test::file_serial]
 fn dispatcher_lists_db_and_vault_tools_when_password_present() {
     set_env(); // sets XGRAM_KEYSTORE_PASSWORD
     let tmp = tempdir().unwrap();
@@ -48,6 +50,7 @@ fn dispatcher_lists_db_and_vault_tools_when_password_present() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn dispatcher_omits_vault_tools_when_no_password() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -67,6 +70,7 @@ fn dispatcher_omits_vault_tools_when_no_password() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn dispatcher_vault_set_get_round_trip() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -90,6 +94,7 @@ fn dispatcher_vault_set_get_round_trip() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn dispatcher_list_sessions_returns_empty_then_one() {
     set_env();
     use openxgram_core::paths::db_path;
@@ -122,6 +127,7 @@ fn dispatcher_list_sessions_returns_empty_then_one() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn dispatcher_list_memories_validates_kind() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -144,6 +150,7 @@ fn dispatcher_list_memories_validates_kind() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn dispatcher_recall_messages_validates_query() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -164,6 +171,7 @@ fn dispatcher_recall_messages_validates_query() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn dispatcher_unknown_tool_returns_method_not_found() {
     set_env();
     let tmp = tempdir().unwrap();
@@ -176,6 +184,7 @@ fn dispatcher_unknown_tool_returns_method_not_found() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn open_without_init_raises() {
     let tmp = tempdir().unwrap();
     match OpenxgramDispatcher::open(&tmp.path().join("absent")) {

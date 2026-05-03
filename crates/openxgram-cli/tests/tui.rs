@@ -15,6 +15,7 @@ fn buffer_contains(terminal: &Terminal<TestBackend>, needle: &str) -> bool {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn render_uninstalled_state_shows_install_hint() {
     let backend = TestBackend::new(80, 20);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -29,9 +30,11 @@ fn render_uninstalled_state_shows_install_hint() {
 }
 
 #[test]
+#[serial_test::file_serial]
 fn render_installed_state_shows_machine_info() {
     unsafe {
         std::env::set_var("XGRAM_KEYSTORE_PASSWORD", "test-password-12345");
+        std::env::set_var("XGRAM_SKIP_PORT_PRECHECK", "1");
         std::env::remove_var("XGRAM_SEED");
     }
     let tmp = tempdir().unwrap();
