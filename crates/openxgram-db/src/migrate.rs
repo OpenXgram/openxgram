@@ -17,6 +17,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "message_embeddings",
         sql: include_str!("../migrations/0002_message_embeddings.sql"),
     },
+    Migration {
+        version: 3,
+        name: "episodes",
+        sql: include_str!("../migrations/0003_episodes.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {
