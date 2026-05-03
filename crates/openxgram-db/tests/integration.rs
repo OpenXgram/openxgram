@@ -21,14 +21,19 @@ fn test_migrate_idempotent() {
     };
     let mut db = Db::open(cfg).unwrap();
     db.migrate().unwrap();
-    db.migrate().unwrap(); // 두 번 실행해도 안전
-
-    // schema_migrations에 1개 레코드만
-    let count: i64 = db
+    let count_first: i64 = db
         .conn()
         .query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(count, 1);
+    db.migrate().unwrap();
+    let count_second: i64 = db
+        .conn()
+        .query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))
+        .unwrap();
+
+    // 두 번째 호출이 추가 record 를 만들지 않아야 idempotent
+    assert_eq!(count_first, count_second);
+    assert!(count_first >= 1, "최소 1개 마이그레이션 적용");
 }
 
 #[test]

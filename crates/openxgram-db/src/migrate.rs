@@ -6,11 +6,18 @@ pub struct Migration {
     pub sql: &'static str,
 }
 
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "init",
-    sql: include_str!("../migrations/0001_init.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "init",
+        sql: include_str!("../migrations/0001_init.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "message_embeddings",
+        sql: include_str!("../migrations/0002_message_embeddings.sql"),
+    },
+];
 
 pub struct MigrationRunner<'a> {
     conn: &'a mut rusqlite::Connection,
