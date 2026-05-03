@@ -259,6 +259,9 @@ enum SessionCli {
         /// 입력 파일 경로 (생략 시 stdin)
         #[arg(long)]
         input: Option<PathBuf>,
+        /// 메시지 signature 를 master_public_key 로 검증 (불일치 시 raise)
+        #[arg(long)]
+        verify: bool,
     },
     /// session 삭제 (messages·episodes CASCADE, memories.session_id NULL)
     Delete { id: String },
@@ -284,7 +287,7 @@ impl From<SessionCli> for SessionAction {
             SessionCli::Reflect { session_id } => SessionAction::Reflect { session_id },
             SessionCli::Recall { query, k } => SessionAction::Recall { query, k },
             SessionCli::Export { session_id, out } => SessionAction::Export { session_id, out },
-            SessionCli::Import { input } => SessionAction::Import { input },
+            SessionCli::Import { input, verify } => SessionAction::Import { input, verify },
             SessionCli::Delete { id } => SessionAction::Delete { id },
             SessionCli::ReflectAll => SessionAction::ReflectAll,
         }

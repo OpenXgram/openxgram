@@ -25,6 +25,9 @@ pub struct TextPackage {
     pub messages: Vec<PkgMessage>,
     pub episodes: Vec<PkgEpisode>,
     pub memories: Vec<PkgMemory>,
+    /// 메시지 서명을 검증할 master 공개키 (33바이트 secp256k1 압축, hex). 없으면 검증 불가.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub master_public_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,7 +68,14 @@ pub struct PkgMemory {
 }
 
 /// session 의 모든 메시지·episode·memory 를 1 패키지로 묶어 반환.
-pub fn export_session(db: &mut Db, session_id: &str, source_machine: &str) -> Result<TextPackage> {
+/// `master_public_key_hex` 가 Some 이면 패키지에 포함 — 수신측이 message
+/// signature 를 검증할 수 있게 됨.
+pub fn export_session(
+    db: &mut Db,
+    session_id: &str,
+    source_machine: &str,
+    master_public_key_hex: Option<String>,
+) -> Result<TextPackage> {
     let session = SessionStore::new(db)
         .get_by_id(session_id)?
         .ok_or_else(|| MemoryError::InvalidKind(format!("session not found: {session_id}")))?;
@@ -122,6 +132,7 @@ pub fn export_session(db: &mut Db, session_id: &str, source_machine: &str) -> Re
         messages,
         episodes,
         memories,
+        master_public_key: master_public_key_hex,
     })
 }
 
