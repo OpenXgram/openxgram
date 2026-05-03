@@ -18,6 +18,7 @@ use openxgram_cli::notify::{self, NotifyAction};
 use openxgram_cli::patterns::{self, PatternsAction};
 use openxgram_cli::payment::{self, PaymentAction};
 use openxgram_cli::peer::{self, PeerAction};
+use openxgram_cli::peer_send;
 use openxgram_cli::reset::{self, ResetOpts};
 use openxgram_cli::session::{self, SessionAction};
 use openxgram_cli::status::{self, StatusOpts};
@@ -561,6 +562,16 @@ enum PeerCli {
     Touch { alias: String },
     /// peer 삭제
     Delete { alias: String },
+    /// peer 의 /v1/message 로 envelope 전송 (master ECDSA 서명, 성공 시 last_seen 갱신)
+    Send {
+        #[arg(long)]
+        alias: String,
+        #[arg(long)]
+        body: String,
+        /// sender 주소 (생략 시 master 주소)
+        #[arg(long)]
+        sender: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -668,6 +679,7 @@ impl From<PeerCli> for PeerAction {
             PeerCli::Show { alias } => PeerAction::Show { alias },
             PeerCli::Touch { alias } => PeerAction::Touch { alias },
             PeerCli::Delete { alias } => PeerAction::Delete { alias },
+            PeerCli::Send { .. } => unreachable!("Send 는 main.rs 에서 별도 처리"),
         }
     }
 }
@@ -1304,7 +1316,18 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Peer { data_dir, action } => {
             let dir = resolve_data_dir(data_dir)?;
-            peer::run_peer(&dir, action.into())?;
+            // Send 는 async/transport 필요 — 다른 액션과 분리 처리
+            if let PeerCli::Send {
+                alias,
+                body,
+                sender,
+            } = action
+            {
+                let pw = openxgram_core::env::require_password()?;
+                peer_send::run_peer_send(&dir, &alias, sender.as_deref(), &body, &pw).await?;
+            } else {
+                peer::run_peer(&dir, action.into())?;
+            }
         }
 
         Commands::Payment { data_dir, action } => {

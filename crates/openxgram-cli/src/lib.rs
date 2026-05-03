@@ -15,6 +15,7 @@ pub mod notify;
 pub mod patterns;
 pub mod payment;
 pub mod peer;
+pub mod peer_send;
 pub mod reset;
 pub mod session;
 pub mod status;
