@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use openxgram_cli::backup::restore_cold_backup;
+use openxgram_cli::backup_push::{self, BackupPushOpts, BackupTarget};
 use openxgram_cli::daemon::{self, DaemonOpts};
 use openxgram_cli::doctor::{self, DoctorOpts};
 use openxgram_cli::init::{self, InitOpts};
@@ -152,6 +153,16 @@ enum Commands {
     Notify {
         #[command(subcommand)]
         target: NotifyCli,
+    },
+
+    /// session 통계 백업을 Discord/Telegram 으로 push
+    BackupPush {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long, value_enum)]
+        target: BackupTargetArg,
     },
 
     /// 사이드카 데몬 — scheduler + transport server foreground 실행
@@ -395,6 +406,21 @@ impl From<MemoryCli> for MemoryAction {
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
+enum BackupTargetArg {
+    Discord,
+    Telegram,
+}
+
+impl From<BackupTargetArg> for BackupTarget {
+    fn from(t: BackupTargetArg) -> Self {
+        match t {
+            BackupTargetArg::Discord => BackupTarget::Discord,
+            BackupTargetArg::Telegram => BackupTarget::Telegram,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
 enum RoleArg {
     Primary,
     Secondary,
@@ -562,6 +588,19 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Notify { target } => {
             notify::run_notify(target.into()).await?;
+        }
+
+        Commands::BackupPush {
+            data_dir,
+            session_id,
+            target,
+        } => {
+            backup_push::run_backup_push(BackupPushOpts {
+                data_dir: resolve_data_dir(data_dir)?,
+                session_id,
+                target: target.into(),
+            })
+            .await?;
         }
 
         Commands::Daemon {
