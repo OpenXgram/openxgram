@@ -144,32 +144,87 @@ fn gather_db_metrics(data_dir: &std::path::Path) -> String {
     out
 }
 
-/// drain 된 envelope 들을 한 번의 DB open 으로 처리 (silent error 패턴).
-fn process_inbound(
+/// drain 된 envelope 들을 한 번의 DB open 으로 처리.
+/// 각 envelope: peer 조회 → 서명 검증 → L0 message insert → peer.touch (성공 시).
+/// 검증 실패·미등록 peer 는 silent drop + WARN (PRD-2.0.1 / 2.0.2 / 2.0.3).
+pub fn process_inbound(
     data_dir: &std::path::Path,
     envelopes: &[openxgram_transport::Envelope],
 ) -> Result<()> {
     use openxgram_db::{Db, DbConfig};
+    use openxgram_keystore::verify_with_pubkey;
+    use openxgram_memory::{default_embedder, MessageStore, SessionStore};
     use openxgram_peer::PeerStore;
+
     let mut db = Db::open(DbConfig {
         path: db_path(data_dir),
         ..Default::default()
     })
     .context("DB open (inbound) 실패")?;
     db.migrate().context("DB migrate (inbound) 실패")?;
-    let mut store = PeerStore::new(&mut db);
+    let embedder = default_embedder().context("embedder init 실패")?;
+
     for env in envelopes {
-        match store.touch_by_eth_address(&env.from) {
-            Ok(0) => {
-                tracing::debug!(from = %env.from, "anonymous inbound (peer 미등록)");
-            }
-            Ok(_) => {
-                tracing::info!(from = %env.from, "peer last_seen 갱신");
+        // 1. peer 조회 (envelope.from = eth_address)
+        let peer = match PeerStore::new(&mut db).get_by_eth_address(&env.from) {
+            Ok(Some(p)) => p,
+            Ok(None) => {
+                tracing::warn!(from = %env.from, "unknown peer — envelope drop (PRD-2.0.1)");
+                continue;
             }
             Err(e) => {
-                tracing::warn!(error = %e, from = %env.from, "peer.touch 실패");
+                tracing::warn!(error = %e, "peer 조회 실패");
+                continue;
             }
+        };
+
+        // 2. 서명 검증 (peer.public_key_hex 로 envelope.payload_hex bytes 검증)
+        let payload_bytes = match hex::decode(&env.payload_hex) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(error = %e, from = %env.from, "payload hex decode 실패");
+                continue;
+            }
+        };
+        let sig_bytes = match hex::decode(&env.signature_hex) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(error = %e, from = %env.from, "signature hex decode 실패");
+                continue;
+            }
+        };
+        if let Err(e) = verify_with_pubkey(&peer.public_key_hex, &payload_bytes, &sig_bytes) {
+            tracing::warn!(error = %e, from = %env.from, "서명 검증 실패 — drop (PRD-2.0.1)");
+            continue;
         }
+
+        // 3. session 매핑 — alias 별 inbox session ensure (PRD-2.0.3)
+        let session_title = format!("inbox-from-{}", peer.alias);
+        let session = match SessionStore::new(&mut db).ensure_by_title(&session_title, "inbound") {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "session ensure 실패");
+                continue;
+            }
+        };
+
+        // 4. L0 message 자동 저장 (PRD-2.0.2)
+        let body = String::from_utf8_lossy(&payload_bytes).into_owned();
+        if let Err(e) = MessageStore::new(&mut db, embedder.as_ref()).insert(
+            &session.id,
+            &env.from,
+            &body,
+            &env.signature_hex,
+        ) {
+            tracing::warn!(error = %e, "L0 message insert 실패");
+            continue;
+        }
+
+        // 5. peer last_seen 갱신
+        if let Err(e) = PeerStore::new(&mut db).touch_by_eth_address(&env.from) {
+            tracing::warn!(error = %e, "peer.touch 실패");
+        }
+        tracing::info!(from = %env.from, session = %session.id, "inbound envelope 저장 완료");
     }
     Ok(())
 }
