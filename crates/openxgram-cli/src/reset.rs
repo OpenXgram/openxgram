@@ -10,10 +10,9 @@
 use std::path::PathBuf;
 
 use anyhow::{anyhow, bail, Result};
+use openxgram_core::confirm::{DELETE_CONFIRM, RESET_CONFIRM};
 
 use crate::uninstall::{run_uninstall, UninstallOpts};
-
-const CONFIRM_STRING: &str = "RESET OPENXGRAM";
 
 #[derive(Debug, Clone)]
 pub struct ResetOpts {
@@ -29,11 +28,11 @@ pub fn run_reset(opts: &ResetOpts) -> Result<()> {
     }
 
     let confirm = opts.confirm.as_deref().ok_or_else(|| {
-        anyhow!("--hard 사용 시 --confirm \"{CONFIRM_STRING}\" 정확 일치 필요")
+        anyhow!("--hard 사용 시 --confirm \"{RESET_CONFIRM}\" 정확 일치 필요")
     })?;
-    if confirm != CONFIRM_STRING {
+    if confirm != RESET_CONFIRM {
         bail!(
-            "확인 문자열 불일치. 정확히 \"{CONFIRM_STRING}\" 입력 필요 (대소문자 포함)"
+            "확인 문자열 불일치. 정확히 \"{RESET_CONFIRM}\" 입력 필요 (대소문자 포함)"
         );
     }
 
@@ -46,7 +45,7 @@ pub fn run_reset(opts: &ResetOpts) -> Result<()> {
         data_dir: opts.data_dir.clone(),
         no_backup: true,
         cold_backup_to: None,
-        confirm: Some("DELETE OPENXGRAM".into()),
+        confirm: Some(DELETE_CONFIRM.into()),
         dry_run: opts.dry_run,
     })?;
 

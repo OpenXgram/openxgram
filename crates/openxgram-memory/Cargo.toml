@@ -8,6 +8,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+openxgram-core = { path = "../openxgram-core" }
 openxgram-db = { path = "../openxgram-db" }
 rusqlite = { workspace = true }
 serde = { workspace = true }

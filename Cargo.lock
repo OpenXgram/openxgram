@@ -1737,11 +1737,8 @@ dependencies = [
 name = "openxgram-core"
 version = "0.1.0-alpha.1"
 dependencies = [
- "anyhow",
- "serde",
- "serde_json",
+ "chrono",
  "thiserror 1.0.69",
- "tracing",
 ]
 
 [[package]]
@@ -1803,6 +1800,7 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "chrono",
+ "openxgram-core",
  "openxgram-db",
  "rusqlite",
  "serde",

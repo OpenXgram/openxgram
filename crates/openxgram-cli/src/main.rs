@@ -209,7 +209,7 @@ async fn main() -> anyhow::Result<()> {
                 role: role.into(),
                 data_dir: match data_dir {
                     Some(p) => p,
-                    None => init::default_data_dir()?,
+                    None => openxgram_core::paths::default_data_dir()?,
                 },
                 force,
                 dry_run,
@@ -222,7 +222,7 @@ async fn main() -> anyhow::Result<()> {
             let opts = StatusOpts {
                 data_dir: match data_dir {
                     Some(p) => p,
-                    None => init::default_data_dir()?,
+                    None => openxgram_core::paths::default_data_dir()?,
                 },
             };
             status::run_status(&opts)?;
@@ -232,7 +232,7 @@ async fn main() -> anyhow::Result<()> {
             let opts = DoctorOpts {
                 data_dir: match data_dir {
                     Some(p) => p,
-                    None => init::default_data_dir()?,
+                    None => openxgram_core::paths::default_data_dir()?,
                 },
             };
             let report = doctor::run_doctor(&opts)?;
@@ -249,7 +249,7 @@ async fn main() -> anyhow::Result<()> {
             let opts = ResetOpts {
                 data_dir: match data_dir {
                     Some(p) => p,
-                    None => init::default_data_dir()?,
+                    None => openxgram_core::paths::default_data_dir()?,
                 },
                 hard,
                 confirm,
@@ -281,7 +281,7 @@ async fn main() -> anyhow::Result<()> {
             let opts = UninstallOpts {
                 data_dir: match data_dir {
                     Some(p) => p,
-                    None => init::default_data_dir()?,
+                    None => openxgram_core::paths::default_data_dir()?,
                 },
                 cold_backup_to,
                 no_backup,
@@ -301,7 +301,7 @@ async fn main() -> anyhow::Result<()> {
             let opts = TuiOpts {
                 data_dir: match data_dir {
                     Some(p) => p,
-                    None => init::default_data_dir()?,
+                    None => openxgram_core::paths::default_data_dir()?,
                 },
             };
             tui::run_tui(&opts)?;

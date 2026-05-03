@@ -14,8 +14,15 @@
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, Context, Result};
-use chrono::{DateTime, FixedOffset, Utc};
+use anyhow::{bail, Context, Result};
+use openxgram_core::env::{require_password, require_seed_phrase, MIN_PASSWORD_LEN};
+use openxgram_core::paths::{
+    db_path, install_dirs, keystore_dir, manifest_path, MASTER_KEY_NAME,
+};
+use openxgram_core::ports::{
+    HTTP_PORT, HTTP_SERVICE, INBOUND_WEBHOOK_PORT, REQUIRED_PORTS, RPC_PORT, RPC_SERVICE,
+};
+use openxgram_core::time::kst_now;
 use openxgram_db::{Db, DbConfig};
 use openxgram_keystore::{FsKeystore, Keystore};
 use openxgram_manifest::{
@@ -23,11 +30,6 @@ use openxgram_manifest::{
     RegisteredKey, SCHEMA_VERSION,
 };
 
-const DEFAULT_PORTS: &[u16] = &[7300, 7301];
-const SEED_ENV: &str = "XGRAM_SEED";
-const PASSWORD_ENV: &str = "XGRAM_KEYSTORE_PASSWORD";
-const MIN_PASSWORD_LEN: usize = 12;
-const MASTER_KEY_NAME: &str = "master";
 const MASTER_DERIVATION_PATH: &str = "m/44'/60'/0'/0/0";
 
 #[derive(Debug, Clone)]
@@ -57,8 +59,7 @@ pub fn run_init(opts: &InitOpts) -> Result<()> {
     let phrase = obtain_seed_phrase(opts)?;
 
     println!("[4/6] 마스터 키페어 ({MASTER_DERIVATION_PATH})");
-    let password = std::env::var(PASSWORD_ENV)
-        .map_err(|_| anyhow!("환경변수 {PASSWORD_ENV} 누락"))?;
+    let password = require_password()?;
     if password.len() < MIN_PASSWORD_LEN {
         bail!(
             "패스워드는 최소 {MIN_PASSWORD_LEN}자 (현재: {})",
@@ -83,7 +84,7 @@ pub fn run_init(opts: &InitOpts) -> Result<()> {
         init_database(&opts.data_dir).context("DB 초기화 실패")?;
     }
 
-    let manifest_path = opts.data_dir.join("install-manifest.json");
+    let target = manifest_path(&opts.data_dir);
     let unsigned = build_manifest(&machine, registered_master, directories);
 
     if opts.dry_run {
@@ -95,34 +96,32 @@ pub fn run_init(opts: &InitOpts) -> Result<()> {
 
     let signed = sign_manifest(&opts.data_dir, &password, unsigned)?;
     signed
-        .write(&manifest_path)
-        .with_context(|| format!("install-manifest 저장 실패: {}", manifest_path.display()))?;
+        .write(&target)
+        .with_context(|| format!("install-manifest 저장 실패: {}", target.display()))?;
 
     println!();
     println!("✓ OpenXgram 설치 완료");
     println!("  alias    : {}", opts.alias);
     println!("  address  : {}", signed.registered_keys[0].address);
     println!("  data_dir : {}", opts.data_dir.display());
-    println!("  manifest : {}", manifest_path.display());
+    println!("  manifest : {}", target.display());
     Ok(())
 }
 
 fn precheck(opts: &InitOpts) -> Result<()> {
-    let manifest_path = opts.data_dir.join("install-manifest.json");
-    if manifest_path.exists() && !opts.force {
+    let mp = manifest_path(&opts.data_dir);
+    if mp.exists() && !opts.force {
         bail!(
             "이미 설치되어 있습니다 ({}). `xgram uninstall` 후 재시도하거나 `xgram init --force` 사용.",
-            manifest_path.display()
+            mp.display()
         );
     }
-
-    for &port in DEFAULT_PORTS {
+    for &port in REQUIRED_PORTS {
         match TcpListener::bind(("127.0.0.1", port)) {
             Ok(l) => drop(l),
             Err(e) => bail!("필수 포트 {port} 점유: {e}"),
         }
     }
-
     Ok(())
 }
 
@@ -148,10 +147,7 @@ fn detect_os() -> Result<OsKind> {
 
 fn obtain_seed_phrase(opts: &InitOpts) -> Result<Option<String>> {
     if opts.import {
-        let phrase = std::env::var(SEED_ENV).map_err(|_| {
-            anyhow!("--import 시 환경변수 {SEED_ENV} 가 24단어 시드를 담고 있어야 합니다")
-        })?;
-        Ok(Some(phrase))
+        Ok(Some(require_seed_phrase()?))
     } else {
         Ok(None)
     }
@@ -162,7 +158,7 @@ fn setup_master_keypair(
     seed_phrase: Option<&str>,
     password: &str,
 ) -> Result<RegisteredKey> {
-    let ks = FsKeystore::new(data_dir.join("keystore"));
+    let ks = FsKeystore::new(keystore_dir(data_dir));
     let address = match seed_phrase {
         None => {
             let (addr, mnemonic) = ks
@@ -187,11 +183,7 @@ fn setup_master_keypair(
 }
 
 fn ensure_data_dirs(data_dir: &Path, dry_run: bool) -> Result<Vec<DirectoryEntry>> {
-    let dirs = [
-        data_dir.to_path_buf(),
-        data_dir.join("keystore"),
-        data_dir.join("backup"),
-    ];
+    let dirs = install_dirs(data_dir);
     let mut entries = Vec::with_capacity(dirs.len());
     for d in &dirs {
         if !dry_run {
@@ -208,7 +200,7 @@ fn ensure_data_dirs(data_dir: &Path, dry_run: bool) -> Result<Vec<DirectoryEntry
 
 fn init_database(data_dir: &Path) -> Result<()> {
     let mut db = Db::open(DbConfig {
-        path: data_dir.join("db.sqlite"),
+        path: db_path(data_dir),
         ..Default::default()
     })?;
     db.migrate()?;
@@ -234,19 +226,19 @@ fn build_manifest(
         registered_keys: vec![master],
         ports: vec![
             PortEntry {
-                number: 7300,
+                number: RPC_PORT,
                 protocol: PortProtocol::Tcp,
-                service: "xgram-rpc".into(),
+                service: RPC_SERVICE.into(),
             },
             PortEntry {
-                number: 7301,
+                number: HTTP_PORT,
                 protocol: PortProtocol::Tcp,
-                service: "xgram-http".into(),
+                service: HTTP_SERVICE.into(),
             },
         ],
         os_keychain_entries: vec![],
         selected_extractors: serde_json::Value::Null,
-        inbound_webhook_port: Some(14921),
+        inbound_webhook_port: Some(INBOUND_WEBHOOK_PORT),
         backup_schedule: None,
     }
 }
@@ -256,7 +248,7 @@ fn sign_manifest(
     password: &str,
     manifest: InstallManifest,
 ) -> Result<InstallManifest> {
-    let ks = FsKeystore::new(data_dir.join("keystore"));
+    let ks = FsKeystore::new(keystore_dir(data_dir));
     let kp = ks
         .load(MASTER_KEY_NAME, password)
         .context("master 키 로드 실패 — keystore 패스워드 확인")?;
@@ -264,14 +256,4 @@ fn sign_manifest(
     let mut signed = manifest;
     signed.uninstall_token = hex::encode(signature);
     Ok(signed)
-}
-
-fn kst_now() -> DateTime<FixedOffset> {
-    let kst = FixedOffset::east_opt(9 * 3600).expect("KST offset valid");
-    Utc::now().with_timezone(&kst)
-}
-
-pub fn default_data_dir() -> Result<PathBuf> {
-    let home = std::env::var("HOME").map_err(|_| anyhow!("HOME 환경변수 누락"))?;
-    Ok(PathBuf::from(home).join(".openxgram"))
 }

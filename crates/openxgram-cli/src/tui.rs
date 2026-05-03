@@ -10,6 +10,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use openxgram_core::paths::manifest_path;
 use openxgram_manifest::InstallManifest;
 use ratatui::{
     crossterm::{
@@ -36,7 +37,7 @@ pub fn run_tui(opts: &TuiOpts) -> Result<()> {
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let manifest = InstallManifest::read(opts.data_dir.join("install-manifest.json")).ok();
+    let manifest = InstallManifest::read(manifest_path(&opts.data_dir)).ok();
 
     let outcome = (|| -> Result<()> {
         loop {

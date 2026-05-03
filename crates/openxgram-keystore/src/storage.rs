@@ -92,10 +92,11 @@ impl FsKeystore {
         }
     }
 
-    /// 기본 경로 ~/.openxgram/keystore/ 사용
+    /// 기본 경로 — core::paths 의 단일 source of truth 사용.
     pub fn default_path() -> PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-        PathBuf::from(home).join(".openxgram").join("keystore")
+        openxgram_core::paths::default_data_dir()
+            .map(|d| openxgram_core::paths::keystore_dir(&d))
+            .unwrap_or_else(|_| PathBuf::from("/root/.openxgram/keystore"))
     }
 
     fn key_path(&self, name: &str) -> PathBuf {

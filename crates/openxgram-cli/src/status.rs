@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+use openxgram_core::paths::manifest_path;
 use openxgram_manifest::InstallManifest;
 
 #[derive(Debug, Clone)]
@@ -14,14 +15,14 @@ pub struct StatusOpts {
 }
 
 pub fn run_status(opts: &StatusOpts) -> Result<()> {
-    let manifest_path = opts.data_dir.join("install-manifest.json");
-    if !manifest_path.exists() {
-        println!("OpenXgram 미설치 ({}).", manifest_path.display());
+    let mp = manifest_path(&opts.data_dir);
+    if !mp.exists() {
+        println!("OpenXgram 미설치 ({}).", mp.display());
         println!("  `xgram init --alias <NAME>` 으로 설치하세요.");
         return Ok(());
     }
 
-    let m = InstallManifest::read(&manifest_path)?;
+    let m = InstallManifest::read(&mp)?;
     println!("xgram status");
     println!();
     println!("  alias        : {}", m.machine.alias);
@@ -34,7 +35,7 @@ pub fn run_status(opts: &StatusOpts) -> Result<()> {
     );
     println!("  installed_at : {}", m.installed_at);
     println!("  data_dir     : {}", opts.data_dir.display());
-    println!("  manifest     : {}", manifest_path.display());
+    println!("  manifest     : {}", mp.display());
     println!();
     println!("  registered keys ({}):", m.registered_keys.len());
     for k in &m.registered_keys {
