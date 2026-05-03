@@ -2,6 +2,13 @@
 
 OpenXgram 의 변경 이력. 모든 시간은 KST(Asia/Seoul). [Semantic Versioning](https://semver.org/) + BUILD 자동 증가 (CI/CD 갱신, 수동 변경 금지).
 
+## [0.1.0-rc.2] — 2026-05-04 KST (Phase 1 RC2 — vault notify + MCP HTTP auth)
+
+### Added
+- **Vault pending Discord 알림** — `DISCORD_WEBHOOK_URL` 환경 시 confirm 정책으로 pending 생성될 때 마스터에게 fire-and-forget POST. silent error 패턴, `XGRAM_VAULT_NOTIFY=off` 로 비활성화.
+- **MCP HTTP caller 인증** — Bearer 토큰 발급/검증/폐기 (`xgram mcp token-create/list/revoke`). DB 에 SHA-256 해시만 저장. agent 식별 후 vault tools (`vault_get`/`vault_set`/`vault_delete`) 가 ACL · 일일한도 · confirm/mfa 정책에 자동 라우팅. `XGRAM_MCP_REQUIRE_AUTH=1` 으로 헤더 없는 요청 reject (엄격 모드). 헤더 없으면 master 폴백.
+- **MCP MFA 코드 동봉** — vault_get/_set arg 의 `mfa_code` 필드 (TOTP 코드).
+
 ## [0.1.0-rc.1] — 2026-05-04 KST (Phase 1 MVP RC)
 
 ### Added
