@@ -1,0 +1,899 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Guide — OpenXgram 자세한 사용법</title>
+    <meta name="description" content="OpenXgram 처음 설치부터 다중 에이전트 허브 운영, 백업·복구·키 회전까지 — 8개 튜토리얼 + FAQ + 트러블슈팅. 사용자가 실제로 따라할 수 있는 단계별 안내." />
+<script type="module" src="/src/main.ts"></script>
+    <link rel="icon" type="image/svg+xml" href="/openxgram-logo.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta property="og:title" content="OpenXgram Guide — 자세한 사용법" />
+    <meta property="og:description" content="설치부터 백업·복구까지 8개 튜토리얼 + FAQ + 트러블슈팅." />
+    <meta property="og:image" content="https://openxgram.org/openxgram-logo.svg" />
+    <meta name="twitter:card" content="summary" />
+    <style>
+      .toc { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 22px; margin: 16px 0 24px; }
+      .toc ol { margin: 6px 0 0; padding-left: 22px; color: var(--fg-dim); }
+      .toc ol li { padding: 4px 0; }
+      .toc ol li a { color: var(--fg); }
+      .toc ol li a:hover { color: var(--accent); }
+      .step { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 22px; margin: 14px 0; }
+      .step .step-no { display: inline-block; font-family: var(--mono); font-size: 11px; color: var(--accent); padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-soft); margin-bottom: 8px; }
+      .step h4 { margin: 4px 0 10px; font-size: 16px; color: var(--fg); }
+      .step p { color: var(--fg-dim); margin: 6px 0; }
+      details.faq { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 18px; margin: 8px 0; }
+      details.faq summary { cursor: pointer; font-weight: 600; color: var(--fg); list-style: none; padding: 4px 0; }
+      details.faq summary::-webkit-details-marker { display: none; }
+      details.faq summary::before { content: "▸ "; color: var(--accent); margin-right: 4px; }
+      details.faq[open] summary::before { content: "▾ "; }
+      details.faq[open] summary { color: var(--accent); }
+      details.faq .answer { padding-top: 10px; color: var(--fg-dim); }
+      details.faq .answer p { margin: 8px 0; }
+      .anchor-target { scroll-margin-top: 80px; }
+      .callout { border-left: 3px solid var(--accent); background: var(--bg-soft); padding: 12px 16px; border-radius: 6px; margin: 12px 0; color: var(--fg-dim); }
+      .callout strong { color: var(--accent); }
+      .ts-box { border-left: 3px solid #ffb86b; background: var(--bg-soft); padding: 12px 16px; border-radius: 6px; margin: 10px 0; color: var(--fg-dim); }
+      .ts-box .symptom { color: #ffb86b; font-family: var(--mono); font-size: 12.5px; display: block; margin-bottom: 4px; }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container row">
+        <a class="brand" href="/"><svg class="brand-logo" width="22" height="22" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 24 Q26 21 30 24"/><path d="M34 24 Q38 21 42 24"/><path d="M20 36 C24 33 28 33 32 36 C36 33 40 33 44 36"/><path d="M20 36 C18 35 17 33 19 31"/><path d="M44 36 C46 35 47 33 45 31"/><path d="M26 42 Q32 45 38 42"/><path d="M28 46 L32 52 L36 46"/></svg><span>OpenXgram</span></a>
+        <nav class="nav">
+          <a href="/">Home</a>
+          <a href="/why/">Why</a>
+          <a href="/features/">Features</a>
+          <a href="/quickstart/">Quickstart</a>
+          <a href="/guide/">Guide</a>
+          <a href="/usecases/">Use cases</a>
+          <a href="/architecture/">Architecture</a>
+          <a href="/docs/">Docs</a>
+          <button class="lang-toggle" type="button">EN</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="container">
+          <div class="kicker" data-i18n-ko>처음부터 따라하는 자세한 가이드</div>
+          <div class="kicker" data-i18n-en>Step-by-step detailed guide</div>
+          <h1 data-i18n-ko>Guide — 8 튜토리얼 + FAQ + 트러블슈팅</h1>
+          <h1 data-i18n-en>Guide — 8 tutorials + FAQ + troubleshooting</h1>
+          <p class="lead" data-i18n-ko>
+            <a href="/quickstart/">Quickstart</a> 가 명령어 카탈로그라면, 이 페이지는 <strong>실제로 사용자가 화면을 보면서 그대로 따라할 수 있는 튜토리얼</strong>입니다.
+            첫 설치 → 첫 대화 → 웹/터미널 AI 연동 → 메신저 알림 → 다중 에이전트 → 워크플로우 → 백업·키 회전 까지 8 단계.
+          </p>
+          <p class="lead" data-i18n-en>
+            If <a href="/quickstart/">Quickstart</a> is the command catalog, this page is a <strong>walk-through tutorial you can follow on your screen</strong>.
+            From first install → first conversation → web/terminal AI hookup → messenger alerts → multi-agent → workflows → backup &amp; key rotation. Eight steps.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
+          <div class="kicker">Table of contents</div>
+          <h2 data-i18n-ko>이 가이드에서 다루는 것</h2>
+          <h2 data-i18n-en>What this guide covers</h2>
+          <div class="toc">
+            <ol>
+              <li><a href="#tutorial-1" data-i18n-ko>첫 설치 — 5분 안에 작동 확인</a><a href="#tutorial-1" data-i18n-en>First install — running in 5 minutes</a></li>
+              <li><a href="#tutorial-2" data-i18n-ko>첫 대화 저장 + 회상</a><a href="#tutorial-2" data-i18n-en>First conversation save + recall</a></li>
+              <li><a href="#tutorial-3" data-i18n-ko>웹 AI (Claude · ChatGPT · Gemini) 연동 — 3가지 방법</a><a href="#tutorial-3" data-i18n-en>Web AI (Claude · ChatGPT · Gemini) — 3 ways</a></li>
+              <li><a href="#tutorial-4" data-i18n-ko>터미널 AI 하네스 (Claude Code · Cursor · Aider)</a><a href="#tutorial-4" data-i18n-en>Terminal AI harness (Claude Code · Cursor · Aider)</a></li>
+              <li><a href="#tutorial-5" data-i18n-ko>Discord · Telegram 연결 — 처음부터</a><a href="#tutorial-5" data-i18n-en>Discord · Telegram setup — from zero</a></li>
+              <li><a href="#tutorial-6" data-i18n-ko>다중 에이전트 채팅방 — Channel MCP</a><a href="#tutorial-6" data-i18n-en>Multi-agent chat — Channel MCP</a></li>
+              <li><a href="#tutorial-7" data-i18n-ko>예약 + 체인 메시지 (워크플로우)</a><a href="#tutorial-7" data-i18n-en>Scheduling + chain messages (workflows)</a></li>
+              <li><a href="#tutorial-8" data-i18n-ko>백업 · 복구 · 키 회전</a><a href="#tutorial-8" data-i18n-en>Backup · restore · key rotation</a></li>
+              <li><a href="#faq" data-i18n-ko>FAQ — 자주 묻는 질문</a><a href="#faq" data-i18n-en>FAQ — frequently asked</a></li>
+              <li><a href="#troubleshooting" data-i18n-ko>트러블슈팅</a><a href="#troubleshooting" data-i18n-en>Troubleshooting</a></li>
+            </ol>
+          </div>
+          <p class="muted" data-i18n-ko>
+            전체 명령은 <a href="/quickstart/">/quickstart/</a> 와 <a href="/docs/">/docs/</a> 에서 인덱싱되어 있습니다. 이 가이드는 "무엇을 누르면 무엇이 나오는가" 흐름에 집중합니다.
+          </p>
+          <p class="muted" data-i18n-en>
+            All commands are indexed at <a href="/quickstart/">/quickstart/</a> and <a href="/docs/">/docs/</a>. This page focuses on the "press X, see Y" flow.
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================== Tutorial 1 ============================== -->
+      <section id="tutorial-1" class="anchor-target">
+        <div class="container">
+          <div class="kicker">Tutorial 1 · 5 minutes</div>
+          <h2 data-i18n-ko>첫 설치 — 5분 안에 작동 확인</h2>
+          <h2 data-i18n-en>First install — running in 5 minutes</h2>
+          <p data-i18n-ko>리눅스/macOS 셸 한 줄로 설치합니다. Windows 는 WSL2 를 추천합니다.</p>
+          <p data-i18n-en>One shell line on Linux/macOS. For Windows we recommend WSL2.</p>
+
+          <div class="step">
+            <span class="step-no">Step 1.1</span>
+            <h4 data-i18n-ko>install.sh 실행</h4>
+            <h4 data-i18n-en>Run install.sh</h4>
+<pre class="code"><span class="p">$</span> curl -sSfL https://openxgram.org/install.sh | sh
+<span class="c"># 사용자 홈에 ~/.openxgram/bin/xgram 바이너리 설치
+# PATH 안내 메시지가 출력됩니다 — 한 번만 따라하면 됩니다</span>
+
+<span class="p">$</span> xgram --version
+<span class="c"># openxgram 0.2.0</span></pre>
+            <p data-i18n-ko>설치 스크립트가 PATH 추가를 안내합니다. <code class="inline">command not found</code> 가 뜨면 트러블슈팅 섹션을 먼저 보세요.</p>
+            <p data-i18n-en>The installer prints a PATH hint. If you see <code class="inline">command not found</code>, jump to the troubleshooting section.</p>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 1.2</span>
+            <h4 data-i18n-ko>신원 만들기 (xgram init)</h4>
+            <h4 data-i18n-en>Create your identity (xgram init)</h4>
+<pre class="code"><span class="p">$</span> xgram init <span class="s">--alias my-laptop</span>
+<span class="c"># 출력 예:
+#   ✓ master keypair generated (secp256k1)
+#   ✓ vault sealed
+#
+#   12-word recovery phrase (write this down OFFLINE):
+#     ribbon glance carbon ... (12 words)
+#
+#   다시 보여주지 않습니다. 종이/금고에 적어두세요.</span></pre>
+            <div class="callout" data-i18n-ko>
+              <strong>중요</strong> — 12-단어 시드는 마스터 신원을 복구하는 유일한 수단입니다. 노트북이 박살나면 이 시드만 있으면 다른 머신에서 같은 자격으로 복구할 수 있습니다. <strong>스크린샷 금지 / 평문 클라우드 저장 금지 / 종이 또는 하드웨어 지갑 권장.</strong>
+            </div>
+            <div class="callout" data-i18n-en>
+              <strong>Critical</strong> — the 12-word phrase is the only way to recover your master identity. If your laptop dies, this phrase rebuilds the same credentials on a new machine. <strong>No screenshots. No plaintext cloud storage. Paper or a hardware wallet only.</strong>
+            </div>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 1.3</span>
+            <h4 data-i18n-ko>어떤 파일이 어디에 생기는가</h4>
+            <h4 data-i18n-en>Where files land</h4>
+<pre class="code"><span class="p">$</span> ls -la ~/.openxgram/
+<span class="c"># bin/             ← xgram 바이너리
+# config/          ← config.toml (별칭, peer 목록)
+# data/            ← memory.db (SQLite + sqlite-vec)
+# vault/           ← 암호화된 자격증명 (다층 암호화)
+# logs/            ← 감사 로그 (append-only, 해시 체인)</span>
+
+<span class="p">$</span> ls ~/.openxgram/data/
+<span class="c"># memory.db (당신의 모든 메시지·기억·임베딩이 여기에)</span></pre>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 1.4</span>
+            <h4 data-i18n-ko>"외부 전송 0" 직접 검증</h4>
+            <h4 data-i18n-en>Verify "zero outbound" yourself</h4>
+            <p data-i18n-ko>설치 후 아무 명령이나 실행한 뒤 다음으로 네트워크 연결을 확인하세요. 인터넷으로 나가는 연결이 0 이어야 합니다.</p>
+            <p data-i18n-en>After running any command, inspect network connections. You should see zero outbound connections.</p>
+<pre class="code"><span class="c"># Linux</span>
+<span class="p">$</span> ss -tnp 2&gt;/dev/null | grep xgram
+<span class="c"># (출력 없음 = 외부 전송 0)</span>
+
+<span class="p">$</span> lsof -i -nP 2&gt;/dev/null | grep xgram
+<span class="c"># (출력 없음 = 열린 소켓 없음)</span>
+
+<span class="c"># macOS</span>
+<span class="p">$</span> lsof -i -nP -P | grep xgram
+<span class="c"># (역시 비어 있어야 정상)</span>
+
+<span class="c"># 포함 명령 (xgram doctor 가 한 번에 검사)</span>
+<span class="p">$</span> xgram doctor
+<span class="c"># ✓ binary OK
+# ✓ vault sealed
+# ✓ db reachable
+# ✓ no outbound sockets</span></pre>
+            <p data-i18n-ko>Discord/Telegram 알림을 켰을 때만 outbound 가 생깁니다 (api.telegram.org / discord.com). 의도치 않은 도메인이 보이면 즉시 보고 부탁드립니다.</p>
+            <p data-i18n-en>Outbound traffic only appears when you enable Discord/Telegram notifications (api.telegram.org / discord.com). Report any other domain immediately.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== Tutorial 2 ============================== -->
+      <section id="tutorial-2" class="anchor-target">
+        <div class="container">
+          <div class="kicker">Tutorial 2 · core loop</div>
+          <h2 data-i18n-ko>첫 대화 저장 + 회상</h2>
+          <h2 data-i18n-en>First conversation save + recall</h2>
+          <p data-i18n-ko>OpenXgram 의 핵심 사이클: 세션 만들기 → 메시지 추가 → 시맨틱 회상.</p>
+          <p data-i18n-en>The OpenXgram core loop: create a session → add messages → semantic recall.</p>
+
+          <div class="step">
+            <span class="step-no">Step 2.1</span>
+            <h4 data-i18n-ko>세션 시작</h4>
+            <h4 data-i18n-en>Start a session</h4>
+<pre class="code"><span class="p">$</span> xgram session new <span class="s">"주간 회고"</span>
+<span class="c"># {"session_id":"01HXAB...","title":"주간 회고","created_at":"2026-05-04T10:00:00+09:00"}</span></pre>
+            <p data-i18n-ko>session_id 를 어딘가에 복사해두세요 (다음 단계에서 사용).</p>
+            <p data-i18n-en>Copy the <code class="inline">session_id</code> — you'll use it in the next step.</p>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 2.2</span>
+            <h4 data-i18n-ko>메시지 추가 (양쪽 모두)</h4>
+            <h4 data-i18n-en>Add messages (both sides)</h4>
+<pre class="code"><span class="p">$</span> SID=<span class="s">"01HXAB..."</span>
+<span class="p">$</span> xgram session message <span class="s">--session-id $SID</span> --sender me \
+    --body <span class="s">"이번 주 OpenXgram 가이드 페이지를 작성했다."</span>
+<span class="p">$</span> xgram session message <span class="s">--session-id $SID</span> --sender claude \
+    --body <span class="s">"좋네요. 다음 주는 GUI 쪽을 마무리합시다."</span></pre>
+            <p data-i18n-ko>sender 는 자유 문자열입니다. <code class="inline">me</code> · <code class="inline">claude</code> · <code class="inline">chatgpt</code> · <code class="inline">starian</code> 등 — 나중에 누가 말했는지 회상 결과에 그대로 표시됩니다.</p>
+            <p data-i18n-en>The <code class="inline">sender</code> field is a free string — <code class="inline">me</code>, <code class="inline">claude</code>, <code class="inline">chatgpt</code>, <code class="inline">starian</code>, etc. It shows up verbatim in recall output.</p>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 2.3</span>
+            <h4 data-i18n-ko>시맨틱 회상</h4>
+            <h4 data-i18n-en>Semantic recall</h4>
+<pre class="code"><span class="p">$</span> xgram session recall --query <span class="s">"가이드 작업"</span> -k 5
+<span class="c"># 출력 예:
+# 1. score=0.91  sender=me     time=2026-05-04T10:01
+#    snippet: "이번 주 OpenXgram 가이드 페이지를 작성했다."
+# 2. score=0.78  sender=claude  time=2026-05-04T10:02
+#    snippet: "좋네요. 다음 주는 GUI..."</span></pre>
+            <p data-i18n-ko>
+              <strong>결과 해석</strong> —
+              <code class="inline">score</code> 는 코사인 유사도 (0~1). 0.7 이상이면 강한 관련, 0.5~0.7 약한 관련.
+              <code class="inline">sender</code> 는 누가 그 메시지를 남겼는지.
+              <code class="inline">snippet</code> 은 본문 앞부분 발췌. 전체 본문은 <code class="inline">--full</code> 플래그로 볼 수 있습니다.
+            </p>
+            <p data-i18n-en>
+              <strong>How to read</strong> —
+              <code class="inline">score</code> is cosine similarity (0–1). 0.7+ is strong, 0.5–0.7 weak.
+              <code class="inline">sender</code> is who wrote it.
+              <code class="inline">snippet</code> is the head of the body — pass <code class="inline">--full</code> for everything.
+            </p>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 2.4</span>
+            <h4 data-i18n-ko>중요한 것은 핀하기</h4>
+            <h4 data-i18n-en>Pin what matters</h4>
+<pre class="code"><span class="p">$</span> xgram memory add <span class="s">"마스터 별명: kandj. 한국어 우선."</span> --pin
+<span class="c"># 핀된 메모리는 회상 시 항상 상위에 노출됩니다 (ROUTINE 패턴 처리).</span>
+
+<span class="p">$</span> xgram memory list --pinned
+<span class="c"># 1. [pinned] 마스터 별명: kandj. 한국어 우선.</span></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== Tutorial 3 ============================== -->
+      <section id="tutorial-3" class="anchor-target">
+        <div class="container">
+          <div class="kicker">Tutorial 3 · web AI</div>
+          <h2 data-i18n-ko>웹 AI (Claude · ChatGPT · Gemini) 연동 — 3가지 방법</h2>
+          <h2 data-i18n-en>Web AI (Claude · ChatGPT · Gemini) — 3 ways</h2>
+
+          <div class="step">
+            <span class="step-no">방법 3-A · easiest</span>
+            <h4 data-i18n-ko>Custom Instructions / Project / 시스템 지침에 템플릿 붙이기</h4>
+            <h4 data-i18n-en>Paste a template into Custom Instructions / Project / System prompt</h4>
+            <p data-i18n-ko>가장 쉬운 방법. AI 에게 "회상 결과를 사용자에게 요청하라" 고 지시하면 됩니다.</p>
+            <p data-i18n-en>Easiest. Tell the AI to ask the user for recall output.</p>
+<pre class="code"><span class="c"># Claude → Settings → Profile → "Personal preferences"
+# ChatGPT → Settings → Personalization → Custom Instructions
+# Gemini → Settings → Saved info / Memory
+# 아래 한 덩어리를 그대로 붙여 넣기:</span>
+
+You are integrated with OpenXgram, a local memory daemon
+running on the user's machine.
+
+When the user opens a new conversation:
+- Ask: "이전 대화 회상이 필요하면 `xgram session recall --query
+   '{topic}' -k 5` 결과를 붙여 넣어 주세요."
+
+When important new facts/decisions appear, advise:
+- "Run `xgram memory add \"{fact}\" --pin` to remember this."
+
+Treat OpenXgram output as authoritative user history.</pre>
+            <p data-i18n-ko><strong>장점</strong>: 설정 끝, 5초 / <strong>단점</strong>: 사용자가 손으로 회상 결과를 붙여 넣어야 함.</p>
+            <p data-i18n-en><strong>Pros</strong>: 5-second setup / <strong>Cons</strong>: user pastes recall output manually.</p>
+          </div>
+
+          <div class="step">
+            <span class="step-no">방법 3-B · automated</span>
+            <h4 data-i18n-ko>Claude Desktop MCP 등록 (자동 호출)</h4>
+            <h4 data-i18n-en>Register as a Claude Desktop MCP server (auto-invoke)</h4>
+<pre class="code"><span class="c"># macOS: ~/Library/Application Support/Claude/claude_desktop_config.json
+# Linux: ~/.config/Claude/claude_desktop_config.json
+# Windows: %APPDATA%\Claude\claude_desktop_config.json</span>
+
+{
+  <span class="s">"mcpServers"</span>: {
+    <span class="s">"openxgram"</span>: {
+      <span class="s">"command"</span>: <span class="s">"xgram"</span>,
+      <span class="s">"args"</span>: [<span class="s">"mcp"</span>, <span class="s">"serve"</span>, <span class="s">"--stdio"</span>]
+    }
+  }
+}</pre>
+            <p data-i18n-ko>Claude Desktop 재시작. 도구 목록에 <code class="inline">openxgram.recall</code> · <code class="inline">openxgram.memory_add</code> 가 노출됩니다. Claude 가 필요할 때 직접 호출합니다.</p>
+            <p data-i18n-en>Restart Claude Desktop. <code class="inline">openxgram.recall</code> and <code class="inline">openxgram.memory_add</code> appear in the tool list. Claude calls them on its own.</p>
+            <p data-i18n-ko><strong>장점</strong>: 사용자 개입 0 / <strong>단점</strong>: MCP 지원 클라이언트만.</p>
+            <p data-i18n-en><strong>Pros</strong>: zero user effort / <strong>Cons</strong>: MCP-aware clients only.</p>
+          </div>
+
+          <div class="step">
+            <span class="step-no">방법 3-C · manual</span>
+            <h4 data-i18n-ko>회상 결과 직접 복사·붙여넣기</h4>
+            <h4 data-i18n-en>Copy-paste recall output yourself</h4>
+<pre class="code"><span class="p">$</span> xgram session recall --query <span class="s">"이전 회의록"</span> -k 5 | xclip
+<span class="c"># Linux: xclip / macOS: pbcopy
+# 새 ChatGPT 탭 → 첫 메시지에 붙여넣기 → 그 위에 질문</span></pre>
+            <p data-i18n-ko><strong>장점</strong>: 어떤 AI 든 작동 / <strong>단점</strong>: 매번 손으로. 단발성에 적합.</p>
+            <p data-i18n-en><strong>Pros</strong>: works in any AI / <strong>Cons</strong>: manual every time. Best for one-off use.</p>
+          </div>
+
+          <p class="muted" data-i18n-ko><strong>추천</strong> — Claude Desktop 메인 사용자: 3-B. ChatGPT 위주: 3-A + 3-C 혼용. 가끔 Gemini: 3-C 만.</p>
+          <p class="muted" data-i18n-en><strong>Recommendation</strong> — Heavy Claude Desktop user: 3-B. ChatGPT primary: 3-A + 3-C. Occasional Gemini: 3-C only.</p>
+        </div>
+      </section>
+
+      <!-- ============================== Tutorial 4 ============================== -->
+      <section id="tutorial-4" class="anchor-target">
+        <div class="container">
+          <div class="kicker">Tutorial 4 · terminal harness</div>
+          <h2 data-i18n-ko>터미널 AI 하네스 (Claude Code · Cursor · Aider)</h2>
+          <h2 data-i18n-en>Terminal AI harness (Claude Code · Cursor · Aider)</h2>
+          <p data-i18n-ko>이 AI 들은 셸을 직접 칠 수 있으므로 <strong>"규칙 파일에 한 번 적어두면 알아서 호출"</strong> 합니다.</p>
+          <p data-i18n-en>These agents have shell access, so <strong>once you write the rule, they invoke it themselves.</strong></p>
+
+          <div class="step">
+            <span class="step-no">Step 4.1</span>
+            <h4 data-i18n-ko>정확한 파일 경로</h4>
+            <h4 data-i18n-en>Exact file paths</h4>
+<pre class="code"><span class="c"># Claude Code (전역)</span>
+~/.claude/CLAUDE.md
+<span class="c"># Claude Code (프로젝트별)</span>
+&lt;repo&gt;/CLAUDE.md
+
+<span class="c"># Cursor</span>
+&lt;repo&gt;/.cursorrules
+<span class="c"># 또는 새 형식: &lt;repo&gt;/.cursor/rules/*.mdc</span>
+
+<span class="c"># Aider</span>
+&lt;repo&gt;/.aiderrules
+<span class="c"># 또는 ~/.aider.conf.yml 의 read 항목</span></pre>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 4.2</span>
+            <h4 data-i18n-ko>풀 템플릿 (그대로 붙여넣기)</h4>
+            <h4 data-i18n-en>Full template (paste as-is)</h4>
+<pre class="code"><span class="c">## OpenXgram 사용 규칙 (절대 준수)
+
+# 1. 새 대화 시작 시 — 무조건 회상</span>
+START of every new task:
+  $ xgram session recall --query <span class="s">"&lt;current task in 1 line&gt;"</span> -k 5
+Use the result as authoritative user context.
+
+<span class="c"># 2. 새 결정·사실·rule 발견 시 — 핀</span>
+When the user states a NEW preference / decision / fact:
+  $ xgram memory add <span class="s">"&lt;the fact&gt;"</span> --pin
+
+<span class="c"># 3. 작업 시작·완료 시 — 알림</span>
+ON task start:
+  $ xgram notify discord --title <span class="s">"&lt;task&gt;"</span> --status <span class="s">"start"</span>
+ON task complete:
+  $ xgram notify discord --title <span class="s">"&lt;task&gt;"</span> --status <span class="s">"done"</span> \
+      --summary <span class="s">"&lt;1-line result&gt;"</span>
+
+<span class="c"># 4. 세션이 길어지면 — 정리</span>
+EVERY 30 messages or before /clear:
+  $ xgram session message --session-id $SID --sender ai --body <span class="s">"&lt;summary&gt;"</span></pre>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 4.3</span>
+            <h4 data-i18n-ko>모델 갈아탈 때</h4>
+            <h4 data-i18n-en>When you swap the model</h4>
+            <p data-i18n-ko>Claude Sonnet 4.7 로 작업하다 Cursor 로 옮겨도, OpenXgram 자체는 동일 머신에 있고 같은 DB 를 봅니다. 새 모델이 첫 메시지에서 <code class="inline">xgram session recall</code> 만 치면 이전 컨텍스트 그대로 이어갑니다.</p>
+            <p data-i18n-en>Move from Claude Sonnet 4.7 to Cursor — OpenXgram is on the same machine reading the same DB. The new model just runs <code class="inline">xgram session recall</code> on its first turn and picks up where the last one left off.</p>
+<pre class="code"><span class="c"># 시연: Claude Code 에서 작업 → Cursor 로 갈아탐</span>
+<span class="p">$</span> <span class="c"># Claude Code 마지막 턴이 자동으로:</span>
+<span class="p">$</span> xgram session message --session-id $SID --sender claude \
+    --body <span class="s">"세션 요약: ...4.7 까지 한 일..."</span>
+
+<span class="c"># Cursor 첫 턴이 (.cursorrules 규칙대로):</span>
+<span class="p">$</span> xgram session recall --query <span class="s">"방금 하던 작업"</span> -k 10
+<span class="c"># → Cursor 가 마지막 메시지 + 직전 5턴 컨텍스트를 그대로 본다.</span></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== Tutorial 5 ============================== -->
+      <section id="tutorial-5" class="anchor-target">
+        <div class="container">
+          <div class="kicker">Tutorial 5 · messengers</div>
+          <h2 data-i18n-ko>Discord · Telegram 연결 — 처음부터</h2>
+          <h2 data-i18n-en>Discord · Telegram setup — from zero</h2>
+          <p data-i18n-ko>가장 빠른 길은 <code class="inline">xgram notify setup</code> 마법사입니다. 봇 토큰만 붙여넣으면 검증·저장·테스트까지 자동.</p>
+          <p data-i18n-en>The fastest path is the <code class="inline">xgram notify setup</code> wizard — paste a token, it validates, stores, and sends a test ping.</p>
+
+          <div class="step">
+            <span class="step-no">Step 5-T1</span>
+            <h4 data-i18n-ko>Telegram — BotFather 화면 그대로</h4>
+            <h4 data-i18n-en>Telegram — BotFather, click by click</h4>
+<pre class="code"><span class="c"># 1) Telegram 앱에서 @BotFather 검색 → /start
+# 2) 입력: /newbot
+# 3) 봇 표시이름: My OpenXgram Bot   (나중에 변경 가능)
+# 4) 봇 username: my_openxgram_bot   (반드시 _bot 으로 끝나야 함)
+# 5) BotFather 응답 메시지에서 토큰 복사:
+#    1234567890:ABC-DEF1234ghIklzyx57W2v1u123ew11
+# 6) 자기 봇과 1회 대화 → /start  (chat_id 받기 위함)
+# 7) 셸로 돌아와서:</span>
+<span class="p">$</span> xgram notify setup
+<span class="c"># 마법사가 묻습니다:
+#   ? Platform: telegram
+#   ? Bot token: (붙여넣기)
+#   ? 테스트 메시지를 보낼까요? Y
+# 자동으로 chat_id 를 발견하고 vault 에 봉인합니다.
+# 휴대폰에 "✓ OpenXgram connected" 도착.</span></pre>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 5-D1</span>
+            <h4 data-i18n-ko>Discord — 개발자 포털 단계별</h4>
+            <h4 data-i18n-en>Discord — developer portal step by step</h4>
+<pre class="code"><span class="c"># 1) https://discord.com/developers/applications → "New Application"
+#    이름: my-openxgram (자유)
+# 2) 좌측 "Bot" 메뉴 → "Add Bot" → "Yes, do it!"
+# 3) Token → "Reset Token" → 새 토큰 표시 → 복사
+#    (한 번만 보이므로 즉시 메모)
+# 4) 같은 페이지 아래로 스크롤:
+#    Privileged Gateway Intents
+#      [✓] MESSAGE CONTENT INTENT  ← 반드시 켜기 (수신용)
+# 5) 좌측 "OAuth2" → "URL Generator"
+#    Scopes: [✓] bot
+#    Bot Permissions:
+#      [✓] Send Messages
+#      [✓] Read Message History
+#      [✓] View Channels
+# 6) 생성된 URL 을 브라우저로 → 자기 서버에 봇 초대
+# 7) 셸로 돌아와서:</span>
+<span class="p">$</span> xgram notify setup
+<span class="c">#   ? Platform: discord
+#   ? Bot token: (붙여넣기)
+# 채널 ID 도 묻습니다 (Discord → 우클릭 채널 → "ID 복사").</span></pre>
+            <div class="ts-box">
+              <span class="symptom" data-i18n-ko>증상 — discord-listen 이 메시지 0개를 받음</span>
+              <span class="symptom" data-i18n-en>Symptom — discord-listen receives 0 messages</span>
+              <span data-i18n-ko>→ Step 5-D1 의 4번을 다시 확인하세요. <strong>MESSAGE CONTENT INTENT</strong> 가 꺼져 있으면 메시지 본문이 빈 문자열로 들어옵니다.</span>
+              <span data-i18n-en>→ Re-check item 4 above. If <strong>MESSAGE CONTENT INTENT</strong> is off, message bodies arrive as empty strings.</span>
+            </div>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 5.2</span>
+            <h4 data-i18n-ko>마법사 vs 수동 설정</h4>
+            <h4 data-i18n-en>Wizard vs manual</h4>
+<pre class="code"><span class="c"># 마법사 (권장)</span>
+<span class="p">$</span> xgram notify setup
+
+<span class="c"># 수동 (스크립트로 자동화하고 싶을 때)</span>
+<span class="p">$</span> xgram vault put telegram.bot_token <span class="s">"1234:ABC..."</span>
+<span class="p">$</span> xgram vault put telegram.chat_id <span class="s">"6565914284"</span>
+<span class="p">$</span> xgram notify telegram --title <span class="s">"Hello"</span> --body <span class="s">"테스트"</span></pre>
+            <p data-i18n-ko>마법사는 토큰 검증 + chat_id 자동 발견 + 테스트 메시지 송신을 한 번에 합니다. 수동은 모든 값을 사용자가 알 때만 쓰세요.</p>
+            <p data-i18n-en>The wizard validates the token, auto-detects chat_id, and sends a test ping in one go. Use manual only when you already know every value.</p>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 5.3</span>
+            <h4 data-i18n-ko>받기 (인바운드) + 데몬 모드</h4>
+            <h4 data-i18n-en>Receive (inbound) + daemon mode</h4>
+<pre class="code"><span class="c"># 포그라운드 (관찰용)</span>
+<span class="p">$</span> xgram telegram-listen
+<span class="p">$</span> xgram discord-listen
+
+<span class="c"># 백그라운드 데몬 (시스템 부팅 시 자동 시작)</span>
+<span class="p">$</span> xgram daemon install --service notify-listen
+<span class="c"># systemd unit 파일을 ~/.config/systemd/user/ 에 설치합니다.</span>
+<span class="p">$</span> systemctl --user enable --now xgram-notify-listen</pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== Tutorial 6 ============================== -->
+      <section id="tutorial-6" class="anchor-target">
+        <div class="container">
+          <div class="kicker">Tutorial 6 · multi-agent hub</div>
+          <h2 data-i18n-ko>다중 에이전트 채팅방 — Channel MCP</h2>
+          <h2 data-i18n-en>Multi-agent chat — Channel MCP</h2>
+          <p data-i18n-ko>여러 AI 에이전트(Starian · Eno · Kai 등)가 같은 OpenXgram 허브를 통해 서로 메시지를 주고받습니다.</p>
+          <p data-i18n-en>Multiple AI agents (Starian · Eno · Kai …) talk to each other through one OpenXgram hub.</p>
+
+          <div class="step">
+            <span class="step-no">Step 6.1</span>
+            <h4 data-i18n-ko>허브 시작</h4>
+            <h4 data-i18n-en>Start the hub</h4>
+<pre class="code"><span class="p">$</span> xgram channel serve --port 8765
+<span class="c"># JSON-RPC over HTTP 가 :8765/mcp 에 노출됩니다.
+# Bearer 토큰이 vault 에 자동 발급됩니다.</span>
+
+<span class="p">$</span> xgram mcp tokens list
+<span class="c"># 1. starian-token  (created 2026-05-04)
+# 2. eno-token      (created 2026-05-04)</span></pre>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 6.2</span>
+            <h4 data-i18n-ko>peer 등록</h4>
+            <h4 data-i18n-en>Register peers</h4>
+<pre class="code"><span class="c"># 환경변수 (또는 ~/.openxgram/config/config.toml)</span>
+<span class="p">$</span> export XGRAM_CHANNEL_PEERS=<span class="s">"starian@http://hub:8765,eno@http://hub:8765,kai@http://hub:8765"</span>
+
+<span class="c"># 또는</span>
+<span class="p">$</span> xgram channel peer add --role starian --endpoint http://hub:8765/mcp \
+    --token <span class="s">"$(xgram mcp tokens issue --role starian)"</span></pre>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 6.3</span>
+            <h4 data-i18n-ko>다른 AI 가 호출하는 방법</h4>
+            <h4 data-i18n-en>How another AI calls in</h4>
+<pre class="code"><span class="c"># MCP JSON-RPC 표준 — POST /mcp</span>
+<span class="p">$</span> curl -X POST http://hub:8765/mcp \
+    -H <span class="s">"Authorization: Bearer eno-token-..."</span> \
+    -H <span class="s">"Content-Type: application/json"</span> \
+    -d <span class="s">'{
+      "jsonrpc":"2.0", "id":1,
+      "method":"tools/call",
+      "params":{
+        "name":"send_message",
+        "arguments":{"to":"starian","summary":"빌드 완료","type":"result"}
+      }
+    }'</span></pre>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 6.4</span>
+            <h4 data-i18n-ko>시나리오 — Starian + Eno + Kai 가 같이 일함</h4>
+            <h4 data-i18n-en>Scenario — Starian + Eno + Kai working together</h4>
+<pre class="code"><span class="c"># 1) Starian (오케스트레이터) → Eno (코딩) 작업 요청</span>
+starian: send_message(to=<span class="s">"eno"</span>, summary=<span class="s">"가이드 페이지 빌드"</span>, type=<span class="s">"request"</span>)
+
+<span class="c"># 2) Eno 가 빌드 끝나면 → Starian + Kai (운영) 양쪽에 보고</span>
+eno: send_message(to=<span class="s">"starian"</span>, summary=<span class="s">"빌드 OK"</span>, type=<span class="s">"result"</span>)
+eno: send_message(to=<span class="s">"kai"</span>, summary=<span class="s">"배포 부탁"</span>, type=<span class="s">"request"</span>)
+
+<span class="c"># 3) Kai 가 배포 + 헬스 체크 → 마스터에게 최종 보고</span>
+kai:  send_message(to=<span class="s">"master"</span>, summary=<span class="s">"https://openxgram.org/guide/ live"</span>)</pre>
+            <p data-i18n-ko>모든 메시지가 OpenXgram 의 같은 DB(L0 messages 레이어) 에 기록되므로, 한 명이 다른 한 명의 컨텍스트를 그대로 회상할 수 있습니다.</p>
+            <p data-i18n-en>Every message lands in the same DB (L0 messages layer), so any agent can recall any other agent's context.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== Tutorial 7 ============================== -->
+      <section id="tutorial-7" class="anchor-target">
+        <div class="container">
+          <div class="kicker">Tutorial 7 · workflows</div>
+          <h2 data-i18n-ko>예약 + 체인 메시지 (워크플로우)</h2>
+          <h2 data-i18n-en>Scheduling + chain messages (workflows)</h2>
+
+          <div class="step">
+            <span class="step-no">Step 7.1</span>
+            <h4 data-i18n-ko>일회성 예약</h4>
+            <h4 data-i18n-en>One-shot schedule</h4>
+<pre class="code"><span class="p">$</span> xgram schedule once --at <span class="s">"2026-05-05T09:00:00+09:00"</span> \
+    --notify discord --title <span class="s">"아침 점검"</span> \
+    --body <span class="s">"오늘 할 일 3가지를 확인하세요."</span></pre>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 7.2</span>
+            <h4 data-i18n-ko>cron 반복 예약</h4>
+            <h4 data-i18n-en>Recurring cron</h4>
+<pre class="code"><span class="p">$</span> xgram schedule cron --expr <span class="s">"0 9 * * MON"</span> \
+    --notify telegram --title <span class="s">"주간 회고"</span> \
+    --body <span class="s">"지난주 회상: xgram session recall --query 'last week' -k 10"</span>
+
+<span class="p">$</span> xgram schedule list
+<span class="c"># 1. cron  "0 9 * * MON"  → notify telegram (next: 2026-05-11 09:00 KST)</span></pre>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 7.3</span>
+            <h4 data-i18n-ko>chain.yaml 작성 (실 예시)</h4>
+            <h4 data-i18n-en>Write a chain.yaml (real example)</h4>
+<pre class="code"><span class="c"># ~/morning-routine.yaml</span>
+<span class="k">name</span>: morning-routine
+<span class="k">steps</span>:
+  - <span class="k">id</span>: recall
+    <span class="k">run</span>: xgram session recall --query <span class="s">"yesterday"</span> -k 10
+    <span class="k">capture</span>: stdout
+
+  - <span class="k">id</span>: notify-summary
+    <span class="k">notify</span>: discord
+    <span class="k">title</span>: <span class="s">"Good morning"</span>
+    <span class="k">body</span>: <span class="s">"{{ steps.recall.stdout }}"</span>
+
+  - <span class="k">id</span>: ask-claude
+    <span class="k">peer</span>: claude
+    <span class="k">prompt</span>: <span class="s">"오늘 우선순위 3개를 정해줘. 어제 컨텍스트: {{ steps.recall.stdout }}"</span>
+    <span class="k">capture</span>: response
+
+  - <span class="k">id</span>: pin-priorities
+    <span class="k">run</span>: xgram memory add <span class="s">"오늘 우선순위: {{ steps.ask-claude.response }}"</span> --pin</pre>
+
+<pre class="code"><span class="p">$</span> xgram chain run ~/morning-routine.yaml
+<span class="c"># 각 step 의 stdout 이 실시간으로 출력되고
+# 마지막에 전체 그래프가 ~/.openxgram/data/chains/&lt;run-id&gt;.json 에 기록됩니다.</span></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== Tutorial 8 ============================== -->
+      <section id="tutorial-8" class="anchor-target">
+        <div class="container">
+          <div class="kicker">Tutorial 8 · backup &amp; rotation</div>
+          <h2 data-i18n-ko>백업 · 복구 · 키 회전</h2>
+          <h2 data-i18n-en>Backup · restore · key rotation</h2>
+
+          <div class="step">
+            <span class="step-no">Step 8.1</span>
+            <h4 data-i18n-ko>백업 만들기 (age 다중 수신자)</h4>
+            <h4 data-i18n-en>Create a backup (age multi-recipient)</h4>
+<pre class="code"><span class="p">$</span> xgram backup create --out ~/openxgram-backup-2026-05-04.age \
+    --recipient <span class="s">"age1qz..."</span> \
+    --recipient <span class="s">"age1xy..."</span>
+<span class="c"># memory.db + vault + config + logs 를 묶어서 age 로 암호화.
+# recipient 가 여러 개면 그중 하나의 비밀키만 있어도 복호화됩니다.</span></pre>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 8.2</span>
+            <h4 data-i18n-ko>변조 검출 (audit verify)</h4>
+            <h4 data-i18n-en>Tamper check (audit verify)</h4>
+<pre class="code"><span class="p">$</span> xgram audit verify
+<span class="c"># 출력 예:
+# ✓ logs append-only chain OK (12,481 entries)
+# ✓ vault HMAC OK
+# ✓ memory.db row hashes OK
+# ✗ message #1043 hash mismatch  ← 변조 의심</span></pre>
+            <p data-i18n-ko>모든 메시지·결정·로그는 해시 체인으로 묶여 있어, 누가 디스크에 직접 손을 대면 즉시 잡힙니다.</p>
+            <p data-i18n-en>Every message, decision, and log line is hash-chained — anyone tampering with the disk gets caught immediately.</p>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 8.3</span>
+            <h4 data-i18n-ko>KEK 회전 (HD wallet)</h4>
+            <h4 data-i18n-en>Rotate KEK (HD wallet)</h4>
+<pre class="code"><span class="p">$</span> xgram vault rotate-kek
+<span class="c"># 마스터 시드에서 다음 derivation path 의 KEK 를 만들고
+# vault 안의 모든 필드를 새 KEK 로 재암호화합니다.
+# 마스터 시드는 변하지 않으므로 12-단어 복구 시드는 그대로 유효.</span>
+
+<span class="p">$</span> xgram vault history
+<span class="c"># kek-1  retired  2026-05-04
+# kek-2  active   2026-05-04</span></pre>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 8.4</span>
+            <h4 data-i18n-ko>새 머신으로 복구</h4>
+            <h4 data-i18n-en>Restore on a new machine</h4>
+<pre class="code"><span class="c"># 새 머신:</span>
+<span class="p">$</span> curl -sSfL https://openxgram.org/install.sh | sh
+<span class="p">$</span> xgram init --restore
+<span class="c"># 마법사가 12-단어 시드를 묻습니다 → 입력</span>
+
+<span class="p">$</span> xgram backup restore ~/openxgram-backup-2026-05-04.age
+<span class="c"># memory.db / vault / config / logs 가 복원됩니다.</span>
+
+<span class="p">$</span> xgram doctor
+<span class="c"># ✓ identity matches recovered seed
+# ✓ vault unsealed
+# ✓ db integrity OK</span></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== FAQ ============================== -->
+      <section id="faq" class="anchor-target">
+        <div class="container">
+          <div class="kicker">FAQ</div>
+          <h2 data-i18n-ko>자주 묻는 질문</h2>
+          <h2 data-i18n-en>Frequently asked</h2>
+
+          <details class="faq">
+            <summary data-i18n-ko>1. 데이터가 정말로 외부에 안 나가나요?</summary>
+            <summary data-i18n-en>1. Does the data really never leave my machine?</summary>
+            <div class="answer">
+              <p data-i18n-ko>네. 기본 설정에서 xgram 은 어떤 외부 서버에도 연결하지 않습니다. 직접 확인:</p>
+              <p data-i18n-en>Yes. With default settings xgram opens zero outbound connections. Verify yourself:</p>
+<pre class="code"><span class="p">$</span> ss -tnp | grep xgram      <span class="c"># Linux</span>
+<span class="p">$</span> lsof -i -nP | grep xgram   <span class="c"># macOS / Linux</span>
+<span class="p">$</span> xgram doctor               <span class="c"># 통합 확인</span></pre>
+              <p data-i18n-ko>Discord/Telegram 알림을 켰을 때만 해당 API 도메인으로 outbound 가 발생합니다.</p>
+              <p data-i18n-en>Outbound traffic only opens when you turn on Discord/Telegram notifications, and only to those API domains.</p>
+            </div>
+          </details>
+
+          <details class="faq">
+            <summary data-i18n-ko>2. Mem0 / Zep 같은 서비스와 뭐가 다른가요?</summary>
+            <summary data-i18n-en>2. How is this different from Mem0 / Zep?</summary>
+            <div class="answer">
+              <p data-i18n-ko>핵심 차이: <strong>호스팅 SaaS 가 아니라 로컬 단일 바이너리</strong>. Mem0/Zep 은 자기네 서버에 데이터를 두지만, OpenXgram 은 사용자 머신에서만 돕니다. 또 OpenXgram 은 메모리뿐 아니라 <strong>자격증명(Vault) · 로그 무결성(audit chain) · 결제(USDC) · 다중 에이전트 허브(Channel MCP)</strong> 까지 한 바이너리에 통합돼 있습니다.</p>
+              <p data-i18n-en>Key difference: <strong>local single binary, not a hosted SaaS</strong>. Mem0/Zep keep your data on their servers; OpenXgram never leaves your machine. OpenXgram also bundles <strong>credentials (Vault), tamper-evident logs (audit chain), payments (USDC), and a multi-agent hub (Channel MCP)</strong> in one binary.</p>
+            </div>
+          </details>
+
+          <details class="faq">
+            <summary data-i18n-ko>3. 모바일에서도 쓸 수 있나요?</summary>
+            <summary data-i18n-en>3. Can I use it on mobile?</summary>
+            <div class="answer">
+              <p data-i18n-ko>현재(v0.2.x)는 Discord / Telegram 봇을 통한 알림 수신만 지원합니다. 작성·회상은 데스크톱/노트북/서버에서. 정식 모바일 GUI 는 Phase 2 GUI 로드맵에 있습니다.</p>
+              <p data-i18n-en>Today (v0.2.x) mobile is receive-only via Discord / Telegram bots. Authoring and recall happen on desktop/laptop/server. A native mobile GUI is on the Phase 2 roadmap.</p>
+            </div>
+          </details>
+
+          <details class="faq">
+            <summary data-i18n-ko>4. 비밀번호(=시드)를 잊어버리면?</summary>
+            <summary data-i18n-en>4. What if I lose my password / seed?</summary>
+            <div class="answer">
+              <p data-i18n-ko>12-단어 복구 시드를 잃어버리면 vault 해제 방법이 없습니다 — <strong>설계 의도</strong>입니다 (백도어 없음). 그래서 <code class="inline">xgram init</code> 직후 종이/금고/하드웨어 지갑에 시드를 적어두라고 강조합니다. 다만 <strong>memory.db 자체는 vault 와 별개</strong>이므로, 시드를 잃어도 평문 메모리는 별도 export 로 살릴 수 있습니다.</p>
+              <p data-i18n-en>If you lose the 12-word phrase, the vault cannot be opened — that's <strong>by design</strong> (no backdoor). That's why we insist you write the phrase down right after <code class="inline">xgram init</code>. Note: <strong>memory.db is separate from the vault</strong> — even without the seed you can export plaintext memories.</p>
+            </div>
+          </details>
+
+          <details class="faq">
+            <summary data-i18n-ko>5. 서버를 옮기려면?</summary>
+            <summary data-i18n-en>5. How do I move to a new server?</summary>
+            <div class="answer">
+              <p data-i18n-ko>Tutorial 8.4 참조. <code class="inline">xgram backup create</code> → 새 머신에서 <code class="inline">xgram init --restore</code> + <code class="inline">xgram backup restore</code>. 5분 안에 완전히 똑같은 신원과 메모리로 부활합니다.</p>
+              <p data-i18n-en>See Tutorial 8.4. <code class="inline">xgram backup create</code> → on the new machine, <code class="inline">xgram init --restore</code> + <code class="inline">xgram backup restore</code>. Same identity, same memories, in under 5 minutes.</p>
+            </div>
+          </details>
+
+          <details class="faq">
+            <summary data-i18n-ko>6. 여러 사람이 같이 쓸 수 있나요?</summary>
+            <summary data-i18n-en>6. Can multiple people share an instance?</summary>
+            <div class="answer">
+              <p data-i18n-ko>각자 자기 xgram 을 돌리고 <strong>peer 등록</strong>으로 연결하는 게 표준입니다 (Tutorial 6). 한 인스턴스를 여러 명이 직접 공유하는 모드는 권장하지 않습니다 — vault 의 ACL 모델이 1 인 기준이기 때문입니다.</p>
+              <p data-i18n-en>The standard model is: each person runs their own xgram, then connects via <strong>peer registration</strong> (Tutorial 6). Direct multi-user sharing of one instance is discouraged — the vault ACL model is single-owner.</p>
+            </div>
+          </details>
+
+          <details class="faq">
+            <summary data-i18n-ko>7. 비용은 얼마인가요?</summary>
+            <summary data-i18n-en>7. What does it cost?</summary>
+            <div class="answer">
+              <p data-i18n-ko>OpenXgram 자체는 <strong>무료 오픈소스</strong>입니다. 사용자 머신에서만 돌기 때문에 SaaS 요금이 없습니다. USDC 기반 결제는 옵션 — 예약 작업이나 외부 모델 호출 비용을 자기 자기에게/타인에게 정산할 때만 사용합니다.</p>
+              <p data-i18n-en>OpenXgram itself is <strong>free and open source</strong>. There's no SaaS fee because it runs only on your machine. USDC payments are optional — used only when you want to settle scheduled jobs or external model calls.</p>
+            </div>
+          </details>
+
+          <details class="faq">
+            <summary data-i18n-ko>8. 오픈소스인가요? 라이선스는?</summary>
+            <summary data-i18n-en>8. Is it open source? Which license?</summary>
+            <div class="answer">
+              <p data-i18n-ko>네. 전체 코드가 <a href="https://github.com/openxgram/openxgram" target="_blank" rel="noopener">github.com/openxgram/openxgram</a> 에 공개돼 있습니다. 라이선스는 Apache-2.0. 누구든 fork · audit · self-host 가능합니다.</p>
+              <p data-i18n-en>Yes. The entire codebase is at <a href="https://github.com/openxgram/openxgram" target="_blank" rel="noopener">github.com/openxgram/openxgram</a> under Apache-2.0. Anyone can fork, audit, or self-host.</p>
+            </div>
+          </details>
+
+          <details class="faq">
+            <summary data-i18n-ko>9. 외부 보안 감사를 받았나요?</summary>
+            <summary data-i18n-en>9. Has it been externally audited?</summary>
+            <div class="answer">
+              <p data-i18n-ko><strong>정직하게:</strong> 아직 외부 전문 감사는 받지 않았습니다 (v0.2.x). 알려진 약점은 GitHub <code class="inline">SECURITY.md</code> 에 공개적으로 트래킹합니다. 프로덕션 환경에서 민감 데이터를 다루는 경우, 자체 위협 모델 검토 후 사용을 권장합니다.</p>
+              <p data-i18n-en><strong>Honestly:</strong> no formal third-party audit yet (v0.2.x). Known weaknesses are tracked openly in <code class="inline">SECURITY.md</code> on GitHub. If you handle highly sensitive data in production, please review against your own threat model first.</p>
+            </div>
+          </details>
+
+          <details class="faq">
+            <summary data-i18n-ko>10. 기여하고 싶어요</summary>
+            <summary data-i18n-en>10. I'd like to contribute</summary>
+            <div class="answer">
+              <p data-i18n-ko>환영합니다. <a href="https://github.com/openxgram/openxgram" target="_blank" rel="noopener">GitHub repo</a> → <code class="inline">CONTRIBUTING.md</code> 를 보세요. 좋은 첫 이슈는 <code class="inline">good-first-issue</code> 라벨로 모아두었습니다. 디자인 결정 토론은 <code class="inline">docs/decisions/</code> (ADR) 에서 이루어집니다.</p>
+              <p data-i18n-en>Welcome. Start at the <a href="https://github.com/openxgram/openxgram" target="_blank" rel="noopener">GitHub repo</a> → <code class="inline">CONTRIBUTING.md</code>. Look for issues tagged <code class="inline">good-first-issue</code>. Design decisions are debated in <code class="inline">docs/decisions/</code> (ADRs).</p>
+            </div>
+          </details>
+
+          <details class="faq">
+            <summary data-i18n-ko>11. GUI 는 언제 나오나요?</summary>
+            <summary data-i18n-en>11. When does the GUI ship?</summary>
+            <div class="answer">
+              <p data-i18n-ko>Phase 2 로드맵에 Tauri + React 기반 GUI 가 진행 중입니다. 현재는 TUI(<code class="inline">xgram tui</code>)와 CLI 가 주력입니다.</p>
+              <p data-i18n-en>A Tauri + React GUI is in flight on the Phase 2 roadmap. Today the TUI (<code class="inline">xgram tui</code>) and the CLI are the primary surfaces.</p>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <!-- ============================== Troubleshooting ============================== -->
+      <section id="troubleshooting" class="anchor-target">
+        <div class="container">
+          <div class="kicker">Troubleshooting</div>
+          <h2 data-i18n-ko>트러블슈팅</h2>
+          <h2 data-i18n-en>Troubleshooting</h2>
+
+          <div class="ts-box">
+            <span class="symptom">xgram: command not found</span>
+            <p data-i18n-ko><strong>원인</strong>: PATH 에 <code class="inline">~/.openxgram/bin</code> 이 없음.</p>
+            <p data-i18n-en><strong>Cause</strong>: <code class="inline">~/.openxgram/bin</code> is not in PATH.</p>
+<pre class="code"><span class="c"># bash / zsh — 셸 rc 파일에 한 줄 추가</span>
+<span class="p">$</span> echo <span class="s">'export PATH="$HOME/.openxgram/bin:$PATH"'</span> &gt;&gt; ~/.zshrc
+<span class="p">$</span> source ~/.zshrc
+<span class="p">$</span> xgram --version</pre>
+          </div>
+
+          <div class="ts-box">
+            <span class="symptom" data-i18n-ko>증상 — Error: master key load failed</span>
+            <span class="symptom" data-i18n-en>Symptom — Error: master key load failed</span>
+            <p data-i18n-ko><strong>원인</strong>: vault 패스워드 입력 오타 또는 KEK 손상. 시드는 안전하므로 패스워드만 다시 시도하세요.</p>
+            <p data-i18n-en><strong>Cause</strong>: wrong vault passphrase, or KEK damage. Your seed is safe — just retry the passphrase.</p>
+<pre class="code"><span class="p">$</span> xgram vault unseal     <span class="c"># 패스워드 재입력</span>
+<span class="p">$</span> xgram doctor           <span class="c"># vault 상태 확인</span>
+<span class="c"># 그래도 실패하면: Tutorial 8.4 (시드로 복구)</span></pre>
+          </div>
+
+          <div class="ts-box">
+            <span class="symptom" data-i18n-ko>증상 — discord-listen 이 메시지 0개</span>
+            <span class="symptom" data-i18n-en>Symptom — discord-listen receives 0 messages</span>
+            <p data-i18n-ko><strong>원인</strong>: Discord 개발자 포털의 <strong>MESSAGE CONTENT INTENT</strong> 가 꺼져 있음. Tutorial 5-D1 의 4번 단계 참조.</p>
+            <p data-i18n-en><strong>Cause</strong>: <strong>MESSAGE CONTENT INTENT</strong> is off in the Discord Developer Portal. See Tutorial 5-D1 step 4.</p>
+          </div>
+
+          <div class="ts-box">
+            <span class="symptom" data-i18n-ko>증상 — "내 데이터는 어디에 있나?"</span>
+            <span class="symptom" data-i18n-en>Symptom — "Where is my data?"</span>
+            <p data-i18n-ko>모든 사용자 데이터는 <code class="inline">~/.openxgram/</code> 한 곳에. 이 디렉토리만 백업하면 전체 상태가 백업됩니다.</p>
+            <p data-i18n-en>Everything lives in <code class="inline">~/.openxgram/</code>. Back up that single directory to back up everything.</p>
+<pre class="code"><span class="p">$</span> du -sh ~/.openxgram/*
+<span class="p">$</span> xgram doctor   <span class="c"># 위치를 다시 출력해줍니다</span></pre>
+          </div>
+
+          <div class="ts-box">
+            <span class="symptom" data-i18n-ko>증상 — 디스크가 가득 참 (memory.db 가 너무 커짐)</span>
+            <span class="symptom" data-i18n-en>Symptom — disk full / memory.db too large</span>
+<pre class="code"><span class="p">$</span> xgram session list --older-than 90d
+<span class="p">$</span> xgram backup create --out ~/archive-90d.age --filter <span class="s">"older-than 90d"</span>
+<span class="p">$</span> xgram session prune --older-than 90d
+<span class="c"># 90일 지난 세션을 백업한 후 DB 에서 제거합니다.
+# 기억(memories) 은 별도 보존됩니다 — 메시지(L0)만 정리됩니다.</span>
+
+<span class="p">$</span> xgram db vacuum
+<span class="c"># SQLite 압축</span></pre>
+          </div>
+
+          <div class="ts-box">
+            <span class="symptom" data-i18n-ko>증상 — 빌드 실패 / fastembed 모델 다운로드 실패</span>
+            <span class="symptom" data-i18n-en>Symptom — build fails / fastembed model download fails</span>
+            <p data-i18n-ko>BGE-small 모델은 첫 회상 시 자동 다운로드됩니다 (~120MB). 회사 방화벽 환경이라면 <code class="inline">xgram model fetch --offline-tarball ./bge-small.tar.gz</code> 로 오프라인 설치할 수 있습니다.</p>
+            <p data-i18n-en>The BGE-small model auto-downloads on first recall (~120MB). Behind a corporate firewall use <code class="inline">xgram model fetch --offline-tarball ./bge-small.tar.gz</code> for offline install.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
+          <div class="kicker">Next</div>
+          <h2 data-i18n-ko>다음으로</h2>
+          <h2 data-i18n-en>What's next</h2>
+          <ul class="dotted">
+            <li data-i18n-ko><a href="/quickstart/">/quickstart/</a> — 명령어 카탈로그 (한 화면 요약)</li>
+            <li data-i18n-en><a href="/quickstart/">/quickstart/</a> — command catalog (one-page summary)</li>
+            <li data-i18n-ko><a href="/architecture/">/architecture/</a> — 5층 메모리 + Vault 내부 구조</li>
+            <li data-i18n-en><a href="/architecture/">/architecture/</a> — 5-layer memory + vault internals</li>
+            <li data-i18n-ko><a href="/usecases/">/usecases/</a> — 실제 시나리오 사례</li>
+            <li data-i18n-en><a href="/usecases/">/usecases/</a> — real-world scenarios</li>
+            <li data-i18n-ko><a href="/docs/">/docs/</a> — 모든 명령 레퍼런스</li>
+            <li data-i18n-en><a href="/docs/">/docs/</a> — full command reference</li>
+          </ul>
+        </div>
+      </section>
+
+      <footer class="site-footer">
+        <div class="container row">
+          <div data-i18n-ko>© 2026 OpenXgram contributors</div>
+          <div data-i18n-en>© 2026 OpenXgram contributors</div>
+          <div class="mono">v0.2.0</div>
+        </div>
+      </footer>
+    </main>
+  </body>
+</html>
