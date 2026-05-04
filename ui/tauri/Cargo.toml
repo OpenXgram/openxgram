@@ -35,6 +35,7 @@ openxgram-db = { path = "../../crates/openxgram-db" }
 openxgram-vault = { path = "../../crates/openxgram-vault" }
 openxgram-memory = { path = "../../crates/openxgram-memory" }
 openxgram-peer = { path = "../../crates/openxgram-peer" }
+openxgram-payment = { path = "../../crates/openxgram-payment" }
 
 [dev-dependencies]
 tempfile = "3"
