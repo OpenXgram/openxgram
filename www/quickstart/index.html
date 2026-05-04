@@ -119,14 +119,14 @@
             For deeper automation than copy/paste, use MCP. xgram can run as an MCP server. Add it to Claude Desktop's MCP config and Claude reaches into your local xgram to read/write memory — traffic flows over loopback (127.0.0.1) only.
           </p>
 <pre class="code"><span class="c"># 옵션 1) HTTP MCP — 로컬 루프백</span>
-<span class="p">$</span> xgram mcp serve <span class="s">--bind 127.0.0.1:7301</span>
+<span class="p">$</span> xgram mcp-serve <span class="s">--bind 127.0.0.1:7301</span>
 <span class="c"># 외부 0.0.0.0 바인딩 절대 금지</span>
 
-<span class="c"># 옵션 2) Claude Desktop ~/.claude/mcp_servers.json 에 추가</span>
+<span class="c"># 옵션 2) Claude Desktop ~/.claude/mcp_servers.json 에 추가 (--bind 생략 시 stdio 모드)</span>
 {
   <span class="s">"openxgram"</span>: {
     <span class="s">"command"</span>: <span class="s">"xgram"</span>,
-    <span class="s">"args"</span>: [<span class="s">"mcp"</span>, <span class="s">"serve-stdio"</span>]
+    <span class="s">"args"</span>: [<span class="s">"mcp-serve"</span>]
   }
 }</pre>
         </div>
@@ -178,7 +178,8 @@
           <p data-i18n-ko>가장 빠른 길. 셸에서 직접 명령어를 칩니다.</p>
           <p data-i18n-en>The fastest path. You type commands in the shell.</p>
 <pre class="code"><span class="p">$</span> xgram session new <span class="s">--title "주간 회고"</span>
-<span class="p">$</span> xgram message add <span class="s">--from me --body "이번 주 최우선은 결제 자동화"</span>
+<span class="c"># → session id 출력 (예: 7f3a...). 아래 &lt;ID&gt; 자리에 그 값을 사용</span>
+<span class="p">$</span> xgram session message <span class="s">--session-id &lt;ID&gt; --sender me --body "이번 주 최우선은 결제 자동화"</span>
 <span class="p">$</span> xgram memory add <span class="s">--kind decision --content "RBF tip 은 +15% 로 고정"</span>
 <span class="p">$</span> xgram session recall <span class="s">--query "결제 자동화" --k 5</span>
 <span class="c"># top-5 회상 결과 (다른 AI 와 공유 가능)</span></pre>
