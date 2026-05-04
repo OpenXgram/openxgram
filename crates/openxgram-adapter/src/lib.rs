@@ -7,12 +7,14 @@
 //! Async fn in trait (Rust 1.75+ stable) 사용. dyn-compatibility 필요 시 호출자
 //! 측에서 BoxFuture 래핑.
 
+pub mod channel_mcp;
 pub mod discord_gateway;
 pub mod telegram_bot;
 
 use serde::Serialize;
 use thiserror::Error;
 
+pub use channel_mcp::{AdapterInfo, ChannelMcpClient, ChannelSendResult};
 pub use discord_gateway::{DiscordGatewayClient, DiscordIncomingMessage, GatewayError};
 pub use telegram_bot::{TelegramBotAdapter, TelegramUpdate};
 
