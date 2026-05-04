@@ -64,3 +64,4 @@ logs/
 # macOS
 .DS_Store
 Thumbs.db
+release-bundle/
