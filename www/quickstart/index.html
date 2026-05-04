@@ -192,6 +192,52 @@
 
       <section>
         <div class="container">
+          <div class="kicker">Mode 4 · 다중 에이전트 메신저 허브 (Channel MCP 내장)</div>
+          <h2 data-i18n-ko>4) 다중 에이전트 메신저 허브 — Channel MCP 내장</h2>
+          <h2 data-i18n-en>4) Multi-agent messenger hub — embedded Channel MCP</h2>
+          <p data-i18n-ko>
+            여러 AI 에이전트(eno · qua · pip · res ...)가 같은 채팅·라우팅 허브를 공유합니다.
+            OpenXgram 1대가 channel-mcp 정식 구현체로 동작 — 외부 channel-mcp 운영 불필요.
+            Discord/Telegram/Slack/KakaoTalk 어댑터가 한 바이너리에 들어 있고,
+            <code>send_to_platform</code> · <code>send_message</code> 도구 시그니처는 Starian channel-mcp 와 호환됩니다.
+          </p>
+          <p data-i18n-en>
+            Run one OpenXgram daemon as the multi-agent chat &amp; routing hub.
+            channel-mcp lives <em>inside</em> OpenXgram — no external service needed.
+            Discord / Telegram / Slack / KakaoTalk adapters share one binary,
+            and tool signatures match Starian channel-mcp (drop-in compatible).
+          </p>
+<pre class="code"><span class="p">$</span> <span class="c"># 1. 자기 webhook/봇 토큰을 환경변수로 (외부 SaaS 0)</span>
+<span class="p">$</span> export DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+<span class="p">$</span> export TELEGRAM_BOT_TOKEN=...  TELEGRAM_CHAT_ID=...
+<span class="p">$</span> export XGRAM_CHANNEL_PEERS=<span class="s">"eno:discord:default,qua:telegram:default"</span>
+
+<span class="p">$</span> <span class="c"># 2. Channel MCP 서버 기동 (loopback 만 — 절대 규칙)</span>
+<span class="p">$</span> xgram channel serve <span class="s">--bind 127.0.0.1:7250 --auth-token $(openssl rand -hex 32)</span>
+<span class="c">  ✓ OpenXgram Channel MCP 서버 기동
+    bind     : 127.0.0.1:7250
+    adapters : discord:default · telegram:default · slack:default
+    peers    : eno → discord, qua → telegram</span>
+
+<span class="p">$</span> <span class="c"># 3. 다른 에이전트들이 OpenXgram 의 HTTP 엔드포인트로 송수신</span>
+<span class="p">$</span> xgram channel send <span class="s">--to-role eno --text "build green" --msg-type result</span>
+<span class="p">$</span> xgram channel list-adapters
+<span class="p">$</span> xgram channel list-peers</pre>
+          <p data-i18n-ko>
+            <strong>외부 channel-mcp 운영 불필요</strong> — OpenXgram 한 대에 다 들어 있음.
+            기존 Starian channel-mcp 클라이언트는 <code>http://127.0.0.1:7250/tools/{name}</code> 로
+            동일하게 호출 가능합니다.
+          </p>
+          <p data-i18n-en>
+            <strong>No external channel-mcp required</strong> — everything runs in one OpenXgram binary.
+            Existing Starian channel-mcp clients can call the same tool names against
+            <code>http://127.0.0.1:7250/tools/{name}</code>.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
           <div class="kicker">사람도 같은 채팅방에 · 5분 안에 ✓</div>
           <h2 data-i18n-ko>Discord · Telegram 알림 — 5분 안에 휴대폰으로</h2>
           <h2 data-i18n-en>Discord · Telegram alerts — phone notifications in 5 minutes</h2>

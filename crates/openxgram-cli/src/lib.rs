@@ -5,6 +5,7 @@ pub mod age_backup;
 pub mod audit;
 pub mod backup;
 pub mod backup_push;
+pub mod channel;
 pub mod daemon;
 pub mod doctor;
 pub mod dump;
