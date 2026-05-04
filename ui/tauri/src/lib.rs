@@ -12,11 +12,11 @@
 //!     쓰기 명령(peer_add, payment_set_daily_limit) 은 명시 raise.
 //!   - 비밀번호 필요 명령(vault_get) 은 `XGRAM_KEYSTORE_PASSWORD` 환경변수 사용 — fallback 없이 raise.
 //!
-//! Payment daily limit 매핑:
-//!   payment 전용 store 는 daily_limit 개념이 없다 (PRD §16 baseline).
-//!   따라서 vault ACL 의 `key_pattern="payment.usdc.transfer"`, `agent="default"`
-//!   row 의 `daily_limit` 컬럼을 microUSDC 단위로 사용. (의미: 마스터가 default agent 에게
-//!   하루에 허용한 USDC payment intent 건수의 micro 환산. ACL 정합 — 별도 store 미생성.)
+//! Payment daily limit:
+//!   `openxgram_payment::DailyLimitStore` (마이그레이션 0015, payment_daily_limits)
+//!   를 직접 사용. agent_id="default", chain_id="base" 키로 microUSDC 한도 관리.
+//!   (PR #93 까지는 vault_acl row 를 의미적으로 재사용했으나, ACL 권한과 결제 한도는
+//!    다른 관심사이므로 정식 store 분리.)
 
 #![cfg_attr(
     all(not(debug_assertions), target_os = "windows"),
@@ -36,7 +36,8 @@ use openxgram_memory::{
     default_embedder, MemoryKind, MemoryStore, MessageStore, TraitStore,
 };
 use openxgram_peer::{PeerRole, PeerStore};
-use openxgram_vault::{AclAction, AclPolicy, VaultStore};
+use openxgram_payment::DailyLimitStore;
+use openxgram_vault::VaultStore;
 
 // ───────────────────────────── subprocess wrappers (legacy) ──────────────────
 
@@ -429,44 +430,36 @@ fn vault_get(state: State<'_, AppState>, key: String) -> Result<String, String> 
 
 // ───────────────────────────── invoke handlers — payment limits ──────────────
 
-const PAYMENT_LIMIT_KEY_PATTERN: &str = "payment.usdc.transfer";
+/// 기본 agent / chain — frontend 가 명시적으로 전달하지 않을 때 사용.
 const PAYMENT_LIMIT_AGENT: &str = "default";
+const PAYMENT_LIMIT_CHAIN: &str = "base";
 
-/// payment_get_daily_limit — vault_acl 에서 (payment.usdc.transfer, default) row 의 daily_limit 반환.
+/// payment_get_daily_limit — payment_daily_limits 에서 (default, base) row 의 microUSDC 반환.
 /// row 미존재 → 0 (의도: "한도 미설정 = 결제 차단").
 #[tauri::command]
 fn payment_get_daily_limit(state: State<'_, AppState>) -> Result<i64, String> {
     let out: Option<i64> = with_db_optional(&state, |db| {
-        let mut store = VaultStore::new(db);
-        let rows = store.list_acl().map_err(|e| format!("list_acl: {e}"))?;
-        let limit = rows
-            .iter()
-            .find(|a| a.key_pattern == PAYMENT_LIMIT_KEY_PATTERN && a.agent == PAYMENT_LIMIT_AGENT)
-            .map(|a| a.daily_limit)
-            .unwrap_or(0);
-        Ok(limit)
+        let mut store = DailyLimitStore::new(db);
+        let row = store
+            .get(PAYMENT_LIMIT_AGENT, PAYMENT_LIMIT_CHAIN)
+            .map_err(|e| format!("daily_limit get: {e}"))?;
+        Ok(row.map(|r| r.daily_micro).unwrap_or(0))
     })?;
     Ok(out.unwrap_or(0))
 }
 
-/// payment_set_daily_limit — vault_acl 에 microUSDC 한도 upsert.
-/// frontend 는 `microUsdc` (number) 로 전달. i64 변환 후 저장.
+/// payment_set_daily_limit — payment_daily_limits 에 (default, base) microUSDC 한도 upsert.
+/// frontend 는 `microUsdc` (number) 로 전달. 0 = 한도 미설정 (결제 차단), 음수 = raise.
 #[tauri::command]
 fn payment_set_daily_limit(state: State<'_, AppState>, micro_usdc: i64) -> Result<(), String> {
     if micro_usdc < 0 {
         return Err("micro_usdc 음수 불가".into());
     }
     with_db_required(&state, |db| {
-        let mut store = VaultStore::new(db);
+        let mut store = DailyLimitStore::new(db);
         store
-            .upsert_acl(
-                PAYMENT_LIMIT_KEY_PATTERN,
-                PAYMENT_LIMIT_AGENT,
-                &[AclAction::Get, AclAction::Set],
-                micro_usdc,
-                AclPolicy::Confirm,
-            )
-            .map_err(|e| format!("upsert_acl: {e}"))?;
+            .set(PAYMENT_LIMIT_AGENT, PAYMENT_LIMIT_CHAIN, micro_usdc)
+            .map_err(|e| format!("daily_limit set: {e}"))?;
         Ok(())
     })
 }

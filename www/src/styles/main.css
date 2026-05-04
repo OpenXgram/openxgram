@@ -53,6 +53,7 @@ a:hover { color: var(--accent); }
   color: var(--fg); font-weight: 700; letter-spacing: 0.02em;
 }
 .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 14px var(--accent); }
+.brand .brand-logo { color: var(--accent); filter: drop-shadow(0 0 6px rgba(125, 249, 197, 0.45)); flex-shrink: 0; }
 .nav { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; }
 .nav a { color: var(--fg-dim); font-size: 14px; }
 .nav a:hover, .nav a.active { color: var(--fg); }
