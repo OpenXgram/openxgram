@@ -1,0 +1,28 @@
+[package]
+name = "openxgram-channel"
+description = "Embedded Channel MCP server — multi-agent chat hub (Discord/Telegram/Slack/KakaoTalk adapters + role-routed peer registry)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+openxgram-core = { path = "../openxgram-core" }
+openxgram-adapter = { path = "../openxgram-adapter" }
+openxgram-peer = { path = "../openxgram-peer" }
+openxgram-db = { path = "../openxgram-db" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+reqwest = { workspace = true }
+async-trait = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { workspace = true, features = ["full", "test-util"] }

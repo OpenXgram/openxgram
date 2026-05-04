@@ -25,6 +25,7 @@ openxgram-keystore = { path = "../openxgram-keystore" }
 openxgram-db = { path = "../openxgram-db" }
 openxgram-manifest = { path = "../openxgram-manifest" }
 openxgram-adapter = { path = "../openxgram-adapter" }
+openxgram-channel = { path = "../openxgram-channel" }
 openxgram-mcp = { path = "../openxgram-mcp" }
 openxgram-memory = { path = "../openxgram-memory" }
 openxgram-nostr = { path = "../openxgram-nostr" }
