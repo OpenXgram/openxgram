@@ -93,14 +93,14 @@
               <h3 data-i18n-ko>에이전트 USDC 결제 자동화</h3>
               <h3 data-i18n-en>Autonomous USDC payment</h3>
               <p data-i18n-ko>
-                연구 에이전트가 데이터셋 호스트에 소액(예: 건당 $0.50)을 자동 결제합니다.
-                Base 네트워크 위 USDC — 송금 수수료 1원 미만. 사용자(나) 가 정한 한도 안에서는 자동, 넘으면 승인이 필요합니다.
-                모든 결제는 변조 불가능한 기록(audit chain) 에 봉인됩니다.
+                연구 에이전트가 데이터셋 호스트에 micropayment(예: 건당 $0.50)를 자동 결제합니다.
+                Base 네트워크 위 USDC — 1원 이하의 수수료. 사용자(나) 가 정한 한도 안에서는 자동, 넘으면 승인이 필요합니다.
+                모든 결제는 블록체인 암호화로 봉인되어 위·변조가 불가능합니다.
               </p>
               <p data-i18n-en>
-                A research agent pays small amounts to dataset hosts (e.g. $0.50 per call).
-                USDC on Base — transfer fees under a cent. Inside the limits you set: auto. Above: requires your approval.
-                Every payment is sealed into a tamper-proof record (audit chain).
+                A research agent micropays dataset hosts (e.g. $0.50 per call).
+                USDC on Base — fees under 1 cent. Inside the limits you set: auto. Above: requires your approval.
+                Every payment is sealed in a blockchain-encrypted log — tamper-evident by construction.
               </p>
             </div>
 

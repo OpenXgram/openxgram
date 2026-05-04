@@ -81,8 +81,8 @@
               </p>
               <hr class="sep"/>
               <p data-i18n-ko><strong>OpenXgram vault:</strong> 4단계 암호화(디스크/필드/전송/메모리 zeroize) +
-                ACL + 일일 한도 + 감사 chain. 키 자체는 에이전트 컨텍스트에 노출되지 않습니다.</p>
-              <p data-i18n-en><strong>OpenXgram vault:</strong> four-layer encryption + ACL + daily limits + audit chain.
+                ACL + 일일 한도 + 블록체인 암호화 기록. 키 자체는 에이전트 컨텍스트에 노출되지 않습니다.</p>
+              <p data-i18n-en><strong>OpenXgram vault:</strong> four-layer encryption + ACL + daily limits + blockchain-encrypted log.
                 The raw key never enters the agent's context.</p>
             </div>
 
@@ -121,7 +121,7 @@
               <p data-i18n-ko><strong>OpenXgram policy:</strong> auto / confirm / mfa 3단계 승인 + 일일 한도 + 화이트리스트.
                 넘으려 하면 즉시 막히고 감사 로그에 남습니다.</p>
               <p data-i18n-en><strong>OpenXgram policy:</strong> three-step approval (auto / confirm / mfa) + daily limit + whitelist.
-                Crossings are blocked at the boundary and recorded in the audit chain.</p>
+                Crossings are blocked at the boundary and recorded in the blockchain-encrypted log.</p>
             </div>
 
             <div class="card">
@@ -147,14 +147,14 @@
               <h3 data-i18n-ko>"에이전트 결제가 거칠고 비싸다"</h3>
               <h3 data-i18n-en>"Agent payments are clunky and expensive"</h3>
               <p data-i18n-ko>
-                신용카드 결제는 한도 변경·환불·신원확인이 까다롭고, 송금 수수료가 비싼 블록체인 네트워크에서는 소액 결제가 거의 불가능합니다.
+                신용카드 결제는 한도 변경·환불·신원확인이 까다롭고, 수수료가 비싼 블록체인 네트워크에서는 micropayment 가 거의 불가능합니다.
               </p>
               <p data-i18n-en>
-                Credit cards struggle with limits, refunds, KYC; networks with high transfer fees make small payments unrealistic.
+                Credit cards struggle with limits, refunds, KYC; networks with high fees make micropayments unrealistic.
               </p>
               <hr class="sep"/>
-              <p data-i18n-ko><strong>OpenXgram:</strong> Base 네트워크 위 USDC — 송금 수수료가 1원 미만으로 거의 0 입니다. 사용자(나) 가 정한 한도와 승인 절차 안에서 에이전트가 자율적으로 결제할 수 있습니다.</p>
-              <p data-i18n-en><strong>OpenXgram:</strong> USDC on Base — transfer fees under a cent, effectively zero. Agents pay autonomously within the limits and approval rules you set.</p>
+              <p data-i18n-ko><strong>OpenXgram:</strong> Base 네트워크 위 USDC — 1원 이하의 수수료로 micropayment 가 현실적입니다. 사용자(나) 가 정한 한도와 승인 절차 안에서 에이전트가 자율적으로 결제할 수 있습니다.</p>
+              <p data-i18n-en><strong>OpenXgram:</strong> USDC on Base — fees under 1 cent make micropayments practical. Agents pay autonomously within the limits and approval rules you set.</p>
             </div>
           </div>
         </div>
