@@ -34,11 +34,11 @@
           <h1 data-i18n-en>Install once → the same memory, everywhere.</h1>
           <p class="lead" data-i18n-ko>
             xgram 은 사용자(나) 의 기기에서만 도는 단일 바이너리입니다.
-            한 번 설치하면 <strong>(A) 직접 CLI 로</strong>, <strong>(B) 터미널 AI 하네스</strong>(Claude Code · Cursor · Aider) 의 지침에 추가해서, <strong>(C) 웹 AI</strong>(Claude · ChatGPT · Gemini) 의 시스템 지침/Custom Instructions/Project 설정에 사용법을 넣어서 사용할 수 있습니다.
+            한 번 설치하면 <strong>(1) 웹 AI</strong>(Claude · ChatGPT · Gemini) 의 시스템 지침/Custom Instructions/Project 에 사용법을 붙여 넣어서, <strong>(2) 터미널 AI 하네스</strong>(Claude Code · Cursor · Aider) 의 지침에 추가해서, <strong>(3) 직접 CLI 로</strong> — 어떤 방식이든 같은 메모리를 사용합니다.
           </p>
           <p class="lead" data-i18n-en>
             xgram is a single binary that runs only on your machine.
-            Install once, then use it <strong>(A) directly via CLI</strong>, <strong>(B) inside a terminal AI harness</strong> (Claude Code · Cursor · Aider) by adding rules, or <strong>(C) inside a web AI</strong> (Claude · ChatGPT · Gemini) by pasting usage instructions into system prompts / custom instructions / project settings.
+            Install once, then use it <strong>(1) inside a web AI</strong> (Claude · ChatGPT · Gemini) by pasting usage instructions into system prompts / custom instructions / project settings, <strong>(2) inside a terminal AI harness</strong> (Claude Code · Cursor · Aider) by adding rules, or <strong>(3) directly via CLI</strong> — same memory across all paths.
           </p>
         </div>
       </section>
@@ -68,24 +68,75 @@
 
       <section>
         <div class="container">
-          <div class="kicker">Mode A · Direct CLI</div>
-          <h2 data-i18n-ko>A) 직접 CLI — 개발자/파워 유저</h2>
-          <h2 data-i18n-en>A) Direct CLI — developers / power users</h2>
-          <p data-i18n-ko>가장 빠른 길. 셸에서 직접 명령어를 칩니다.</p>
-          <p data-i18n-en>The fastest path. You type commands in the shell.</p>
-<pre class="code"><span class="p">$</span> xgram session new <span class="s">--title "주간 회고"</span>
-<span class="p">$</span> xgram message add <span class="s">--from me --body "이번 주 최우선은 결제 자동화"</span>
-<span class="p">$</span> xgram memory add <span class="s">--kind decision --content "RBF tip 은 +15% 로 고정"</span>
-<span class="p">$</span> xgram session recall <span class="s">--query "결제 자동화" --k 5</span>
-<span class="c"># top-5 회상 결과 (다른 AI 와 공유 가능)</span></pre>
+          <div class="kicker">Mode 1 · Web AI (가장 흔한 사용법)</div>
+          <h2 data-i18n-ko>1) 웹 AI (Claude · ChatGPT · Gemini) — 셸 접근 불가</h2>
+          <h2 data-i18n-en>1) Web AI (Claude · ChatGPT · Gemini) — no shell access</h2>
+          <p data-i18n-ko>
+            대부분의 사용자가 매일 쓰는 환경입니다. 웹 채팅창은 사용자 기기의 셸에 접근할 수 없으므로 두 가지 방법으로 OpenXgram 을 연결합니다 — 어떤 방법이든 사용자 기기 밖으로 데이터가 나가지 않습니다.
+          </p>
+          <p data-i18n-en>
+            This is the everyday environment for most users. Web chat windows can't reach your local shell, so OpenXgram connects via two paths — both keep data on your machine.
+          </p>
+
+          <h3 data-i18n-ko>1-A) 시스템 지침 / Custom Instructions / Project 에 사용법 붙이기 (가장 쉬움)</h3>
+          <h3 data-i18n-en>1-A) Paste usage into System Prompt / Custom Instructions / Project rules (easiest)</h3>
+          <p data-i18n-ko>
+            ChatGPT Custom Instructions, Claude Project Instructions, Gemini Gems 같은 곳에 아래 템플릿을 그대로 붙여 넣으세요. AI 가 안내대로 동작합니다 — 사용자(나) 가 터미널에서 xgram 명령을 실행해서 결과를 채팅에 붙여 넣는 식으로 양방향 연결됩니다.
+          </p>
+          <p data-i18n-en>
+            Paste the template below into ChatGPT Custom Instructions, Claude Project Instructions, or Gemini Gems. The AI follows it — you run xgram in your terminal and paste the result back into chat to complete the loop.
+          </p>
+<pre class="code"><span class="c"># 템플릿 (KO) — 시스템 지침/Custom Instructions/Project 에 붙여넣기</span>
+
+당신은 OpenXgram 메모리 시스템을 사용하는 AI 입니다.
+
+[규칙]
+1. 사용자가 새 주제를 꺼내면, 가장 먼저 이렇게 답합니다:
+   "관련 기억을 회상하시려면 사용자(나) 의 터미널에서 다음 명령을 실행해 결과를 붙여 넣어 주세요:
+    xgram session recall --query &lt;핵심 키워드&gt; --k 5"
+
+2. 사용자가 회상 결과를 붙여 넣으면, 그 정보를 바탕으로 답변합니다.
+
+3. 대화 중 중요한 결정/사실/규칙이 나오면 이렇게 안내합니다:
+   "이 내용을 기억에 저장하시려면:
+    xgram memory add --kind &lt;fact|decision|rule&gt; --content &lt;내용&gt;"
+
+4. 외부 메모리 서비스(Mem0·Zep 등)는 절대 권하지 않습니다.
+5. 모든 기억은 사용자(나) 의 기기 안에만 머무릅니다.</pre>
+          <p data-i18n-ko>
+            영어 템플릿이 필요하면 <code>xgram memory export-prompt</code> 명령으로 즉시 출력할 수 있습니다.
+          </p>
+          <p data-i18n-en>
+            Run <code>xgram memory export-prompt</code> for the English template.
+          </p>
+
+          <h3 data-i18n-ko>1-B) MCP 서버 연결 (Claude Desktop 등 MCP 지원 클라이언트)</h3>
+          <h3 data-i18n-en>1-B) MCP server (Claude Desktop and other MCP clients)</h3>
+          <p data-i18n-ko>
+            붙여넣기 방식보다 자동화가 더 필요하면 MCP 를 사용하세요. xgram 자체가 MCP 서버를 띄울 수 있습니다. Claude Desktop 의 MCP 설정에 OpenXgram 을 등록하면, 웹 Claude 가 사용자 기기의 xgram 을 직접 호출해 메모리를 읽고 씁니다 — 데이터는 로컬 루프백(127.0.0.1)으로만 흐릅니다.
+          </p>
+          <p data-i18n-en>
+            For deeper automation than copy/paste, use MCP. xgram can run as an MCP server. Add it to Claude Desktop's MCP config and Claude reaches into your local xgram to read/write memory — traffic flows over loopback (127.0.0.1) only.
+          </p>
+<pre class="code"><span class="c"># 옵션 1) HTTP MCP — 로컬 루프백</span>
+<span class="p">$</span> xgram mcp serve <span class="s">--bind 127.0.0.1:7301</span>
+<span class="c"># 외부 0.0.0.0 바인딩 절대 금지</span>
+
+<span class="c"># 옵션 2) Claude Desktop ~/.claude/mcp_servers.json 에 추가</span>
+{
+  <span class="s">"openxgram"</span>: {
+    <span class="s">"command"</span>: <span class="s">"xgram"</span>,
+    <span class="s">"args"</span>: [<span class="s">"mcp"</span>, <span class="s">"serve-stdio"</span>]
+  }
+}</pre>
         </div>
       </section>
 
       <section>
         <div class="container">
-          <div class="kicker">Mode B · Terminal AI harness</div>
-          <h2 data-i18n-ko>B) 터미널 AI 하네스 — 셸 접근 가능한 AI</h2>
-          <h2 data-i18n-en>B) Terminal AI harness — AI agents with shell access</h2>
+          <div class="kicker">Mode 2 · Terminal AI harness</div>
+          <h2 data-i18n-ko>2) 터미널 AI 하네스 — 셸 접근 가능한 AI</h2>
+          <h2 data-i18n-en>2) Terminal AI harness — AI agents with shell access</h2>
           <p data-i18n-ko>
             Claude Code · Cursor · Aider 같이 셸을 쓸 수 있는 AI 에는, 프로젝트 지침 파일에 <em>"OpenXgram 명령으로 기억을 회상·저장하라"</em> 라고만 적어두면 AI 가 자동으로 사용합니다. 데이터는 모두 사용자 기기 안에서만 흐릅니다.
           </p>
@@ -121,67 +172,16 @@
 
       <section>
         <div class="container">
-          <div class="kicker">Mode C · Web AI</div>
-          <h2 data-i18n-ko>C) 웹 AI (Claude · ChatGPT · Gemini) — 셸 접근 불가</h2>
-          <h2 data-i18n-en>C) Web AI (Claude · ChatGPT · Gemini) — no shell access</h2>
-          <p data-i18n-ko>
-            웹 채팅창은 사용자 기기의 셸에 접근할 수 없습니다. 두 가지 방법으로 OpenXgram 을 연동합니다 — 어떤 방법이든 사용자 기기 밖으로 데이터가 나가지 않습니다.
-          </p>
-          <p data-i18n-en>
-            Web chat windows can't access your local shell. Two integration paths — both keep data on your machine.
-          </p>
-
-          <h3 data-i18n-ko>C-1) MCP 서버 연결 (Claude Desktop 권장)</h3>
-          <h3 data-i18n-en>C-1) MCP server (recommended with Claude Desktop)</h3>
-          <p data-i18n-ko>
-            xgram 자체가 MCP 서버를 띄울 수 있습니다. Claude Desktop 의 MCP 설정에 OpenXgram 을 등록하면, 웹 Claude 가 사용자 기기의 xgram 을 직접 호출해 메모리를 읽고 씁니다 — 데이터는 로컬 루프백(127.0.0.1)으로만 흐릅니다.
-          </p>
-          <p data-i18n-en>
-            xgram can run as an MCP server. Add it to Claude Desktop's MCP config and Claude reaches into your local xgram to read/write memory — traffic flows over loopback (127.0.0.1) only.
-          </p>
-<pre class="code"><span class="c"># 옵션 1) HTTP MCP — 로컬 루프백</span>
-<span class="p">$</span> xgram mcp serve <span class="s">--bind 127.0.0.1:7301</span>
-<span class="c"># 외부 0.0.0.0 바인딩 절대 금지</span>
-
-<span class="c"># 옵션 2) Claude Desktop ~/.claude/mcp_servers.json 에 추가</span>
-{
-  <span class="s">"openxgram"</span>: {
-    <span class="s">"command"</span>: <span class="s">"xgram"</span>,
-    <span class="s">"args"</span>: [<span class="s">"mcp"</span>, <span class="s">"serve-stdio"</span>]
-  }
-}</pre>
-
-          <h3 data-i18n-ko>C-2) 시스템 지침 / Custom Instructions / Project 에 사용법 붙이기</h3>
-          <h3 data-i18n-en>C-2) Paste usage into System Prompt / Custom Instructions / Project rules</h3>
-          <p data-i18n-ko>
-            ChatGPT Custom Instructions, Claude Project Instructions, Gemini Gems 같은 곳에 아래 템플릿을 그대로 붙여 넣으세요. AI 가 해당 안내대로 동작합니다 — 사용자(나) 가 직접 xgram 명령을 실행해서 결과를 다시 채팅에 붙여 넣는 보조 역할을 하게 됩니다.
-          </p>
-          <p data-i18n-en>
-            Paste the template below into ChatGPT Custom Instructions, Claude Project Instructions, or Gemini Gems. The AI will follow it — and you remain in control by running xgram locally and pasting the results back into chat.
-          </p>
-<pre class="code"><span class="c"># 템플릿 (KO) — 시스템 지침/Custom Instructions/Project 에 붙여넣기</span>
-
-당신은 OpenXgram 메모리 시스템을 사용하는 AI 입니다.
-
-[규칙]
-1. 사용자가 새 주제를 꺼내면, 가장 먼저 이렇게 답합니다:
-   "관련 기억을 회상하시려면 사용자(나) 의 터미널에서 다음 명령을 실행해 결과를 붙여 넣어 주세요:
-    xgram session recall --query &lt;핵심 키워드&gt; --k 5"
-
-2. 사용자가 회상 결과를 붙여 넣으면, 그 정보를 바탕으로 답변합니다.
-
-3. 대화 중 중요한 결정/사실/규칙이 나오면 이렇게 안내합니다:
-   "이 내용을 기억에 저장하시려면:
-    xgram memory add --kind &lt;fact|decision|rule&gt; --content &lt;내용&gt;"
-
-4. 외부 메모리 서비스(Mem0·Zep 등)는 절대 권하지 않습니다.
-5. 모든 기억은 사용자(나) 의 기기 안에만 머무릅니다.</pre>
-          <p data-i18n-ko>
-            영어 템플릿이 필요하면 <code>xgram memory export-prompt</code> 명령으로 즉시 출력할 수 있습니다.
-          </p>
-          <p data-i18n-en>
-            Run <code>xgram memory export-prompt</code> for the English template.
-          </p>
+          <div class="kicker">Mode 3 · Direct CLI</div>
+          <h2 data-i18n-ko>3) 직접 CLI — 개발자/파워 유저</h2>
+          <h2 data-i18n-en>3) Direct CLI — developers / power users</h2>
+          <p data-i18n-ko>가장 빠른 길. 셸에서 직접 명령어를 칩니다.</p>
+          <p data-i18n-en>The fastest path. You type commands in the shell.</p>
+<pre class="code"><span class="p">$</span> xgram session new <span class="s">--title "주간 회고"</span>
+<span class="p">$</span> xgram message add <span class="s">--from me --body "이번 주 최우선은 결제 자동화"</span>
+<span class="p">$</span> xgram memory add <span class="s">--kind decision --content "RBF tip 은 +15% 로 고정"</span>
+<span class="p">$</span> xgram session recall <span class="s">--query "결제 자동화" --k 5</span>
+<span class="c"># top-5 회상 결과 (다른 AI 와 공유 가능)</span></pre>
         </div>
       </section>
 
