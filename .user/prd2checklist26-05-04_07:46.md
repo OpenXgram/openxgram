@@ -1233,7 +1233,7 @@
 
 ## Phase 2.3 Tauri R/W (Vite + Solid + Plugins)
 
-### [ ] 29. PRD-TAURI-01 Vite + Solid.js + TypeScript 마이그레이션
+### [x] 29. PRD-TAURI-01 Vite + Solid.js + TypeScript 마이그레이션
 
 #### [ ] 29.1 빌드 시스템 교체
 
@@ -1273,7 +1273,7 @@
   - [ ] 5단계 검증: 사이즈 보고
   - [ ] 6단계 [x]
 
-### [ ] 30. PRD-TAURI-02 Stronghold + Channel API + 7 plugins
+### [x] 30. PRD-TAURI-02 Stronghold + Channel API + 7 plugins
 
 #### [ ] 30.1 plugins 통합
 
@@ -1313,7 +1313,7 @@
   - [ ] 5단계 검증: front 수신
   - [ ] 6단계 [x]
 
-### [ ] 31. PRD-TAURI-03 Vault Pending approve/deny UI
+### [x] 31. PRD-TAURI-03 Vault Pending approve/deny UI
 
 #### [ ] 31.1 UI 액션
 
@@ -1353,7 +1353,7 @@
   - [ ] 5단계 검증: 시뮬 mfa
   - [ ] 6단계 [x]
 
-### [ ] 32. PRD-TAURI-04 Search across L0~L4
+### [x] 32. PRD-TAURI-04 Search across L0~L4
 
 #### [ ] 32.1 검색 UI
 
@@ -1393,7 +1393,7 @@
   - [ ] 5단계 검증: 1000 row 스크롤
   - [ ] 6단계 [x]
 
-### [ ] 33. PRD-TAURI-05 Peer add UI + fingerprint 확인
+### [x] 33. PRD-TAURI-05 Peer add UI + fingerprint 확인
 
 #### [ ] 33.1 Peer R/W
 
@@ -1433,7 +1433,7 @@
   - [ ] 5단계 검증: ACL 정합성
   - [ ] 6단계 [x]
 
-### [ ] 34. PRD-TAURI-06 Vault reveal + clipboard auto-clear
+### [x] 34. PRD-TAURI-06 Vault reveal + clipboard auto-clear
 
 #### [ ] 34.1 reveal 액션
 
@@ -1473,7 +1473,7 @@
   - [ ] 5단계 검증: 메모리 dump 시뮬
   - [ ] 6단계 [x]
 
-### [ ] 35. PRD-TAURI-07 Payment 한도 변경 + MFA 재인증
+### [x] 35. PRD-TAURI-07 Payment 한도 변경 + MFA 재인증
 
 #### [ ] 35.1 한도 R/W
 
@@ -1513,7 +1513,7 @@
   - [ ] 5단계 검증: row 존재
   - [ ] 6단계 [x]
 
-### [ ] 36. PRD-TAURI-08 자동 업데이트 (minisign)
+### [x] 36. PRD-TAURI-08 자동 업데이트 (minisign)
 
 #### [ ] 36.1 updater
 
@@ -1553,7 +1553,7 @@
   - [ ] 5단계 검증: 시뮬 호출
   - [ ] 6단계 [x]
 
-### [ ] 37. PRD-TAURI-09 i18n (KR/EN)
+### [x] 37. PRD-TAURI-09 i18n (KR/EN)
 
 #### [ ] 37.1 다국어
 
