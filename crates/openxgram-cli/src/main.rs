@@ -15,7 +15,7 @@ use openxgram_cli::init::{self, InitOpts};
 use openxgram_cli::mcp_serve;
 use openxgram_cli::memory::{self, MemoryAction};
 use openxgram_cli::migrate::{self, MigrateOpts};
-use openxgram_cli::notify::{self, NotifyAction};
+use openxgram_cli::notify::{self, ChannelMode, NotifyAction};
 use openxgram_cli::notify_setup::{self, SetupOpts, SetupTarget};
 use openxgram_cli::patterns::{self, PatternsAction};
 use openxgram_cli::payment::{self, PaymentAction};
@@ -514,6 +514,47 @@ enum NotifyCli {
         #[arg(long)]
         data_dir: Option<PathBuf>,
     },
+    /// Starian Channel MCP HTTP gateway 호출 (다중 에이전트 메시지 라우팅 허브).
+    ///
+    /// 모드 (배타):
+    /// - `--platform <p> --channel-id <c> --text <t>` : send_to_platform
+    /// - `--to-role <r> --summary <s> [--type <t>]`   : send_message (피어 라우팅)
+    /// - `--list-adapters`                            : 등록 어댑터 목록
+    Channel {
+        /// channel-mcp gateway URL (기본 OPENXGRAM_CHANNEL_MCP_URL)
+        #[arg(long)]
+        mcp_url: Option<String>,
+        /// 선택 bearer 토큰 (기본 OPENXGRAM_CHANNEL_MCP_TOKEN)
+        #[arg(long)]
+        auth_token: Option<String>,
+
+        /// send_to_platform 모드 — 플랫폼 (discord/telegram/slack/kakaotalk/webhook)
+        #[arg(long, conflicts_with_all = ["to_role", "list_adapters"])]
+        platform: Option<String>,
+        /// send_to_platform 모드 — 채널 ID (discord channel id, telegram chat id 등)
+        #[arg(long, requires = "platform")]
+        channel_id: Option<String>,
+        /// send_to_platform / send_message 의 메시지 본문
+        #[arg(long)]
+        text: Option<String>,
+        /// 답글 대상 메시지 ID (선택, send_to_platform 만)
+        #[arg(long)]
+        reply_to: Option<String>,
+
+        /// send_message 모드 — 대상 역할명 (master/starian/res/eno/...)
+        #[arg(long, conflicts_with_all = ["platform", "list_adapters"])]
+        to_role: Option<String>,
+        /// send_message 모드 — 한 줄 요약
+        #[arg(long, requires = "to_role")]
+        summary: Option<String>,
+        /// send_message 모드 — request|result|info|alert (기본 info)
+        #[arg(long, default_value = "info")]
+        msg_type: String,
+
+        /// list_adapters 모드 — 등록된 어댑터 출력
+        #[arg(long, default_value_t = false)]
+        list_adapters: bool,
+    },
 }
 
 /// 송신·수신 서브명령은 `NotifyAction` 으로, setup-* 마법사는 직접 dispatch.
@@ -577,8 +618,84 @@ impl From<NotifyCli> for NotifyDispatch {
                     detect_attempts: None,
                 },
             ),
+            NotifyCli::Channel {
+                mcp_url,
+                auth_token,
+                platform,
+                channel_id,
+                text,
+                reply_to,
+                to_role,
+                summary,
+                msg_type,
+                list_adapters,
+            } => {
+                let mode = build_channel_mode(
+                    list_adapters,
+                    platform,
+                    channel_id,
+                    text,
+                    reply_to,
+                    to_role,
+                    summary,
+                    msg_type,
+                );
+                NotifyDispatch::Action(NotifyAction::Channel {
+                    mcp_url,
+                    auth_token,
+                    mode,
+                })
+            }
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_channel_mode(
+    list_adapters: bool,
+    platform: Option<String>,
+    channel_id: Option<String>,
+    text: Option<String>,
+    reply_to: Option<String>,
+    to_role: Option<String>,
+    summary: Option<String>,
+    msg_type: String,
+) -> ChannelMode {
+    if list_adapters {
+        return ChannelMode::ListAdapters;
+    }
+    if let Some(pf) = platform {
+        let cid = channel_id.unwrap_or_else(|| {
+            eprintln!("xgram notify channel: --platform 사용 시 --channel-id 필요");
+            std::process::exit(2);
+        });
+        let body = text.unwrap_or_else(|| {
+            eprintln!("xgram notify channel: --platform 사용 시 --text 필요");
+            std::process::exit(2);
+        });
+        return ChannelMode::Platform {
+            platform: pf,
+            channel_id: cid,
+            text: body,
+            reply_to,
+        };
+    }
+    if let Some(role) = to_role {
+        let s = summary.unwrap_or_else(|| {
+            eprintln!("xgram notify channel: --to-role 사용 시 --summary 필요");
+            std::process::exit(2);
+        });
+        return ChannelMode::Peer {
+            to_role: role,
+            summary: s,
+            msg_type,
+        };
+    }
+    eprintln!(
+        "xgram notify channel: 모드를 지정하세요 \
+         (--platform | --to-role | --list-adapters)"
+    );
+    std::process::exit(2);
 }
 
 #[derive(Subcommand, Debug)]

@@ -374,6 +374,59 @@
 
       <section>
         <div class="container">
+          <div class="kicker">다중 에이전트 인프라 · channel-mcp</div>
+          <h2 data-i18n-ko>📡 Channel MCP — 토큰 없이 5 플랫폼을 한 인터페이스로</h2>
+          <h2 data-i18n-en>📡 Channel MCP — one interface, 5 platforms, no per-app tokens</h2>
+          <p data-i18n-ko>
+            여러 AI 에이전트가 같은 메시지 라우팅 허브 (Starian Channel MCP) 를 쓰는 환경이라면,
+            OpenXgram 은 webhook/봇 토큰을 직접 들고 있을 필요 없이 channel-mcp 의 HTTP gateway 한 곳으로 위임할 수 있습니다.
+            discord · telegram · slack · kakaotalk · webhook — 5 플랫폼이 같은 명령으로 통합됩니다.
+          </p>
+          <p data-i18n-en>
+            If multiple AI agents share a message routing hub (Starian Channel MCP),
+            OpenXgram can delegate sending to the channel-mcp HTTP gateway instead of holding webhook/bot tokens itself.
+            Five platforms — discord · telegram · slack · kakaotalk · webhook — through one command.
+          </p>
+<pre class="code"><span class="c"># 1) channel-mcp gateway URL 등록 (1회)</span>
+<span class="p">$</span> <span class="k">export</span> OPENXGRAM_CHANNEL_MCP_URL=<span class="s">"http://localhost:7100"</span>
+<span class="c"># bearer 토큰을 요구하는 호스트라면:</span>
+<span class="p">$</span> <span class="k">export</span> OPENXGRAM_CHANNEL_MCP_TOKEN=<span class="s">"&lt;TOKEN&gt;"</span>
+
+<span class="c"># 2) send_to_platform — 디스코드 채널로 전송</span>
+<span class="p">$</span> xgram notify channel <span class="s">--platform discord --channel-id 12345 --text "approve?"</span>
+
+<span class="c"># 3) send_message — 역할명으로 다른 에이전트에게 라우팅 (피어)</span>
+<span class="p">$</span> xgram notify channel <span class="s">--to-role res --summary "조사 부탁" --msg-type request</span>
+
+<span class="c"># 4) 등록된 어댑터 + 연결 상태 조회</span>
+<span class="p">$</span> xgram notify channel <span class="s">--list-adapters</span></pre>
+          <p data-i18n-ko>
+            <strong>장점.</strong> 토큰을 OpenXgram 마다 등록하지 않아도 됩니다 (channel-mcp 에 1회).
+            5 플랫폼을 한 인터페이스로. 역할명 (<code>res</code>, <code>eno</code>, <code>master</code> …) 으로 다른 에이전트에게 직접 메시지 전달.
+          </p>
+          <p data-i18n-en>
+            <strong>Why.</strong> Tokens live in channel-mcp once, not in every OpenXgram instance.
+            Five platforms behind one command. Direct peer-to-peer routing by role name (<code>res</code>, <code>eno</code>, <code>master</code> …).
+          </p>
+          <p data-i18n-ko>
+            <strong>언제 webhook?</strong> 단독 사용자, channel-mcp 를 운영하지 않는 환경.
+            <strong>언제 channel-mcp?</strong> Starian / Eno / Res 처럼 여러 에이전트가 협업하는 다중 에이전트 시스템.
+          </p>
+          <p data-i18n-en>
+            <strong>Use webhook when</strong> you're a solo user without channel-mcp.
+            <strong>Use channel-mcp when</strong> multiple agents (Starian / Eno / Res …) collaborate on a shared hub.
+          </p>
+          <p data-i18n-ko style="opacity: 0.75; font-size: 0.9em;">
+            구현 노트 — channel-mcp HTTP gateway 가 표준 MCP JSON-RPC <code>tools/call</code> (<code>POST /mcp</code>) 를 노출한다고 가정합니다. 호스트가 다른 경로를 쓰면 <code>ChannelMcpClient::with_endpoint</code> 로 교체하세요.
+          </p>
+          <p data-i18n-en style="opacity: 0.75; font-size: 0.9em;">
+            Implementation note — assumes the channel-mcp HTTP gateway exposes the standard MCP JSON-RPC <code>tools/call</code> (<code>POST /mcp</code>). Override via <code>ChannelMcpClient::with_endpoint</code> if your host uses a different path.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
           <div class="kicker">Cross-LLM 이동</div>
           <h2 data-i18n-ko>모델 갈아타기 — 같은 기억 그대로</h2>
           <h2 data-i18n-en>Switching models — same memory, intact</h2>

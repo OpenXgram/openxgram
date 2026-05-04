@@ -14,8 +14,8 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Context, Result};
 use futures_util::StreamExt;
 use openxgram_adapter::{
-    Adapter, DiscordGatewayClient, DiscordIncomingMessage, DiscordWebhookAdapter,
-    TelegramBotAdapter, TelegramUpdate,
+    Adapter, ChannelMcpClient, DiscordGatewayClient, DiscordIncomingMessage,
+    DiscordWebhookAdapter, TelegramBotAdapter, TelegramUpdate,
 };
 use openxgram_core::env::require_password;
 use openxgram_core::paths::{db_path, keystore_dir, MASTER_KEY_NAME};
@@ -30,6 +30,10 @@ const TELEGRAM_TOKEN_ENV: &str = "TELEGRAM_BOT_TOKEN";
 const TELEGRAM_CHAT_ENV: &str = "TELEGRAM_CHAT_ID";
 /// 테스트·self-host 환경에서 Telegram API base 를 교체할 때 사용.
 const TELEGRAM_API_BASE_ENV: &str = "TELEGRAM_API_BASE";
+/// Starian Channel MCP HTTP gateway base URL (예: http://localhost:7100).
+pub const CHANNEL_MCP_URL_ENV: &str = "OPENXGRAM_CHANNEL_MCP_URL";
+/// 선택 — channel-mcp gateway 가 bearer 토큰을 요구하는 경우.
+pub const CHANNEL_MCP_TOKEN_ENV: &str = "OPENXGRAM_CHANNEL_MCP_TOKEN";
 
 #[derive(Debug, Clone)]
 pub enum NotifyAction {
@@ -67,6 +71,39 @@ pub enum NotifyAction {
         /// 사람 친화 출력 (false 면 한 줄 JSON).
         pretty: bool,
     },
+    /// Starian Channel MCP HTTP gateway 호출 — 다중 에이전트 메시지 라우팅 허브.
+    ///
+    /// 세 가지 모드 (배타):
+    /// - `ChannelMode::Platform`     : `send_to_platform(platform, channel_id, text, reply_to?)`
+    /// - `ChannelMode::Peer`         : `send_message(to_role, summary, msg_type)`
+    /// - `ChannelMode::ListAdapters` : `list_adapters()` 결과를 stdout 으로 출력
+    Channel {
+        /// gateway base URL (생략 시 OPENXGRAM_CHANNEL_MCP_URL 환경변수 — 미설정 시 raise)
+        mcp_url: Option<String>,
+        /// 선택 bearer 토큰 (생략 시 OPENXGRAM_CHANNEL_MCP_TOKEN)
+        auth_token: Option<String>,
+        mode: ChannelMode,
+    },
+}
+
+/// `xgram notify channel` 의 세 가지 호출 모드.
+#[derive(Debug, Clone)]
+pub enum ChannelMode {
+    /// `send_to_platform` 도구 호출 (discord/telegram/slack/kakaotalk/webhook).
+    Platform {
+        platform: String,
+        channel_id: String,
+        text: String,
+        reply_to: Option<String>,
+    },
+    /// `send_message` 도구 호출 — 역할명 라우팅.
+    Peer {
+        to_role: String,
+        summary: String,
+        msg_type: String,
+    },
+    /// `list_adapters` 도구 호출.
+    ListAdapters,
 }
 
 pub async fn run_notify(action: NotifyAction) -> Result<()> {
@@ -114,6 +151,98 @@ pub async fn run_notify(action: NotifyAction) -> Result<()> {
             pretty,
         } => {
             run_discord_listen(bot_token, channel_id, store_session, data_dir, pretty).await?;
+        }
+        NotifyAction::Channel {
+            mcp_url,
+            auth_token,
+            mode,
+        } => {
+            run_channel(mcp_url, auth_token, mode).await?;
+        }
+    }
+    Ok(())
+}
+
+// ── Channel MCP ──────────────────────────────────────────────────────────
+
+async fn run_channel(
+    mcp_url: Option<String>,
+    auth_token: Option<String>,
+    mode: ChannelMode,
+) -> Result<()> {
+    let url = resolve(mcp_url, CHANNEL_MCP_URL_ENV, "--mcp-url")?;
+    let token = auth_token.or_else(|| {
+        std::env::var(CHANNEL_MCP_TOKEN_ENV)
+            .ok()
+            .filter(|s| !s.is_empty())
+    });
+    let client = ChannelMcpClient::new(url, token);
+
+    match mode {
+        ChannelMode::Platform {
+            platform,
+            channel_id,
+            text,
+            reply_to,
+        } => {
+            let r = client
+                .send_to_platform(&platform, &channel_id, &text, reply_to.as_deref())
+                .await?;
+            if !r.success {
+                bail!(
+                    "channel-mcp send_to_platform 실패: {}",
+                    r.error.unwrap_or_else(|| "(no error message)".into())
+                );
+            }
+            println!(
+                "✓ channel-mcp send_to_platform({platform}, {channel_id}) 완료{}",
+                r.message_id
+                    .map(|id| format!(" — id={id}"))
+                    .unwrap_or_default()
+            );
+        }
+        ChannelMode::Peer {
+            to_role,
+            summary,
+            msg_type,
+        } => {
+            let r = client
+                .send_message(&to_role, &summary, &msg_type)
+                .await?;
+            if !r.success {
+                bail!(
+                    "channel-mcp send_message 실패: {}",
+                    r.error.unwrap_or_else(|| "(no error message)".into())
+                );
+            }
+            println!(
+                "✓ channel-mcp send_message(to={to_role}, type={msg_type}) 완료{}",
+                r.message_id
+                    .map(|id| format!(" — id={id}"))
+                    .unwrap_or_default()
+            );
+        }
+        ChannelMode::ListAdapters => {
+            let list = client.list_adapters().await?;
+            if list.is_empty() {
+                println!("(등록된 어댑터 없음)");
+            } else {
+                println!("등록된 channel-mcp 어댑터 ({}):", list.len());
+                for a in &list {
+                    let conn = if a.connected { "✓" } else { "✗" };
+                    let ch = a
+                        .channel_id
+                        .as_deref()
+                        .map(|c| format!(" channel={c}"))
+                        .unwrap_or_default();
+                    let note = a
+                        .note
+                        .as_deref()
+                        .map(|n| format!(" — {n}"))
+                        .unwrap_or_default();
+                    println!("  {conn} {}{ch}{note}", a.platform);
+                }
+            }
         }
     }
     Ok(())
