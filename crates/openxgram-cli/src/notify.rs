@@ -1,18 +1,22 @@
-//! xgram notify — Discord webhook / Telegram bot 송신 + Telegram 양방향 수신.
+//! xgram notify — Discord (webhook 송신 / Gateway 수신) · Telegram bot 양방향.
 //!
-//! - notify discord/telegram : 텍스트 송신 (webhook / sendMessage).
-//! - notify telegram-listen  : long-polling 으로 받기. 옵션 `--store-session` 으로
-//!   받은 메시지를 OpenXgram L0 messages 테이블에 저장 (이후 회상·reflection 대상).
+//! - notify discord/telegram     : 텍스트 송신 (webhook / sendMessage).
+//! - notify telegram-listen      : Telegram long-polling 수신.
+//! - notify discord-listen       : Discord Gateway WebSocket 수신 (다중 에이전트 채팅방).
 //!
-//! Discord 받기는 미구현 — webhook 은 송신 전용. 봇 게이트웨이(WebSocket) 의존성이
-//! 크므로 별도 PR.
+//! `--store-session` 옵션으로 받은 메시지를 OpenXgram L0 messages 테이블에 저장
+//! (이후 회상·reflection 대상). 두 listen 모두 같은 `StoreCtx` 를 공유한다.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context, Result};
-use openxgram_adapter::{Adapter, DiscordWebhookAdapter, TelegramBotAdapter, TelegramUpdate};
+use futures_util::StreamExt;
+use openxgram_adapter::{
+    Adapter, DiscordGatewayClient, DiscordIncomingMessage, DiscordWebhookAdapter,
+    TelegramBotAdapter, TelegramUpdate,
+};
 use openxgram_core::env::require_password;
 use openxgram_core::paths::{db_path, keystore_dir, MASTER_KEY_NAME};
 use openxgram_core::time::kst_now;
@@ -21,6 +25,7 @@ use openxgram_keystore::{FsKeystore, Keypair, Keystore};
 use openxgram_memory::{default_embedder, MessageStore, SessionStore};
 
 const DISCORD_URL_ENV: &str = "DISCORD_WEBHOOK_URL";
+const DISCORD_BOT_TOKEN_ENV: &str = "DISCORD_BOT_TOKEN";
 const TELEGRAM_TOKEN_ENV: &str = "TELEGRAM_BOT_TOKEN";
 const TELEGRAM_CHAT_ENV: &str = "TELEGRAM_CHAT_ID";
 /// 테스트·self-host 환경에서 Telegram API base 를 교체할 때 사용.
@@ -49,6 +54,18 @@ pub enum NotifyAction {
         data_dir: Option<PathBuf>,
         /// 한 번만 polling 후 종료 (테스트·debug 용). 기본 false (Ctrl+C 까지 loop).
         once: bool,
+    },
+    /// Discord Gateway 봇 — 채널/DM 수신 (WebSocket).
+    DiscordListen {
+        bot_token: Option<String>,
+        /// 특정 channel 만 받기 (없으면 모든 channel + DM).
+        channel_id: Option<u64>,
+        /// 받은 메시지를 L0 messages 로 저장. session title (없으면 자동 생성).
+        store_session: Option<String>,
+        /// 데이터 디렉토리 (store_session 사용 시 필요).
+        data_dir: Option<PathBuf>,
+        /// 사람 친화 출력 (false 면 한 줄 JSON).
+        pretty: bool,
     },
 }
 
@@ -79,7 +96,6 @@ pub async fn run_notify(action: NotifyAction) -> Result<()> {
             once,
         } => {
             let token = resolve(bot_token, TELEGRAM_TOKEN_ENV, "--bot-token")?;
-            // chat_id 는 listen 에서 선택. 송신용 placeholder.
             let adapter = adapter_with_base(TelegramBotAdapter::new(token, ""));
             run_telegram_listen(
                 adapter,
@@ -89,6 +105,15 @@ pub async fn run_notify(action: NotifyAction) -> Result<()> {
                 once,
             )
             .await?;
+        }
+        NotifyAction::DiscordListen {
+            bot_token,
+            channel_id,
+            store_session,
+            data_dir,
+            pretty,
+        } => {
+            run_discord_listen(bot_token, channel_id, store_session, data_dir, pretty).await?;
         }
     }
     Ok(())
@@ -123,7 +148,6 @@ async fn run_telegram_listen(
         chat_id_filter, store_session_title, once
     );
 
-    // 저장 모드면 미리 DB · keystore · session · embedder 준비.
     let mut store_ctx = if let Some(title) = store_session_title {
         let dir = resolve_data_dir(data_dir)?;
         Some(StoreCtx::open(&dir, title)?)
@@ -132,7 +156,6 @@ async fn run_telegram_listen(
     };
 
     let stop = Arc::new(AtomicBool::new(false));
-    // graceful Ctrl+C. 실패해도 listen 자체는 진행. handle 은 join 하지 않음 (loop 종료 시 자동 drop).
     let _signal_handle = {
         let stop = stop.clone();
         tokio::spawn(async move {
@@ -167,7 +190,7 @@ async fn run_telegram_listen(
                     continue;
                 }
             }
-            handle_update(u, store_ctx.as_mut())?;
+            handle_telegram_update(u, store_ctx.as_mut())?;
         }
 
         if once {
@@ -178,7 +201,7 @@ async fn run_telegram_listen(
     Ok(())
 }
 
-fn handle_update(u: &TelegramUpdate, store: Option<&mut StoreCtx>) -> Result<()> {
+fn handle_telegram_update(u: &TelegramUpdate, store: Option<&mut StoreCtx>) -> Result<()> {
     let sender = u.sender_username.as_deref().unwrap_or("(anonymous)");
     println!(
         "[{}] tg chat={} from=@{} update_id={}: {}",
@@ -189,10 +212,103 @@ fn handle_update(u: &TelegramUpdate, store: Option<&mut StoreCtx>) -> Result<()>
         u.text,
     );
     if let Some(ctx) = store {
-        ctx.append(u)?;
+        let sender_label = format!(
+            "telegram:{}",
+            u.sender_username.as_deref().unwrap_or("anonymous")
+        );
+        ctx.append(&sender_label, &u.text)?;
     }
     Ok(())
 }
+
+// ── Discord listen ───────────────────────────────────────────────────────
+
+async fn run_discord_listen(
+    bot_token: Option<String>,
+    channel_id: Option<u64>,
+    store_session: Option<String>,
+    data_dir: Option<PathBuf>,
+    pretty: bool,
+) -> Result<()> {
+    let token = resolve(bot_token, DISCORD_BOT_TOKEN_ENV, "--bot-token")?;
+
+    let mut store_ctx = if let Some(title) = &store_session {
+        let dir = resolve_data_dir(data_dir.as_deref())?;
+        Some(StoreCtx::open(&dir, title)?)
+    } else {
+        None
+    };
+
+    let client = DiscordGatewayClient::new(token);
+    let stream: std::pin::Pin<Box<dyn futures_util::Stream<Item = DiscordIncomingMessage> + Send>> =
+        match channel_id {
+            Some(cid) => Box::pin(client.listen_channel(cid).await?),
+            None => Box::pin(client.connect().await?),
+        };
+
+    eprintln!(
+        "✓ Discord Gateway 연결됨 — 메시지 수신 대기 중 (Ctrl+C 종료){}",
+        store_ctx
+            .as_ref()
+            .map(|c| format!(" · L0 store=session/{}", c.session_id))
+            .unwrap_or_default()
+    );
+
+    let mut stream = stream;
+    let shutdown = tokio::signal::ctrl_c();
+    tokio::pin!(shutdown);
+    loop {
+        tokio::select! {
+            _ = &mut shutdown => {
+                eprintln!("\n✓ Ctrl+C — 종료");
+                return Ok(());
+            }
+            next = stream.next() => {
+                match next {
+                    Some(msg) => {
+                        emit_discord(&msg, pretty);
+                        if let Some(ctx) = store_ctx.as_mut() {
+                            let sender_label = format!("discord:{}", msg.author_name);
+                            if let Err(e) = ctx.append(&sender_label, &msg.content) {
+                                tracing::warn!(error = %e, "L0 저장 실패");
+                                eprintln!("⚠ L0 저장 실패: {e:#}");
+                            }
+                        }
+                    }
+                    None => {
+                        eprintln!("⚠ Discord Gateway stream 종료 (서버 측 disconnect)");
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn emit_discord(msg: &DiscordIncomingMessage, pretty: bool) {
+    if pretty {
+        println!(
+            "[{}] #{} <{}> {}",
+            msg.timestamp_kst.format("%Y-%m-%d %H:%M:%S%:z"),
+            msg.channel_id,
+            msg.author_name,
+            msg.content
+        );
+    } else {
+        let line = serde_json::json!({
+            "message_id": msg.message_id,
+            "channel_id": msg.channel_id,
+            "guild_id": msg.guild_id,
+            "author_id": msg.author_id,
+            "author_name": msg.author_name,
+            "content": msg.content,
+            "timestamp_kst": msg.timestamp_kst.to_rfc3339(),
+        });
+        println!("{line}");
+    }
+}
+
+// ── 공용 store context ────────────────────────────────────────────────────
 
 struct StoreCtx {
     db: Db,
@@ -215,7 +331,7 @@ impl StoreCtx {
         })
         .with_context(|| format!("DB open 실패: {}", path.display()))?;
 
-        // session ensure_by_title — 없으면 생성. home_machine 은 hostname (cmd_new 와 동일).
+        // session ensure_by_title — 없으면 생성. home_machine 은 hostname.
         let home_machine = std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".into());
         let session = SessionStore::new(&mut db).ensure_by_title(session_title, &home_machine)?;
 
@@ -237,17 +353,13 @@ impl StoreCtx {
         })
     }
 
-    fn append(&mut self, u: &TelegramUpdate) -> Result<()> {
-        let sender = format!(
-            "telegram:{}",
-            u.sender_username.as_deref().unwrap_or("anonymous")
-        );
-        let signature = hex::encode(self.signing_key.sign(u.text.as_bytes()));
+    fn append(&mut self, sender: &str, body: &str) -> Result<()> {
+        let signature = hex::encode(self.signing_key.sign(body.as_bytes()));
         let embedder = default_embedder()?;
         let msg = MessageStore::new(&mut self.db, embedder.as_ref()).insert(
             &self.session_id,
-            &sender,
-            &u.text,
+            sender,
+            body,
             &signature,
         )?;
         println!("  → L0 저장 (id={})", msg.id);
