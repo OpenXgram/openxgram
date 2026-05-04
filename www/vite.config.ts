@@ -10,6 +10,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: resolve(__dirname, 'index.html'),
+        why: resolve(__dirname, 'why/index.html'),
         features: resolve(__dirname, 'features/index.html'),
         quickstart: resolve(__dirname, 'quickstart/index.html'),
         usecases: resolve(__dirname, 'usecases/index.html'),

@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Why OpenXgram — pain points → solutions</title>
+    <meta name="description" content="어떤 AI 서비스든 같은 대화를 이어가야 하는 이유 — 그리고 정보가 외부로 새어나가지 않는 이유." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='8' fill='%237df9c5'/%3E%3C/svg%3E" />
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container row">
+        <a class="brand" href="/"><span class="dot"></span><span>OpenXgram</span></a>
+        <nav class="nav">
+          <a href="/">Home</a>
+          <a href="/why/">Why</a>
+          <a href="/features/">Features</a>
+          <a href="/quickstart/">Quickstart</a>
+          <a href="/usecases/">Use cases</a>
+          <a href="/architecture/">Architecture</a>
+          <a href="/docs/">Docs</a>
+          <button class="lang-toggle" type="button">EN</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="container">
+          <div class="kicker" data-i18n-ko>왜 OpenXgram?</div>
+          <div class="kicker" data-i18n-en>Why OpenXgram?</div>
+          <h1 data-i18n-ko>대화는 끊기고,<br />데이터는 새어나갑니다.</h1>
+          <h1 data-i18n-en>Conversations break.<br />Data leaks out.</h1>
+          <p class="lead" data-i18n-ko>
+            Claude · ChatGPT · Gemini 사이를 오갈 때마다 컨텍스트가 사라지고,
+            기존 메모리 SaaS(Mem0·Zep 등)를 쓰면 사용자의 데이터가 그들의 서버에 임베딩으로 남습니다.
+            <strong>OpenXgram 은 다릅니다 — 어떤 AI 든 같은 기억을 이어가지만, 모든 데이터가 사용자(나) 의 기기 안에서만 머무릅니다. 블록체인 기반 암호화로 외부 서버로 전송되지 않습니다.</strong>
+          </p>
+          <p class="lead" data-i18n-en>
+            Every time you move between Claude, ChatGPT, Gemini, the context vanishes —
+            and existing memory SaaS (Mem0, Zep, etc.) embed your data on their own third-party servers.
+            <strong>OpenXgram is different — the same memory carries across any AI, but all of it stays on your machine. Blockchain-grade encryption means nothing is ever sent to an external server.</strong>
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
+          <div class="grid grid-2" style="margin-top: 8px;">
+            <div class="card">
+              <span class="tag">pain · memory loss</span>
+              <h3 data-i18n-ko>"또 처음부터 설명해야 한다"</h3>
+              <h3 data-i18n-en>"I'm explaining everything again"</h3>
+              <p data-i18n-ko>
+                Claude Code 에서 진행하던 작업을 Cursor 로 옮기면 컨텍스트가 사라집니다.
+                다음 세션에 같은 자료를 또 붙여 넣게 됩니다.
+              </p>
+              <p data-i18n-en>
+                Move from Claude Code to Cursor and the context evaporates.
+                You re-paste the same files into the next session.
+              </p>
+              <hr class="sep"/>
+              <p data-i18n-ko><strong>OpenXgram:</strong> L0~L4 다층 기억이 머신과 하네스 밖에 살아 있어,
+                어떤 도구에서 켜도 어제 했던 결정·노트·파일을 그대로 봅니다.</p>
+              <p data-i18n-en><strong>OpenXgram:</strong> the multi-layer memory lives outside any single harness,
+                so any tool you open still sees yesterday's decisions, notes, files.</p>
+            </div>
+
+            <div class="card">
+              <span class="tag">pain · scattered keys</span>
+              <h3 data-i18n-ko>"키가 .env 파일 곳곳에 흩어졌다"</h3>
+              <h3 data-i18n-en>"Keys are scattered across .env files"</h3>
+              <p data-i18n-ko>
+                레포마다 .env, OS 키체인, 1Password — 에이전트가 어떤 걸 읽고 쓰는지 추적이 안 됩니다.
+                토큰이 평문으로 컨텍스트에 떠다닙니다.
+              </p>
+              <p data-i18n-en>
+                Every repo has its own .env, OS keychain, 1Password — there's no audit trail
+                of what the agent actually used. Plain-text tokens drift into context.
+              </p>
+              <hr class="sep"/>
+              <p data-i18n-ko><strong>OpenXgram vault:</strong> 4단계 암호화(디스크/필드/전송/메모리 zeroize) +
+                ACL + 일일 한도 + 블록체인 암호화 기록. 키 자체는 에이전트 컨텍스트에 노출되지 않습니다.</p>
+              <p data-i18n-en><strong>OpenXgram vault:</strong> four-layer encryption + ACL + daily limits + blockchain-encrypted log.
+                The raw key never enters the agent's context.</p>
+            </div>
+
+            <div class="card">
+              <span class="tag">pain · 다른 서비스의 문제</span>
+              <h3 data-i18n-ko>"클라우드 메모리 서비스를 쓰면 내 데이터가 그들 서버로 간다"</h3>
+              <h3 data-i18n-en>"Cloud memory SaaS reads everything you store"</h3>
+              <p data-i18n-ko>
+                <strong>다른 서비스(Mem0 · Zep 등)를 쓸 경우</strong> — 사용자가 저장한 메모리가 그들의 클라우드 서버로 전송됩니다.
+                회사 비밀·개인 기록·클라이언트 자료가 모두 제3자 서버에 임베딩 형태로 남고, 한 번 올라간 데이터는 통제할 수 없습니다.
+              </p>
+              <p data-i18n-en>
+                <strong>If you use other services (Mem0, Zep, etc.)</strong> — your stored memory is sent to their cloud servers.
+                Company secrets, personal notes, client data all end up embedded on a third-party server, and once uploaded, you lose control.
+              </p>
+              <hr class="sep"/>
+              <p data-i18n-ko><strong>OpenXgram 은 정반대입니다.</strong> 모든 메모리·임베딩이 사용자(나) 의 기기 안 단일 SQLite 파일에만 저장됩니다.
+                BGE-small 임베딩 모델도 로컬에서 실행됩니다. 외부 서버로 전송되는 데이터는 0 입니다.
+                다른 기기와 동기화할 때도 사용자가 직접 운영하는 Nostr relay 위에서 블록체인 암호화로 주고받습니다.</p>
+              <p data-i18n-en><strong>OpenXgram is the exact opposite.</strong> All memory and embeddings live in a single SQLite file on your own machine.
+                The BGE-small embedding model runs locally. Zero data is transmitted to any external server.
+                Even cross-device sync runs over your self-hosted Nostr relay with blockchain-grade encryption.</p>
+            </div>
+
+            <div class="card">
+              <span class="tag">pain · runaway agent</span>
+              <h3 data-i18n-ko>"에이전트가 어디까지 할지 통제가 안 된다"</h3>
+              <h3 data-i18n-en>"There's no real boundary for the agent"</h3>
+              <p data-i18n-ko>
+                자율 에이전트에게 카드·API 키를 주는 순간 위험이 시작됩니다.
+                얼마까지 쓸지, 무엇은 사람 승인이 필요한지 — 명세할 곳이 없습니다.
+              </p>
+              <p data-i18n-en>
+                The moment you hand a card or API key to an autonomous agent, risk starts.
+                How much can it spend? What needs a human? There's nowhere to declare it.
+              </p>
+              <hr class="sep"/>
+              <p data-i18n-ko><strong>OpenXgram policy:</strong> auto / confirm / mfa 3단계 승인 + 일일 한도 + 화이트리스트.
+                넘으려 하면 즉시 막히고 감사 로그에 남습니다.</p>
+              <p data-i18n-en><strong>OpenXgram policy:</strong> three-step approval (auto / confirm / mfa) + daily limit + whitelist.
+                Crossings are blocked at the boundary and recorded in the blockchain-encrypted log.</p>
+            </div>
+
+            <div class="card">
+              <span class="tag">pain · cross-machine</span>
+              <h3 data-i18n-ko>"같은 에이전트팀을 다른 머신에서 못 돌린다"</h3>
+              <h3 data-i18n-en>"My agent team can't move between machines"</h3>
+              <p data-i18n-ko>
+                노트북에 셋업한 멀티에이전트 시스템을 새 머신에서 돌리려면 키 재발급, 메모리 export, 설정 복제가 필요합니다.
+              </p>
+              <p data-i18n-en>
+                Spinning up the same multi-agent system on a new machine means reissuing keys,
+                exporting memory, copying configs.
+              </p>
+              <hr class="sep"/>
+              <p data-i18n-ko><strong>OpenXgram:</strong> BIP44 HD wallet 한 번이면 같은 신원이 어디서나.
+                Nostr 채널로 메모리 동기화. 머신 화이트리스트로 안전하게 합류.</p>
+              <p data-i18n-en><strong>OpenXgram:</strong> one BIP44 HD wallet, the same identity anywhere.
+                Nostr channels sync the memory; a machine whitelist keeps the join safe.</p>
+            </div>
+
+            <div class="card">
+              <span class="tag">pain · payment</span>
+              <h3 data-i18n-ko>"에이전트 결제가 거칠고 비싸다"</h3>
+              <h3 data-i18n-en>"Agent payments are clunky and expensive"</h3>
+              <p data-i18n-ko>
+                신용카드 결제는 한도 변경·환불·신원확인이 까다롭고, 수수료가 비싼 블록체인 네트워크에서는 micropayment 가 거의 불가능합니다.
+              </p>
+              <p data-i18n-en>
+                Credit cards struggle with limits, refunds, KYC; networks with high fees make micropayments unrealistic.
+              </p>
+              <hr class="sep"/>
+              <p data-i18n-ko><strong>OpenXgram:</strong> Base 네트워크 위 USDC — 1원 이하의 수수료로 micropayment 가 현실적입니다. 사용자(나) 가 정한 한도와 승인 절차 안에서 에이전트가 자율적으로 결제할 수 있습니다.</p>
+              <p data-i18n-en><strong>OpenXgram:</strong> USDC on Base — fees under 1 cent make micropayments practical. Agents pay autonomously within the limits and approval rules you set.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
+          <div class="kicker">Bottom line</div>
+          <h2 data-i18n-ko>한 문장으로</h2>
+          <h2 data-i18n-en>In one line</h2>
+          <p data-i18n-ko>
+            <strong>Claude 든 ChatGPT 든 Gemini 든 — 어떤 AI 서비스에서든 같은 대화를 이어가게 하면서,
+            블록체인 기반 암호화로 정보가 외부로 노출되지 않게 지키는 개인 인프라.</strong>
+          </p>
+          <p data-i18n-en>
+            <strong>Continue the same conversation across Claude, ChatGPT, Gemini, or any local model —
+            with blockchain-grade encryption so nothing ever leaves your machines.</strong>
+          </p>
+          <div class="cta">
+            <a class="btn btn-primary" href="/quickstart/" data-i18n-ko>지금 시작 →</a>
+            <a class="btn btn-primary" href="/quickstart/" data-i18n-en>Get started →</a>
+            <a class="btn btn-ghost" href="/usecases/" data-i18n-ko>실제 시나리오 보기</a>
+            <a class="btn btn-ghost" href="/usecases/" data-i18n-en>See real scenarios</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container row">
+        <div>© 2026 OpenXgram contributors</div>
+        <div class="mono">v0.1.0.0-alpha.1</div>
+      </div>
+    </footer>
+  </body>
+</html>

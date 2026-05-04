@@ -7,6 +7,7 @@
 //!   - memory    : L2 fact/decision/reference/rule 저장
 //!   - util      : 모듈 내부 공통 헬퍼
 
+pub mod claude_compat;
 pub mod embed;
 pub mod episode;
 pub mod memory;
@@ -32,6 +33,10 @@ pub use traits::{
     DERIVED_TRAIT_PREFIX,
 };
 pub use transfer::{export_session, import_session, ImportSummary, TextPackage};
+pub use claude_compat::{
+    export_claude, import_claude, parse_claude, ClaudeCategory, ClaudeEntry, ClaudeExport,
+    ClaudeImportSummary, CLAUDE_EXPORT_PROMPT,
+};
 
 use thiserror::Error;
 

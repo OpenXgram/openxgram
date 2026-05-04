@@ -29,12 +29,10 @@ pub use nostr::{
 };
 pub use nostr_sdk::RelayPoolNotification;
 
-mod nip65;
 mod ratchet;
 mod relay;
 mod sink;
 mod source;
-pub use nip65::{dedup_relays, fetch_peer_relays, publish_relay_list, RelayEntry, RelayMetadata};
 pub use ratchet::{Ratchet, RatchetKey};
 pub use relay::{NostrRelay, RelayConfig, DEFAULT_RELAY_PORT};
 pub use sink::NostrSink;
