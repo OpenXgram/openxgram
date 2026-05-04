@@ -3,9 +3,10 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use openxgram_core::paths::db_path;
+use openxgram_core::paths::{db_path, keystore_dir, MASTER_KEY_NAME};
 use openxgram_db::{Db, DbConfig};
-use openxgram_vault::audit_chain::{verify_chain, verify_checkpoints};
+use openxgram_keystore::{FsKeystore, Keystore};
+use openxgram_vault::audit_chain::{create_checkpoint, verify_chain, verify_checkpoints};
 
 #[derive(Debug, Clone)]
 pub enum AuditAction {
@@ -27,6 +28,22 @@ pub fn run_audit(data_dir: &Path, action: AuditAction) -> Result<VerifyReport> {
             // password prompt 는 CLI binding 측 — 여기서는 master 미지정 시 skip
             Ok(VerifyReport::CheckpointRequiresMaster)
         }
+    }
+}
+
+/// master 패스워드를 받아 즉시 체크포인트를 생성한다 (PRD-AUDIT-03).
+///
+/// 빈 chain 이거나 새 entry 가 없으면 `CheckpointSkipped`,
+/// 생성 성공 시 `CheckpointCreated(seq)` 를 반환한다.
+pub fn run_audit_checkpoint(data_dir: &Path, password: &str) -> Result<VerifyReport> {
+    let mut db = open_db(data_dir)?;
+    let ks = FsKeystore::new(keystore_dir(data_dir));
+    let master = ks
+        .load(MASTER_KEY_NAME, password)
+        .context("master 키 로드 실패")?;
+    match create_checkpoint(&mut db, &master).context("checkpoint 생성 실패")? {
+        Some(seq) => Ok(VerifyReport::CheckpointCreated(seq)),
+        None => Ok(VerifyReport::CheckpointSkipped),
     }
 }
 
@@ -53,6 +70,8 @@ pub enum VerifyReport {
     Failed(Vec<String>),
     Backfilled(usize),
     CheckpointRequiresMaster,
+    CheckpointCreated(i64),
+    CheckpointSkipped,
 }
 
 impl std::fmt::Display for VerifyReport {
@@ -69,6 +88,12 @@ impl std::fmt::Display for VerifyReport {
             Self::Backfilled(n) => write!(f, "✓ {n} 개 audit row 에 hash chain backfill 완료"),
             Self::CheckpointRequiresMaster => {
                 write!(f, "checkpoint 생성은 master 패스워드가 필요 — `xgram audit checkpoint --password=…`")
+            }
+            Self::CheckpointCreated(seq) => {
+                write!(f, "✓ checkpoint 생성 완료 (seq={seq})")
+            }
+            Self::CheckpointSkipped => {
+                write!(f, "ℹ checkpoint 생략 — 새 audit entry 가 없거나 chain 이 비어있음")
             }
         }
     }

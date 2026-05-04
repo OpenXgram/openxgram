@@ -242,9 +242,7 @@ pub fn create_checkpoint(db: &mut Db, master: &Keypair) -> Result<Option<i64>> {
     let root = merkle_root_since(db, since_seq)?.unwrap_or([0u8; 32]);
     let signature = master.sign(&root);
     let signer_pk_hex = hex::encode(master.public_key_bytes());
-    let now_kst = chrono::Utc::now()
-        .with_timezone(&chrono::FixedOffset::east_opt(9 * 3600).unwrap())
-        .timestamp();
+    let now_kst = openxgram_core::time::kst_now().timestamp();
 
     let conn = db.conn();
     conn.execute(

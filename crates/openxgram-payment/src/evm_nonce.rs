@@ -40,9 +40,7 @@ pub fn get_and_increment(
     let tx = conn.unchecked_transaction().map_err(PaymentError::Sqlite)?;
 
     let from_lc = from_address.to_lowercase();
-    let now = chrono::Utc::now()
-        .with_timezone(&chrono_tz_kst())
-        .timestamp();
+    let now = openxgram_core::time::kst_now().timestamp();
 
     let current: Option<i64> = tx
         .query_row(
@@ -74,9 +72,7 @@ pub fn reset(db: &mut Db, from_address: &str, chain_id: u64, new_nonce: u64) -> 
     ensure_schema(db)?;
     let conn = db.conn();
     let from_lc = from_address.to_lowercase();
-    let now = chrono::Utc::now()
-        .with_timezone(&chrono_tz_kst())
-        .timestamp();
+    let now = openxgram_core::time::kst_now().timestamp();
     conn.execute(
         "INSERT INTO evm_nonce_counter (from_address, chain_id, next_nonce, updated_at_kst)
          VALUES (?1, ?2, ?3, ?4)
@@ -85,11 +81,6 @@ pub fn reset(db: &mut Db, from_address: &str, chain_id: u64, new_nonce: u64) -> 
     )
     .map_err(PaymentError::Sqlite)?;
     Ok(())
-}
-
-/// chrono Asia/Seoul TZ — chrono-tz crate 미사용 시 FixedOffset 9h
-fn chrono_tz_kst() -> chrono::FixedOffset {
-    chrono::FixedOffset::east_opt(9 * 3600).expect("KST offset")
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@
 //! KEK 자체는 master m/44'/0'/0'/0/N 에서 derive — keystore::derive_keypair 위임.
 
 use chrono::{DateTime, FixedOffset};
+use openxgram_core::time::{kst_now, kst_offset};
 use openxgram_db::Db;
 use rusqlite::params;
 
@@ -37,14 +38,10 @@ pub struct KekRotation {
     pub audit_row_id: Option<String>,
 }
 
-fn kst() -> FixedOffset {
-    FixedOffset::east_opt(9 * 3600).expect("KST")
-}
-
 fn ts_to_dt(ts: i64) -> DateTime<FixedOffset> {
     DateTime::from_timestamp(ts, 0)
         .expect("valid ts")
-        .with_timezone(&kst())
+        .with_timezone(&kst_offset())
 }
 
 /// 현재 활성 KEK 의 derivation index — retired_at 가 NULL 인 가장 최근 row.
@@ -78,7 +75,7 @@ pub fn next(db: &mut Db, audit_row_id: Option<&str>) -> Result<u32> {
         .flatten();
     let next_n = max_n.map(|n| n as u32 + 1).unwrap_or(0);
     let conn = db.conn();
-    let now_kst = chrono::Utc::now().with_timezone(&kst()).timestamp();
+    let now_kst = kst_now().timestamp();
     conn.execute(
         "INSERT INTO vault_kek_rotations (derivation_index, rotated_at_kst, audit_row_id)
          VALUES (?1, ?2, ?3)",
@@ -90,7 +87,7 @@ pub fn next(db: &mut Db, audit_row_id: Option<&str>) -> Result<u32> {
 /// 특정 N 의 retired_at 설정 — 7일 read-only 유예 시작.
 pub fn retire(db: &mut Db, derivation_index: u32) -> Result<()> {
     let conn = db.conn();
-    let now_kst = chrono::Utc::now().with_timezone(&kst()).timestamp();
+    let now_kst = kst_now().timestamp();
     let n = conn.execute(
         "UPDATE vault_kek_rotations SET retired_at_kst = ?1 WHERE derivation_index = ?2",
         params![now_kst, derivation_index as i64],
@@ -105,7 +102,7 @@ pub fn retire(db: &mut Db, derivation_index: u32) -> Result<()> {
 /// 호출자가 secret 을 zeroize 한 후 audit row 추가 (PRD-ROT-03 KEK_ROTATE_ZEROIZE).
 pub fn list_expired(db: &mut Db) -> Result<Vec<KekRotation>> {
     let conn = db.conn();
-    let cutoff = chrono::Utc::now().with_timezone(&kst()).timestamp() - GRACE_DAYS * 24 * 3600;
+    let cutoff = kst_now().timestamp() - GRACE_DAYS * 24 * 3600;
     let mut stmt = conn.prepare(
         "SELECT id, derivation_index, rotated_at_kst, retired_at_kst, audit_row_id
          FROM vault_kek_rotations
@@ -131,9 +128,7 @@ pub fn record_rotation_event(
     derivation_index: u32,
 ) -> Result<String> {
     let id = uuid::Uuid::new_v4().to_string();
-    let ts = chrono::Utc::now()
-        .with_timezone(&kst())
-        .to_rfc3339();
+    let ts = kst_now().to_rfc3339();
     let key = format!("kek/index/{derivation_index}");
     let agent = "master";
     let action = "rotate";

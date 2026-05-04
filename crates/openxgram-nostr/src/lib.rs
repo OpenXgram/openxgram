@@ -334,7 +334,7 @@ mod tests {
             unix_ts,
         )
         .unwrap();
-        let rpk = ratchet.current(unix_ts).public.clone();
+        let rpk = ratchet.current(unix_ts).public;
         // ratchet pk 알면 unwrap 성공
         let ok = unwrap_ciphertext_from_peer(
             receiver.secret_key(),
@@ -394,10 +394,7 @@ mod tests {
         let master_decrypt = decrypt_from_peer(receiver.secret_key(), &sender.public_key(), &ct);
         assert!(master_decrypt.is_err());
         // ratchet pubkey 로 복호 가능
-        let ratchet_pk = {
-            let key = ratchet.current(unix_ts);
-            key.public.clone()
-        };
+        let ratchet_pk = ratchet.current(unix_ts).public;
         let ok = decrypt_from_peer(receiver.secret_key(), &ratchet_pk, &ct).unwrap();
         assert_eq!(ok, pt);
     }

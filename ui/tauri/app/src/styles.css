@@ -1,0 +1,102 @@
+/* OpenXgram Tauri app — minimal global styles
+ * Enforces button consistency, contrast, focus visibility.
+ */
+
+:root {
+  --fg: #1a1d24;
+  --fg-dim: #4a4f5a;
+  --bg: #ffffff;
+  --bg-soft: #f4f5f7;
+  --border: #d0d3d9;
+  --border-strong: #2a2d33;
+  --accent: #0a66c2;
+  --accent-fg: #ffffff;
+  --danger: #b00020;
+  --warn-bg: #fffbe6;
+  --warn-border: #c2a83a;
+  --radius: 6px;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+h1 { font-size: 20px; font-weight: 600; }
+h2 { font-size: 16px; font-weight: 600; }
+h3 { font-size: 14px; font-weight: 600; }
+
+button,
+input,
+select {
+  font-family: inherit;
+  font-size: 14px;
+}
+
+button {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+button:hover:not(:disabled) {
+  background: var(--bg-soft);
+  border-color: var(--border-strong);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+button.primary:hover:not(:disabled) {
+  background: #084d92;
+  border-color: #084d92;
+}
+
+button.danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+button.danger:hover:not(:disabled) {
+  background: #fdecef;
+}
+
+input[type="text"],
+input[type="number"],
+input:not([type]) {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+
+/* Improve muted-text contrast (was #666 on white = 5.7:1, now 7:1+) */
+.muted { color: var(--fg-dim); }
