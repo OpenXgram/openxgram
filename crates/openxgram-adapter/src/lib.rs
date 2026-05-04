@@ -1,9 +1,15 @@
-//! openxgram-adapter — outbound 메시지 어댑터 (Discord webhook, Telegram bot).
+//! openxgram-adapter — outbound + inbound 메시지 어댑터.
 //!
-//! Phase 1 first PR: 텍스트 send_text 만. 첨부·서명 envelope·rate-limit 은 후속.
+//! - Discord webhook        : 송신 전용 (webhook 은 receive 미지원).
+//! - Discord Gateway (봇)   : 수신 (WebSocket) — 다중 에이전트 채팅방 허브.
+//! - Telegram bot           : 송신 (송신 양방향은 별도 PR).
 //!
 //! Async fn in trait (Rust 1.75+ stable) 사용. dyn-compatibility 필요 시 호출자
 //! 측에서 BoxFuture 래핑.
+
+pub mod discord_gateway;
+
+pub use discord_gateway::{DiscordGatewayClient, DiscordIncomingMessage, GatewayError};
 
 use serde::Serialize;
 use thiserror::Error;

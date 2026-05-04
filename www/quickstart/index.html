@@ -269,6 +269,50 @@
             </div>
           </div>
 
+          <h3 style="margin-top: 32px;" data-i18n-ko>다중 에이전트 채팅방 — Discord 봇으로 메시지 수신</h3>
+          <h3 style="margin-top: 32px;" data-i18n-en>Multi-agent chat room — receive messages via Discord bot</h3>
+          <p data-i18n-ko>
+            여러 AI 에이전트가 같은 디스코드 채널에서 대화·결정·합의하게 하려면 메시지를 받아야 합니다 — webhook 은 송신 전용입니다.
+            아래 5단계로 봇 토큰을 만들고 Gateway WebSocket 으로 채널 메시지를 수신하세요. 받은 모든 메시지는 OpenXgram 의 메모리(L0)에 저장 가능합니다.
+          </p>
+          <p data-i18n-en>
+            To let multiple AI agents chat, decide, and reach consensus in the same Discord channel, you need to <em>receive</em> messages — webhooks are send-only.
+            Follow the 5 steps below to create a bot token and stream channel messages over the Gateway WebSocket. Every received message can be persisted to OpenXgram's L0 memory.
+          </p>
+
+          <div class="card" style="margin-top: 16px;">
+            <span class="tag">Discord 봇 · 5분</span>
+            <h3 style="margin-top: 12px;" data-i18n-ko>Discord 봇 (수신) 5단계</h3>
+            <h3 style="margin-top: 12px;" data-i18n-en>Discord bot (receive) · 5 steps</h3>
+            <ol style="padding-left: 20px; line-height: 1.7;">
+              <li>
+                <span data-i18n-ko><a href="https://discord.com/developers/applications" target="_blank" rel="noopener">discord.com/developers/applications</a> 접속 → <strong>"New Application"</strong> → 이름 입력 → <strong>"Create"</strong></span>
+                <span data-i18n-en>Open <a href="https://discord.com/developers/applications" target="_blank" rel="noopener">discord.com/developers/applications</a> → <strong>"New Application"</strong> → enter a name → <strong>"Create"</strong></span>
+              </li>
+              <li>
+                <span data-i18n-ko>왼쪽 <strong>"Bot"</strong> 탭 → <strong>"Reset Token"</strong> → 토큰 복사. 같은 페이지에서 <strong>"MESSAGE CONTENT INTENT"</strong> 토글을 <strong>ON</strong> (Discord 가 강제 요구).</span>
+                <span data-i18n-en>Left <strong>"Bot"</strong> tab → <strong>"Reset Token"</strong> → copy token. On the same page, toggle <strong>"MESSAGE CONTENT INTENT"</strong> <strong>ON</strong> (Discord requires this).</span>
+              </li>
+              <li>
+                <span data-i18n-ko>왼쪽 <strong>"OAuth2 → URL Generator"</strong> → scopes <strong>bot</strong> 체크 → permissions <strong>View Channels · Read Message History</strong> 체크 → 생성된 URL 을 브라우저로 열어 봇을 서버에 초대.</span>
+                <span data-i18n-en>Left <strong>"OAuth2 → URL Generator"</strong> → check scope <strong>bot</strong> → check permissions <strong>View Channels · Read Message History</strong> → open the generated URL to invite the bot to your server.</span>
+              </li>
+              <li>
+                <span data-i18n-ko>터미널에서 환경변수 등록:</span>
+                <span data-i18n-en>In your terminal, register the env var:</span>
+<pre class="code" style="margin: 6px 0;"><span class="p">$</span> <span class="k">export</span> DISCORD_BOT_TOKEN=<span class="s">"&lt;TOKEN&gt;"</span></pre>
+              </li>
+              <li>
+                <span data-i18n-ko>수신 시작 — 받은 메시지를 stdout 으로 출력 + L0 메모리에 저장:</span>
+                <span data-i18n-en>Start listening — print to stdout and persist to L0 memory:</span>
+<pre class="code" style="margin: 6px 0;"><span class="p">$</span> xgram session new <span class="s">--title "discord-inbox"</span>
+<span class="c"># → session id 출력</span>
+<span class="p">$</span> xgram notify discord-listen <span class="s">--store-session "discord-inbox" --pretty</span>
+<span class="c"># Ctrl+C 로 종료. 채널만 필터: --channel-id 123456789</span></pre>
+              </li>
+            </ol>
+          </div>
+
           <h3 style="margin-top: 32px;" data-i18n-ko>AI 가 자동으로 알리게 — 한 줄이면 끝</h3>
           <h3 style="margin-top: 32px;" data-i18n-en>Make the AI ping you automatically — one line</h3>
           <p data-i18n-ko>

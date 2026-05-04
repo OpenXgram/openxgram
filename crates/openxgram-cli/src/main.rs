@@ -444,7 +444,7 @@ impl From<SessionCli> for SessionAction {
 
 #[derive(Subcommand, Debug)]
 enum NotifyCli {
-    /// Discord webhook
+    /// Discord webhook (송신)
     Discord {
         /// Webhook URL (생략 시 DISCORD_WEBHOOK_URL 환경변수)
         #[arg(long)]
@@ -452,7 +452,7 @@ enum NotifyCli {
         #[arg(long)]
         text: String,
     },
-    /// Telegram bot
+    /// Telegram bot (송신)
     Telegram {
         /// Bot token (생략 시 TELEGRAM_BOT_TOKEN 환경변수)
         #[arg(long)]
@@ -462,6 +462,26 @@ enum NotifyCli {
         chat_id: Option<String>,
         #[arg(long)]
         text: String,
+    },
+    /// Discord Gateway 봇 — 채널/DM 메시지 수신 (WebSocket).
+    /// 다중 에이전트 시스템에서 채팅방 허브 역할.
+    DiscordListen {
+        /// Bot token (생략 시 DISCORD_BOT_TOKEN 환경변수)
+        #[arg(long)]
+        bot_token: Option<String>,
+        /// 특정 channel_id 만 수신 (없으면 봇이 속한 모든 channel + DM)
+        #[arg(long)]
+        channel_id: Option<u64>,
+        /// 받은 메시지를 L0 messages 로 저장. session ID 또는 title 을 넘긴다
+        /// (`xgram session new --title <NAME>` 로 미리 생성).
+        #[arg(long)]
+        store_session: Option<String>,
+        /// 데이터 디렉토리 (store-session 사용 시; 기본 ~/.openxgram)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        /// 사람 친화 출력. 미지정 시 한 줄 JSON.
+        #[arg(long)]
+        pretty: bool,
     },
 }
 
@@ -477,6 +497,19 @@ impl From<NotifyCli> for NotifyAction {
                 bot_token,
                 chat_id,
                 text,
+            },
+            NotifyCli::DiscordListen {
+                bot_token,
+                channel_id,
+                store_session,
+                data_dir,
+                pretty,
+            } => NotifyAction::DiscordListen {
+                bot_token,
+                channel_id,
+                store_session,
+                data_dir,
+                pretty,
             },
         }
     }
@@ -1174,7 +1207,19 @@ async fn main() -> anyhow::Result<()> {
         },
 
         Commands::Notify { target } => {
-            notify::run_notify(target.into()).await?;
+            // store-session 모드는 data_dir 미지정 시 기본 경로로 보강.
+            let mut action: NotifyAction = target.into();
+            if let NotifyAction::DiscordListen {
+                store_session: Some(_),
+                data_dir,
+                ..
+            } = &mut action
+            {
+                if data_dir.is_none() {
+                    *data_dir = Some(resolve_data_dir(None)?);
+                }
+            }
+            notify::run_notify(action).await?;
         }
 
         Commands::BackupPush {

@@ -1,6 +1,6 @@
 [package]
 name = "openxgram-adapter"
-description = "Outbound message adapters (Discord/Telegram) for OpenXgram"
+description = "Outbound + inbound message adapters (Discord webhook+gateway, Telegram bot) for OpenXgram"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,6 +14,15 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true }
+chrono = { workspace = true }
+
+# Discord Gateway (양방향 수신) — twilight 0.17 stack.
+# rustls ring provider 를 명시 (twilight-gateway 가 default provider 미설정 시 panic).
+twilight-gateway = "0.17"
+twilight-model = "0.17"
+futures-util = "0.3"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 [dev-dependencies]
 wiremock = "0.6"
+tokio = { workspace = true }
