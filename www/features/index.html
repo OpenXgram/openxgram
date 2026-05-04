@@ -118,24 +118,24 @@
               <h3 data-i18n-ko>시나리오</h3>
               <h3 data-i18n-en>Scenario</h3>
               <p data-i18n-ko>
-                연구 에이전트가 arXiv API 와 데이터셋 호스트에 micropayment 를 보냅니다.
-                건당 $0.50, 일일 $20 한도. 한도 안에서는 자동, 넘으면 confirm.
+                연구 에이전트가 arXiv API 와 데이터셋 호스트에 소액(예: 건당 $0.50)을 자동 결제합니다.
+                일일 한도는 $20. 한도 안에서는 자동, 넘으면 사용자(나) 의 승인이 필요합니다.
               </p>
               <p data-i18n-en>
-                A research agent micropays arXiv mirrors and dataset hosts.
-                $0.50/call, $20/day cap. Inside the cap: auto. Above: confirm.
+                A research agent pays small amounts to arXiv mirrors and dataset hosts (e.g. $0.50 per call).
+                Daily cap $20. Inside the cap: auto. Above: requires your approval.
               </p>
             </div>
             <div class="card">
               <h3 data-i18n-ko>왜 Base 인가</h3>
               <h3 data-i18n-en>Why Base</h3>
               <ul class="clean dotted">
-                <li data-i18n-ko>가스비 거의 0, micropayment 현실적</li>
-                <li data-i18n-ko>EVM 호환 — 표준 지갑·툴체인 그대로</li>
-                <li data-i18n-ko>USDC — fiat 환산 직관적</li>
-                <li data-i18n-en>Near-zero gas, micropayments work</li>
-                <li data-i18n-en>EVM-compatible — standard wallets/tools</li>
-                <li data-i18n-en>USDC — intuitive fiat conversion</li>
+                <li data-i18n-ko>송금 수수료가 1원 미만 — 1달러 미만의 소액 결제도 부담 없음</li>
+                <li data-i18n-ko>표준 EVM 네트워크 — 일반 지갑·도구 그대로 사용</li>
+                <li data-i18n-ko>USDC 스테이블코인 — 실시간 환율 변동 없이 달러처럼 직관적</li>
+                <li data-i18n-en>Transfer fees under a cent — small payments work without overhead</li>
+                <li data-i18n-en>Standard EVM network — works with familiar wallets/tools</li>
+                <li data-i18n-en>USDC stablecoin — pegged to USD, no volatility surprise</li>
               </ul>
             </div>
           </div>
