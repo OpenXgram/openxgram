@@ -36,9 +36,15 @@ openxgram-vault = { path = "../../crates/openxgram-vault" }
 openxgram-memory = { path = "../../crates/openxgram-memory" }
 openxgram-peer = { path = "../../crates/openxgram-peer" }
 openxgram-payment = { path = "../../crates/openxgram-payment" }
+openxgram-orchestration = { path = "../../crates/openxgram-orchestration" }
+# CLI 의 notify_setup helper (telegram_get_me 등) 직접 사용.
+openxgram-cli = { path = "../../crates/openxgram-cli", default-features = false }
+serde_yaml = "0.9"
 
 [dev-dependencies]
 tempfile = "3"
+openxgram-orchestration = { path = "../../crates/openxgram-orchestration" }
+openxgram-cli = { path = "../../crates/openxgram-cli", default-features = false }
 
 [features]
 default = []
