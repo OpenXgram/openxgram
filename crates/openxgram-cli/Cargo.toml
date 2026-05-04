@@ -59,10 +59,10 @@ opentelemetry_sdk = { workspace = true }
 opentelemetry-otlp = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 futures-util = "0.3"
+reqwest = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
-reqwest = { workspace = true }
 serial_test = { workspace = true }
 nostr-relay-builder = "0.43"
 wiremock = "0.6"

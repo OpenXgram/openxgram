@@ -204,6 +204,33 @@
             Just follow the steps below. No external SaaS — the message goes only to <em>your</em> webhook/bot.
           </p>
 
+          <!-- One-line wizard sub-card (above the 5-step cards) -->
+          <div class="card" style="margin-top: 24px; border-style: dashed;">
+            <span class="tag">🪄 한 줄로 끝내기 · One-line wizard</span>
+            <h3 style="margin-top: 12px;" data-i18n-ko>봇 토큰만 붙여넣으면 끝 — 마법사가 검증·저장·테스트까지 자동</h3>
+            <h3 style="margin-top: 12px;" data-i18n-en>Paste the bot token — the wizard validates, saves, and sends a test message</h3>
+            <p data-i18n-ko style="margin-top: 8px;">
+              5단계 가이드를 직접 따라가지 않아도 됩니다. 두 마법사 중 하나만 실행하세요. 토큰을 검증한 뒤
+              Telegram 은 <code>chat_id</code> 를 자동으로 감지하고, 결과는 <code>~/.openxgram/notify.toml</code>
+              (perm 0600) 에 저장됩니다. 마지막에 테스트 메시지가 자동으로 전송됩니다.
+            </p>
+            <p data-i18n-en style="margin-top: 8px;">
+              No need to follow the 5-step cards by hand — run one of the wizards instead. After validating the token,
+              the Telegram wizard auto-detects your <code>chat_id</code>, persists everything to
+              <code>~/.openxgram/notify.toml</code> (perm 0600), and sends a test message at the end.
+            </p>
+<pre class="code" style="margin: 8px 0;"><span class="p">$</span> xgram notify setup-telegram   <span class="c"># 봇 토큰만 붙여넣으면 끝</span>
+<span class="p">$</span> xgram notify setup-discord    <span class="c"># 봇 토큰 + 서버 초대 안내 (webhook URL 옵션)</span></pre>
+            <p data-i18n-ko style="margin-top: 8px; opacity: 0.85;">
+              마법사가 토큰 검증 → chat_id 감지 → 저장 → 테스트 메시지까지 자동.
+              5단계 카드는 마법사가 동작하지 않을 때의 폴백입니다.
+            </p>
+            <p data-i18n-en style="margin-top: 8px; opacity: 0.85;">
+              The wizard handles token validation → chat_id detection → save → test message automatically.
+              The 5-step cards below remain as a fallback if you prefer to do it manually.
+            </p>
+          </div>
+
           <div class="grid grid-2" style="margin-top: 24px;">
             <!-- Discord card -->
             <div class="card">
