@@ -452,7 +452,7 @@ enum NotifyCli {
         #[arg(long)]
         text: String,
     },
-    /// Telegram bot (송신)
+    /// Telegram bot 송신 (sendMessage)
     Telegram {
         /// Bot token (생략 시 TELEGRAM_BOT_TOKEN 환경변수)
         #[arg(long)]
@@ -483,6 +483,24 @@ enum NotifyCli {
         #[arg(long)]
         pretty: bool,
     },
+    /// Telegram bot 받기 (long-polling, 양방향). 옵션으로 L0 message 저장.
+    TelegramListen {
+        /// Bot token (생략 시 TELEGRAM_BOT_TOKEN 환경변수)
+        #[arg(long)]
+        bot_token: Option<String>,
+        /// 이 chat_id 에서 온 메시지만 통과 (생략 시 모든 chat 수신)
+        #[arg(long)]
+        chat_id: Option<i64>,
+        /// 지정 시 OpenXgram L0 message 로 저장. session title 로 사용.
+        #[arg(long)]
+        store_session: Option<String>,
+        /// L0 저장 시 데이터 디렉토리 (기본: ~/.openxgram)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        /// 한 번만 polling 후 종료 (테스트·debug 용)
+        #[arg(long, default_value_t = false)]
+        once: bool,
+    },
 }
 
 impl From<NotifyCli> for NotifyAction {
@@ -510,6 +528,19 @@ impl From<NotifyCli> for NotifyAction {
                 store_session,
                 data_dir,
                 pretty,
+            },
+            NotifyCli::TelegramListen {
+                bot_token,
+                chat_id,
+                store_session,
+                data_dir,
+                once,
+            } => NotifyAction::TelegramListen {
+                bot_token,
+                chat_id_filter: chat_id,
+                store_session_title: store_session,
+                data_dir,
+                once,
             },
         }
     }

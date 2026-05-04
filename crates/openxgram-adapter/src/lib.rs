@@ -2,17 +2,19 @@
 //!
 //! - Discord webhook        : 송신 전용 (webhook 은 receive 미지원).
 //! - Discord Gateway (봇)   : 수신 (WebSocket) — 다중 에이전트 채팅방 허브.
-//! - Telegram bot           : 송신 (송신 양방향은 별도 PR).
+//! - Telegram bot           : 양방향 (sendMessage + getUpdates long-polling).
 //!
 //! Async fn in trait (Rust 1.75+ stable) 사용. dyn-compatibility 필요 시 호출자
 //! 측에서 BoxFuture 래핑.
 
 pub mod discord_gateway;
-
-pub use discord_gateway::{DiscordGatewayClient, DiscordIncomingMessage, GatewayError};
+pub mod telegram_bot;
 
 use serde::Serialize;
 use thiserror::Error;
+
+pub use discord_gateway::{DiscordGatewayClient, DiscordIncomingMessage, GatewayError};
+pub use telegram_bot::{TelegramBotAdapter, TelegramUpdate};
 
 #[derive(Debug, Error)]
 pub enum AdapterError {
@@ -62,61 +64,9 @@ impl Adapter for DiscordWebhookAdapter {
     }
 }
 
-// ── Telegram bot ─────────────────────────────────────────────────────────
-
-pub struct TelegramBotAdapter {
-    pub api_base: String,
-    pub bot_token: String,
-    pub chat_id: String,
-    client: reqwest::Client,
-}
-
-impl TelegramBotAdapter {
-    pub fn new(bot_token: impl Into<String>, chat_id: impl Into<String>) -> Self {
-        Self {
-            api_base: "https://api.telegram.org".into(),
-            bot_token: bot_token.into(),
-            chat_id: chat_id.into(),
-            client: reqwest::Client::new(),
-        }
-    }
-
-    /// 테스트·self-host 환경에서 API 베이스를 교체.
-    pub fn with_api_base(mut self, api_base: impl Into<String>) -> Self {
-        self.api_base = api_base.into();
-        self
-    }
-}
-
-#[derive(Serialize)]
-struct TelegramPayload<'a> {
-    chat_id: &'a str,
-    text: &'a str,
-}
-
-impl Adapter for TelegramBotAdapter {
-    async fn send_text(&self, text: &str) -> Result<()> {
-        let url = format!(
-            "{}/bot{}/sendMessage",
-            self.api_base.trim_end_matches('/'),
-            self.bot_token
-        );
-        let resp = self
-            .client
-            .post(&url)
-            .json(&TelegramPayload {
-                chat_id: &self.chat_id,
-                text,
-            })
-            .send()
-            .await?;
-        check_status(resp).await
-    }
-}
-
 // ── 공용 ────────────────────────────────────────────────────────────────
 
-async fn check_status(resp: reqwest::Response) -> Result<()> {
+pub(crate) async fn check_status(resp: reqwest::Response) -> Result<()> {
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();

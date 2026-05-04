@@ -37,22 +37,26 @@ async fn discord_listen_requires_bot_token() {
 
 #[tokio::test]
 #[serial_test::file_serial]
-async fn discord_listen_store_without_data_dir_raises() {
-    // bot_token 은 있고 store_session 도 있지만 data_dir 미지정 → raise.
+async fn discord_listen_store_session_validates_before_connect() {
+    // bot_token 은 있고 store_session 도 있다. data_dir 미지정이면 ~/.openxgram 으로
+    // resolve 후 DB 부재 raise. 어쨌든 Gateway 연결 전에 실패해야 한다.
     clear_env();
+    // 존재하지 않는 디렉토리를 명시 — 항상 DB 부재 raise.
     let err = run_notify(NotifyAction::DiscordListen {
         bot_token: Some("dummy.token.value".into()),
         channel_id: None,
         store_session: Some("nonexistent-session".into()),
-        data_dir: None,
+        data_dir: Some(std::path::PathBuf::from(
+            "/tmp/openxgram-discord-listen-test-no-such-dir",
+        )),
         pretty: false,
     })
     .await
     .unwrap_err();
     let msg = format!("{err:#}");
     assert!(
-        msg.contains("data_dir") || msg.contains("data-dir") || msg.contains("디렉토리"),
-        "expected data_dir error, got: {msg}"
+        msg.contains("DB") || msg.contains("xgram init") || msg.contains("미존재"),
+        "expected DB-not-found / init error before Gateway connect, got: {msg}"
     );
 }
 
