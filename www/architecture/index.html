@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Architecture — OpenXgram</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='8' fill='%237df9c5'/%3E%3C/svg%3E" />
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container row">
+        <a class="brand" href="/"><span class="dot"></span><span>OpenXgram</span></a>
+        <nav class="nav">
+          <a href="/">Home</a>
+          <a href="/features/">Features</a>
+          <a href="/quickstart/">Quickstart</a>
+          <a href="/usecases/">Use cases</a>
+          <a href="/architecture/">Architecture</a>
+          <a href="/docs/">Docs</a>
+          <button class="lang-toggle" type="button">EN</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero" style="padding: 56px 0 24px;">
+        <div class="container">
+          <div class="kicker">Architecture</div>
+          <h1 data-i18n-ko>코어, 저장소, 전송, 표면.</h1>
+          <h1 data-i18n-en>Core, store, transport, surface.</h1>
+          <p class="lead muted" data-i18n-ko>각 레이어가 독립적으로 교체 가능해야 한다 — 그래서 단순함이 가장 중요하다.</p>
+          <p class="lead muted" data-i18n-en>Every layer must be replaceable on its own — that's why simplicity matters most.</p>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
+          <div class="kicker">Memory pipeline</div>
+          <h2 data-i18n-ko>5층 메모리 파이프라인</h2>
+          <h2 data-i18n-en>5-layer memory pipeline</h2>
+          <div class="diagram">
+            <svg viewBox="0 0 800 280" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Memory pipeline">
+              <g font-family="ui-monospace, Menlo, monospace" font-size="13">
+                <rect x="20"  y="20"  width="140" height="60" rx="8" fill="#161a26" stroke="#7df9c5"/>
+                <text x="35" y="55" fill="#7df9c5">user / agent</text>
+
+                <rect x="200" y="20"  width="140" height="60" rx="8" fill="#161a26" stroke="#8ab4ff"/>
+                <text x="215" y="55" fill="#8ab4ff">L0 messages</text>
+
+                <rect x="380" y="20"  width="140" height="60" rx="8" fill="#161a26" stroke="#ff6cab"/>
+                <text x="395" y="55" fill="#ff6cab">L1 episodes</text>
+
+                <rect x="560" y="20"  width="220" height="60" rx="8" fill="#161a26" stroke="#f5c97b"/>
+                <text x="575" y="55" fill="#f5c97b">L2 memories (pin)</text>
+
+                <rect x="200" y="120" width="140" height="60" rx="8" fill="#161a26" stroke="#ff6cab"/>
+                <text x="215" y="155" fill="#ff6cab">L3 patterns</text>
+
+                <rect x="380" y="120" width="140" height="60" rx="8" fill="#161a26" stroke="#7df9c5"/>
+                <text x="395" y="155" fill="#7df9c5">L4 traits</text>
+
+                <rect x="20"  y="200" width="760" height="60" rx="8" fill="#0d1018" stroke="#232838"/>
+                <text x="35" y="235" fill="#cdd3e0">SQLite + sqlite-vec — single file. BGE-small embeddings. secp256k1 signatures.</text>
+
+                <!-- arrows -->
+                <path d="M160 50 L195 50" stroke="#7df9c5" fill="none" marker-end="url(#a)"/>
+                <path d="M340 50 L375 50" stroke="#8ab4ff" fill="none" marker-end="url(#a)"/>
+                <path d="M520 50 L555 50" stroke="#ff6cab" fill="none" marker-end="url(#a)"/>
+                <path d="M270 80 L270 115" stroke="#f5c97b" fill="none" marker-end="url(#a)"/>
+                <path d="M340 150 L375 150" stroke="#ff6cab" fill="none" marker-end="url(#a)"/>
+                <defs><marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#cdd3e0"/></marker></defs>
+              </g>
+            </svg>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
+          <div class="kicker">Vault</div>
+          <h2 data-i18n-ko>Vault — 4단계 보안</h2>
+          <h2 data-i18n-en>Vault — four lines of defense</h2>
+          <div class="grid grid-2">
+            <div class="card"><h3>1 · Disk</h3><p data-i18n-ko>AES-256-GCM 암호화, scrypt KDF (N=2^17). seed.enc + vault.db 분리 저장.</p><p data-i18n-en>AES-256-GCM at rest, scrypt KDF (N=2^17). seed.enc and vault.db kept separate.</p></div>
+            <div class="card"><h3>2 · Field</h3><p data-i18n-ko>각 secret에 고유 nonce + ACL 태그. 같은 DB 접근 권한도 필드 단위로 차단.</p><p data-i18n-en>Per-secret nonce + ACL tag. Even with DB access, fields stay locked.</p></div>
+            <div class="card"><h3>3 · Transport</h3><p data-i18n-ko>peer 간 통신은 Noise/TLS. 모든 메시지에 secp256k1 서명 → 위변조 차단.</p><p data-i18n-en>Peer comms over Noise/TLS, every message secp256k1-signed.</p></div>
+            <div class="card"><h3>4 · In-memory</h3><p data-i18n-ko>secret 객체는 zeroize on drop, mlock으로 swap 차단, no-debug derive.</p><p data-i18n-en>Secrets zeroize on drop, mlock prevents swap, no Debug derives.</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
+          <div class="kicker">Audit</div>
+          <h2 data-i18n-ko>감사 체인</h2>
+          <h2 data-i18n-en>Audit chain</h2>
+          <p data-i18n-ko>모든 vault 작업과 결제는 append-only 로그에 기록되며, 각 엔트리는 이전 엔트리의 해시를 포함합니다 (단방향 체인).</p>
+          <p data-i18n-en>Every vault op and payment is appended to a log; each entry includes the previous entry's hash (hash chain).</p>
+          <div class="diagram">
+            <svg viewBox="0 0 800 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Audit chain">
+              <g font-family="ui-monospace, Menlo, monospace" font-size="12">
+                <rect x="20"  y="30" width="160" height="60" rx="8" fill="#161a26" stroke="#7df9c5"/>
+                <text x="35" y="55" fill="#7df9c5">entry n-1</text>
+                <text x="35" y="75" fill="#98a0b3">hash a83f..</text>
+
+                <rect x="220" y="30" width="160" height="60" rx="8" fill="#161a26" stroke="#8ab4ff"/>
+                <text x="235" y="55" fill="#8ab4ff">entry n</text>
+                <text x="235" y="75" fill="#98a0b3">prev=a83f.. sig=..</text>
+
+                <rect x="420" y="30" width="160" height="60" rx="8" fill="#161a26" stroke="#ff6cab"/>
+                <text x="435" y="55" fill="#ff6cab">entry n+1</text>
+                <text x="435" y="75" fill="#98a0b3">prev=9c1a.. sig=..</text>
+
+                <rect x="620" y="30" width="160" height="60" rx="8" fill="#161a26" stroke="#f5c97b"/>
+                <text x="635" y="55" fill="#f5c97b">verify root</text>
+                <text x="635" y="75" fill="#98a0b3">oxg vault verify</text>
+
+                <path d="M180 60 L215 60" stroke="#cdd3e0" fill="none"/>
+                <path d="M380 60 L415 60" stroke="#cdd3e0" fill="none"/>
+                <path d="M580 60 L615 60" stroke="#cdd3e0" fill="none"/>
+              </g>
+            </svg>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
+          <div class="kicker">Stack</div>
+          <h2 data-i18n-ko>Tauri 데스크톱 스택</h2>
+          <h2 data-i18n-en>Tauri desktop stack</h2>
+          <ul class="clean dotted">
+            <li data-i18n-ko>코어 데몬 — Rust 단일 바이너리, IPC over local socket</li>
+            <li data-i18n-ko>TUI — ratatui, 헤드리스 머신/SSH 환경에서 즉시 사용</li>
+            <li data-i18n-ko>GUI (Phase 2) — Tauri + React, 같은 IPC 클라이언트 재사용</li>
+            <li data-i18n-ko>저장소 — SQLite + sqlite-vec, OS 키체인은 seed.enc 보호용으로만</li>
+            <li data-i18n-ko>전송 — IPC → Tailscale → XMTP → Nostr 단계적 확장</li>
+            <li data-i18n-en>Core daemon — single Rust binary, IPC over local socket</li>
+            <li data-i18n-en>TUI — ratatui, ready for headless / SSH</li>
+            <li data-i18n-en>GUI (Phase 2) — Tauri + React reusing the same IPC client</li>
+            <li data-i18n-en>Storage — SQLite + sqlite-vec; OS keychain only protects seed.enc</li>
+            <li data-i18n-en>Transport — IPC → Tailscale → XMTP → Nostr, layered</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container row">
+        <div>© 2026 OpenXgram contributors</div>
+        <div class="mono">v0.1.0.0-alpha.1</div>
+      </div>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quickstart — OpenXgram</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='8' fill='%237df9c5'/%3E%3C/svg%3E" />
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container row">
+        <a class="brand" href="/"><span class="dot"></span><span>OpenXgram</span></a>
+        <nav class="nav">
+          <a href="/">Home</a>
+          <a href="/features/">Features</a>
+          <a href="/quickstart/">Quickstart</a>
+          <a href="/usecases/">Use cases</a>
+          <a href="/architecture/">Architecture</a>
+          <a href="/docs/">Docs</a>
+          <button class="lang-toggle" type="button">EN</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero" style="padding: 56px 0 24px;">
+        <div class="container">
+          <div class="kicker">Quickstart</div>
+          <h1 data-i18n-ko>5분 안에 첫 메시지부터 vault까지.</h1>
+          <h1 data-i18n-en>From first message to vault in five minutes.</h1>
+          <p class="lead muted" data-i18n-ko>모든 명령은 단일 바이너리 <code class="inline">oxg</code>로 실행됩니다. 네트워크 호출은 명시적으로만 일어납니다.</p>
+          <p class="lead muted" data-i18n-en>Everything runs through one binary, <code class="inline">oxg</code>. No surprise network calls.</p>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
+          <h2 data-i18n-ko>1 · 설치</h2>
+          <h2 data-i18n-en>1 · Install</h2>
+          <p data-i18n-ko>현재는 소스 빌드를 권장합니다 (alpha).</p>
+          <p data-i18n-en>Source build for now (alpha).</p>
+<pre class="code"><span class="p">$</span> git <span class="k">clone</span> https://github.com/openxgram/openxgram
+<span class="p">$</span> <span class="k">cd</span> openxgram
+<span class="p">$</span> cargo build --release
+<span class="p">$</span> <span class="k">install</span> target/release/oxg ~/.local/bin/</pre>
+
+          <h2 data-i18n-ko>2 · 초기화</h2>
+          <h2 data-i18n-en>2 · Initialize</h2>
+          <p data-i18n-ko>BIP39 시드를 생성하고 로컬 vault·메모리 DB를 만듭니다.</p>
+          <p data-i18n-en>Generates a BIP39 seed and creates the local vault + memory DB.</p>
+<pre class="code"><span class="p">$</span> oxg init
+<span class="c"># → ~/.openxgram/seed.enc , memory.db , vault.db 생성</span>
+<span class="p">$</span> oxg whoami
+<span class="s">npub1xxxx... (machine: kai-mbp)</span></pre>
+
+          <h2 data-i18n-ko>3 · 첫 메시지</h2>
+          <h2 data-i18n-en>3 · First message</h2>
+          <p data-i18n-ko>L0 messages → L1 episode가 자동 생성됩니다.</p>
+          <p data-i18n-en>L0 messages auto-bind into an L1 episode.</p>
+<pre class="code"><span class="p">$</span> oxg say <span class="s">"hello, world"</span>
+<span class="p">$</span> oxg recall --query <span class="s">"hello"</span>
+<span class="s">[L0 #1] hello, world          (sig ok, episode ep-001)</span></pre>
+
+          <h2 data-i18n-ko>4 · Vault put / get</h2>
+          <h2 data-i18n-en>4 · Vault put / get</h2>
+          <p data-i18n-ko>API 키를 안전하게 저장하고, 정책에 따라 다른 에이전트에 노출합니다.</p>
+          <p data-i18n-en>Store an API key, expose it to other agents per policy.</p>
+<pre class="code"><span class="p">$</span> oxg vault put openai.api_key
+<span class="c"># prompt: paste the secret (echo off)</span>
+<span class="p">$</span> oxg vault get openai.api_key --as agent:eno
+<span class="s">sk-proj-xxxxxxxxxxxx</span>
+<span class="p">$</span> oxg vault policy set openai.api_key --tier confirm --daily-limit 100</pre>
+
+          <h2 data-i18n-ko>5 · Peer 추가</h2>
+          <h2 data-i18n-en>5 · Add a peer</h2>
+          <p data-i18n-ko>다른 머신·에이전트와 같은 기억을 공유하려면 peer로 등록합니다.</p>
+          <p data-i18n-en>Share memory with another machine or agent by adding it as a peer.</p>
+<pre class="code"><span class="p">$</span> oxg peer add nostr://npub1abc...xyz --label workstation
+<span class="p">$</span> oxg peer ls
+<span class="s">workstation   nostr://npub1abc...xyz   trusted</span>
+<span class="p">$</span> oxg sync push --to workstation
+<span class="s">[ok] 124 messages, 12 memories signed and pushed</span></pre>
+
+          <hr class="sep" />
+          <p data-i18n-ko>다음 단계: <a href="/usecases/">실제 사례 →</a></p>
+          <p data-i18n-en>Next: <a href="/usecases/">real-world cases →</a></p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container row">
+        <div>© 2026 OpenXgram contributors</div>
+        <div class="mono">v0.1.0.0-alpha.1</div>
+      </div>
+    </footer>
+  </body>
+</html>

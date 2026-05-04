@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use openxgram_cli::audit::{self, AuditAction};
 use openxgram_cli::backup::{
     create_cold_backup, resolve_backup_target, restore_cold_backup, restore_cold_backup_merge,
 };
@@ -311,6 +312,14 @@ enum Commands {
         data_dir: Option<PathBuf>,
         #[command(subcommand)]
         action: PaymentCli,
+    },
+
+    /// audit chain 무결성·체크포인트 관리 (PRD-AUDIT-03)
+    Audit {
+        #[arg(long, global = true)]
+        data_dir: Option<PathBuf>,
+        #[command(subcommand)]
+        cmd: AuditCli,
     },
 
     /// 자체 호스팅 Nostr relay (PRD-NOSTR-06) — 다른 머신과 메시지 중계
@@ -832,6 +841,16 @@ enum PatternsCli {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum AuditCli {
+    /// chain 무결성 + 체크포인트 서명 검증
+    Verify,
+    /// chain hash 가 누락된 audit row 에 backfill (master 패스워드 불필요)
+    Backfill,
+    /// 현재 chain 끝 seq 까지 master 서명 체크포인트 생성 (master 패스워드 필요)
+    Checkpoint,
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum ClassificationArg {
     New,
@@ -1286,6 +1305,19 @@ async fn main() -> anyhow::Result<()> {
         Commands::Patterns { data_dir, action } => {
             let dir = resolve_data_dir(data_dir)?;
             patterns::run_patterns(&dir, action.into())?;
+        }
+
+        Commands::Audit { data_dir, cmd } => {
+            let dir = resolve_data_dir(data_dir)?;
+            let report = match cmd {
+                AuditCli::Verify => audit::run_audit(&dir, AuditAction::Verify)?,
+                AuditCli::Backfill => audit::run_audit(&dir, AuditAction::Backfill)?,
+                AuditCli::Checkpoint => {
+                    let pw = openxgram_core::env::require_password()?;
+                    audit::run_audit_checkpoint(&dir, &pw)?
+                }
+            };
+            println!("{report}");
         }
 
         Commands::Wizard => {
