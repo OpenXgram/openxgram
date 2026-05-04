@@ -34,13 +34,13 @@
           <h1 data-i18n-en>Conversations break.<br />Data leaks out.</h1>
           <p class="lead" data-i18n-ko>
             Claude · ChatGPT · Gemini 사이를 오갈 때마다 컨텍스트가 사라지고,
-            메모리 SaaS 는 당신의 데이터를 자기 서버에 임베딩합니다.
-            <strong>OpenXgram 은 어떤 AI 든 같은 기억을 이어가게 하면서, 블록체인 기반 암호화로 데이터를 당신의 머신 밖으로 절대 내보내지 않습니다.</strong>
+            기존 메모리 SaaS(Mem0·Zep 등)를 쓰면 사용자의 데이터가 그들의 서버에 임베딩으로 남습니다.
+            <strong>OpenXgram 은 다릅니다 — 어떤 AI 든 같은 기억을 이어가지만, 모든 데이터가 사용자(나) 의 기기 안에서만 머무릅니다. 블록체인 기반 암호화로 외부 서버로 전송되지 않습니다.</strong>
           </p>
           <p class="lead" data-i18n-en>
             Every time you move between Claude, ChatGPT, Gemini, the context vanishes —
-            and memory SaaS embeds your data on a third-party server.
-            <strong>OpenXgram keeps the same memory across any AI, while blockchain-grade encryption ensures data never leaves your machines.</strong>
+            and existing memory SaaS (Mem0, Zep, etc.) embed your data on their own third-party servers.
+            <strong>OpenXgram is different — the same memory carries across any AI, but all of it stays on your machine. Blockchain-grade encryption means nothing is ever sent to an external server.</strong>
           </p>
         </div>
       </section>
@@ -87,22 +87,24 @@
             </div>
 
             <div class="card">
-              <span class="tag">pain · cloud lock-in</span>
-              <h3 data-i18n-ko>"메모리 SaaS 가 내 데이터를 본다"</h3>
-              <h3 data-i18n-en>"My memory SaaS reads everything"</h3>
+              <span class="tag">pain · 다른 서비스의 문제</span>
+              <h3 data-i18n-ko>"클라우드 메모리 서비스를 쓰면 내 데이터가 그들 서버로 간다"</h3>
+              <h3 data-i18n-en>"Cloud memory SaaS reads everything you store"</h3>
               <p data-i18n-ko>
-                Mem0·Zep 등은 메모리를 클라우드에 저장합니다. 회사 비밀, 개인 일기, 클라이언트 자료가
-                제3자 서버에 임베딩되어 들어갑니다.
+                <strong>다른 서비스(Mem0 · Zep 등)를 쓸 경우</strong> — 사용자가 저장한 메모리가 그들의 클라우드 서버로 전송됩니다.
+                회사 비밀·개인 기록·클라이언트 자료가 모두 제3자 서버에 임베딩 형태로 남고, 한 번 올라간 데이터는 통제할 수 없습니다.
               </p>
               <p data-i18n-en>
-                Mem0, Zep et al. store memory in the cloud. Company secrets, journals, client data
-                end up embedded on a third-party server.
+                <strong>If you use other services (Mem0, Zep, etc.)</strong> — your stored memory is sent to their cloud servers.
+                Company secrets, personal notes, client data all end up embedded on a third-party server, and once uploaded, you lose control.
               </p>
               <hr class="sep"/>
-              <p data-i18n-ko><strong>OpenXgram:</strong> 단일 SQLite 파일 + sqlite-vec, 임베딩(BGE-small)도 로컬.
-                Nostr 동기화도 자체 호스팅 relay 가능. 데이터가 사용자 기기를 떠나지 않습니다.</p>
-              <p data-i18n-en><strong>OpenXgram:</strong> a single SQLite file + sqlite-vec, embeddings (BGE-small) run locally.
-                Even Nostr sync can use a self-hosted relay. Data never leaves your machine.</p>
+              <p data-i18n-ko><strong>OpenXgram 은 정반대입니다.</strong> 모든 메모리·임베딩이 사용자(나) 의 기기 안 단일 SQLite 파일에만 저장됩니다.
+                BGE-small 임베딩 모델도 로컬에서 실행됩니다. 외부 서버로 전송되는 데이터는 0 입니다.
+                다른 기기와 동기화할 때도 사용자가 직접 운영하는 Nostr relay 위에서 블록체인 암호화로 주고받습니다.</p>
+              <p data-i18n-en><strong>OpenXgram is the exact opposite.</strong> All memory and embeddings live in a single SQLite file on your own machine.
+                The BGE-small embedding model runs locally. Zero data is transmitted to any external server.
+                Even cross-device sync runs over your self-hosted Nostr relay with blockchain-grade encryption.</p>
             </div>
 
             <div class="card">
