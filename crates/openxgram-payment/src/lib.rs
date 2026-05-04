@@ -18,7 +18,10 @@ pub mod alloy_bridge;
 pub mod chain;
 pub mod erc20;
 pub mod evm_nonce;
+pub mod limits;
 pub mod submit;
+
+pub use limits::{DailyLimit, DailyLimitStore};
 
 use chrono::{DateTime, FixedOffset};
 use openxgram_core::time::kst_now;
