@@ -101,12 +101,9 @@ async fn run_telegram_setup(opts: SetupOpts) -> Result<()> {
     println!("  📱 본인 Telegram 에서 @{bot_username} 에게 아무 메시지 (예: /start)");
 
     let chat_id = if is_noninteractive() {
-        std::env::var(SETUP_CHAT_ID_ENV)
-            .map_err(|_| {
-                anyhow!(
-                    "비대화 모드 — 환경변수 {SETUP_CHAT_ID_ENV} 가 필요합니다 (chat_id)"
-                )
-            })?
+        std::env::var(SETUP_CHAT_ID_ENV).map_err(|_| {
+            anyhow!("비대화 모드 — 환경변수 {SETUP_CHAT_ID_ENV} 가 필요합니다 (chat_id)")
+        })?
     } else {
         match telegram_detect_chat_id(
             &api_base,
@@ -159,10 +156,7 @@ async fn run_discord_setup(opts: SetupOpts) -> Result<()> {
     println!("  📋 New Application → Bot 탭 → MESSAGE CONTENT INTENT 활성");
     println!("  📋 Bot → Reset Token → 복사\n");
 
-    let token = read_token_or_env(
-        "봇 토큰을 붙여넣고 Enter (예: MTI...): ",
-        SETUP_TOKEN_ENV,
-    )?;
+    let token = read_token_or_env("봇 토큰을 붙여넣고 Enter (예: MTI...): ", SETUP_TOKEN_ENV)?;
 
     let api_base = discord_api_base();
     let bot = discord_get_me(&api_base, &token)
@@ -185,17 +179,12 @@ async fn run_discord_setup(opts: SetupOpts) -> Result<()> {
     }
 
     println!("\n3단계 ─ 채널 ID (옵션, 개발자 모드 → 채널 우클릭 → ID 복사)");
-    let channel_id = read_optional_or_env(
-        "채널 ID (생략 가능, Enter 만): ",
-        SETUP_CHANNEL_ENV,
-    )?;
+    let channel_id = read_optional_or_env("채널 ID (생략 가능, Enter 만): ", SETUP_CHANNEL_ENV)?;
 
     println!("\n4단계 ─ Webhook URL (옵션, 송신용)");
     println!("  채널 설정 → 연동 → 웹훅 만들기 → URL 복사");
-    let webhook_url = read_optional_or_env(
-        "webhook URL (생략 가능, Enter 만): ",
-        SETUP_WEBHOOK_ENV,
-    )?;
+    let webhook_url =
+        read_optional_or_env("webhook URL (생략 가능, Enter 만): ", SETUP_WEBHOOK_ENV)?;
 
     println!("\n5단계 ─ 저장 + 테스트");
     let mut config = NotifyConfig::load(opts.data_dir.as_deref())?;
@@ -329,18 +318,16 @@ async fn telegram_detect_chat_id(
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            bail!(
-                "Telegram getUpdates HTTP {} : {}",
-                status.as_u16(),
-                body
-            );
+            bail!("Telegram getUpdates HTTP {} : {}", status.as_u16(), body);
         }
         let parsed: TelegramGetUpdatesResp = resp.json().await?;
         if !parsed.ok {
             bail!("Telegram getUpdates ok=false");
         }
         if let Some(updates) = parsed.result {
-            if let Some(first) = updates.into_iter().find_map(|u| u.message.map(|m| m.chat.id))
+            if let Some(first) = updates
+                .into_iter()
+                .find_map(|u| u.message.map(|m| m.chat.id))
             {
                 return Ok(Some(first));
             }
@@ -646,7 +633,9 @@ fn parse_kv(line: &str) -> Option<(String, String)> {
     let (k, rest) = line.split_once('=')?;
     let key = k.trim().to_string();
     let value_raw = rest.trim();
-    let unquoted = value_raw.strip_prefix('"').and_then(|s| s.strip_suffix('"'))?;
+    let unquoted = value_raw
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))?;
     let value = unquoted.replace("\\\"", "\"").replace("\\\\", "\\");
     Some((key, value))
 }

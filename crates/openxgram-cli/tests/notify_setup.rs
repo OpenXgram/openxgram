@@ -5,9 +5,7 @@
 //! - `TELEGRAM_API_BASE` / `DISCORD_API_BASE` 환경변수로 mock 서버 교체.
 //! - `data_dir` 옵션을 tempdir 으로 격리해 `~/.openxgram/notify.toml` 오염 방지.
 
-use openxgram_cli::notify_setup::{
-    run_setup, NotifyConfig, SetupOpts, SetupTarget,
-};
+use openxgram_cli::notify_setup::{run_setup, NotifyConfig, SetupOpts, SetupTarget};
 use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -114,7 +112,10 @@ async fn telegram_setup_rejects_invalid_token() {
 
     clear_setup_env();
     let msg = format!("{err:#}");
-    assert!(msg.contains("getMe") || msg.contains("Telegram"), "msg={msg}");
+    assert!(
+        msg.contains("getMe") || msg.contains("Telegram"),
+        "msg={msg}"
+    );
     // 토큰이 검증되지 않았으니 notify.toml 도 저장되지 않아야 한다.
     assert!(!tmp.path().join("notify.toml").exists());
 }
