@@ -8,6 +8,7 @@ use openxgram_cli::backup::{
     create_cold_backup, resolve_backup_target, restore_cold_backup, restore_cold_backup_merge,
 };
 use openxgram_cli::backup_push::{self, BackupPushOpts, BackupTarget};
+use openxgram_cli::channel::{self, ChannelAction};
 use openxgram_cli::daemon::{self, DaemonOpts};
 use openxgram_cli::doctor::{self, DoctorOpts};
 use openxgram_cli::dump;
@@ -357,6 +358,60 @@ enum Commands {
         /// JSON 으로 출력 (다른 도구 통합용)
         #[arg(long)]
         json: bool,
+    },
+
+    /// 내장 Channel MCP 서버 (다중 에이전트 채팅 라우팅 허브) — Starian channel-mcp 호환
+    Channel {
+        #[command(subcommand)]
+        cmd: ChannelCli,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ChannelCli {
+    /// HTTP 서버 기동 (loopback 만 허용 — 절대 규칙)
+    Serve {
+        /// 바인딩 주소 (기본 127.0.0.1:7250). 0.0.0.0 등 외부 바인딩 금지.
+        #[arg(long, default_value = "127.0.0.1:7250")]
+        bind: String,
+        /// Bearer 인증 토큰 (생략 시 인증 없음 — loopback 만 신뢰)
+        #[arg(long)]
+        auth_token: Option<String>,
+    },
+    /// 기동 중인 서버에 메시지 전송 (role 라우팅 또는 platform 직접)
+    Send {
+        #[arg(long, default_value = "http://127.0.0.1:7250")]
+        server: String,
+        #[arg(long)]
+        auth_token: Option<String>,
+        /// peer registry 의 role (예: eno / qua / master)
+        #[arg(long)]
+        to_role: Option<String>,
+        /// platform 직접 (discord / telegram / slack / kakaotalk)
+        #[arg(long)]
+        platform: Option<String>,
+        #[arg(long)]
+        channel_id: Option<String>,
+        #[arg(long)]
+        text: String,
+        #[arg(long)]
+        reply_to: Option<String>,
+        #[arg(long, default_value = "info")]
+        msg_type: String,
+    },
+    /// 등록된 어댑터 목록
+    ListAdapters {
+        #[arg(long, default_value = "http://127.0.0.1:7250")]
+        server: String,
+        #[arg(long)]
+        auth_token: Option<String>,
+    },
+    /// 등록된 peer (역할별) 목록
+    ListPeers {
+        #[arg(long, default_value = "http://127.0.0.1:7250")]
+        server: String,
+        #[arg(long)]
+        auth_token: Option<String>,
     },
 }
 
@@ -1635,6 +1690,38 @@ async fn main() -> anyhow::Result<()> {
                     println!("  {name} {ver}");
                 }
             }
+        }
+
+        Commands::Channel { cmd } => {
+            let action = match cmd {
+                ChannelCli::Serve { bind, auth_token } => ChannelAction::Serve { bind, auth_token },
+                ChannelCli::Send {
+                    server,
+                    auth_token,
+                    to_role,
+                    platform,
+                    channel_id,
+                    text,
+                    reply_to,
+                    msg_type,
+                } => ChannelAction::Send {
+                    server,
+                    auth_token,
+                    to_role,
+                    platform,
+                    channel_id,
+                    text,
+                    reply_to,
+                    msg_type,
+                },
+                ChannelCli::ListAdapters { server, auth_token } => {
+                    ChannelAction::ListAdapters { server, auth_token }
+                }
+                ChannelCli::ListPeers { server, auth_token } => {
+                    ChannelAction::ListPeers { server, auth_token }
+                }
+            };
+            channel::run(action).await?;
         }
     }
 
