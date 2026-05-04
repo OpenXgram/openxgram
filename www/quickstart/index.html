@@ -192,6 +192,70 @@
 
       <section>
         <div class="container">
+          <div class="kicker">사람도 같은 채팅방에</div>
+          <h2 data-i18n-ko>Discord · Telegram 연결 — 사람도 함께</h2>
+          <h2 data-i18n-en>Connect Discord · Telegram — humans in the loop</h2>
+          <p data-i18n-ko>
+            AI 에이전트가 무언가 결정하거나 승인이 필요할 때, 사용자(나) 의 휴대폰에 즉시 알림이 오게 하세요.
+            <code>xgram notify</code> 명령은 Discord webhook 또는 Telegram bot 으로 메시지를 보냅니다 — 외부 SaaS 가 아닌, 사용자(나) 가 만든 webhook/bot 으로만 직접 전송합니다.
+            모든 로직은 사용자 기기 안에서 도는 xgram 바이너리가 담당합니다.
+          </p>
+          <p data-i18n-en>
+            Get instant phone alerts when an agent decides or needs approval. <code>xgram notify</code> sends to <em>your own</em> Discord webhook or Telegram bot — no external SaaS, the local xgram binary is the only sender.
+          </p>
+
+          <h3 data-i18n-ko>Discord webhook 연결</h3>
+          <h3 data-i18n-en>Discord webhook</h3>
+          <p data-i18n-ko>1) Discord 서버 → 채널 설정 → 연동 → Webhook 만들기 → URL 복사. 2) xgram 명령 또는 환경변수에 등록.</p>
+          <p data-i18n-en>1) Discord server → Channel settings → Integrations → New Webhook → copy URL. 2) Pass to xgram via flag or env var.</p>
+<pre class="code"><span class="c"># 1회 직접 호출</span>
+<span class="p">$</span> xgram notify discord <span class="s">--webhook-url https://discord.com/api/webhooks/&lt;ID&gt;/&lt;TOKEN&gt;</span> \
+    <span class="s">--text "에이전트가 vault put 승인을 요청합니다"</span>
+
+<span class="c"># 환경변수에 등록 (~/.bashrc 등) — 이후 --webhook-url 생략 가능</span>
+<span class="p">$</span> <span class="k">export</span> DISCORD_WEBHOOK_URL=<span class="s">"https://discord.com/api/webhooks/&lt;ID&gt;/&lt;TOKEN&gt;"</span>
+<span class="p">$</span> xgram notify discord <span class="s">--text "approve?"</span></pre>
+
+          <h3 data-i18n-ko>Telegram bot 연결</h3>
+          <h3 data-i18n-en>Telegram bot</h3>
+          <p data-i18n-ko>1) <code>@BotFather</code> 에서 <code>/newbot</code> → 봇 토큰 받기. 2) 본인 chat_id 확인 (예: <code>@userinfobot</code>). 3) xgram 명령 또는 환경변수에 등록.</p>
+          <p data-i18n-en>1) Talk to <code>@BotFather</code>, run <code>/newbot</code>, get bot token. 2) Find your chat_id (e.g. <code>@userinfobot</code>). 3) Pass to xgram via flag or env var.</p>
+<pre class="code"><span class="c"># 1회 직접 호출</span>
+<span class="p">$</span> xgram notify telegram <span class="s">--bot-token 12345:abcdef --chat-id 123456789</span> \
+    <span class="s">--text "결제 한도 초과 — 사용자 승인 필요"</span>
+
+<span class="c"># 환경변수에 등록</span>
+<span class="p">$</span> <span class="k">export</span> TELEGRAM_BOT_TOKEN=<span class="s">"12345:abcdef"</span>
+<span class="p">$</span> <span class="k">export</span> TELEGRAM_CHAT_ID=<span class="s">"123456789"</span>
+<span class="p">$</span> xgram notify telegram <span class="s">--text "approve?"</span></pre>
+
+          <h3 data-i18n-ko>AI 가 자동으로 알림 보내게 하기</h3>
+          <h3 data-i18n-en>Wire it into your AI</h3>
+          <p data-i18n-ko>
+            CLAUDE.md / .cursorrules / 시스템 지침에 다음 한 줄을 추가하면, AI 가 중요한 결정·승인 요청·에러 발생 시 자동으로 사용자(나) 에게 메시지를 보냅니다.
+          </p>
+          <p data-i18n-en>
+            Add this line to your CLAUDE.md / .cursorrules / system prompt — the AI will ping you automatically on decisions, approval requests, or errors.
+          </p>
+<pre class="code"><span class="c"># OpenXgram 알림 규칙 (CLAUDE.md / .cursorrules 등에 추가)</span>
+
+- 사용자(나) 의 승인이 필요한 작업이 생기면, 즉시:
+  <span class="k">xgram notify discord --text "&lt;상황 한 줄 요약 + 결정 옵션&gt;"</span>
+  <span class="k">xgram notify telegram --text "&lt;같은 메시지&gt;"</span>
+- 작업 완료/실패 보고도 동일 명령으로
+- 외부 webhook 은 사용자(나) 가 만든 것만 사용 — 다른 곳에 절대 전송 금지</pre>
+
+          <p data-i18n-ko>
+            이렇게 하면 사용자(나) 가 자리에 없어도 휴대폰으로 AI 의 진행 상황·승인 요청을 받고, OpenXgram CLI 로 다시 응답할 수 있습니다 — 양방향 휴먼-에이전트 협업.
+          </p>
+          <p data-i18n-en>
+            With this in place, the agent reaches your phone for decisions and progress while you're away — and you respond by running xgram commands locally. Two-way human-agent collaboration.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
           <div class="kicker">Cross-LLM 이동</div>
           <h2 data-i18n-ko>모델 갈아타기 — 같은 기억 그대로</h2>
           <h2 data-i18n-en>Switching models — same memory, intact</h2>
