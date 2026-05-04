@@ -1,6 +1,7 @@
 //! xgram CLI library — init/uninstall/doctor 등의 핵심 흐름.
 //! main.rs(바이너리)와 통합 테스트가 공유한다.
 
+pub mod age_backup;
 pub mod audit;
 pub mod backup;
 pub mod backup_push;
@@ -14,12 +15,14 @@ pub mod memory;
 pub mod migrate;
 pub mod nostr_inbound;
 pub mod notify;
+pub mod otel;
 pub mod patterns;
 pub mod payment;
 pub mod peer;
 pub mod peer_send;
 pub mod ratchet_cron;
 pub mod reset;
+pub mod retention;
 pub mod session;
 pub mod status;
 pub mod systemd;
