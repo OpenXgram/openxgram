@@ -266,8 +266,34 @@
 <pre class="code" style="margin: 6px 0;"><span class="p">$</span> xgram notify telegram <span class="s">--text "hello from OpenXgram"</span></pre>
                 </li>
               </ol>
+
+              <div style="margin-top: 16px; padding: 12px; border: 1px solid var(--border, #2a3142); border-radius: 8px; background: var(--bg-soft, rgba(0,128,255,0.05));">
+                <strong data-i18n-ko>받기 · 양방향 (long-polling)</strong>
+                <strong data-i18n-en>Receive · bidirectional (long-polling)</strong>
+                <p style="margin: 8px 0;" data-i18n-ko>
+                  휴대폰 텔레그램에서 봇에 메시지를 보내면 OpenXgram 이 long-polling 으로 받아 <strong>L0 message</strong> 로 저장합니다 — AI 가 다음 회상 시 자연스럽게 참조.
+                </p>
+                <p style="margin: 8px 0;" data-i18n-en>
+                  Send a message to the bot from your phone's Telegram and OpenXgram receives it via long-polling, storing it as an <strong>L0 message</strong> — the AI references it on the next recall.
+                </p>
+<pre class="code" style="margin: 6px 0;"><span class="c"># 받기만 (stdout 출력)</span>
+<span class="p">$</span> xgram notify telegram-listen
+
+<span class="c"># 받은 메시지를 L0 message 로 저장 — AI 가 회상에서 참조 가능</span>
+<span class="p">$</span> xgram notify telegram-listen <span class="s">--store-session "tg-inbox"</span>
+
+<span class="c"># 특정 chat_id 만 필터링</span>
+<span class="p">$</span> xgram notify telegram-listen <span class="s">--chat-id 123456789 --store-session "tg-inbox"</span></pre>
+              </div>
             </div>
           </div>
+
+          <p style="margin-top: 16px; opacity: 0.85;" data-i18n-ko>
+            <strong>Discord 한계 (정직):</strong> 현재 Discord 통합은 <em>송신 전용</em>입니다 (webhook 기반). 받기는 봇 게이트웨이 WebSocket 의존성이 커서 후속 PR 로 분리했습니다 — 양방향이 필요하면 우선 Telegram 을 사용하세요.
+          </p>
+          <p style="margin-top: 16px; opacity: 0.85;" data-i18n-en>
+            <strong>Discord limitation (honest):</strong> the current Discord integration is <em>send-only</em> (webhook-based). Receive requires a bot gateway WebSocket and is deferred to a follow-up PR — use Telegram if you need bidirectional today.
+          </p>
 
           <h3 style="margin-top: 32px;" data-i18n-ko>AI 가 자동으로 알리게 — 한 줄이면 끝</h3>
           <h3 style="margin-top: 32px;" data-i18n-en>Make the AI ping you automatically — one line</h3>
