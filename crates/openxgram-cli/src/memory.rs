@@ -3,12 +3,22 @@
 //! Phase 1: 간단 CRUD. 회상 점수·임베딩 통합·NEW/RECURRING/ROUTINE
 //! 분류기는 후속 PR.
 
+use std::fs;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use openxgram_core::paths::db_path;
 use openxgram_db::{Db, DbConfig};
-use openxgram_memory::{MemoryKind, MemoryStore};
+use openxgram_memory::{
+    export_claude, import_claude, parse_claude, MemoryKind, MemoryStore,
+};
+
+/// memory export/import 포맷.
+#[derive(Debug, Clone, Copy)]
+pub enum MemoryExportFmt {
+    /// Claude 호환 markdown (카테고리별 entry, single code block).
+    Claude,
+}
 
 #[derive(Debug, Clone)]
 pub enum MemoryAction {
@@ -69,6 +79,49 @@ pub fn run_memory(data_dir: &Path, action: MemoryAction) -> Result<()> {
         MemoryAction::Unpin { id } => {
             store.set_pinned(&id, false)?;
             println!("✓ unpinned: {id}");
+        }
+    }
+    Ok(())
+}
+
+/// L2 memories + L4 traits 를 Claude 호환 markdown 으로 export.
+/// `output` 이 Some 이면 파일에 기록, None 이면 stdout.
+pub fn run_export(data_dir: &Path, output: Option<&Path>, fmt: MemoryExportFmt) -> Result<()> {
+    let mut db = open_db(data_dir)?;
+    match fmt {
+        MemoryExportFmt::Claude => {
+            let exp = export_claude(&mut db).context("Claude export 실패")?;
+            let md = exp.render_markdown();
+            match output {
+                Some(p) => {
+                    fs::write(p, &md)
+                        .with_context(|| format!("export 파일 쓰기 실패 ({})", p.display()))?;
+                    println!("✓ export 완료 → {}", p.display());
+                }
+                None => {
+                    print!("{md}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Claude 호환 markdown 파일을 읽어 memories/traits 를 import.
+pub fn run_import(data_dir: &Path, input: &Path, fmt: MemoryExportFmt) -> Result<()> {
+    if !input.exists() {
+        bail!("import 입력 파일 미존재 ({})", input.display());
+    }
+    let text = fs::read_to_string(input)
+        .with_context(|| format!("import 파일 읽기 실패 ({})", input.display()))?;
+    let mut db = open_db(data_dir)?;
+    match fmt {
+        MemoryExportFmt::Claude => {
+            let parsed = parse_claude(&text);
+            let summary = import_claude(&mut db, &parsed).context("Claude import 실패")?;
+            println!("✓ import 완료");
+            println!("  memories  : {}", summary.memories_inserted);
+            println!("  traits    : {}", summary.traits_inserted);
         }
     }
     Ok(())
