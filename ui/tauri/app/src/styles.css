@@ -100,3 +100,181 @@ input:focus-visible {
 
 /* Improve muted-text contrast (was #666 on white = 5.7:1, now 7:1+) */
 .muted { color: var(--fg-dim); }
+
+/* ── App layout ──────────────────────────────────────────────────────────── */
+.app-shell {
+  padding: 16px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  gap: 8px;
+}
+.app-title { margin: 0; font-size: 18px; }
+
+/* ── Tab navigation ──────────────────────────────────────────────────────── */
+.tabnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.tabnav button {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.tabnav button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* ── Cards & sections ────────────────────────────────────────────────────── */
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  background: var(--bg);
+}
+.card-soft {
+  background: var(--bg-soft);
+}
+.card h2,
+.card h3 { margin-top: 0; }
+.section-title {
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+/* ── Forms ───────────────────────────────────────────────────────────────── */
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.form-row label {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.form-row input[type="text"],
+.form-row input[type="number"],
+.form-row input:not([type]),
+.form-row select,
+.form-row textarea {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 14px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.form-row textarea {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 13px;
+  min-height: 140px;
+  resize: vertical;
+}
+.form-row select:focus-visible,
+.form-row textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+
+.row-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+/* ── Badges & status pills ───────────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--fg-dim);
+}
+.badge.ok {
+  border-color: #2a8a3e;
+  background: #e8f5ec;
+  color: #1a5a2a;
+}
+.badge.warn {
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+  color: #5a4710;
+}
+.badge.err {
+  border-color: var(--danger);
+  background: #fdecef;
+  color: var(--danger);
+}
+
+/* ── Lists ───────────────────────────────────────────────────────────────── */
+.plain-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.plain-list > li {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+/* ── Inline error / hint ─────────────────────────────────────────────────── */
+.error-text {
+  color: var(--danger);
+  font-size: 13px;
+  margin: 4px 0 0;
+}
+.hint {
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
+/* ── Stats grid ──────────────────────────────────────────────────────────── */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.stat-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  text-align: center;
+  background: var(--bg-soft);
+}
+.stat-card .stat-value {
+  font-size: 22px;
+  font-weight: 600;
+  display: block;
+}
+.stat-card .stat-label {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+/* ── Responsive (small windows / tablets) ────────────────────────────────── */
+@media (max-width: 640px) {
+  .app-shell { padding: 10px; }
+  .tabnav button { font-size: 12px; padding: 5px 8px; }
+}

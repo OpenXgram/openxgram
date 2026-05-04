@@ -214,14 +214,14 @@ async fn run_discord_setup(opts: SetupOpts) -> Result<()> {
 
 // ── HTTP helpers ─────────────────────────────────────────────────────────
 
-fn telegram_api_base() -> String {
+pub fn telegram_api_base() -> String {
     std::env::var(TELEGRAM_API_BASE_ENV)
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| TELEGRAM_API_BASE_DEFAULT.into())
 }
 
-fn discord_api_base() -> String {
+pub fn discord_api_base() -> String {
     std::env::var(DISCORD_API_BASE_ENV)
         .ok()
         .filter(|s| !s.is_empty())
@@ -238,12 +238,12 @@ struct TelegramGetMeResp {
 }
 
 #[derive(Debug, Deserialize)]
-struct TelegramBotInfo {
+pub struct TelegramBotInfo {
     #[serde(default)]
-    username: Option<String>,
+    pub username: Option<String>,
 }
 
-async fn telegram_get_me(api_base: &str, token: &str) -> Result<TelegramBotInfo> {
+pub async fn telegram_get_me(api_base: &str, token: &str) -> Result<TelegramBotInfo> {
     let url = format!("{}/bot{}/getMe", api_base.trim_end_matches('/'), token);
     let resp = reqwest::Client::new()
         .get(&url)
@@ -292,7 +292,7 @@ struct TelegramRawChat {
     id: i64,
 }
 
-async fn telegram_detect_chat_id(
+pub async fn telegram_detect_chat_id(
     api_base: &str,
     token: &str,
     max_attempts: u32,
@@ -337,7 +337,7 @@ async fn telegram_detect_chat_id(
     Ok(None)
 }
 
-async fn telegram_send(api_base: &str, token: &str, chat_id: &str, text: &str) -> Result<()> {
+pub async fn telegram_send(api_base: &str, token: &str, chat_id: &str, text: &str) -> Result<()> {
     let url = format!(
         "{}/bot{}/sendMessage",
         api_base.trim_end_matches('/'),
@@ -363,14 +363,14 @@ async fn telegram_send(api_base: &str, token: &str, chat_id: &str, text: &str) -
 }
 
 #[derive(Debug, Deserialize)]
-struct DiscordUserResp {
+pub struct DiscordUserResp {
     #[serde(default)]
-    username: Option<String>,
+    pub username: Option<String>,
     #[serde(default)]
-    discriminator: Option<String>,
+    pub discriminator: Option<String>,
 }
 
-async fn discord_get_me(api_base: &str, token: &str) -> Result<DiscordUserResp> {
+pub async fn discord_get_me(api_base: &str, token: &str) -> Result<DiscordUserResp> {
     let url = format!("{}/users/@me", api_base.trim_end_matches('/'));
     let resp = reqwest::Client::new()
         .get(&url)
@@ -387,7 +387,7 @@ async fn discord_get_me(api_base: &str, token: &str) -> Result<DiscordUserResp> 
     Ok(resp.json().await?)
 }
 
-async fn discord_send_webhook(url: &str, text: &str) -> Result<()> {
+pub async fn discord_send_webhook(url: &str, text: &str) -> Result<()> {
     #[derive(serde::Serialize)]
     struct Payload<'a> {
         content: &'a str,
