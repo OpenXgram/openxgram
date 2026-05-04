@@ -1,0 +1,24 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "OpenXgram main window capabilities (PRD-TAURI-02 보안 — 와일드카드 금지)",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-clear",
+    "notification:default",
+    "store:default",
+    "global-shortcut:default",
+    {
+      "identifier": "stronghold:allow-load",
+      "allow": [{ "path": "$APPDATA/openxgram/stronghold.snapshot" }]
+    },
+    "updater:default",
+    {
+      "identifier": "core:webview:allow-create-webview",
+      "deny": [{ "label": "*" }]
+    }
+  ]
+}
