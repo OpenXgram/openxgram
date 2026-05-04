@@ -16,6 +16,7 @@ members = [
     "crates/openxgram-nostr",
     "crates/openxgram-orchestration",
     "crates/openxgram-channel",
+    "crates/openxgram-did",
     "crates/openxgram-cli",
 ]
 # ui/tauri 는 platform 의존(webkit2gtk 등) 이라 워크스페이스 외부.
