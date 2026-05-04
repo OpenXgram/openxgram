@@ -28,6 +28,7 @@ openxgram-adapter = { path = "../openxgram-adapter" }
 openxgram-mcp = { path = "../openxgram-mcp" }
 openxgram-memory = { path = "../openxgram-memory" }
 openxgram-nostr = { path = "../openxgram-nostr" }
+openxgram-orchestration = { path = "../openxgram-orchestration" }
 openxgram-peer = { path = "../openxgram-peer" }
 openxgram-payment = { path = "../openxgram-payment" }
 openxgram-scheduler = { path = "../openxgram-scheduler" }
@@ -60,6 +61,7 @@ opentelemetry-otlp = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 futures-util = "0.3"
 reqwest = { workspace = true }
+serde_yaml = "0.9"
 
 [dev-dependencies]
 tempfile = "3"

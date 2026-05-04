@@ -17,6 +17,7 @@ use openxgram_cli::memory::{self, MemoryAction};
 use openxgram_cli::migrate::{self, MigrateOpts};
 use openxgram_cli::notify::{self, ChannelMode, NotifyAction};
 use openxgram_cli::notify_setup::{self, SetupOpts, SetupTarget};
+use openxgram_cli::orchestration::{self, ChainAction, ScheduleAction};
 use openxgram_cli::patterns::{self, PatternsAction};
 use openxgram_cli::payment::{self, PaymentAction};
 use openxgram_cli::peer::{self, PeerAction};
@@ -337,6 +338,22 @@ enum Commands {
         /// 동시 연결 제한
         #[arg(long)]
         max_connections: Option<usize>,
+    },
+
+    /// 예약 메시지 — 특정 시각 또는 cron 표현식으로 미래 전송 (PRD-ORCH-01)
+    Schedule {
+        #[arg(long, global = true)]
+        data_dir: Option<PathBuf>,
+        #[command(subcommand)]
+        action: ScheduleAction,
+    },
+
+    /// 메시지 체인 — 순차 단계 + 조건 분기 (PRD-ORCH-01)
+    Chain {
+        #[arg(long, global = true)]
+        data_dir: Option<PathBuf>,
+        #[command(subcommand)]
+        action: ChainAction,
     },
 
     /// 쉘 자동 완성 스크립트 출력 (bash/zsh/fish/elvish/powershell)
@@ -1721,6 +1738,16 @@ async fn main() -> anyhow::Result<()> {
                 .map_err(|e| anyhow::anyhow!("ctrl_c handler: {e}"))?;
             println!("shutting down relay");
             relay.shutdown();
+        }
+
+        Commands::Schedule { data_dir, action } => {
+            let dir = resolve_data_dir(data_dir)?;
+            orchestration::run_schedule(&dir, action)?;
+        }
+
+        Commands::Chain { data_dir, action } => {
+            let dir = resolve_data_dir(data_dir)?;
+            orchestration::run_chain(&dir, action)?;
         }
 
         Commands::Completions { shell } => {

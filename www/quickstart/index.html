@@ -427,6 +427,75 @@
 
       <section>
         <div class="container">
+          <div class="kicker" data-i18n-ko>오케스트레이션</div>
+          <div class="kicker" data-i18n-en>Orchestration</div>
+          <h2 data-i18n-ko>예약 메시지 + 체인 메시지 — 다중 에이전트 워크플로우</h2>
+          <h2 data-i18n-en>Scheduled messages + message chains — multi-agent workflows</h2>
+          <p data-i18n-ko>
+            AI 들이 자동으로 협업하도록 시간·조건 기반 라우팅을 제공합니다.
+            특정 시각 또는 cron 표현식으로 미래 메시지를 예약하고 (KST 기준),
+            여러 단계를 직렬로 묶어 응답에 따라 분기시킵니다.
+          </p>
+          <p data-i18n-en>
+            Time- and condition-based routing so agents collaborate autonomously.
+            Schedule future messages by absolute time or cron (KST), or chain steps with delays
+            and response-based branching.
+          </p>
+<pre class="code"><span class="c"># 1) 1회 예약 — 2026-05-05 09:00 KST 에 res 에이전트로</span>
+<span class="p">$</span> xgram schedule once <span class="s">--at "2026-05-05T09:00:00+09:00"</span> \
+    <span class="s">--to-role res --text "morning briefing"</span>
+
+<span class="c"># 2) 반복 예약 — 매일 09:00 KST 디스코드 채널로</span>
+<span class="p">$</span> xgram schedule cron <span class="s">"0 9 * * *"</span> \
+    <span class="s">--to-platform discord --channel-id 12345 --text "daily standup"</span>
+
+<span class="c"># 3) 예약 목록 / 취소 / 도달분 수동 실행</span>
+<span class="p">$</span> xgram schedule list
+<span class="p">$</span> xgram schedule cancel <span class="s">&lt;id&gt;</span>
+<span class="p">$</span> xgram schedule run-pending</pre>
+          <p data-i18n-ko>
+            <strong>체인 (chain).</strong> YAML 파일에 단계를 적고 한 번에 실행. 직전 응답에 키워드가 있으면 다음 단계 진행 — <code>response_contains</code> / <code>response_not_contains</code>.
+          </p>
+          <p data-i18n-en>
+            <strong>Chain.</strong> Define steps in YAML, run once. Branch on prior response keywords using <code>response_contains</code> / <code>response_not_contains</code>.
+          </p>
+<pre class="code"><span class="c"># chain.yaml</span>
+name: morning-routine
+steps:
+  - to_role: master
+    text: <span class="s">"오늘 일정 어떠세요?"</span>
+    delay_secs: 0
+  - to_role: res
+    text: <span class="s">"오늘 뉴스 요약 부탁"</span>
+    delay_secs: 30
+  - to_platform: discord
+    channel_id: <span class="s">"12345"</span>
+    text: <span class="s">"✓ standup 시작"</span>
+    condition_kind: response_contains
+    condition_value: <span class="s">"ok"</span>
+
+<span class="c"># 등록 → 실행</span>
+<span class="p">$</span> xgram chain create <span class="s">--file chain.yaml</span>
+<span class="p">$</span> xgram chain list
+<span class="p">$</span> xgram chain show morning-routine
+<span class="p">$</span> xgram chain run morning-routine</pre>
+          <p data-i18n-ko>
+            <strong>저장소.</strong> SQLite 마이그레이션 0016 — <code>scheduled_messages</code> + <code>message_chains</code> + <code>chain_steps</code>. 모든 시간은 KST. 실패 시 <code>last_error</code> 컬럼 + <code>status='failed'</code> 로 기록 (silent fallback 금지).
+          </p>
+          <p data-i18n-en>
+            <strong>Storage.</strong> SQLite migration 0016 — <code>scheduled_messages</code> + <code>message_chains</code> + <code>chain_steps</code>. All timestamps in KST. Failures recorded in <code>last_error</code> with <code>status='failed'</code> (no silent fallbacks).
+          </p>
+          <p data-i18n-ko style="opacity: 0.75; font-size: 0.9em;">
+            구현 노트 — <code>ChannelSender</code> trait 가 송신 추상화입니다. <code>xgram chain run</code> 은 현재 <code>NoopSender</code> (dry-run) 로 동작하며, channel-mcp 어댑터의 <code>RouteEngine</code> 가 이 trait 를 구현하면 자동으로 실 송신으로 연결됩니다.
+          </p>
+          <p data-i18n-en style="opacity: 0.75; font-size: 0.9em;">
+            Implementation note — sending is abstracted by the <code>ChannelSender</code> trait. <code>xgram chain run</code> currently uses <code>NoopSender</code> (dry-run); once the channel-mcp adapter's <code>RouteEngine</code> implements the trait it switches to real delivery.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
           <div class="kicker">Cross-LLM 이동</div>
           <h2 data-i18n-ko>모델 갈아타기 — 같은 기억 그대로</h2>
           <h2 data-i18n-en>Switching models — same memory, intact</h2>
