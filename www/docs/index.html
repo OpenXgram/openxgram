@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Docs — OpenXgram</title>
+    <meta name="description" content="개발자를 위한 PRD · ADR · PR 링크." />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='8' fill='%237df9c5'/%3E%3C/svg%3E" />
     <script type="module" src="/src/main.ts"></script>
   </head>
@@ -13,6 +14,7 @@
         <a class="brand" href="/"><span class="dot"></span><span>OpenXgram</span></a>
         <nav class="nav">
           <a href="/">Home</a>
+          <a href="/why/">Why</a>
           <a href="/features/">Features</a>
           <a href="/quickstart/">Quickstart</a>
           <a href="/usecases/">Use cases</a>
@@ -24,67 +26,69 @@
     </header>
 
     <main>
-      <section class="hero" style="padding: 56px 0 24px;">
+      <section class="hero">
         <div class="container">
-          <div class="kicker">Docs</div>
-          <h1 data-i18n-ko>설계는 글로 남는다.</h1>
-          <h1 data-i18n-en>Design lives in writing.</h1>
-          <p class="lead muted" data-i18n-ko>모든 PRD와 ADR은 GitHub 저장소의 마크다운입니다 — 이 사이트는 진입점일 뿐.</p>
-          <p class="lead muted" data-i18n-en>All PRDs and ADRs live as markdown in the repo — this site is just an entry point.</p>
+          <div class="kicker" data-i18n-ko>개발자 문서</div>
+          <div class="kicker" data-i18n-en>Developer docs</div>
+          <h1 data-i18n-ko>PRD · ADR · PR.</h1>
+          <h1 data-i18n-en>PRD · ADR · PR.</h1>
+          <p class="lead" data-i18n-ko>OpenXgram 의 설계는 GitHub 에서 공개로 진행됩니다 — 어떤 AI 와도 같은 대화를 이어가는 인프라, 외부 정보 노출 없이.</p>
+          <p class="lead" data-i18n-en>OpenXgram is designed in the open on GitHub — infrastructure that keeps the same conversation across any AI, with zero data exposure.</p>
         </div>
       </section>
 
       <section>
         <div class="container">
-          <div class="kicker">PRDs</div>
-          <h2 data-i18n-ko>제품 요구사항 문서</h2>
-          <h2 data-i18n-en>Product Requirements Documents</h2>
-          <ul class="clean dotted">
-            <li><a href="https://github.com/openxgram/openxgram/tree/main/docs/prd" target="_blank" rel="noopener">docs/prd/ — 전체 PRD 인덱스</a></li>
-            <li data-i18n-ko>PRD-MEMORY — 5층 메모리 사양</li>
-            <li data-i18n-ko>PRD-VAULT — 자격 저장소·ACL·승인 정책</li>
-            <li data-i18n-ko>PRD-PAYMENT — USDC on Base 결제 흐름</li>
-            <li data-i18n-ko>PRD-NOSTR-01..07 — Nostr 통합 (베이스라인 → peer 스킴)</li>
-            <li data-i18n-ko>PRD-DESKTOP — Tauri 데스크톱 앱 (Phase 2)</li>
-            <li data-i18n-en>PRD-MEMORY — 5-layer memory spec</li>
-            <li data-i18n-en>PRD-VAULT — credential store, ACLs, approval tiers</li>
-            <li data-i18n-en>PRD-PAYMENT — USDC on Base payment flow</li>
-            <li data-i18n-en>PRD-NOSTR-01..07 — Nostr integration (baseline → peer scheme)</li>
-            <li data-i18n-en>PRD-DESKTOP — Tauri desktop app (Phase 2)</li>
-          </ul>
-        </div>
-      </section>
-
-      <section>
-        <div class="container">
-          <div class="kicker">ADRs</div>
-          <h2 data-i18n-ko>아키텍처 결정 기록</h2>
-          <h2 data-i18n-en>Architecture Decision Records</h2>
-          <ul class="clean dotted">
-            <li><a href="https://github.com/openxgram/openxgram/tree/main/docs/decisions" target="_blank" rel="noopener">docs/decisions/ — 전체 ADR 인덱스</a></li>
-            <li data-i18n-ko>왜 SQLite + sqlite-vec 인가 (단일 파일 단순함)</li>
-            <li data-i18n-ko>왜 BGE-small 인가 (로컬 / 768d / 다국어)</li>
-            <li data-i18n-ko>왜 secp256k1 인가 (Nostr/Bitcoin 호환)</li>
-            <li data-i18n-ko>왜 Tauri 인가 (Electron 대비 메모리·바이너리 크기)</li>
-            <li data-i18n-en>Why SQLite + sqlite-vec (single-file simplicity)</li>
-            <li data-i18n-en>Why BGE-small (local / 768d / multilingual)</li>
-            <li data-i18n-en>Why secp256k1 (Nostr/Bitcoin compatible)</li>
-            <li data-i18n-en>Why Tauri (memory + binary size vs Electron)</li>
-          </ul>
-        </div>
-      </section>
-
-      <section>
-        <div class="container">
-          <div class="kicker">Other</div>
-          <h2 data-i18n-ko>그 외</h2>
-          <h2 data-i18n-en>Other resources</h2>
-          <ul class="clean dotted">
-            <li><a href="https://github.com/openxgram/openxgram/blob/main/CHANGELOG.md" target="_blank" rel="noopener">CHANGELOG</a></li>
-            <li><a href="https://github.com/openxgram/openxgram/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">CONTRIBUTING</a></li>
-            <li><a href="https://github.com/openxgram/openxgram/blob/main/SECURITY.md" target="_blank" rel="noopener">SECURITY</a></li>
-            <li><a href="https://github.com/openxgram/openxgram/blob/main/CODE_OF_CONDUCT.md" target="_blank" rel="noopener">CODE_OF_CONDUCT</a></li>
-          </ul>
+          <div class="grid grid-3">
+            <div class="card">
+              <span class="tag">PRD</span>
+              <h3 data-i18n-ko>제품 요구 정의서</h3>
+              <h3 data-i18n-en>Product requirements</h3>
+              <p data-i18n-ko>각 기능 별 PRD 는 <code class="inline">docs/prd/</code> 에 있습니다.</p>
+              <p data-i18n-en>Per-feature PRDs live in <code class="inline">docs/prd/</code>.</p>
+              <p><a href="https://github.com/openxgram/openxgram/tree/main/docs/prd" target="_blank" rel="noopener">github.com/openxgram/openxgram/docs/prd ↗</a></p>
+            </div>
+            <div class="card">
+              <span class="tag">ADR</span>
+              <h3 data-i18n-ko>아키텍처 결정 기록</h3>
+              <h3 data-i18n-en>Architecture decisions</h3>
+              <p data-i18n-ko>왜 SQLite 인지, 왜 Base 인지, 왜 secp256k1 인지 — 결정 기록이 모두 있습니다.</p>
+              <p data-i18n-en>Why SQLite, why Base, why secp256k1 — every decision is recorded.</p>
+              <p><a href="https://github.com/openxgram/openxgram/tree/main/docs/decisions" target="_blank" rel="noopener">docs/decisions ↗</a></p>
+            </div>
+            <div class="card">
+              <span class="tag">PR</span>
+              <h3 data-i18n-ko>최근 PR</h3>
+              <h3 data-i18n-en>Recent PRs</h3>
+              <p data-i18n-ko>구현 진행은 PR 별로 확인하세요.</p>
+              <p data-i18n-en>Track implementation PR by PR.</p>
+              <p><a href="https://github.com/openxgram/openxgram/pulls" target="_blank" rel="noopener">github.com/openxgram/openxgram/pulls ↗</a></p>
+            </div>
+            <div class="card">
+              <span class="tag">checklists</span>
+              <h3 data-i18n-ko>체크리스트</h3>
+              <h3 data-i18n-en>Checklists</h3>
+              <p data-i18n-ko>릴리스·검증 체크리스트.</p>
+              <p data-i18n-en>Release and verification checklists.</p>
+              <p><a href="https://github.com/openxgram/openxgram/tree/main/docs/checklists" target="_blank" rel="noopener">docs/checklists ↗</a></p>
+            </div>
+            <div class="card">
+              <span class="tag">crates</span>
+              <h3 data-i18n-ko>Rust 워크스페이스</h3>
+              <h3 data-i18n-en>Rust workspace</h3>
+              <p data-i18n-ko>코어 데몬, 라이브러리, CLI.</p>
+              <p data-i18n-en>Core daemon, library, CLI.</p>
+              <p><a href="https://github.com/openxgram/openxgram/tree/main/crates" target="_blank" rel="noopener">crates/ ↗</a></p>
+            </div>
+            <div class="card">
+              <span class="tag">contribute</span>
+              <h3 data-i18n-ko>기여하기</h3>
+              <h3 data-i18n-en>Contribute</h3>
+              <p data-i18n-ko>이슈 · PR · RFC 환영. 한국어/영어 모두 OK.</p>
+              <p data-i18n-en>Issues, PRs, RFCs welcome. Korean and English both fine.</p>
+              <p><a href="https://github.com/openxgram/openxgram/issues" target="_blank" rel="noopener">issues ↗</a></p>
+            </div>
+          </div>
         </div>
       </section>
     </main>

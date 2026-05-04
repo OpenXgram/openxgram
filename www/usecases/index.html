@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Use cases — OpenXgram</title>
+    <meta name="description" content="어떤 AI 서비스에서든 같은 대화를 이어가는 5 가지 시나리오 — 모두 블록체인 기반 암호화 위에서, 외부에 정보 노출 없이." />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='8' fill='%237df9c5'/%3E%3C/svg%3E" />
     <script type="module" src="/src/main.ts"></script>
   </head>
@@ -13,6 +14,7 @@
         <a class="brand" href="/"><span class="dot"></span><span>OpenXgram</span></a>
         <nav class="nav">
           <a href="/">Home</a>
+          <a href="/why/">Why</a>
           <a href="/features/">Features</a>
           <a href="/quickstart/">Quickstart</a>
           <a href="/usecases/">Use cases</a>
@@ -24,171 +26,115 @@
     </header>
 
     <main>
-      <section class="hero" style="padding: 56px 0 24px;">
+      <section class="hero">
         <div class="container">
-          <div class="kicker">Use cases</div>
-          <h1 data-i18n-ko>현실 시나리오 다섯 가지.</h1>
-          <h1 data-i18n-en>Five real-world scenarios.</h1>
-          <p class="lead muted" data-i18n-ko>각 사례는 시나리오 → 명령 시퀀스 → 기대 결과 → 주의점으로 구성됩니다.</p>
-          <p class="lead muted" data-i18n-en>Each case: scenario → commands → expected result → caveats.</p>
+          <div class="kicker" data-i18n-ko>5 시나리오</div>
+          <div class="kicker" data-i18n-en>Five scenarios</div>
+          <h1 data-i18n-ko>어떤 AI 서비스든<br />같은 대화를 이어갑니다.</h1>
+          <h1 data-i18n-en>Continue the same conversation —<br />on any AI service.</h1>
+          <p class="lead" data-i18n-ko>다섯 가지 시나리오 모두, 블록체인 기반 암호화로 보호되며 데이터는 당신의 머신을 떠나지 않습니다.</p>
+          <p class="lead" data-i18n-en>All five scenarios run on blockchain-grade encryption — your data never leaves your machines.</p>
         </div>
       </section>
 
       <section>
         <div class="container">
-          <div class="kicker">Case 1</div>
-          <h2 data-i18n-ko>여러 머신에서 동일 ChatGPT 세션 이어가기</h2>
-          <h2 data-i18n-en>Continue the same ChatGPT session across machines</h2>
-          <h3 data-i18n-ko>시나리오</h3><h3 data-i18n-en>Scenario</h3>
-          <p data-i18n-ko>회사 노트북에서 시작한 대화를 집 데스크톱에서 그대로 이어가고 싶다. 모델·UI는 달라도 메모리는 같아야 한다.</p>
-          <p data-i18n-en>Start a conversation on your work laptop, pick it up at home — different model or UI, same memory.</p>
-          <h3 data-i18n-ko>명령</h3><h3 data-i18n-en>Commands</h3>
-<pre class="code"><span class="c"># laptop</span>
-<span class="p">$</span> oxg say <span class="s">"draft Q3 report intro"</span>
-<span class="p">$</span> oxg sync push --to home-desktop
+          <div class="grid grid-2">
 
-<span class="c"># desktop</span>
-<span class="p">$</span> oxg sync pull --from laptop
-<span class="p">$</span> oxg recall --episode latest
-<span class="s">[L1 ep-042] 12 messages — last: "draft Q3 report intro"</span>
-<span class="p">$</span> oxg say <span class="s">"continue from where we stopped"</span></pre>
-          <h3 data-i18n-ko>기대 결과</h3><h3 data-i18n-en>Expected result</h3>
-          <ul class="clean dotted">
-            <li data-i18n-ko>두 머신의 episode 타임라인이 머지됨 (서명 충돌 없음)</li>
-            <li data-i18n-ko>벡터 검색이 양쪽 메시지를 모두 찾음</li>
-            <li data-i18n-en>Episode timelines merged (no signature conflicts)</li>
-            <li data-i18n-en>Vector search finds messages from both sides</li>
-          </ul>
-          <h3 data-i18n-ko>주의점</h3><h3 data-i18n-en>Caveats</h3>
-          <ul class="clean dotted">
-            <li data-i18n-ko>peer를 먼저 trusted로 등록해야 sync가 자동 진행됩니다.</li>
-            <li data-i18n-en>The peer must be registered as trusted before sync auto-runs.</li>
-          </ul>
-        </div>
-      </section>
+            <div class="card">
+              <span class="tag">01</span>
+              <h3 data-i18n-ko>멀티에이전트 시스템에 영구 기억 붙이기</h3>
+              <h3 data-i18n-en>Persistent memory for a multi-agent system</h3>
+              <p data-i18n-ko>
+                연구·코딩·리뷰 에이전트 셋이 한 프로젝트에서 협업합니다.
+                각자 같은 L2 메모리에서 결정·사실을 읽고, 새 사실은 모두에게 즉시 보입니다.
+                재시작·교체에도 컨텍스트가 사라지지 않습니다.
+              </p>
+              <p data-i18n-en>
+                Research, code, review agents collaborate on one project.
+                They share an L2 memory; new facts surface to all of them at once.
+                Restart or swap an agent — context survives.
+              </p>
+            </div>
 
-      <section>
-        <div class="container">
-          <div class="kicker">Case 2</div>
-          <h2 data-i18n-ko>Vault로 API 키 안전 공유 (마스터 승인 정책)</h2>
-          <h2 data-i18n-en>Share an API key safely via Vault (master approval)</h2>
-          <h3 data-i18n-ko>시나리오</h3><h3 data-i18n-en>Scenario</h3>
-          <p data-i18n-ko>Eno(코딩 에이전트)가 OpenAI API를 써야 한다. 키를 평문으로 넘기지 않고, 호출마다 정책 검증을 거치게 한다.</p>
-          <p data-i18n-en>Eno (the coding agent) needs OpenAI API access. Never hand it a plaintext key — gate each call by policy.</p>
-          <h3 data-i18n-ko>명령</h3><h3 data-i18n-en>Commands</h3>
-<pre class="code"><span class="p">$</span> oxg vault put openai.api_key --acl <span class="s">"agent:eno"</span> --tier confirm
-<span class="p">$</span> oxg vault policy set openai.api_key \
-    --daily-limit 200 --machine kai-mbp --machine kai-desktop
-<span class="p">$</span> oxg vault audit openai.api_key --since 1d
-<span class="s">[2026-05-04 09:11 KST] eno  GET ok   (sig 0x9a1c..)
-[2026-05-04 09:42 KST] eno  GET deny (over daily-limit)</span></pre>
-          <h3 data-i18n-ko>기대 결과</h3><h3 data-i18n-en>Expected result</h3>
-          <ul class="clean dotted">
-            <li data-i18n-ko>Eno가 키를 직접 보유하지 않고, 매 호출 vault에 요청 → 정책 통과 시만 노출</li>
-            <li data-i18n-ko>한도 초과 시 confirm 프롬프트가 마스터에게 도달</li>
-            <li data-i18n-en>Eno never holds the key; it asks vault each call, only released if policy passes</li>
-            <li data-i18n-en>Past the cap, a confirm prompt is routed to the operator</li>
-          </ul>
-          <h3 data-i18n-ko>주의점</h3><h3 data-i18n-en>Caveats</h3>
-          <ul class="clean dotted">
-            <li data-i18n-ko>tier=auto는 편하지만 감사만 남고 차단은 없으니, 외부 API에는 confirm 이상을 권장.</li>
-            <li data-i18n-en>tier=auto only logs — never use it for outbound APIs; prefer confirm or higher.</li>
-          </ul>
-        </div>
-      </section>
+            <div class="card">
+              <span class="tag">02</span>
+              <h3 data-i18n-ko>에이전트가 안전하게 API 키를 사용</h3>
+              <h3 data-i18n-en>Agents using API keys safely</h3>
+              <p data-i18n-ko>
+                vault 가 토큰을 보관하고 호출을 직접 수행합니다.
+                일일 한도, ACL, 승인 정책으로 자율성과 안전을 동시에. 키가 컨텍스트에 떠다니지 않습니다.
+              </p>
+              <p data-i18n-en>
+                The vault holds tokens and performs the call itself.
+                Daily limit + ACL + approval policy give autonomy and safety together.
+                Keys never float around in context.
+              </p>
+            </div>
 
-      <section>
-        <div class="container">
-          <div class="kicker">Case 3</div>
-          <h2 data-i18n-ko>USDC 결제 자동화 (한도 + MFA)</h2>
-          <h2 data-i18n-en>USDC payments with limits + MFA</h2>
-          <h3 data-i18n-ko>시나리오</h3><h3 data-i18n-en>Scenario</h3>
-          <p data-i18n-ko>리서치 에이전트가 매일 자료 구독료를 결제한다. 잔돈 수준은 자동, 큰 금액은 MFA로.</p>
-          <p data-i18n-en>The research agent renews subscriptions daily. Pennies auto-pay, larger amounts require MFA.</p>
-          <h3 data-i18n-ko>명령</h3><h3 data-i18n-en>Commands</h3>
-<pre class="code"><span class="p">$</span> oxg pay policy set --currency usdc --network base \
-    --auto-under 5usdc --confirm-under 50usdc --mfa-over 50usdc \
-    --daily-cap 200usdc
+            <div class="card">
+              <span class="tag">03</span>
+              <h3 data-i18n-ko>Claude · ChatGPT · Gemini 어느 곳에서든 같은 대화</h3>
+              <h3 data-i18n-en>Same conversation in Claude, ChatGPT, Gemini</h3>
+              <p data-i18n-ko>
+                낮에는 Claude 로, 밤에는 ChatGPT 로, 주말엔 Gemini 로 — 같은 기억을 이어갑니다.
+                대화 본문은 블록체인 기반 키로 암호화되어 어떤 모델 제공자도 평문을 보지 못합니다.
+                새 모델이 나오면 한 줄 바꿔 즉시 채택.
+              </p>
+              <p data-i18n-en>
+                Day in Claude, night in ChatGPT, weekend in Gemini — same memory carries over.
+                Conversations are encrypted with blockchain-grade keys; no model provider sees the plaintext.
+                A new model launches? Change one line, adopt instantly.
+              </p>
+            </div>
 
-<span class="p">$</span> oxg pay send 0xPAPER... 3.20usdc --memo <span class="s">"arxiv pro renew"</span>
-<span class="s">[auto] tx 0x9c3a... confirmed in 2 blocks
-[memory] L2 receipt saved (kind=fact)</span>
+            <div class="card">
+              <span class="tag">04</span>
+              <h3 data-i18n-ko>에이전트 USDC 결제 자동화</h3>
+              <h3 data-i18n-en>Autonomous USDC payment</h3>
+              <p data-i18n-ko>
+                연구 에이전트가 데이터셋 호스트에 micropayment 를 보냅니다.
+                USDC on Base — 가스 거의 0. 한도 내에서 자동, 큰 금액은 confirm.
+                모든 결제는 audit chain 에 봉인.
+              </p>
+              <p data-i18n-en>
+                A research agent micropays dataset hosts.
+                USDC on Base — near-zero gas. Auto inside the cap, confirm above it.
+                Every payment is sealed into the audit chain.
+              </p>
+            </div>
 
-<span class="p">$</span> oxg pay send 0xVENDOR... 80usdc
-<span class="s">[mfa] open authenticator → enter code: ___</span></pre>
-          <h3 data-i18n-ko>기대 결과</h3><h3 data-i18n-en>Expected result</h3>
-          <ul class="clean dotted">
-            <li data-i18n-ko>모든 영수증이 L2 memory의 fact로 자동 저장 → "지난 달 구독비"를 자연어로 검색 가능</li>
-            <li data-i18n-en>Receipts persist as L2 facts; ask "last month subscription spend" in natural language</li>
-          </ul>
-          <h3 data-i18n-ko>주의점</h3><h3 data-i18n-en>Caveats</h3>
-          <ul class="clean dotted">
-            <li data-i18n-ko>최초 1회 카운터파티는 confirm으로 풀고 화이트리스트에 등록할 것.</li>
-            <li data-i18n-en>First-time counterparties: confirm once, then add to allowlist.</li>
-          </ul>
-        </div>
-      </section>
+            <div class="card">
+              <span class="tag">05</span>
+              <h3 data-i18n-ko>여러 머신에서 같은 에이전트팀 운영</h3>
+              <h3 data-i18n-en>Run the same team across machines</h3>
+              <p data-i18n-ko>
+                노트북·서버·오프라인 워크스테이션에서 같은 BIP44 신원을 사용합니다.
+                Nostr 채널(자체 호스팅 가능)로 메모리 동기화, 화이트리스트로 합류 통제.
+                한 머신을 잃어도 시드만 있으면 복원.
+              </p>
+              <p data-i18n-en>
+                Same BIP44 identity on laptop, server, offline workstation.
+                Sync over Nostr (self-hosted possible); whitelist gates the join.
+                Lose a machine — restore from the seed.
+              </p>
+            </div>
 
-      <section>
-        <div class="container">
-          <div class="kicker">Case 4</div>
-          <h2 data-i18n-ko>Nostr cross-network 메시지</h2>
-          <h2 data-i18n-en>Cross-network messaging via Nostr</h2>
-          <h3 data-i18n-ko>시나리오</h3><h3 data-i18n-en>Scenario</h3>
-          <p data-i18n-ko>다른 클라이언트(Damus 등)를 쓰는 친구에게 OpenXgram에서 직접 메시지를 보낸다. 같은 키, 다른 표면.</p>
-          <p data-i18n-en>Send a DM from OpenXgram to a friend on Damus. Same key, different surface.</p>
-          <h3 data-i18n-ko>명령</h3><h3 data-i18n-en>Commands</h3>
-<pre class="code"><span class="p">$</span> oxg peer add nostr://npub1friend...
-<span class="p">$</span> oxg relay add wss://relay.damus.io
-<span class="p">$</span> oxg send --to nostr://npub1friend... <span class="s">"hey, ratchet test"</span>
-<span class="s">[ok] event 0xa12... published to 3 relays
-[ratchet] sk rotated (epoch 7 → 8)</span></pre>
-          <h3 data-i18n-ko>기대 결과</h3><h3 data-i18n-en>Expected result</h3>
-          <ul class="clean dotted">
-            <li data-i18n-ko>친구의 일반 Nostr 클라이언트에서도 수신됨 (NIP-44 호환)</li>
-            <li data-i18n-ko>OpenXgram 측에는 L0 message + 서명 + ratchet epoch 기록</li>
-            <li data-i18n-en>Friend's stock Nostr client receives it (NIP-44 compatible)</li>
-            <li data-i18n-en>OpenXgram side records L0 message + signature + ratchet epoch</li>
-          </ul>
-          <h3 data-i18n-ko>주의점</h3><h3 data-i18n-en>Caveats</h3>
-          <ul class="clean dotted">
-            <li data-i18n-ko>릴레이를 자체 호스팅하면 검열 저항이 더 강해집니다 (PRD-NOSTR-06).</li>
-            <li data-i18n-en>Self-hosting a relay raises censorship resistance (PRD-NOSTR-06).</li>
-          </ul>
-        </div>
-      </section>
+            <div class="card">
+              <span class="tag">+ humans</span>
+              <h3 data-i18n-ko>에이전트 + 사람 협업</h3>
+              <h3 data-i18n-en>Humans in the loop</h3>
+              <p data-i18n-ko>
+                같은 방에 사람도 들어옵니다. 에이전트가 confirm 정책에 걸리면 사람에게 푸시,
+                사람이 직접 메시지를 던지면 에이전트가 받아서 작업합니다. 메신저 표면을 그대로 활용.
+              </p>
+              <p data-i18n-en>
+                Humans share the same room. A confirm-tier action pings a human;
+                a human-typed message lands at the agent. Use the messenger surface as-is.
+              </p>
+            </div>
 
-      <section>
-        <div class="container">
-          <div class="kicker">Case 5</div>
-          <h2 data-i18n-ko>5층 메모리로 에이전트 학습 관리</h2>
-          <h2 data-i18n-en>Manage agent learning with 5-layer memory</h2>
-          <h3 data-i18n-ko>시나리오</h3><h3 data-i18n-en>Scenario</h3>
-          <p data-i18n-ko>에이전트가 같은 실수를 반복한다. 패턴으로 끌어올리고, 야간 reflection으로 traits에 반영시켜 다음 세션부터 자동 회피.</p>
-          <p data-i18n-en>An agent keeps making the same mistake. Promote it to a pattern; nightly reflection bakes it into traits so future sessions avoid it.</p>
-          <h3 data-i18n-ko>명령</h3><h3 data-i18n-en>Commands</h3>
-<pre class="code"><span class="p">$</span> oxg memory add --kind rule \
-    <span class="s">"git push 전 항상 pre-commit 통과 확인"</span> --pin
-
-<span class="p">$</span> oxg pattern detect --since 7d
-<span class="s">[RECURRING] "skipped pre-commit" — seen 4 times</span>
-
-<span class="p">$</span> oxg reflect --tonight
-<span class="s">[L4 trait] cautious-deployer (confidence 0.81)</span>
-
-<span class="p">$</span> oxg recall --query <span class="s">"deploy 절차"</span>
-<span class="s">[rule pinned] git push 전 항상 pre-commit 통과 확인
-[trait]       cautious-deployer</span></pre>
-          <h3 data-i18n-ko>기대 결과</h3><h3 data-i18n-en>Expected result</h3>
-          <ul class="clean dotted">
-            <li data-i18n-ko>다음 세션에서 같은 종류 실수가 반복되면 prompt 단계에서 차단됨</li>
-            <li data-i18n-en>Next session catches the same mistake at prompt time, before it happens</li>
-          </ul>
-          <h3 data-i18n-ko>주의점</h3><h3 data-i18n-en>Caveats</h3>
-          <ul class="clean dotted">
-            <li data-i18n-ko>핀(pin)은 망각 회피 수단이지 맹신은 금물 — 정기적으로 가지치기.</li>
-            <li data-i18n-en>Pinning prevents forgetting, but isn't a guarantee — prune regularly.</li>
-          </ul>
+          </div>
         </div>
       </section>
     </main>

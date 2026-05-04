@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Features — OpenXgram</title>
+    <meta name="description" content="OpenXgram 5 핵심 기능: 다층 기억, vault, 결제, cross-LLM, 감사 chain." />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='8' fill='%237df9c5'/%3E%3C/svg%3E" />
     <script type="module" src="/src/main.ts"></script>
   </head>
@@ -13,6 +14,7 @@
         <a class="brand" href="/"><span class="dot"></span><span>OpenXgram</span></a>
         <nav class="nav">
           <a href="/">Home</a>
+          <a href="/why/">Why</a>
           <a href="/features/">Features</a>
           <a href="/quickstart/">Quickstart</a>
           <a href="/usecases/">Use cases</a>
@@ -24,158 +26,185 @@
     </header>
 
     <main>
-      <section class="hero" style="padding: 56px 0 24px;">
+      <section class="hero">
         <div class="container">
-          <div class="kicker">Features</div>
-          <h1 data-i18n-ko>모듈마다 분명한 책임.</h1>
-          <h1 data-i18n-en>Each module owns one clear job.</h1>
-          <p class="lead" data-i18n-ko>OpenXgram은 다섯 개의 핵심 시스템으로 구성된다. 각각은 독립적으로 동작하면서, 서명·암호화로 연결된다.</p>
-          <p class="lead" data-i18n-en>Five core systems, each operating independently, glued together by signatures and encryption.</p>
+          <div class="kicker" data-i18n-ko>5 핵심 기능</div>
+          <div class="kicker" data-i18n-en>Five core features</div>
+          <h1 data-i18n-ko>어떤 AI 든 같은 대화를<br />이어가는 다섯 가지 축.</h1>
+          <h1 data-i18n-en>Five pillars that carry<br />the same conversation across any AI.</h1>
+          <p class="lead" data-i18n-ko>Claude · ChatGPT · Gemini · 로컬 모델 — 어떤 AI 든 같은 기억으로. 블록체인 기반 암호화로 보호되며, 데이터는 외부로 노출되지 않고 당신의 머신에 남습니다.</p>
+          <p class="lead" data-i18n-en>Claude · ChatGPT · Gemini · local models — same memory across any AI. Blockchain-grade encryption keeps your data on your machines, never exposed.</p>
         </div>
       </section>
 
       <section>
         <div class="container">
-          <div class="kicker">Memory</div>
-          <h2 data-i18n-ko>5층 메모리 (L0 → L4)</h2>
-          <h2 data-i18n-en>5-layer memory (L0 → L4)</h2>
-          <p data-i18n-ko>아래로 갈수록 원시에 가깝고, 위로 갈수록 추상·정체성에 가깝다. 야간 reflection이 패턴을 traits로 승격시킨다.</p>
-          <p data-i18n-en>Lower = raw, higher = abstracted identity. Nightly reflection promotes patterns into traits.</p>
-
-          <div class="diagram" style="margin-top: 18px;">
-            <svg viewBox="0 0 800 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Five-layer memory diagram">
-              <defs>
-                <linearGradient id="g4" x1="0" x2="1"><stop offset="0" stop-color="#7df9c5"/><stop offset="1" stop-color="#8ab4ff"/></linearGradient>
-              </defs>
-              <g font-family="ui-monospace, Menlo, monospace" font-size="13">
-                <!-- L4 -->
-                <rect x="40" y="20"  width="720" height="50" rx="8" fill="#161a26" stroke="url(#g4)"/>
-                <text x="60" y="50" fill="#7df9c5">L4 · traits</text>
-                <text x="200" y="50" fill="#98a0b3">정체성·성향 (nightly reflection)</text>
-                <!-- L3 -->
-                <rect x="40" y="80"  width="720" height="50" rx="8" fill="#161a26" stroke="#8ab4ff"/>
-                <text x="60" y="110" fill="#8ab4ff">L3 · patterns</text>
-                <text x="200" y="110" fill="#98a0b3">NEW / RECURRING / ROUTINE 분류기</text>
-                <!-- L2 -->
-                <rect x="40" y="140" width="720" height="50" rx="8" fill="#161a26" stroke="#ff6cab"/>
-                <text x="60" y="170" fill="#ff6cab">L2 · memories</text>
-                <text x="200" y="170" fill="#98a0b3">사실·결정·reference·rule (핀 가능)</text>
-                <!-- L1 -->
-                <rect x="40" y="200" width="720" height="50" rx="8" fill="#161a26" stroke="#f5c97b"/>
-                <text x="60" y="230" fill="#f5c97b">L1 · episodes</text>
-                <text x="200" y="230" fill="#98a0b3">세션 단위 묶음</text>
-                <!-- L0 -->
-                <rect x="40" y="260" width="720" height="50" rx="8" fill="#161a26" stroke="#5f677a"/>
-                <text x="60" y="290" fill="#cdd3e0">L0 · messages</text>
-                <text x="200" y="290" fill="#98a0b3">원시 메시지 + 임베딩 + 서명</text>
-              </g>
-            </svg>
-          </div>
-
-          <div class="grid grid-2" style="margin-top: 24px;">
-            <div class="card"><h3>L0 · messages</h3><p data-i18n-ko>모든 입출력의 원본. BGE-small 768d 임베딩이 부착되고 secp256k1 서명으로 묶인다.</p><p data-i18n-en>The raw signal: every input/output, with a BGE-small 768-d embedding and a secp256k1 signature.</p></div>
-            <div class="card"><h3>L1 · episodes</h3><p data-i18n-ko>한 흐름의 대화·작업을 하나의 episode로. 시작·종료 시각, 참여 에이전트, 요약 임베딩.</p><p data-i18n-en>One coherent flow grouped as an episode: start/end, participants, summary embedding.</p></div>
-            <div class="card"><h3>L2 · memories</h3><p data-i18n-ko>fact / decision / reference / rule 4가지 종류. 핀(pin)으로 망각에서 보호.</p><p data-i18n-en>Four kinds: fact, decision, reference, rule. Pinnable to survive forgetting.</p></div>
-            <div class="card"><h3>L3 · patterns</h3><p data-i18n-ko>같은 행동·요청·실수가 반복되면 패턴으로 승격. NEW · RECURRING · ROUTINE.</p><p data-i18n-en>Repeated behavior promoted into a pattern: NEW, RECURRING, or ROUTINE.</p></div>
-            <div class="card"><h3>L4 · traits</h3><p data-i18n-ko>야간 reflection이 패턴들로부터 정체성·성향을 도출. "이 에이전트는 ~한 경향이 있다."</p><p data-i18n-en>Nightly reflection distills patterns into identity traits.</p></div>
+          <div class="kicker">01 · Memory</div>
+          <h2 data-i18n-ko>다층 기억 — 메시지부터 정체성까지</h2>
+          <h2 data-i18n-en>Multi-layer memory — from messages to identity</h2>
+          <div class="grid grid-2">
+            <div class="card">
+              <h3 data-i18n-ko>시나리오</h3>
+              <h3 data-i18n-en>Scenario</h3>
+              <p data-i18n-ko>
+                금요일에 Claude 와 RFC 초안을 작성하고, 월요일에 Cursor 로 옮겨 같은 RFC 를 이어서 다듬습니다.
+                "지난주에 우리가 합의한 그 결정"을 에이전트가 정확히 인용합니다.
+              </p>
+              <p data-i18n-en>
+                Friday: draft an RFC with Claude. Monday: continue in Cursor.
+                The agent cites "the decision we agreed on last week" with exact references.
+              </p>
+            </div>
+            <div class="card">
+              <h3 data-i18n-ko>구조</h3>
+              <h3 data-i18n-en>Structure</h3>
+              <ul class="clean dotted">
+                <li><code class="inline">L0</code> messages — 원시 메시지 + 임베딩 + 서명</li>
+                <li><code class="inline">L1</code> episodes — 세션 단위 묶음</li>
+                <li><code class="inline">L2</code> memories — 사실·결정·rule (핀 가능)</li>
+                <li><code class="inline">L3</code> patterns — NEW / RECURRING / ROUTINE</li>
+                <li><code class="inline">L4</code> traits — 정체성·성향 (야간 reflection)</li>
+              </ul>
+              <p class="muted" data-i18n-ko>SQLite + sqlite-vec, 단일 파일. 임베더는 BGE-small (로컬).</p>
+              <p class="muted" data-i18n-en>SQLite + sqlite-vec, single file. Embedder: BGE-small (local).</p>
+            </div>
           </div>
         </div>
       </section>
 
       <section>
         <div class="container">
-          <div class="kicker">Vault</div>
-          <h2 data-i18n-ko>다층 자격증명 보안</h2>
-          <h2 data-i18n-en>Multi-layer credential security</h2>
-          <p data-i18n-ko>한 곳에 모든 키를 모은다는 것은 그만큼 두렵다. Vault는 4단계 방어선을 두고, 모든 접근을 서명된 감사 체인에 남긴다.</p>
-          <p data-i18n-en>Putting every key in one place is scary — so Vault stacks four lines of defense and signs every access into an audit chain.</p>
-
-          <div class="diagram" style="margin-top: 18px;">
-            <svg viewBox="0 0 800 220" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Vault four-layer defense">
-              <g font-family="ui-monospace, Menlo, monospace" font-size="13">
-                <rect x="20"  y="40" width="170" height="120" rx="10" fill="#11141d" stroke="#7df9c5"/>
-                <text x="35" y="70" fill="#7df9c5">1 · Disk</text>
-                <text x="35" y="95" fill="#98a0b3">AES-GCM</text>
-                <text x="35" y="115" fill="#98a0b3">scrypt KDF</text>
-
-                <rect x="210" y="40" width="170" height="120" rx="10" fill="#11141d" stroke="#8ab4ff"/>
-                <text x="225" y="70" fill="#8ab4ff">2 · Field</text>
-                <text x="225" y="95" fill="#98a0b3">per-secret nonce</text>
-                <text x="225" y="115" fill="#98a0b3">ACL tag</text>
-
-                <rect x="400" y="40" width="170" height="120" rx="10" fill="#11141d" stroke="#ff6cab"/>
-                <text x="415" y="70" fill="#ff6cab">3 · Transport</text>
-                <text x="415" y="95" fill="#98a0b3">Noise / TLS</text>
-                <text x="415" y="115" fill="#98a0b3">peer pubkey</text>
-
-                <rect x="590" y="40" width="190" height="120" rx="10" fill="#11141d" stroke="#f5c97b"/>
-                <text x="605" y="70" fill="#f5c97b">4 · In-memory</text>
-                <text x="605" y="95" fill="#98a0b3">zeroize on drop</text>
-                <text x="605" y="115" fill="#98a0b3">no swap, mlock</text>
-              </g>
-            </svg>
+          <div class="kicker">02 · Vault</div>
+          <h2 data-i18n-ko>자격 vault — 4단계 암호화 + ACL</h2>
+          <h2 data-i18n-en>Credential vault — 4-layer encryption + ACL</h2>
+          <div class="grid grid-2">
+            <div class="card">
+              <h3 data-i18n-ko>시나리오</h3>
+              <h3 data-i18n-en>Scenario</h3>
+              <p data-i18n-ko>
+                에이전트가 GitHub API 키를 사용해 PR 을 만듭니다. 키는 컨텍스트에 들어가지 않고,
+                vault 가 직접 호출을 수행합니다. 일일 100 회 한도 초과 시 사용자 승인을 요청합니다.
+              </p>
+              <p data-i18n-en>
+                The agent opens a PR using a GitHub API key. The key never enters the context;
+                the vault performs the call. Above 100 calls/day it asks for approval.
+              </p>
+            </div>
+            <div class="card">
+              <h3 data-i18n-ko>레이어</h3>
+              <h3 data-i18n-en>Layers</h3>
+              <ul class="clean dotted">
+                <li data-i18n-ko>디스크 암호화 — secp256k1 master key 파생</li>
+                <li data-i18n-ko>필드별 암호화 — 키마다 다른 nonce</li>
+                <li data-i18n-ko>전송 암호화 — NIP-44</li>
+                <li data-i18n-ko>메모리 zeroize — 사용 후 즉시 0 으로</li>
+                <li data-i18n-en>Disk — derived from secp256k1 master</li>
+                <li data-i18n-en>Field — per-key nonce</li>
+                <li data-i18n-en>Transport — NIP-44</li>
+                <li data-i18n-en>Memory — zeroized right after use</li>
+              </ul>
+            </div>
           </div>
-
-          <ul class="clean dotted" style="margin-top: 18px;">
-            <li data-i18n-ko><strong>ACL</strong> — 에이전트별·role별, 머신 화이트리스트, 일일 한도.</li>
-            <li data-i18n-ko><strong>승인 정책 3단계</strong> — <code class="inline">auto</code> / <code class="inline">confirm</code> / <code class="inline">mfa</code>.</li>
-            <li data-i18n-ko><strong>감사 체인</strong> — 모든 get·put이 서명되어 append-only 로그에 기록.</li>
-            <li data-i18n-en><strong>ACL</strong> — by agent, by role, machine whitelist, daily quota.</li>
-            <li data-i18n-en><strong>Three approval tiers</strong> — <code class="inline">auto</code> / <code class="inline">confirm</code> / <code class="inline">mfa</code>.</li>
-            <li data-i18n-en><strong>Audit chain</strong> — every get/put is signed and appended.</li>
-          </ul>
         </div>
       </section>
 
       <section>
         <div class="container">
-          <div class="kicker">Payment</div>
-          <h2 data-i18n-ko>USDC on Base 결제</h2>
-          <h2 data-i18n-en>USDC payments on Base</h2>
-          <p data-i18n-ko>에이전트가 비용을 지불해야 할 때, 사람이 매번 카드를 꺼낼 수는 없다. 한도와 MFA 정책으로 자동화하되, 잘못된 결제는 마스터에게 즉시 보고된다.</p>
-          <p data-i18n-en>Agents need to spend money. Limits + MFA make it automatic but safe, with every charge surfaced to the operator.</p>
-          <ul class="clean dotted">
-            <li data-i18n-ko>일일 한도 / 단건 한도 / 카운터파티 화이트리스트</li>
-            <li data-i18n-ko>한도 초과 시 confirm, 그 이상은 mfa로 승급</li>
-            <li data-i18n-ko>모든 결제 영수증은 L2 memory에 자동 저장</li>
-            <li data-i18n-en>Daily cap / per-tx cap / counterparty allowlist</li>
-            <li data-i18n-en>Over cap → confirm, way over → escalate to MFA</li>
-            <li data-i18n-en>Receipts auto-saved as L2 memories</li>
-          </ul>
+          <div class="kicker">03 · Payment</div>
+          <h2 data-i18n-ko>USDC on Base — 자율 결제, 안전한 한도</h2>
+          <h2 data-i18n-en>USDC on Base — autonomous, bounded</h2>
+          <div class="grid grid-2">
+            <div class="card">
+              <h3 data-i18n-ko>시나리오</h3>
+              <h3 data-i18n-en>Scenario</h3>
+              <p data-i18n-ko>
+                연구 에이전트가 arXiv API 와 데이터셋 호스트에 micropayment 를 보냅니다.
+                건당 $0.50, 일일 $20 한도. 한도 안에서는 자동, 넘으면 confirm.
+              </p>
+              <p data-i18n-en>
+                A research agent micropays arXiv mirrors and dataset hosts.
+                $0.50/call, $20/day cap. Inside the cap: auto. Above: confirm.
+              </p>
+            </div>
+            <div class="card">
+              <h3 data-i18n-ko>왜 Base 인가</h3>
+              <h3 data-i18n-en>Why Base</h3>
+              <ul class="clean dotted">
+                <li data-i18n-ko>가스비 거의 0, micropayment 현실적</li>
+                <li data-i18n-ko>EVM 호환 — 표준 지갑·툴체인 그대로</li>
+                <li data-i18n-ko>USDC — fiat 환산 직관적</li>
+                <li data-i18n-en>Near-zero gas, micropayments work</li>
+                <li data-i18n-en>EVM-compatible — standard wallets/tools</li>
+                <li data-i18n-en>USDC — intuitive fiat conversion</li>
+              </ul>
+            </div>
+          </div>
         </div>
       </section>
 
       <section>
         <div class="container">
-          <div class="kicker">Nostr</div>
-          <h2 data-i18n-ko>Nostr 통합 — cross-network 메시지</h2>
-          <h2 data-i18n-en>Nostr integration — cross-network messaging</h2>
-          <p data-i18n-ko>OpenXgram의 메시지는 Nostr 이벤트로도 표현된다. 같은 secp256k1 키가 곧 npub이며, 자체 호스팅 릴레이까지 가능하다.</p>
-          <p data-i18n-en>OpenXgram messages can travel as Nostr events. The same secp256k1 key becomes your npub. Self-hosting a relay is supported.</p>
-          <ul class="clean dotted">
-            <li data-i18n-ko><code class="inline">nostr://</code> peer scheme — 다른 네트워크의 피어를 동일하게 호출</li>
-            <li data-i18n-ko>Application-layer ratchet — 전방향 비밀성 (PRD-NOSTR-05)</li>
-            <li data-i18n-ko>NostrSink + NostrSource — 송수신 분리, 검열 저항</li>
-            <li data-i18n-en><code class="inline">nostr://</code> peer scheme — call peers across networks the same way</li>
-            <li data-i18n-en>Application-layer ratchet — forward secrecy (PRD-NOSTR-05)</li>
-            <li data-i18n-en>NostrSink + NostrSource — separate read/write paths, censorship-resistant</li>
-          </ul>
+          <div class="kicker">04 · Cross-LLM</div>
+          <h2 data-i18n-ko>모델 비종속 — 같은 에이전트, 어떤 모델</h2>
+          <h2 data-i18n-en>Model-agnostic — same agent, any model</h2>
+          <div class="grid grid-2">
+            <div class="card">
+              <h3 data-i18n-ko>시나리오</h3>
+              <h3 data-i18n-en>Scenario</h3>
+              <p data-i18n-ko>
+                새 모델이 출시됩니다. 설정 한 줄 바꾸면 같은 에이전트가 같은 기억·자격으로 새 모델 위에서 돕니다.
+                A/B 테스트도, 비용 최적화도 코드 변경 없이.
+              </p>
+              <p data-i18n-en>
+                A new model launches. Flip one config line and the same agent runs on it,
+                with the same memory and credentials. A/B and cost-tuning without code changes.
+              </p>
+            </div>
+            <div class="card">
+              <h3 data-i18n-ko>호환</h3>
+              <h3 data-i18n-en>Compatible</h3>
+              <ul class="clean dotted">
+                <li>Claude · GPT · Gemini · Llama · local</li>
+                <li>Claude Code · Cursor · Aider · custom harness</li>
+                <li>LangGraph · CrewAI · AutoGen — bring it</li>
+                <li>MCP · A2A — naturally aligned</li>
+              </ul>
+            </div>
+          </div>
         </div>
       </section>
 
       <section>
         <div class="container">
-          <div class="kicker">Desktop</div>
-          <h2 data-i18n-ko>Tauri 데스크톱 앱</h2>
-          <h2 data-i18n-en>Tauri desktop app</h2>
-          <p data-i18n-ko>코어 데몬은 Rust 단일 바이너리. TUI(ratatui)로 즉시 사용 가능하고, Phase 2에서 Tauri + React GUI가 같은 IPC를 호출한다.</p>
-          <p data-i18n-en>The core daemon is one Rust binary. Use the ratatui TUI today; in Phase 2, a Tauri + React GUI talks the same IPC.</p>
-          <ul class="clean dotted">
-            <li data-i18n-ko>네이티브 트레이 + 단축키, 시스템 키체인 통합</li>
-            <li data-i18n-ko>오프라인 우선, 동기화는 명시적</li>
-            <li data-i18n-en>Native tray + shortcuts, OS keychain integration</li>
-            <li data-i18n-en>Offline-first, sync is explicit</li>
-          </ul>
+          <div class="kicker">05 · Audit chain</div>
+          <h2 data-i18n-ko>변조 즉시 검출 — 모든 기록은 봉인</h2>
+          <h2 data-i18n-en>Tamper-evident — every record is sealed</h2>
+          <div class="grid grid-2">
+            <div class="card">
+              <h3 data-i18n-ko>시나리오</h3>
+              <h3 data-i18n-en>Scenario</h3>
+              <p data-i18n-ko>
+                감사 시점에 "에이전트가 6개월 전 어떤 키로 무엇을 했는가" 를 묻습니다.
+                각 기록은 secp256k1 서명으로 체이닝되어 있어, 변조가 있으면 즉시 드러납니다.
+              </p>
+              <p data-i18n-en>
+                At audit time, ask "what did the agent do, with which key, six months ago?"
+                Each record is chained with a secp256k1 signature; tampering shows up at once.
+              </p>
+            </div>
+            <div class="card">
+              <h3 data-i18n-ko>구성</h3>
+              <h3 data-i18n-en>Composition</h3>
+              <ul class="clean dotted">
+                <li data-i18n-ko>vault 작업 · 결제 · 정책 변경 · 기억 갱신 — 모두 chain</li>
+                <li data-i18n-ko>이전 hash 를 다음 record 에 포함 → tamper-evident</li>
+                <li data-i18n-ko>로컬 단일 파일, 외부 의존 없음</li>
+                <li data-i18n-en>Vault ops · payments · policy changes · memory edits — all chained</li>
+                <li data-i18n-en>Each record embeds the previous hash → tamper-evident</li>
+                <li data-i18n-en>Local single file, no external dependency</li>
+              </ul>
+            </div>
+          </div>
         </div>
       </section>
     </main>
