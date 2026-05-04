@@ -502,6 +502,32 @@ enum MemoryCli {
     Pin { id: String },
     /// memory unpin
     Unpin { id: String },
+    /// L2 memories + L4 traits 를 Claude 호환 markdown 으로 export
+    Export {
+        /// 결과 파일 경로 (생략 시 stdout)
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// export 포맷 (현재 claude 만 지원)
+        #[arg(long, value_enum, default_value_t = MemoryExportFormat::Claude)]
+        format: MemoryExportFormat,
+    },
+    /// Claude 호환 markdown 을 import (memory/trait 생성)
+    Import {
+        /// 입력 파일 경로
+        #[arg(long)]
+        input: PathBuf,
+        /// import 포맷 (현재 claude 만 지원)
+        #[arg(long, value_enum, default_value_t = MemoryExportFormat::Claude)]
+        format: MemoryExportFormat,
+    },
+    /// Claude 공식 권장 export prompt 출력 (LLM 에 그대로 붙여넣기)
+    ExportPrompt,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum MemoryExportFormat {
+    /// Claude 공식 호환 markdown (카테고리별 entry)
+    Claude,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -538,6 +564,18 @@ impl From<MemoryCli> for MemoryAction {
             MemoryCli::List { kind } => MemoryAction::List { kind: kind.into() },
             MemoryCli::Pin { id } => MemoryAction::Pin { id },
             MemoryCli::Unpin { id } => MemoryAction::Unpin { id },
+            // Export/Import/ExportPrompt 는 main dispatch 에서 직접 처리 — 이 변환에 도달 불가.
+            MemoryCli::Export { .. } | MemoryCli::Import { .. } | MemoryCli::ExportPrompt => {
+                unreachable!("export/import/export-prompt 는 dispatch 에서 처리되어야 함")
+            }
+        }
+    }
+}
+
+impl From<MemoryExportFormat> for memory::MemoryExportFmt {
+    fn from(f: MemoryExportFormat) -> Self {
+        match f {
+            MemoryExportFormat::Claude => Self::Claude,
         }
     }
 }
@@ -1117,10 +1155,23 @@ async fn main() -> anyhow::Result<()> {
             session::run_session(&dir, action.into())?;
         }
 
-        Commands::Memory { data_dir, action } => {
-            let dir = resolve_data_dir(data_dir)?;
-            memory::run_memory(&dir, action.into())?;
-        }
+        Commands::Memory { data_dir, action } => match action {
+            MemoryCli::ExportPrompt => {
+                println!("{}", openxgram_memory::CLAUDE_EXPORT_PROMPT);
+            }
+            MemoryCli::Export { output, format } => {
+                let dir = resolve_data_dir(data_dir)?;
+                memory::run_export(&dir, output.as_deref(), format.into())?;
+            }
+            MemoryCli::Import { input, format } => {
+                let dir = resolve_data_dir(data_dir)?;
+                memory::run_import(&dir, &input, format.into())?;
+            }
+            other => {
+                let dir = resolve_data_dir(data_dir)?;
+                memory::run_memory(&dir, other.into())?;
+            }
+        },
 
         Commands::Notify { target } => {
             notify::run_notify(target.into()).await?;
