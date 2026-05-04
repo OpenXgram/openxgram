@@ -4469,6 +4469,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "openxgram-channel"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "chrono",
+ "openxgram-adapter",
+ "openxgram-core",
+ "openxgram-db",
+ "openxgram-peer",
+ "reqwest 0.13.1",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "openxgram-cli"
 version = "0.2.0"
 dependencies = [
@@ -4488,8 +4509,10 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "openxgram-adapter",
+ "openxgram-channel",
  "openxgram-core",
  "openxgram-db",
+ "openxgram-did",
  "openxgram-keystore",
  "openxgram-manifest",
  "openxgram-mcp",
@@ -4541,6 +4564,23 @@ dependencies = [
  "thiserror 1.0.69",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "openxgram-did"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "bs58",
+ "chrono",
+ "hex",
+ "k256",
+ "openxgram-keystore",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
