@@ -16,6 +16,7 @@ use openxgram_cli::mcp_serve;
 use openxgram_cli::memory::{self, MemoryAction};
 use openxgram_cli::migrate::{self, MigrateOpts};
 use openxgram_cli::notify::{self, NotifyAction};
+use openxgram_cli::notify_setup::{self, SetupOpts, SetupTarget};
 use openxgram_cli::patterns::{self, PatternsAction};
 use openxgram_cli::payment::{self, PaymentAction};
 use openxgram_cli::peer::{self, PeerAction};
@@ -501,47 +502,81 @@ enum NotifyCli {
         #[arg(long, default_value_t = false)]
         once: bool,
     },
+    /// Telegram 인터랙티브 마법사 — 토큰 검증 + chat_id 자동 감지 + 저장 + 테스트
+    SetupTelegram {
+        /// `~/.openxgram` 대신 임의 경로 (테스트용)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+    /// Discord 인터랙티브 마법사 — 토큰 검증 + 채널/webhook 입력 + 저장 + 테스트
+    SetupDiscord {
+        /// `~/.openxgram` 대신 임의 경로 (테스트용)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
 }
 
-impl From<NotifyCli> for NotifyAction {
+/// 송신·수신 서브명령은 `NotifyAction` 으로, setup-* 마법사는 직접 dispatch.
+enum NotifyDispatch {
+    Action(NotifyAction),
+    Setup(SetupTarget, SetupOpts),
+}
+
+impl From<NotifyCli> for NotifyDispatch {
     fn from(c: NotifyCli) -> Self {
         match c {
-            NotifyCli::Discord { webhook_url, text } => NotifyAction::Discord { webhook_url, text },
+            NotifyCli::Discord { webhook_url, text } => {
+                NotifyDispatch::Action(NotifyAction::Discord { webhook_url, text })
+            }
             NotifyCli::Telegram {
                 bot_token,
                 chat_id,
                 text,
-            } => NotifyAction::Telegram {
+            } => NotifyDispatch::Action(NotifyAction::Telegram {
                 bot_token,
                 chat_id,
                 text,
-            },
+            }),
             NotifyCli::DiscordListen {
                 bot_token,
                 channel_id,
                 store_session,
                 data_dir,
                 pretty,
-            } => NotifyAction::DiscordListen {
+            } => NotifyDispatch::Action(NotifyAction::DiscordListen {
                 bot_token,
                 channel_id,
                 store_session,
                 data_dir,
                 pretty,
-            },
+            }),
             NotifyCli::TelegramListen {
                 bot_token,
                 chat_id,
                 store_session,
                 data_dir,
                 once,
-            } => NotifyAction::TelegramListen {
+            } => NotifyDispatch::Action(NotifyAction::TelegramListen {
                 bot_token,
                 chat_id_filter: chat_id,
                 store_session_title: store_session,
                 data_dir,
                 once,
-            },
+            }),
+            NotifyCli::SetupTelegram { data_dir } => NotifyDispatch::Setup(
+                SetupTarget::Telegram,
+                SetupOpts {
+                    data_dir,
+                    detect_attempts: None,
+                },
+            ),
+            NotifyCli::SetupDiscord { data_dir } => NotifyDispatch::Setup(
+                SetupTarget::Discord,
+                SetupOpts {
+                    data_dir,
+                    detect_attempts: None,
+                },
+            ),
         }
     }
 }
@@ -1237,21 +1272,25 @@ async fn main() -> anyhow::Result<()> {
             }
         },
 
-        Commands::Notify { target } => {
-            // store-session 모드는 data_dir 미지정 시 기본 경로로 보강.
-            let mut action: NotifyAction = target.into();
-            if let NotifyAction::DiscordListen {
-                store_session: Some(_),
-                data_dir,
-                ..
-            } = &mut action
-            {
-                if data_dir.is_none() {
-                    *data_dir = Some(resolve_data_dir(None)?);
+        Commands::Notify { target } => match target.into() {
+            NotifyDispatch::Action(mut action) => {
+                // store-session 모드는 data_dir 미지정 시 기본 경로로 보강.
+                if let NotifyAction::DiscordListen {
+                    store_session: Some(_),
+                    data_dir,
+                    ..
+                } = &mut action
+                {
+                    if data_dir.is_none() {
+                        *data_dir = Some(resolve_data_dir(None)?);
+                    }
                 }
+                notify::run_notify(action).await?;
             }
-            notify::run_notify(action).await?;
-        }
+            NotifyDispatch::Setup(target, opts) => {
+                notify_setup::run_setup(target, opts).await?;
+            }
+        },
 
         Commands::BackupPush {
             data_dir,
