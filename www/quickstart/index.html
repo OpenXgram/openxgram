@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Quickstart — OpenXgram</title>
-    <meta name="description" content="블록체인 기반 신원 생성 → 어떤 AI 든 같은 기억으로 대화. 데이터는 당신의 머신을 떠나지 않습니다." />
+    <meta name="description" content="3가지 사용 방법: 직접 CLI · 터미널 하네스(Claude Code·Cursor·Aider) · 웹 AI(Claude·ChatGPT·Gemini)에 지침으로 연결. 데이터는 당신의 머신을 떠나지 않습니다." />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='8' fill='%237df9c5'/%3E%3C/svg%3E" />
     <script type="module" src="/src/main.ts"></script>
   </head>
@@ -28,103 +28,193 @@
     <main>
       <section class="hero">
         <div class="container">
-          <div class="kicker" data-i18n-ko>설치 → 첫 대화</div>
-          <div class="kicker" data-i18n-en>Install → first conversation</div>
-          <h1 data-i18n-ko>설치 → 블록체인 신원<br />→ 어떤 AI 든 같은 대화.</h1>
-          <h1 data-i18n-en>Install → blockchain identity<br />→ same conversation on any AI.</h1>
-          <p class="lead" data-i18n-ko>단일 Rust 바이너리, 외부 서비스 의존 없음, 머신 한 대에 5MB. 데이터는 당신의 머신을 떠나지 않습니다.</p>
-          <p class="lead" data-i18n-en>Single Rust binary. Zero external services. ~5 MB on disk. Your data never leaves your machines.</p>
+          <div class="kicker" data-i18n-ko>3가지 사용 방법</div>
+          <div class="kicker" data-i18n-en>Three ways to use</div>
+          <h1 data-i18n-ko>설치 한 번 → 어디서나 같은 기억.</h1>
+          <h1 data-i18n-en>Install once → the same memory, everywhere.</h1>
+          <p class="lead" data-i18n-ko>
+            xgram 은 사용자(나) 의 기기에서만 도는 단일 바이너리입니다.
+            한 번 설치하면 <strong>(A) 직접 CLI 로</strong>, <strong>(B) 터미널 AI 하네스</strong>(Claude Code · Cursor · Aider) 의 지침에 추가해서, <strong>(C) 웹 AI</strong>(Claude · ChatGPT · Gemini) 의 시스템 지침/Custom Instructions/Project 설정에 사용법을 넣어서 사용할 수 있습니다.
+          </p>
+          <p class="lead" data-i18n-en>
+            xgram is a single binary that runs only on your machine.
+            Install once, then use it <strong>(A) directly via CLI</strong>, <strong>(B) inside a terminal AI harness</strong> (Claude Code · Cursor · Aider) by adding rules, or <strong>(C) inside a web AI</strong> (Claude · ChatGPT · Gemini) by pasting usage instructions into system prompts / custom instructions / project settings.
+          </p>
         </div>
       </section>
 
       <section>
         <div class="container">
           <div class="kicker">Step 1 · Install</div>
-          <h2 data-i18n-ko>설치</h2>
-          <h2 data-i18n-en>Install</h2>
+          <h2 data-i18n-ko>설치 (모든 모드 공통)</h2>
+          <h2 data-i18n-en>Install (common to all modes)</h2>
 <pre class="code"><span class="p">$</span> curl -sSfL https://openxgram.org/install.sh | sh
 <span class="p">$</span> xgram --version
-<span class="c"># openxgram 0.1.0</span></pre>
+<span class="c"># openxgram 0.2.0</span>
+
+<span class="p">$</span> xgram init <span class="s">--alias my-laptop</span>
+<span class="c"># 12-단어 복구 시드를 출력합니다 (오프라인 보관 권장)</span>
+<span class="c"># 이후 모든 데이터는 ~/.openxgram/ 로컬 SQLite 한 파일에만 저장됩니다.</span></pre>
+          <p data-i18n-ko>
+            <strong>외부 전송 0:</strong> 위 두 명령은 인터넷에 데이터를 전혀 보내지 않습니다 (install.sh 내려받기 제외).
+            블록체인 키페어(secp256k1)는 사용자 기기에서 생성되고, 이후 외부로 나가지 않습니다.
+          </p>
+          <p data-i18n-en>
+            <strong>Zero external transmission:</strong> these two commands send nothing to the internet (other than fetching install.sh).
+            The blockchain keypair (secp256k1) is generated locally and never leaves the device.
+          </p>
         </div>
       </section>
 
       <section>
         <div class="container">
-          <div class="kicker">Step 2 · Init</div>
-          <h2 data-i18n-ko>신원 생성 — 한 번이면 됩니다</h2>
-          <h2 data-i18n-en>Create your identity — once</h2>
-<pre class="code"><span class="p">$</span> xgram init
-<span class="c"># BIP39 12-word seed (write it down — only chance)</span>
-<span class="c"># abandon ability able about above absent absorb abstract absurd abuse access accident</span>
-<span class="c">#</span>
-<span class="c"># secp256k1 public key:</span>
-<span class="c"># npub1q9w8e7r6t5y4u3i2o1p... (NIP-19)</span>
-<span class="c"># EVM address: 0xAbCdEf0123456789...</span></pre>
-          <p data-i18n-ko>같은 시드로 어떤 머신에서도 같은 신원을 복원합니다.</p>
-          <p data-i18n-en>Restore the same identity on any machine from the same seed.</p>
+          <div class="kicker">Mode A · Direct CLI</div>
+          <h2 data-i18n-ko>A) 직접 CLI — 개발자/파워 유저</h2>
+          <h2 data-i18n-en>A) Direct CLI — developers / power users</h2>
+          <p data-i18n-ko>가장 빠른 길. 셸에서 직접 명령어를 칩니다.</p>
+          <p data-i18n-en>The fastest path. You type commands in the shell.</p>
+<pre class="code"><span class="p">$</span> xgram session new <span class="s">--title "주간 회고"</span>
+<span class="p">$</span> xgram message add <span class="s">--from me --body "이번 주 최우선은 결제 자동화"</span>
+<span class="p">$</span> xgram memory add <span class="s">--kind decision --content "RBF tip 은 +15% 로 고정"</span>
+<span class="p">$</span> xgram session recall <span class="s">--query "결제 자동화" --k 5</span>
+<span class="c"># top-5 회상 결과 (다른 AI 와 공유 가능)</span></pre>
         </div>
       </section>
 
       <section>
         <div class="container">
-          <div class="kicker">Step 3 · Vault</div>
-          <h2 data-i18n-ko>키 보관 — 컨텍스트에 노출 없이</h2>
-          <h2 data-i18n-en>Store keys — without exposing them to context</h2>
-<pre class="code"><span class="p">$</span> xgram vault put github.token ghp_xxx \
-    --acl=agent:coder --daily-limit=100 --policy=auto
+          <div class="kicker">Mode B · Terminal AI harness</div>
+          <h2 data-i18n-ko>B) 터미널 AI 하네스 — 셸 접근 가능한 AI</h2>
+          <h2 data-i18n-en>B) Terminal AI harness — AI agents with shell access</h2>
+          <p data-i18n-ko>
+            Claude Code · Cursor · Aider 같이 셸을 쓸 수 있는 AI 에는, 프로젝트 지침 파일에 <em>"OpenXgram 명령으로 기억을 회상·저장하라"</em> 라고만 적어두면 AI 가 자동으로 사용합니다. 데이터는 모두 사용자 기기 안에서만 흐릅니다.
+          </p>
+          <p data-i18n-en>
+            For AI agents with shell access (Claude Code · Cursor · Aider), just add to your project rules file: <em>"recall and save memory using xgram commands."</em> The agent will use it automatically. Everything stays on your machine.
+          </p>
 
-<span class="p">$</span> xgram vault put openai.key sk-xxx \
-    --acl=agent:writer --policy=confirm</pre>
-          <p data-i18n-ko>에이전트는 <code class="inline">vault.use("github.token")</code> 형태로 호출합니다 — 키 자체는 노출되지 않습니다.</p>
-          <p data-i18n-en>Agents call <code class="inline">vault.use("github.token")</code> — the key itself never leaks.</p>
+          <h3 data-i18n-ko>CLAUDE.md / .cursorrules / .aiderrules 에 추가</h3>
+          <h3 data-i18n-en>Add to CLAUDE.md / .cursorrules / .aiderrules</h3>
+<pre class="code"><span class="c"># OpenXgram 메모리 사용 규칙</span>
+
+<span class="c">## 응답 시작 전</span>
+- 관련 기억 회상: <span class="k">xgram session recall --query "&lt;핵심 키워드&gt;" --k 5</span>
+- vault 자격 필요 시: <span class="k">xgram vault get &lt;key&gt;</span>
+
+<span class="c">## 중요한 결정/사실 등장 시</span>
+- 사실 저장: <span class="k">xgram memory add --kind fact --content "..."</span>
+- 결정 저장: <span class="k">xgram memory add --kind decision --content "..."</span>
+- 규칙 저장: <span class="k">xgram memory add --kind rule --content "..."</span>
+
+<span class="c">## 절대 금지</span>
+- 외부 클라우드/SaaS 메모리 서비스 사용 금지 — 모든 기억은 OpenXgram 으로
+- 사용자(나) 의 승인 없는 vault put/delete 금지</pre>
+
+          <p data-i18n-ko>
+            이렇게 한 줄 한 줄 적어두면, AI 가 모델을 바꿔도 (Claude → ChatGPT, Cursor → Aider) 같은 메모리를 이어 쓰게 됩니다.
+          </p>
+          <p data-i18n-en>
+            With these lines in place, the same memory carries over even when you switch models (Claude → ChatGPT, Cursor → Aider).
+          </p>
         </div>
       </section>
 
       <section>
         <div class="container">
-          <div class="kicker">Step 4 · First peer</div>
-          <h2 data-i18n-ko>첫 동료 (사람 또는 에이전트) 추가</h2>
-          <h2 data-i18n-en>Add a first peer (human or agent)</h2>
-<pre class="code"><span class="p">$</span> xgram peer add npub1abc... --role=research
+          <div class="kicker">Mode C · Web AI</div>
+          <h2 data-i18n-ko>C) 웹 AI (Claude · ChatGPT · Gemini) — 셸 접근 불가</h2>
+          <h2 data-i18n-en>C) Web AI (Claude · ChatGPT · Gemini) — no shell access</h2>
+          <p data-i18n-ko>
+            웹 채팅창은 사용자 기기의 셸에 접근할 수 없습니다. 두 가지 방법으로 OpenXgram 을 연동합니다 — 어떤 방법이든 사용자 기기 밖으로 데이터가 나가지 않습니다.
+          </p>
+          <p data-i18n-en>
+            Web chat windows can't access your local shell. Two integration paths — both keep data on your machine.
+          </p>
 
-<span class="p">$</span> xgram send npub1abc... \
-    --text=<span class="s">"Hello from OpenXgram"</span> \
-    --memory=L2 --pin</pre>
-          <p data-i18n-ko>메시지는 자동으로 L0 에 저장되고, <code class="inline">--memory=L2</code> 로 사실로 승격됩니다.</p>
-          <p data-i18n-en>The message is logged at L0, and <code class="inline">--memory=L2</code> promotes it to a pinned fact.</p>
+          <h3 data-i18n-ko>C-1) MCP 서버 연결 (Claude Desktop 권장)</h3>
+          <h3 data-i18n-en>C-1) MCP server (recommended with Claude Desktop)</h3>
+          <p data-i18n-ko>
+            xgram 자체가 MCP 서버를 띄울 수 있습니다. Claude Desktop 의 MCP 설정에 OpenXgram 을 등록하면, 웹 Claude 가 사용자 기기의 xgram 을 직접 호출해 메모리를 읽고 씁니다 — 데이터는 로컬 루프백(127.0.0.1)으로만 흐릅니다.
+          </p>
+          <p data-i18n-en>
+            xgram can run as an MCP server. Add it to Claude Desktop's MCP config and Claude reaches into your local xgram to read/write memory — traffic flows over loopback (127.0.0.1) only.
+          </p>
+<pre class="code"><span class="c"># 옵션 1) HTTP MCP — 로컬 루프백</span>
+<span class="p">$</span> xgram mcp serve <span class="s">--bind 127.0.0.1:7301</span>
+<span class="c"># 외부 0.0.0.0 바인딩 절대 금지</span>
+
+<span class="c"># 옵션 2) Claude Desktop ~/.claude/mcp_servers.json 에 추가</span>
+{
+  <span class="s">"openxgram"</span>: {
+    <span class="s">"command"</span>: <span class="s">"xgram"</span>,
+    <span class="s">"args"</span>: [<span class="s">"mcp"</span>, <span class="s">"serve-stdio"</span>]
+  }
+}</pre>
+
+          <h3 data-i18n-ko>C-2) 시스템 지침 / Custom Instructions / Project 에 사용법 붙이기</h3>
+          <h3 data-i18n-en>C-2) Paste usage into System Prompt / Custom Instructions / Project rules</h3>
+          <p data-i18n-ko>
+            ChatGPT Custom Instructions, Claude Project Instructions, Gemini Gems 같은 곳에 아래 템플릿을 그대로 붙여 넣으세요. AI 가 해당 안내대로 동작합니다 — 사용자(나) 가 직접 xgram 명령을 실행해서 결과를 다시 채팅에 붙여 넣는 보조 역할을 하게 됩니다.
+          </p>
+          <p data-i18n-en>
+            Paste the template below into ChatGPT Custom Instructions, Claude Project Instructions, or Gemini Gems. The AI will follow it — and you remain in control by running xgram locally and pasting the results back into chat.
+          </p>
+<pre class="code"><span class="c"># 템플릿 (KO) — 시스템 지침/Custom Instructions/Project 에 붙여넣기</span>
+
+당신은 OpenXgram 메모리 시스템을 사용하는 AI 입니다.
+
+[규칙]
+1. 사용자가 새 주제를 꺼내면, 가장 먼저 이렇게 답합니다:
+   "관련 기억을 회상하시려면 사용자(나) 의 터미널에서 다음 명령을 실행해 결과를 붙여 넣어 주세요:
+    xgram session recall --query &lt;핵심 키워드&gt; --k 5"
+
+2. 사용자가 회상 결과를 붙여 넣으면, 그 정보를 바탕으로 답변합니다.
+
+3. 대화 중 중요한 결정/사실/규칙이 나오면 이렇게 안내합니다:
+   "이 내용을 기억에 저장하시려면:
+    xgram memory add --kind &lt;fact|decision|rule&gt; --content &lt;내용&gt;"
+
+4. 외부 메모리 서비스(Mem0·Zep 등)는 절대 권하지 않습니다.
+5. 모든 기억은 사용자(나) 의 기기 안에만 머무릅니다.</pre>
+          <p data-i18n-ko>
+            영어 템플릿이 필요하면 <code>xgram memory export-prompt</code> 명령으로 즉시 출력할 수 있습니다.
+          </p>
+          <p data-i18n-en>
+            Run <code>xgram memory export-prompt</code> for the English template.
+          </p>
         </div>
       </section>
 
       <section>
         <div class="container">
-          <div class="kicker">Step 5 · Wire your harness</div>
-          <h2 data-i18n-ko>오케스트레이션과 연결</h2>
-          <h2 data-i18n-en>Wire it into your orchestration</h2>
-<pre class="code"><span class="c"># Python — works the same in TS, Rust, Go via FFI</span>
-<span class="k">from</span> openxgram <span class="k">import</span> Xgram
+          <div class="kicker">Cross-LLM 이동</div>
+          <h2 data-i18n-ko>모델 갈아타기 — 같은 기억 그대로</h2>
+          <h2 data-i18n-en>Switching models — same memory, intact</h2>
+          <p data-i18n-ko>
+            ChatGPT 에서 한 시간 일하다가 Claude 로 옮길 때, 또는 Gemini 에서 시작했다가 Cursor 로 옮길 때 — 이전 대화·결정·규칙을 그대로 가져갑니다.
+          </p>
+          <p data-i18n-en>
+            Move from ChatGPT to Claude, or from Gemini to Cursor — your prior conversation, decisions, and rules all come along.
+          </p>
+<pre class="code"><span class="c"># 다른 AI 에 이미 쌓인 기억을 가져오기</span>
+<span class="p">$</span> xgram memory export-prompt   <span class="c"># 이 프롬프트를 그 AI 에 붙여 넣기</span>
+<span class="c"># → AI 가 저장된 기억을 5 카테고리로 출력 (Instructions/Identity/Career/Projects/Preferences)</span>
+<span class="c"># → 결과를 파일로 저장 후 import:</span>
+<span class="p">$</span> xgram memory import <span class="s">--input ./from-other-ai.md --format claude</span>
 
-xgram = Xgram()
-context = xgram.recall(<span class="s">"recent decisions about auth"</span>)
-agent.run(prompt, memory=context)
-xgram.remember(agent.output, layer=<span class="s">"L1"</span>)</pre>
-          <p data-i18n-ko>Claude · ChatGPT · Gemini · 로컬 모델 — 어떤 LLM 이든 같은 인터페이스, 같은 기억. 모델을 바꿔도 대화가 끊기지 않습니다.</p>
-          <p data-i18n-en>Claude · ChatGPT · Gemini · local models — same interface, same memory. Switch the model, the conversation continues.</p>
-
-          <div class="cta" style="margin-top:32px;">
-            <a class="btn btn-primary" href="/usecases/" data-i18n-ko>사용 시나리오 →</a>
-            <a class="btn btn-primary" href="/usecases/" data-i18n-en>See use cases →</a>
-            <a class="btn btn-ghost" href="/architecture/" data-i18n-ko>아키텍처</a>
-            <a class="btn btn-ghost" href="/architecture/" data-i18n-en>Architecture</a>
-          </div>
+<span class="c"># 반대로 OpenXgram → 다른 AI 로 가져가기</span>
+<span class="p">$</span> xgram memory export <span class="s">--format claude</span> &gt; my-memory.md
+<span class="c"># my-memory.md 를 다른 AI 의 시스템 지침/Project 에 붙여 넣기</span></pre>
         </div>
       </section>
+
+      <footer class="site-footer">
+        <div class="container row">
+          <div data-i18n-ko>© 2026 OpenXgram contributors</div>
+          <div data-i18n-en>© 2026 OpenXgram contributors</div>
+          <div class="mono">v0.2.0</div>
+        </div>
+      </footer>
     </main>
-
-    <footer class="site-footer">
-      <div class="container row">
-        <div>© 2026 OpenXgram contributors</div>
-        <div class="mono">v0.1.0.0-alpha.1</div>
-      </div>
-    </footer>
   </body>
 </html>
