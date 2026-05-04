@@ -2,6 +2,23 @@
 
 OpenXgram 의 변경 이력. 모든 시간은 KST(Asia/Seoul). [Semantic Versioning](https://semver.org/) + BUILD 자동 증가 (CI/CD 갱신, 수동 변경 금지).
 
+## [0.2.0] — 2026-05-04 KST (Phase 2 GA)
+
+Phase 2 누적 — Nostr 기반 P2P 전송 / USDC 결제 / 신뢰 인프라 / 관측성 / 데스크톱 GUI / 공식 사이트.
+
+- **Nostr (PRD-NOSTR-01~07)** — Keys conversion + kind 매핑, NostrSink/NostrSource, application-layer ratchet, 자체 호스팅 relay, `nostr://` peer scheme 라우팅.
+- **Payment (PRD-PAY-01~08)** — USDC on Base alloy 베이스라인 + signer + RPC + testnet 통합 테스트 (Base Sepolia).
+- **Audit chain (PRD-AUDIT-01~03)** — append-only Merkle hash chain + CLI 노출 + 검증.
+- **KEK Rotation (PRD-ROT-01~02)** — 키 회전 + envelope re-wrap + grace window.
+- **MFA (PRD-MFA-01)** — WebAuthn ADR + TOTP fallback 통합.
+- **Observability (PRD-OTEL-01~03)** — OpenTelemetry traces/metrics + OTLP exporter + tracing-opentelemetry brigde.
+- **Retention (PRD-RET-01~02)** — L0~L4 보존 정책 + TTL 자동 정리.
+- **Backup (PRD-BAK-01~02)** — age 기반 비파괴 백업 + restore 라운드트립.
+- **Tauri GUI (PRD-UI-01~03)** — 데스크톱 베이스라인 + IPC + 보안 CSP.
+- **Site (PRD-SITE-01)** — openxgram.org 정적 사이트 + GitHub Pages 워크플로우.
+
+세부 변경은 `docs/checklists/` Phase 2 체크리스트 참조.
+
 ## [0.1.0] — 2026-05-04 KST (Phase 1 GA)
 
 rc.1 + rc.2 누적 — 기억·자격 인프라 첫 정식 릴리스. 외부 사용 가능 안정 표면.

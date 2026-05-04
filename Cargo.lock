@@ -4452,7 +4452,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-adapter"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "reqwest 0.13.1",
  "serde",
@@ -4465,7 +4465,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "age",
  "anyhow",
@@ -4513,7 +4513,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "thiserror 1.0.69",
@@ -4521,7 +4521,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-db"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4538,7 +4538,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-keystore"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -4559,7 +4559,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-manifest"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "hex",
@@ -4574,7 +4574,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4584,7 +4584,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-memory"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4603,7 +4603,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-nostr"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "hex",
@@ -4623,7 +4623,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-payment"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "alloy",
  "chrono",
@@ -4644,7 +4644,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-peer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "openxgram-core",
@@ -4660,7 +4660,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-scheduler"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "openxgram-db",
@@ -4674,7 +4674,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-transport"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -4689,7 +4689,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-vault"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "hex",
