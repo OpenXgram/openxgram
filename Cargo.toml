@@ -67,3 +67,10 @@ tower = { version = "0.5", features = ["retry"] }
 hex = "0.4"
 sha2 = "0.10"
 rs_merkle = "1"
+age = { version = "0.11", features = ["armor"] }
+
+# Observability (PRD-OTEL-01~03)
+opentelemetry = "0.31"
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.31", default-features = false, features = ["http-proto", "reqwest-client", "trace", "metrics"] }
+tracing-opentelemetry = "0.32"

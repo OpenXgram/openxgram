@@ -949,7 +949,7 @@
 
 ## Phase 2.5 운영성 (OTel + Retention + Backup)
 
-### [ ] 22. PRD-OTEL-01 OTLP/HTTP exporter + tracing-opentelemetry
+### [x] 22. PRD-OTEL-01 OTLP/HTTP exporter + tracing-opentelemetry
 
 #### [ ] 22.1 baseline 셋업
 
@@ -989,7 +989,7 @@
   - [ ] 5단계 검증: HTTP traceparent 헤더 확인
   - [ ] 6단계 [x]
 
-### [ ] 23. PRD-OTEL-02 6 함수 instrument
+### [x] 23. PRD-OTEL-02 6 함수 instrument
 
 #### [ ] 23.1 hot path span
 
@@ -1029,7 +1029,7 @@
   - [ ] 5단계 검증: span 확인
   - [ ] 6단계 [x]
 
-### [ ] 24. PRD-OTEL-03 OTel meter (Prometheus pull 병행)
+### [x] 24. PRD-OTEL-03 OTel meter (Prometheus pull 병행)
 
 #### [ ] 24.1 metrics
 
@@ -1069,7 +1069,7 @@
   - [ ] 5단계 검증: env override 테스트
   - [ ] 6단계 [x]
 
-### [ ] 25. PRD-RET-01 retention preview CLI
+### [x] 25. PRD-RET-01 retention preview CLI
 
 #### [ ] 25.1 preview 출력
 
@@ -1109,7 +1109,7 @@
   - [ ] 5단계 검증: write 시도 → 거부
   - [ ] 6단계 [x]
 
-### [ ] 26. PRD-RET-02 retention apply
+### [x] 26. PRD-RET-02 retention apply
 
 #### [ ] 26.1 dry-run + 실 삭제
 
@@ -1149,7 +1149,7 @@
   - [ ] 5단계 검증: 라운드트립
   - [ ] 6단계 [x]
 
-### [ ] 27. PRD-RET-03 retention cron + doctor WARN
+### [x] 27. PRD-RET-03 retention cron + doctor WARN
 
 #### [ ] 27.1 03:00 KST cron + doctor
 
@@ -1189,7 +1189,7 @@
   - [ ] 5단계 검증: webhook 응답 200
   - [ ] 6단계 [x]
 
-### [ ] 28. PRD-BAK-01 age multi-recipient backup
+### [x] 28. PRD-BAK-01 age multi-recipient backup
 
 #### [ ] 28.1 age 통합
 
