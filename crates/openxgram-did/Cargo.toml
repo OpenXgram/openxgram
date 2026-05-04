@@ -1,0 +1,24 @@
+[package]
+name = "openxgram-did"
+description = "W3C DID + 한국 OpenDID + OmniOne Open DID 호환 신원 모듈 (master keypair → did:key/VC)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+openxgram-keystore = { path = "../openxgram-keystore" }
+k256 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+hex = { workspace = true }
+sha2 = "0.10"
+base64 = "0.22"
+bs58 = "0.5"
+chrono = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

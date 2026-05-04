@@ -146,6 +146,12 @@ enum Commands {
         action: KeypairAction,
     },
 
+    /// W3C DID + 한국 OpenDID + OmniOne Open DID 호환 신원 (did/did-document/issue-vc/verify-vc)
+    Identity {
+        #[command(subcommand)]
+        action: openxgram_cli::identity::IdentityCli,
+    },
+
     /// 대화 session 관리 (new/list/show/message/reflect)
     Session {
         /// 데이터 디렉토리 (기본: ~/.openxgram)
@@ -1436,6 +1442,12 @@ async fn main() -> anyhow::Result<()> {
             let ks_dir = FsKeystore::default_path();
             let ks = FsKeystore::new(&ks_dir);
             handle_keypair(ks, action)?;
+        }
+
+        Commands::Identity { action } => {
+            let ks_dir = FsKeystore::default_path();
+            let ks = FsKeystore::new(&ks_dir);
+            openxgram_cli::identity::run(ks, action)?;
         }
 
         Commands::Session { data_dir, action } => {

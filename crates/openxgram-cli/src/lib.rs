@@ -9,6 +9,7 @@ pub mod channel;
 pub mod daemon;
 pub mod doctor;
 pub mod dump;
+pub mod identity;
 pub mod init;
 pub mod mcp_serve;
 pub mod mcp_tokens;

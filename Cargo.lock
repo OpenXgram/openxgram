@@ -4545,6 +4545,7 @@ dependencies = [
  "openxgram-channel",
  "openxgram-core",
  "openxgram-db",
+ "openxgram-did",
  "openxgram-keystore",
  "openxgram-manifest",
  "openxgram-mcp",
@@ -4598,6 +4599,23 @@ dependencies = [
  "thiserror 1.0.69",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "openxgram-did"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "bs58",
+ "chrono",
+ "hex",
+ "k256",
+ "openxgram-keystore",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
