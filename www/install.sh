@@ -52,6 +52,24 @@ ARCH="$(uname -m)"
 case "$OS" in
   linux) OS_ALIAS="linux" ;;
   darwin) OS_ALIAS="darwin" ;;
+  msys*|mingw*|cygwin*)
+    # Windows 환경 (Git Bash / Cygwin) — POSIX 자동 설치 회피, .zip 안내만 출력 (silent fallback 금지).
+    cat <<EOF >&2
+[Windows 감지] OS=$OS
+
+이 install.sh 는 POSIX 환경 (Linux/macOS) 자동 설치 전용입니다.
+Windows 는 .zip asset 을 직접 다운로드하여 PATH 에 추가해 주세요:
+
+  1) https://github.com/$REPO/releases/latest 접속
+  2) xgram-<버전>-x86_64-windows.zip 다운로드
+  3) 압축 해제 후 SHA256 검증:
+       certutil -hashfile xgram.exe SHA256
+       (SHA256SUMS 파일과 비교)
+  4) xgram.exe 위치를 시스템 PATH 에 추가
+
+또는 WSL2 (Ubuntu) 에서 이 스크립트를 다시 실행하면 linux 빌드가 자동 설치됩니다.
+EOF
+    exit 1 ;;
   *) echo "unsupported OS: $OS — build from source: https://github.com/$REPO" >&2; exit 1 ;;
 esac
 
