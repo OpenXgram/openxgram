@@ -712,10 +712,10 @@ kai:  send_message(to=<span class="s">"master"</span>, summary=<span class="s">"
 
           <div class="step">
             <span class="step-no">Step 9.1</span>
-            <h4 data-i18n-ko>빌드 (소스에서)</h4>
-            <h4 data-i18n-en>Build from source</h4>
-            <p data-i18n-ko>현재는 미리 빌드된 바이너리 배포가 없으므로 직접 빌드합니다 (~5분 소요).</p>
-            <p data-i18n-en>Pre-built binaries are not yet shipped — build it yourself (~5 min).</p>
+            <h4 data-i18n-ko>빌드 (소스에서) — GUI 한정</h4>
+            <h4 data-i18n-en>Build from source — GUI only</h4>
+            <p data-i18n-ko><strong>참고:</strong> CLI 는 5 플랫폼 모두 사전 빌드가 있습니다 (Tutorial 1 의 <code>install.sh</code>). 아직 사전 빌드가 없는 것은 <strong>Tauri GUI 데스크톱 앱</strong>뿐 — 직접 빌드합니다 (~5분 소요).</p>
+            <p data-i18n-en><strong>Note:</strong> the CLI ships pre-built for all 5 platforms (see Tutorial 1's <code>install.sh</code>). Only the <strong>Tauri GUI desktop app</strong> still requires building from source (~5 min).</p>
 <pre class="code"><span class="c"># Linux 의존 (Ubuntu/Debian 기준)</span>
 <span class="p">$</span> sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev
 <span class="c"># macOS / Windows 는 추가 의존 없음 (WebKit / WebView2 OS 기본)</span>
@@ -1157,7 +1157,7 @@ kai:  send_message(to=<span class="s">"master"</span>, summary=<span class="s">"
         <div class="container row">
           <div data-i18n-ko>© 2026 OpenXgram contributors</div>
           <div data-i18n-en>© 2026 OpenXgram contributors</div>
-          <div class="mono">v0.2.0</div>
+          <div class="mono">v0.2.0.0-alpha.1</div>
         </div>
       </footer>
     </main>

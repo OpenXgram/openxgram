@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/OpenXgram/openxgram/blob/main/LICENSE)
 ![CI](https://github.com/OpenXgram/openxgram/actions/workflows/ci.yml/badge.svg)
-[![Version](https://img.shields.io/badge/version-0.1.0--alpha.1-blue)](https://github.com/OpenXgram/openxgram/blob/main/version.json)
+[![Version](https://img.shields.io/badge/version-0.2.0--alpha.1-blue)](https://github.com/OpenXgram/openxgram/blob/main/version.json)
 
 **Repository**: https://github.com/OpenXgram/openxgram  
 **Homepage**: https://openxgram.org
@@ -41,7 +41,17 @@ OpenXgram은 어떤 LLM·머신에서든 동일한 세션·기억·파일·자�
 
 ## 빠른 시작 (Phase 1)
 
-### 빌드
+### 설치
+
+```bash
+# 권장 — 사전 빌드 바이너리 자동 다운로드 (Linux x86_64/aarch64 · macOS x86_64/aarch64 · Windows x86_64)
+curl -sSfL https://openxgram.org/install.sh | sh
+xgram --version                             # openxgram 0.2.0
+```
+
+`install.sh` 가 OS·arch 를 자동 감지하여 [GitHub Releases](https://github.com/OpenXgram/openxgram/releases/latest) 에서 받습니다. Windows 는 `.zip` 직접 다운로드 또는 WSL2 권장.
+
+### (선택) 소스에서 빌드 — 사전 빌드가 없는 플랫폼·고급 사용자
 
 ```bash
 git clone https://github.com/OpenXgram/openxgram
@@ -76,7 +86,8 @@ xgram session recall --query "검색어" --k 5
 
 # 5. L2 memory
 xgram memory add --kind fact --content "물은 100도에 끓는다"
-xgram memory list --kind fact
+xgram memory list                  # 모든 종류 출력 (--kind 생략 가능)
+xgram memory list --kind fact      # 특정 종류 필터
 ```
 
 ### 머신 간 메모리 이동 (PRD §20 F)

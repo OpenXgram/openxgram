@@ -83,8 +83,10 @@ OpenXgram = 어떤 AI 든 (Claude · ChatGPT · Gemini · 로컬 모델) 같은 
    (e) 백업·신원 — 데이터 보존 + DID
 
 [2단계: 답변 기반 맞춤 안내]
-- macOS/Linux: curl -sSfL https://openxgram.org/install.sh | sh
-- Windows: GitHub Releases 에서 .zip 다운로드 + PATH 추가
+- 사전 빌드 지원: Linux x86_64/aarch64 · macOS x86_64/aarch64 · Windows x86_64 (5 플랫폼 모두)
+- macOS/Linux: curl -sSfL https://openxgram.org/install.sh | sh   (install.sh 가 OS·arch 자동 감지)
+- Windows: GitHub Releases 에서 .zip 다운로드 + PATH 추가, 또는 WSL2 에서 위 install.sh 실행
+- 사전 빌드 미지원 플랫폼 / 고급 사용자만: cargo install --path crates/openxgram-cli (소스 빌드 — fallback)
 - xgram init --alias &lt;사용자가-원하는-이름&gt;
 - 12-단어 시드 → 오프라인 보관 (분실 시 영구 손실)
 
@@ -98,7 +100,7 @@ OpenXgram = 어떤 AI 든 (Claude · ChatGPT · Gemini · 로컬 모델) 같은 
 - (b) 알림: xgram notify setup-telegram 또는 setup-discord (대화형 마법사)
 - (c) 다중 에이전트: xgram channel serve --bind 127.0.0.1:7250
 - (d) 결제: xgram payment new
-- (e) 백업: xgram backup create, xgram identity did
+- (e) 백업: xgram backup create, xgram identity did --password &lt;PW&gt; (--data-dir 옵션, --format opendid-kr 한국 OpenDID 형식)
 
 [5단계: 첫 사용 검증]
 - xgram session new --title "첫 대화"
@@ -134,8 +136,10 @@ Ask the user these three numbered:
    (e) Backup & identity — durable data + DID
 
 [Step 2: tailored install]
-- macOS/Linux: curl -sSfL https://openxgram.org/install.sh | sh
-- Windows: download .zip from GitHub Releases and add to PATH
+- Pre-built support: Linux x86_64/aarch64 · macOS x86_64/aarch64 · Windows x86_64 (all 5 platforms)
+- macOS/Linux: curl -sSfL https://openxgram.org/install.sh | sh   (auto-detects OS/arch)
+- Windows: download .zip from GitHub Releases and add to PATH, or run install.sh inside WSL2
+- Unsupported platforms / advanced users only: cargo install --path crates/openxgram-cli (source build — fallback only)
 - xgram init --alias &lt;name&gt;
 - 12-word seed prints — store it offline (paper, password manager). Lose it = all data permanently lost.
 
@@ -149,7 +153,7 @@ Ask the user these three numbered:
 - (b) notify: xgram notify setup-telegram or setup-discord (interactive wizard)
 - (c) multi-agent: xgram channel serve --bind 127.0.0.1:7250
 - (d) payment: xgram payment new
-- (e) backup: xgram backup create, xgram identity did
+- (e) backup: xgram backup create, xgram identity did --password &lt;PW&gt; (--data-dir to override, --format opendid-kr for Korean OpenDID)
 
 [Step 5: smoke test]
 - xgram session new --title "first chat"
@@ -240,7 +244,7 @@ Now ask the three questions in step 1 — all at once.</pre>
         <div class="container row">
           <div data-i18n-ko>© 2026 OpenXgram contributors</div>
           <div data-i18n-en>© 2026 OpenXgram contributors</div>
-          <div class="mono">v0.2.0</div>
+          <div class="mono">v0.2.0.0-alpha.1</div>
         </div>
       </footer>
     </main>
