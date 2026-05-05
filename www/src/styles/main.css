@@ -151,6 +151,24 @@ pre.code .p { color: var(--accent-3); } /* prompt $ */
 .diagram { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; }
 .diagram svg { width: 100%; height: auto; display: block; }
 
+/* Screenshot */
+.screenshot { margin: 18px 0 22px; max-width: 100%; }
+.screenshot img {
+  display: block;
+  width: 100%; max-width: 100%; height: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 28px rgba(0,0,0,0.45);
+  background: var(--bg-elev);
+}
+.screenshot figcaption {
+  text-align: center;
+  font-size: 13px;
+  color: var(--fg-mute);
+  margin-top: 8px;
+  line-height: 1.5;
+}
+
 /* Footer */
 .site-footer {
   margin-top: 56px; padding: 32px 0; border-top: 1px solid var(--border-soft);
