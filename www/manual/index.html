@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Manual — OpenXgram 사용 설명서 (스크린샷 + CLI 매핑)</title>
-    <meta name="description" content="OpenXgram GUI 9 탭 사용 설명서. 각 탭의 스크린샷·단계별 사용법·CLI 명령 매핑. 헤드리스 Chromium 으로 캡처한 실 Solid 컴포넌트 (샘플 데이터). CLI/TUI/GUI 인터페이스 비교 + 트러블슈팅." />
+    <title>Manual — OpenXgram 사용 설명서 (일반 사용자용, 코드 없이)</title>
+    <meta name="description" content="OpenXgram GUI 9 탭을 일반 사용자가 쉽게 이해할 수 있도록 정리한 설명서. 비유와 처음이라면 박스, 짧은 문장. 코드 없이 GUI 만으로 OpenXgram 활용." />
     <script type="module" src="/src/main.ts"></script>
     <link rel="icon" type="image/svg+xml" href="/openxgram-logo.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <meta property="og:title" content="OpenXgram Manual — 9 탭 사용 설명서 (스크린샷 + CLI 매핑)" />
-    <meta property="og:description" content="GUI 9 탭 + 단계별 사용법 + CLI 1:1 매핑 + 트러블슈팅. 헤드리스 Chromium 으로 캡처한 실 Solid 컴포넌트 (샘플 데이터)." />
+    <meta property="og:title" content="OpenXgram Manual — 일반 사용자용 9 탭 설명서" />
+    <meta property="og:description" content="비유 + 처음이라면 박스 + 짧은 문장으로 풀어 쓴 GUI 사용법. 코드 없이 GUI 만으로 OpenXgram 활용." />
     <meta property="og:image" content="https://openxgram.org/openxgram-logo.svg" />
     <meta name="twitter:card" content="summary" />
     <style>
@@ -45,6 +45,11 @@
       .iface-card ul li { margin: 4px 0; }
       .ts-box { border-left: 3px solid #ffb86b; background: var(--bg-soft); padding: 12px 16px; border-radius: 6px; margin: 10px 0; color: var(--fg-dim); }
       .ts-box .symptom { color: #ffb86b; font-family: var(--mono); font-size: 12.5px; display: block; margin-bottom: 4px; }
+      .beginner-tip { position: relative; background: linear-gradient(135deg, rgba(0,200,160,0.10), rgba(0,200,160,0.04)); border: 1px solid rgba(0,200,160,0.35); border-left: 4px solid var(--accent); border-radius: 8px; padding: 12px 14px 12px 48px; margin: 14px 0 18px; color: var(--fg); font-size: 14px; line-height: 1.55; }
+      .beginner-tip::before { content: "💡"; position: absolute; left: 14px; top: 10px; font-size: 20px; line-height: 1; }
+      .beginner-tip strong { color: var(--accent); }
+      .analogy { display: inline-block; background: var(--bg-soft); border: 1px dashed var(--border); border-radius: 6px; padding: 2px 8px; margin: 0 2px; font-size: 13px; color: var(--fg); }
+      .jargon-label { font-size: 11.5px; color: var(--fg-dim); background: var(--bg-elev); border-radius: 4px; padding: 1px 6px; margin-left: 6px; vertical-align: middle; font-family: var(--mono); }
     </style>
   </head>
   <body>
@@ -70,29 +75,29 @@
     <main>
       <section class="hero">
         <div class="container">
-          <div class="kicker" data-i18n-ko>OpenXgram 사용 설명서 — 9 탭 모두 보기</div>
-          <div class="kicker" data-i18n-en>OpenXgram user manual — every tab, with screenshots</div>
-          <h1 data-i18n-ko>OpenXgram 사용 설명서</h1>
-          <h1 data-i18n-en>OpenXgram user manual</h1>
+          <div class="kicker" data-i18n-ko>OpenXgram 사용 설명서 — 9 탭, 쉽게 풀어쓰기</div>
+          <div class="kicker" data-i18n-en>OpenXgram user manual — every tab, in plain words</div>
+          <h1 data-i18n-ko>OpenXgram 사용 설명서 (일반 사용자용)</h1>
+          <h1 data-i18n-en>OpenXgram user manual (for everyone)</h1>
           <p class="lead" data-i18n-ko>
-            GUI 9 탭 각각의 <strong>스크린샷 · 단계별 사용법 · CLI 1:1 매핑</strong>을 한 페이지로 정리했습니다.
-            <a href="/quickstart/">Quickstart</a> 가 명령 카탈로그라면, 이 페이지는
-            "이 화면에서 무엇을 누르면 무엇이 나오는가" 를 그림과 함께 보여줍니다.
+            <strong>이 페이지는 일반 사용자용입니다 — 코드 없이 GUI 만으로 OpenXgram 을 쓰는 방법을 안내합니다.</strong>
+            화면 그림을 보면서 어떤 버튼이 무엇을 하는지, 비유와 짧은 문장으로 풀어 썼습니다.
+            처음이라면 각 탭의 <span class="analogy">💡 처음이라면</span> 박스만 따라 해도 5 분 안에 첫 액션이 가능합니다.
           </p>
           <p class="lead" data-i18n-en>
-            One page covering every GUI tab — <strong>screenshot · step-by-step · matching CLI command</strong>.
-            <a href="/quickstart/">Quickstart</a> is the command catalog;
-            this page shows "press X on this screen, see Y" with pictures.
+            <strong>This page is for everyday users — use OpenXgram via the GUI, no code required.</strong>
+            For each screen we explain what every button does using analogies and short sentences.
+            New here? Just follow the <span class="analogy">💡 First time?</span> box in each tab and you'll be doing your first action within 5 minutes.
           </p>
           <p class="honest" data-i18n-ko>
-            ※ 모든 GUI 스크린샷은 실 Tauri Solid 컴포넌트를 헤드리스 Chromium 으로 렌더한 결과입니다.
-            데스크톱 Tauri 와 시각적으로 동일하며 (둘 다 blink/webkit 계열), 노출된 데이터는 샘플입니다.
-            캡처 방법은 <a href="https://github.com/openxgram/openxgram/blob/main/ui/tauri/app/src/components/" target="_blank" rel="noopener">컴포넌트 소스</a> + Playwright addInitScript 로 <code>window.__TAURI_INTERNALS__.invoke</code> 를 mock 한 것이며, GitHub 에 재현 가능합니다.
+            ※ 그림은 모두 실제 데스크톱 앱(Tauri) 컴포넌트를 그대로 화면에 그린 결과입니다.
+            보이는 글자·숫자는 <strong>샘플 데이터</strong> 라서 실제 사용 시엔 본인 데이터가 보입니다.
+            데스크톱 앱과 시각적으로 똑같이 보이도록 만들었습니다 (같은 렌더링 엔진).
           </p>
           <p class="honest" data-i18n-en>
-            Note — every GUI screenshot is the real Tauri Solid components rendered by headless Chromium.
-            Visually identical to the desktop Tauri shell (both blink/webkit), with sample data.
-            Capture: real components + Playwright <code>addInitScript</code> stubbing <code>window.__TAURI_INTERNALS__.invoke</code>; reproducible from the repo.
+            Note — every image shows the real desktop app (Tauri) components rendered as-is.
+            The text and numbers are <strong>sample data</strong> — your own data will appear in real use.
+            Visually identical to the desktop app (same rendering engine).
           </p>
         </div>
       </section>
@@ -100,59 +105,67 @@
       <!-- ============================== Interface choice ============================== -->
       <section id="interfaces" class="anchor-target">
         <div class="container">
-          <div class="kicker">3 interfaces · same daemon · same data</div>
-          <h2 data-i18n-ko>인터페이스 선택 — CLI · TUI · GUI</h2>
+          <div class="kicker">3 가지 사용 방식 · 같은 데이터</div>
+          <h2 data-i18n-ko>사용 방식 고르기 — CLI · TUI · GUI</h2>
           <h2 data-i18n-en>Pick your interface — CLI · TUI · GUI</h2>
-          <p data-i18n-ko>같은 데몬, 같은 <code>~/.openxgram/</code> 데이터. 어떤 인터페이스로 들어가도 결과는 같습니다. 상황에 맞춰 고르세요.</p>
-          <p data-i18n-en>One daemon, one <code>~/.openxgram/</code>. Whichever surface you pick, the result is the same. Choose by context.</p>
+          <p data-i18n-ko>
+            OpenXgram 은 한 곳에 데이터를 두고, 들어가는 문(門)이 3 개입니다.
+            어느 문으로 들어가도 본 데이터·결과는 같습니다.
+            <span class="analogy">은행 — 창구 / ATM / 모바일 앱</span> 처럼, 상황에 맞는 걸 고르세요.
+          </p>
+          <p data-i18n-en>
+            OpenXgram keeps data in one place, with three doors into it.
+            Whichever door you take, the data and result are the same.
+            <span class="analogy">Bank — counter / ATM / mobile app</span> — pick what fits the moment.
+          </p>
 
           <div class="iface-grid">
             <div class="iface-card">
               <h3>CLI</h3>
-              <p class="one-liner" data-i18n-ko><code>xgram &lt;cmd&gt;</code> — 자동화·CI·파이프</p>
-              <p class="one-liner" data-i18n-en><code>xgram &lt;cmd&gt;</code> — automation, CI, pipes</p>
+              <p class="one-liner" data-i18n-ko><code>xgram &lt;cmd&gt;</code> — 자동화·반복 작업용</p>
+              <p class="one-liner" data-i18n-en><code>xgram &lt;cmd&gt;</code> — for automation and scripts</p>
               <ul>
-                <li data-i18n-ko>스크립트·AI 하네스(Claude Code · Cursor · Aider) 통합</li>
-                <li data-i18n-en>Scripts, AI harness (Claude Code · Cursor · Aider)</li>
-                <li data-i18n-ko>SSH·서버·CI 환경에서 그대로 작동</li>
-                <li data-i18n-en>Works on SSH / servers / CI</li>
-                <li data-i18n-ko>다른 도구와 stdin/stdout 으로 연결</li>
-                <li data-i18n-en>Composable via stdin/stdout</li>
+                <li data-i18n-ko>스크립트와 AI 도구(Claude Code · Cursor · Aider)에 바로 연결</li>
+                <li data-i18n-en>Plug into scripts and AI tools (Claude Code · Cursor · Aider)</li>
+                <li data-i18n-ko>SSH·서버에서도 그대로 동작</li>
+                <li data-i18n-en>Works over SSH and on servers</li>
+                <li data-i18n-ko>다른 명령과 입출력을 이어 붙일 수 있음</li>
+                <li data-i18n-en>Compose with other commands</li>
               </ul>
             </div>
             <div class="iface-card">
               <h3>TUI</h3>
-              <p class="one-liner" data-i18n-ko><code>xgram tui</code> — 터미널 안의 대시보드</p>
-              <p class="one-liner" data-i18n-en><code>xgram tui</code> — dashboard inside your terminal</p>
+              <p class="one-liner" data-i18n-ko><code>xgram tui</code> — 터미널 안 작은 대시보드</p>
+              <p class="one-liner" data-i18n-en><code>xgram tui</code> — a small dashboard inside the terminal</p>
               <ul>
-                <li data-i18n-ko>GPU·GUI 라이브러리 없는 환경 (서버·SSH)</li>
-                <li data-i18n-en>No-GPU / no-GUI environments (servers, SSH)</li>
-                <li data-i18n-ko>설치 manifest 빠른 확인</li>
-                <li data-i18n-en>Quick install-state check</li>
-                <li data-i18n-ko>키바인딩 <kbd>Q</kbd>/<kbd>Esc</kbd> 종료</li>
-                <li data-i18n-en>Quit with <kbd>Q</kbd>/<kbd>Esc</kbd></li>
+                <li data-i18n-ko>화면(GUI) 환경이 없는 서버에서 유용</li>
+                <li data-i18n-en>Useful on servers without a graphical screen</li>
+                <li data-i18n-ko>설치·연결 상태 빠른 확인</li>
+                <li data-i18n-en>Quick install / connection check</li>
+                <li data-i18n-ko>키 입력 <kbd>Q</kbd> / <kbd>Esc</kbd> 로 끝내기</li>
+                <li data-i18n-en>Exit with <kbd>Q</kbd> / <kbd>Esc</kbd></li>
               </ul>
             </div>
             <div class="iface-card">
               <h3>GUI</h3>
-              <p class="one-liner" data-i18n-ko>Tauri 데스크톱 앱 — 9 탭 시각 인터페이스</p>
-              <p class="one-liner" data-i18n-en>Tauri desktop app — 9-tab visual interface</p>
+              <p class="one-liner" data-i18n-ko>데스크톱 앱 — 9 탭으로 클릭 사용</p>
+              <p class="one-liner" data-i18n-en>Desktop app — click through 9 tabs</p>
               <ul>
-                <li data-i18n-ko>처음 사용자 · 봇 토큰 마법사 · 라이브 채널 stream</li>
-                <li data-i18n-en>First-time users · bot wizard · live channel stream</li>
-                <li data-i18n-ko>Vault 30초 reveal 카운트다운, MFA 다이얼로그</li>
-                <li data-i18n-en>Vault 30s reveal countdown, MFA dialog</li>
-                <li data-i18n-ko>같은 데몬 / 같은 데이터 / 같은 결과</li>
-                <li data-i18n-en>Same daemon / same data / same result</li>
+                <li data-i18n-ko>처음 사용자 · 봇 연결 · 라이브 채널 보기에 가장 편함</li>
+                <li data-i18n-en>Best for first-time users, bot setup, live channel views</li>
+                <li data-i18n-ko>비밀값은 30 초 동안만 잠깐 보여주는 안전 모드</li>
+                <li data-i18n-en>Secrets unlock for 30 seconds only — safe-mode reveal</li>
+                <li data-i18n-ko>같은 데이터 · 같은 결과</li>
+                <li data-i18n-en>Same data, same result</li>
               </ul>
             </div>
           </div>
 
           <div class="tip">
-            <strong data-i18n-ko>실용 가이드 —</strong>
-            <strong data-i18n-en>Practical guide —</strong>
-            <span data-i18n-ko>처음 한 번은 GUI 로 봇 등록·신원 확인을 끝내고, 일상은 CLI 로 자동화. 서버에선 TUI 로 상태 점검.</span>
-            <span data-i18n-en>Bootstrap once with GUI (bot setup · identity), automate daily flows with CLI, peek at server state with TUI.</span>
+            <strong data-i18n-ko>실용 팁 —</strong>
+            <strong data-i18n-en>Practical tip —</strong>
+            <span data-i18n-ko>처음 한 번은 GUI 로 봇·신원을 끝내고, 평소엔 CLI 로 자동화. 서버 점검은 TUI.</span>
+            <span data-i18n-en>Set up bots and identity once via GUI, automate daily flow with CLI, peek at servers via TUI.</span>
           </div>
         </div>
       </section>
@@ -160,22 +173,22 @@
       <!-- ============================== TOC ============================== -->
       <section>
         <div class="container">
-          <div class="kicker">Table of contents</div>
-          <h2 data-i18n-ko>이 설명서에서 다루는 9 탭</h2>
-          <h2 data-i18n-en>The nine tabs covered here</h2>
+          <div class="kicker">목차</div>
+          <h2 data-i18n-ko>이 설명서가 다루는 9 탭</h2>
+          <h2 data-i18n-en>The nine tabs in this manual</h2>
           <div class="toc">
             <ol>
-              <li><a href="#tab-onboarding" data-i18n-ko>1. 시작하기 (Onboarding) — init 진행 상태</a><a href="#tab-onboarding" data-i18n-en>1. Onboarding — init progress</a></li>
-              <li><a href="#tab-memory" data-i18n-ko>2. 기억 (Memory) — 5 층 검색</a><a href="#tab-memory" data-i18n-en>2. Memory — 5-layer search</a></li>
-              <li><a href="#tab-vault" data-i18n-ko>3. Vault — 자격증명 승인 + 30초 reveal</a><a href="#tab-vault" data-i18n-en>3. Vault — credential approval + 30s reveal</a></li>
-              <li><a href="#tab-peers" data-i18n-ko>4. 피어 (Peers) — 머신·에이전트 등록</a><a href="#tab-peers" data-i18n-en>4. Peers — register machines / agents</a></li>
-              <li><a href="#tab-notify" data-i18n-ko>5. 알림 (Notify) — Discord/Telegram 봇 마법사</a><a href="#tab-notify" data-i18n-en>5. Notify — Discord / Telegram bot wizard</a></li>
-              <li><a href="#tab-channel" data-i18n-ko>6. 채널 (Channel) — 다중 에이전트 라이브</a><a href="#tab-channel" data-i18n-en>6. Channel — live multi-agent hub</a></li>
-              <li><a href="#tab-schedule" data-i18n-ko>7. 예약 (Schedule) — once / cron</a><a href="#tab-schedule" data-i18n-en>7. Schedule — once / cron</a></li>
-              <li><a href="#tab-chain" data-i18n-ko>8. 체인 (Chain) — YAML 워크플로우</a><a href="#tab-chain" data-i18n-en>8. Chain — YAML workflows</a></li>
-              <li><a href="#tab-settings" data-i18n-ko>9. 설정 (Settings) — USDC 일일 한도</a><a href="#tab-settings" data-i18n-en>9. Settings — USDC daily limit</a></li>
-              <li><a href="#cli-map" data-i18n-ko>10. GUI ↔ CLI 1:1 매핑</a><a href="#cli-map" data-i18n-en>10. GUI ↔ CLI 1:1 mapping</a></li>
-              <li><a href="#troubleshooting" data-i18n-ko>11. 트러블슈팅</a><a href="#troubleshooting" data-i18n-en>11. Troubleshooting</a></li>
+              <li><a href="#tab-onboarding" data-i18n-ko>1. 시작하기 — 첫 사용 안내 (길잡이)</a><a href="#tab-onboarding" data-i18n-en>1. Onboarding — first-time guide</a></li>
+              <li><a href="#tab-memory" data-i18n-ko>2. 기억 — AI 의 노트북 검색</a><a href="#tab-memory" data-i18n-en>2. Memory — search the AI's notebook</a></li>
+              <li><a href="#tab-vault" data-i18n-ko>3. Vault — 비밀번호 금고 (내가 직접 관리)</a><a href="#tab-vault" data-i18n-en>3. Vault — your password safe</a></li>
+              <li><a href="#tab-peers" data-i18n-ko>4. 피어 — 친구 목록 (다른 머신·에이전트)</a><a href="#tab-peers" data-i18n-en>4. Peers — your friend list</a></li>
+              <li><a href="#tab-notify" data-i18n-ko>5. 알림 — Discord / Telegram 봇 연결 마법사</a><a href="#tab-notify" data-i18n-en>5. Notify — Discord / Telegram bot wizard</a></li>
+              <li><a href="#tab-channel" data-i18n-ko>6. 채널 — 단체 채팅방 (AI 들끼리 + 나)</a><a href="#tab-channel" data-i18n-en>6. Channel — group chat (AIs + you)</a></li>
+              <li><a href="#tab-schedule" data-i18n-ko>7. 예약 — 예약 발송 (이메일 예약처럼)</a><a href="#tab-schedule" data-i18n-en>7. Schedule — send-later, like a calendar</a></li>
+              <li><a href="#tab-chain" data-i18n-ko>8. 체인 — 도미노 메시지 (자동 순서)</a><a href="#tab-chain" data-i18n-en>8. Chain — domino workflow</a></li>
+              <li><a href="#tab-settings" data-i18n-ko>9. 설정 — 결제 일일 한도</a><a href="#tab-settings" data-i18n-en>9. Settings — daily payment limit</a></li>
+              <li><a href="#cli-map" data-i18n-ko>10. 화면 ↔ 명령어 대응표</a><a href="#cli-map" data-i18n-en>10. Screen ↔ command map</a></li>
+              <li><a href="#troubleshooting" data-i18n-ko>11. 문제 해결</a><a href="#troubleshooting" data-i18n-en>11. Troubleshooting</a></li>
             </ol>
           </div>
         </div>
@@ -184,285 +197,375 @@
       <!-- ============================== Tab 1 — Onboarding ============================== -->
       <section id="tab-onboarding" class="anchor-target">
         <div class="container">
-          <div class="kicker">Tab 1 · 시작하기 / Onboarding</div>
-          <h2 data-i18n-ko>1. 시작하기 — init 진행 상태</h2>
-          <h2 data-i18n-en>1. Onboarding — init progress</h2>
+          <div class="kicker">탭 1 · 시작하기 / Onboarding</div>
+          <h2 data-i18n-ko>1. 시작하기 — 첫 사용 안내</h2>
+          <h2 data-i18n-en>1. Onboarding — first-time guide</h2>
           <figure class="screenshot">
-            <img src="/screenshots/gui-onboarding.png" alt="Onboarding 탭 — 첫 실행 환영 화면 / Onboarding tab — first-run welcome" loading="lazy" width="1280" height="800" />
-            <figcaption data-i18n-ko>실 Tauri Solid 컴포넌트 헤드리스 Chromium 렌더 — 실 GUI 와 시각적 동일 (blink 엔진), 데이터는 샘플.</figcaption>
-            <figcaption data-i18n-en>Real Tauri Solid components rendered in headless Chromium — visually identical to actual GUI (blink engine), with sample data.</figcaption>
+            <img src="/screenshots/gui-onboarding.png" alt="시작하기 탭 — 첫 실행 환영 화면 / Onboarding tab — first-run welcome" loading="lazy" width="1280" height="800" />
+            <figcaption data-i18n-ko>실제 데스크톱 앱 화면을 그대로 그린 그림 — 표시된 데이터는 샘플입니다.</figcaption>
+            <figcaption data-i18n-en>Real desktop-app components rendered as-is — sample data shown.</figcaption>
           </figure>
-          <p data-i18n-ko><strong>이 탭은 무엇을 하나요</strong> — 첫 실행 환영, init 진행 상태 확인, Memory 탭으로 자동 진행.</p>
-          <p data-i18n-en><strong>What this tab does</strong> — first-run welcome, init readiness check, auto-advance to Memory.</p>
+          <p data-i18n-ko><strong>이 탭의 역할</strong> — 처음 들어왔을 때 인사하고, 준비가 됐는지 확인한 뒤, 다음 단계(기억 탭)로 데려갑니다. <span class="analogy">길잡이 / onboarding</span></p>
+          <p data-i18n-en><strong>What it does</strong> — greets you on first launch, checks that everything is ready, then guides you to the next step (Memory tab). <span class="analogy">A guide</span></p>
+
+          <div class="beginner-tip">
+            <strong data-i18n-ko>처음이라면:</strong>
+            <strong data-i18n-en>First time?</strong>
+            <span data-i18n-ko>이 한 가지만 — 터미널에서 <code>xgram init --alias 내이름</code> 입력하고, GUI 의 "다시 확인" 버튼 한 번. 그러면 끝입니다.</span>
+            <span data-i18n-en>Just one thing — run <code>xgram init --alias yourname</code> in your terminal, then click "Re-check" in the GUI once. Done.</span>
+          </div>
+
           <p data-i18n-ko><strong>어떻게 쓰나요</strong></p>
           <p data-i18n-en><strong>How to use</strong></p>
           <ul class="step-list">
-            <li data-i18n-ko>터미널에서 <code>xgram init --alias &lt;이름&gt;</code> 실행 (seed 와 <code>~/.openxgram/openxgram.db</code> 생성).</li>
-            <li data-i18n-en>Run <code>xgram init --alias &lt;name&gt;</code> in your terminal (creates seed + <code>~/.openxgram/openxgram.db</code>).</li>
-            <li data-i18n-ko>BIP39 12 단어 시드를 안전한 곳에 적어둡니다 — 잃으면 vault 복구 불가.</li>
-            <li data-i18n-en>Write the BIP39 12-word seed somewhere safe — losing it means no vault recovery.</li>
-            <li data-i18n-ko>GUI 의 "초기화 상태 다시 확인" 버튼을 눌러 <span class="badge ok">초기화 완료</span> 배지를 확인.</li>
-            <li data-i18n-en>Click "Re-check initialization" until you see the <span class="badge ok">Initialized</span> badge.</li>
-            <li data-i18n-ko>(선택) Discord/Telegram 토큰을 <strong>알림 (Notify)</strong> 탭에서 연결.</li>
-            <li data-i18n-en>(Optional) Connect Discord/Telegram in the <strong>Notify</strong> tab.</li>
+            <li data-i18n-ko>터미널에서 <code>xgram init --alias 내이름</code> 을 실행합니다. (내 신원과 데이터 파일이 만들어집니다.)</li>
+            <li data-i18n-en>Run <code>xgram init --alias yourname</code> in a terminal. (Creates your identity and data file.)</li>
+            <li data-i18n-ko>화면에 12 개의 영어 단어가 보입니다 — 종이에 적어 안전한 곳에 보관하세요. <span class="analogy">통장 비밀번호 같은 복구용 단어</span></li>
+            <li data-i18n-en>Twelve English words appear — write them on paper and keep them safe. <span class="analogy">Like a bank-recovery passphrase</span></li>
+            <li data-i18n-ko>"초기화 상태 다시 확인" 버튼을 눌러 <span class="badge ok">초기화 완료</span> 라는 표시가 나오면 성공.</li>
+            <li data-i18n-en>Click "Re-check initialization" until you see <span class="badge ok">Initialized</span>.</li>
+            <li data-i18n-ko>(선택) 알림 탭으로 가서 Discord 나 Telegram 봇을 연결합니다.</li>
+            <li data-i18n-en>(Optional) Go to the Notify tab and connect a Discord or Telegram bot.</li>
           </ul>
-          <div class="tip"><strong data-i18n-ko>팁</strong><strong data-i18n-en>Tip</strong> — <span data-i18n-ko>이미 초기화된 경우 GUI 첫 화면이 자동으로 Memory 탭으로 전환됩니다.</span><span data-i18n-en>If already initialized, the GUI auto-switches to the Memory tab on launch.</span></div>
-          <div class="warn"><strong data-i18n-ko>주의</strong><strong data-i18n-en>Caution</strong> — <span data-i18n-ko>seed 는 화면에 평문으로 노출됩니다. 화면 녹화·공유·스크린샷 주의.</span><span data-i18n-en>The seed is shown as plaintext. Beware of screen recording / sharing / screenshots.</span></div>
-          <p class="muted" data-i18n-ko><strong>같은 작업의 CLI</strong>: <code class="inline">xgram init --alias myname</code> · <code class="inline">xgram status</code></p>
-          <p class="muted" data-i18n-en><strong>Same in CLI</strong>: <code class="inline">xgram init --alias myname</code> · <code class="inline">xgram status</code></p>
+          <div class="tip"><strong data-i18n-ko>팁</strong><strong data-i18n-en>Tip</strong> — <span data-i18n-ko>이미 시작 설정이 끝나 있으면, 다음에 GUI 를 켜면 자동으로 기억 탭부터 보입니다.</span><span data-i18n-en>If setup is already done, the GUI opens straight to the Memory tab next time.</span></div>
+          <div class="warn"><strong data-i18n-ko>주의</strong><strong data-i18n-en>Caution</strong> — <span data-i18n-ko>12 개 단어는 화면에 그대로 보입니다. 화면 녹화·공유·캡처를 조심하세요.</span><span data-i18n-en>The 12-word recovery shows as plaintext. Beware of screen recording / sharing / screenshots.</span></div>
+          <p class="muted" data-i18n-ko><strong>같은 작업의 명령어</strong>: <code class="inline">xgram init --alias 내이름</code> · <code class="inline">xgram status</code></p>
+          <p class="muted" data-i18n-en><strong>Same as command</strong>: <code class="inline">xgram init --alias yourname</code> · <code class="inline">xgram status</code></p>
         </div>
       </section>
 
       <!-- ============================== Tab 2 — Memory ============================== -->
       <section id="tab-memory" class="anchor-target">
         <div class="container">
-          <div class="kicker">Tab 2 · 기억 / Memory</div>
-          <h2 data-i18n-ko>2. 기억 — 5 층 메모리 검색</h2>
-          <h2 data-i18n-en>2. Memory — 5-layer search</h2>
+          <div class="kicker">탭 2 · 기억 / Memory</div>
+          <h2 data-i18n-ko>2. 기억 — AI 의 노트북 검색</h2>
+          <h2 data-i18n-en>2. Memory — search the AI's notebook</h2>
           <figure class="screenshot">
-            <img src="/screenshots/gui-memory.png" alt="Memory 탭 — 5층 검색 결과 / Memory tab — 5-layer search results" loading="lazy" width="1280" height="800" />
-            <figcaption data-i18n-ko>실 Tauri Solid 컴포넌트 헤드리스 Chromium 렌더 — 실 GUI 와 시각적 동일 (blink 엔진), 데이터는 샘플.</figcaption>
-            <figcaption data-i18n-en>Real Tauri Solid components rendered in headless Chromium — visually identical to actual GUI (blink engine), with sample data.</figcaption>
+            <img src="/screenshots/gui-memory.png" alt="기억 탭 — 검색 결과 / Memory tab — search results" loading="lazy" width="1280" height="800" />
+            <figcaption data-i18n-ko>실제 데스크톱 앱 화면을 그대로 그린 그림 — 표시된 데이터는 샘플입니다.</figcaption>
+            <figcaption data-i18n-en>Real desktop-app components rendered as-is — sample data shown.</figcaption>
           </figure>
-          <p data-i18n-ko><strong>이 탭은 무엇을 하나요</strong> — L0 메시지·L2 기억·L4 정체성을 한 번에 검색.</p>
-          <p data-i18n-en><strong>What this tab does</strong> — search L0 messages, L2 memories, and L4 traits in one box.</p>
+          <p data-i18n-ko><strong>이 탭의 역할</strong> — AI 가 기록해 둔 모든 것을 한 입력창으로 검색합니다. <span class="analogy">AI 의 노트북</span> 안을 단어 한 번으로 찾아내는 곳입니다.</p>
+          <p data-i18n-en><strong>What it does</strong> — search everything the AI has noted down, from one box. <span class="analogy">The AI's notebook</span> — find anything with a single word.</p>
+
+          <div class="beginner-tip">
+            <strong data-i18n-ko>처음이라면:</strong>
+            <strong data-i18n-en>First time?</strong>
+            <span data-i18n-ko>이 한 가지만 — 검색창에 단어 하나(예: "회의") 입력. 잠깐 멈추면 자동으로 결과가 뜹니다. 체크박스는 일단 그대로 두세요.</span>
+            <span data-i18n-en>Just one thing — type a word (e.g. "meeting"). Pause typing and results appear automatically. Leave the checkboxes alone for now.</span>
+          </div>
+
+          <p data-i18n-ko><strong>기억의 5 단계</strong> — 간단한 것부터 복잡한 것 순서입니다.</p>
+          <p data-i18n-en><strong>Five layers of memory</strong> — simplest to richest.</p>
           <ul class="step-list">
-            <li data-i18n-ko>상단 입력창에 키워드 입력 (300ms 디바운스).</li>
-            <li data-i18n-en>Type a keyword (300ms debounce).</li>
-            <li data-i18n-ko>L0 / L2 / L4 체크박스로 레이어 범위 조절.</li>
-            <li data-i18n-en>Toggle L0 / L2 / L4 checkboxes to scope layers.</li>
-            <li data-i18n-ko>점수(score) 내림차순으로 결과 확인 — 각 줄에 layer + score + body.</li>
-            <li data-i18n-en>Scan score-sorted results — each row shows layer + score + body.</li>
+            <li data-i18n-ko><strong>L0 메시지</strong> — 주고받은 원문 그대로</li>
+            <li data-i18n-en><strong>L0 messages</strong> — raw conversations</li>
+            <li data-i18n-ko><strong>L1 에피소드</strong> — 한 세션 묶음</li>
+            <li data-i18n-en><strong>L1 episodes</strong> — grouped sessions</li>
+            <li data-i18n-ko><strong>L2 기억</strong> — 사실 · 결정 · 규칙 (별표 가능)</li>
+            <li data-i18n-en><strong>L2 memories</strong> — facts, decisions, rules (pinnable)</li>
+            <li data-i18n-ko><strong>L3 패턴</strong> — 새로움 / 반복 / 고정 자동 분류</li>
+            <li data-i18n-en><strong>L3 patterns</strong> — new / recurring / routine</li>
+            <li data-i18n-ko><strong>L4 정체성</strong> — AI 의 성격·성향 (밤마다 자동 정리)</li>
+            <li data-i18n-en><strong>L4 traits</strong> — personality, tendencies (auto-distilled nightly)</li>
           </ul>
-          <div class="tip"><strong data-i18n-ko>팁</strong><strong data-i18n-en>Tip</strong> — <span data-i18n-ko>여러 층을 비교하고 싶다면 L0+L2 만 켜고 검색해 시간 흐름을 확인하세요.</span><span data-i18n-en>To inspect a timeline, enable L0+L2 only.</span></div>
-          <p class="muted" data-i18n-ko><strong>같은 작업의 CLI</strong>: <code class="inline">xgram session recall &lt;키워드&gt;</code></p>
-          <p class="muted" data-i18n-en><strong>Same in CLI</strong>: <code class="inline">xgram session recall &lt;keyword&gt;</code></p>
+          <p data-i18n-ko><strong>어떻게 쓰나요</strong></p>
+          <p data-i18n-en><strong>How to use</strong></p>
+          <ul class="step-list">
+            <li data-i18n-ko>위쪽 입력창에 검색어를 입력합니다. 타이핑을 멈추면 자동으로 검색이 시작됩니다.</li>
+            <li data-i18n-en>Type a search term in the top box. Search runs automatically when you pause typing.</li>
+            <li data-i18n-ko>L0 / L2 / L4 체크박스로 어느 단계에서 찾을지 선택합니다 (필요할 때만).</li>
+            <li data-i18n-en>Use L0 / L2 / L4 checkboxes to scope which layers to search (only when needed).</li>
+            <li data-i18n-ko>결과는 점수가 높은 것부터 위에 나옵니다. 각 줄에 단계 · 점수 · 본문이 보입니다.</li>
+            <li data-i18n-en>Top hits show first. Each row shows layer, score, and content.</li>
+          </ul>
+          <div class="tip"><strong data-i18n-ko>팁</strong><strong data-i18n-en>Tip</strong> — <span data-i18n-ko>대화 흐름을 시간 순으로 보고 싶으면 L0 + L2 만 켜고 검색하세요.</span><span data-i18n-en>To follow a chronological thread, enable only L0 + L2.</span></div>
+          <p class="muted" data-i18n-ko><strong>같은 작업의 명령어</strong>: <code class="inline">xgram session recall &lt;검색어&gt;</code></p>
+          <p class="muted" data-i18n-en><strong>Same as command</strong>: <code class="inline">xgram session recall &lt;keyword&gt;</code></p>
+          <p class="honest" data-i18n-ko>※ 검색은 AI 가 알아듣는 작은 모델(약 120MB)을 한 번 내려받아 사용합니다 — 사용자는 신경 쓸 필요 없습니다.</p>
+          <p class="honest" data-i18n-en>※ Search uses a small AI model (~120MB) downloaded once — you don't need to manage it.</p>
         </div>
       </section>
 
       <!-- ============================== Tab 3 — Vault ============================== -->
       <section id="tab-vault" class="anchor-target">
         <div class="container">
-          <div class="kicker">Tab 3 · Vault</div>
-          <h2 data-i18n-ko>3. Vault — 자격증명 승인 + 30초 Reveal</h2>
-          <h2 data-i18n-en>3. Vault — credential approval + 30s reveal</h2>
+          <div class="kicker">탭 3 · Vault</div>
+          <h2 data-i18n-ko>3. Vault — 비밀번호 금고</h2>
+          <h2 data-i18n-en>3. Vault — your password safe</h2>
           <figure class="screenshot">
-            <img src="/screenshots/gui-vault.png" alt="Vault 탭 — Pending 승인 + Reveal / Vault tab — pending approvals + reveal" loading="lazy" width="1280" height="800" />
-            <figcaption data-i18n-ko>실 Tauri Solid 컴포넌트 헤드리스 Chromium 렌더 — 실 GUI 와 시각적 동일 (blink 엔진), 데이터는 샘플.</figcaption>
-            <figcaption data-i18n-en>Real Tauri Solid components rendered in headless Chromium — visually identical to actual GUI (blink engine), with sample data.</figcaption>
+            <img src="/screenshots/gui-vault.png" alt="Vault 탭 — 승인 + 잠깐 보기 / Vault tab — approvals + reveal" loading="lazy" width="1280" height="800" />
+            <figcaption data-i18n-ko>실제 데스크톱 앱 화면을 그대로 그린 그림 — 표시된 데이터는 샘플입니다.</figcaption>
+            <figcaption data-i18n-en>Real desktop-app components rendered as-is — sample data shown.</figcaption>
           </figure>
-          <p data-i18n-ko><strong>이 탭은 무엇을 하나요</strong> — 다른 에이전트가 요청한 자격증명을 승인/거부하고, 직접 vault 값을 reveal.</p>
-          <p data-i18n-en><strong>What this tab does</strong> — approve or deny credential requests from other agents, and reveal vault values directly.</p>
+          <p data-i18n-ko><strong>이 탭의 역할</strong> — 다른 AI 가 비밀값(API 키 같은 것)을 요청하면 내가 직접 허락/거절합니다. 내 비밀값을 잠깐 꺼내볼 수도 있습니다. <span class="analogy">비밀번호 금고 — 내가 직접 관리</span></p>
+          <p data-i18n-en><strong>What it does</strong> — when other agents ask for secrets (like API keys), you approve or deny. You can also peek at your own secrets briefly. <span class="analogy">A password safe you control</span></p>
+
+          <div class="beginner-tip">
+            <strong data-i18n-ko>처음이라면:</strong>
+            <strong data-i18n-en>First time?</strong>
+            <span data-i18n-ko>이 한 가지만 — 위쪽 "대기 중" 카드에 요청이 보이면, 누가·무엇을·언제 요청했는지 확인하고 <strong>승인</strong> 또는 <strong>거부</strong> 버튼을 누르세요.</span>
+            <span data-i18n-en>Just one thing — when a request appears in the "Pending" card, check who / what / when, then click <strong>Approve</strong> or <strong>Deny</strong>.</span>
+          </div>
+
           <ul class="step-list">
-            <li data-i18n-ko>상단 <strong>Pending</strong> 카드에서 요청자(agent) · 요청 키 · 요청 시각 확인 후 승인/거부.</li>
-            <li data-i18n-en>In the <strong>Pending</strong> card review requester · key · timestamp, then approve or deny.</li>
-            <li data-i18n-ko>거부 시 사유 입력 (감사 로그에 기록).</li>
-            <li data-i18n-en>When denying, enter a reason (logged to audit chain).</li>
-            <li data-i18n-ko>하단 <strong>Vault Reveal</strong> 에 키 입력 → 30초간 마스킹 해제.</li>
-            <li data-i18n-en>In <strong>Vault Reveal</strong> enter the key → unmasked for 30 seconds.</li>
-            <li data-i18n-ko>클립보드 복사 시 30초 후 자동 클리어.</li>
-            <li data-i18n-en>Copying to clipboard auto-clears after 30 seconds.</li>
+            <li data-i18n-ko>위쪽 <strong>대기 중(Pending)</strong> 카드 — 요청자(어떤 AI), 요청한 키 이름, 요청 시각이 보입니다. 확인 후 승인/거부.</li>
+            <li data-i18n-en>Top <strong>Pending</strong> card — see who, which key, when. Then approve or deny.</li>
+            <li data-i18n-ko>거부할 땐 사유를 적습니다 (변조 불가능한 기록<span class="jargon-label">audit chain</span>에 남습니다).</li>
+            <li data-i18n-en>When denying, enter a reason — saved to an immutable log<span class="jargon-label">audit chain</span>.</li>
+            <li data-i18n-ko>아래쪽 <strong>잠깐 보기(Reveal)</strong> 에 키를 입력하면 30 초 동안만 가림이 풀립니다. 시간이 지나면 자동으로 다시 가려집니다.</li>
+            <li data-i18n-en>Bottom <strong>Reveal</strong> — type a key and it unmasks for 30 seconds, then re-masks automatically.</li>
+            <li data-i18n-ko>복사 버튼을 누르면 클립보드에 들어가지만, 30 초 후 자동으로 지워집니다.</li>
+            <li data-i18n-en>Copy puts the value on the clipboard, then clears it after 30 seconds.</li>
           </ul>
-          <div class="warn"><strong data-i18n-ko>주의</strong><strong data-i18n-en>Caution</strong> — <span data-i18n-ko>승인 다이얼로그에서 fingerprint 가 알고 있는 에이전트의 것과 일치하는지 반드시 확인.</span><span data-i18n-en>Always verify the fingerprint in the approval dialog matches the agent you trust.</span></div>
-          <p class="muted" data-i18n-ko><strong>같은 작업의 CLI</strong>: <code class="inline">xgram vault pending-list</code> · <code class="inline">xgram vault approve &lt;id&gt;</code> · <code class="inline">xgram vault reveal &lt;key&gt;</code></p>
-          <p class="muted" data-i18n-en><strong>Same in CLI</strong>: <code class="inline">xgram vault pending-list</code> · <code class="inline">xgram vault approve &lt;id&gt;</code> · <code class="inline">xgram vault reveal &lt;key&gt;</code></p>
+          <div class="warn"><strong data-i18n-ko>주의</strong><strong data-i18n-en>Caution</strong> — <span data-i18n-ko>승인 창에 표시된 지문(고유 신원<span class="jargon-label">fingerprint</span>) 이 내가 아는 AI 의 것과 일치하는지 꼭 확인하세요.</span><span data-i18n-en>Always verify the fingerprint<span class="jargon-label">unique ID</span> in the dialog matches the agent you trust.</span></div>
+          <p class="muted" data-i18n-ko><strong>같은 작업의 명령어</strong>: <code class="inline">xgram vault pending-list</code> · <code class="inline">xgram vault approve &lt;id&gt;</code> · <code class="inline">xgram vault reveal &lt;key&gt;</code></p>
+          <p class="muted" data-i18n-en><strong>Same as command</strong>: <code class="inline">xgram vault pending-list</code> · <code class="inline">xgram vault approve &lt;id&gt;</code> · <code class="inline">xgram vault reveal &lt;key&gt;</code></p>
         </div>
       </section>
 
       <!-- ============================== Tab 4 — Peers ============================== -->
       <section id="tab-peers" class="anchor-target">
         <div class="container">
-          <div class="kicker">Tab 4 · 피어 / Peers</div>
-          <h2 data-i18n-ko>4. 피어 — 다른 머신·에이전트 등록</h2>
-          <h2 data-i18n-en>4. Peers — register other machines / agents</h2>
+          <div class="kicker">탭 4 · 피어 / Peers</div>
+          <h2 data-i18n-ko>4. 피어 — 친구 목록 등록</h2>
+          <h2 data-i18n-en>4. Peers — your friend list</h2>
           <figure class="screenshot">
-            <img src="/screenshots/gui-peers.png" alt="Peers 탭 — 피어 등록 / Peers tab — peer registration" loading="lazy" width="1280" height="800" />
-            <figcaption data-i18n-ko>실 Tauri Solid 컴포넌트 헤드리스 Chromium 렌더 — 실 GUI 와 시각적 동일 (blink 엔진), 데이터는 샘플.</figcaption>
-            <figcaption data-i18n-en>Real Tauri Solid components rendered in headless Chromium — visually identical to actual GUI (blink engine), with sample data.</figcaption>
+            <img src="/screenshots/gui-peers.png" alt="피어 탭 — 친구 등록 / Peers tab — peer registration" loading="lazy" width="1280" height="800" />
+            <figcaption data-i18n-ko>실제 데스크톱 앱 화면을 그대로 그린 그림 — 표시된 데이터는 샘플입니다.</figcaption>
+            <figcaption data-i18n-en>Real desktop-app components rendered as-is — sample data shown.</figcaption>
           </figure>
-          <p data-i18n-ko><strong>이 탭은 무엇을 하나요</strong> — 다른 머신·에이전트의 신원을 등록하고 fingerprint 로 검증.</p>
-          <p data-i18n-en><strong>What this tab does</strong> — register other machines / agents and verify by fingerprint.</p>
+          <p data-i18n-ko><strong>이 탭의 역할</strong> — 다른 머신이나 AI 를 <span class="analogy">친구 목록</span> 에 추가하고, 정말 그 친구가 맞는지 지문으로 확인합니다.</p>
+          <p data-i18n-en><strong>What it does</strong> — add other machines or agents to <span class="analogy">your friend list</span>, then verify by fingerprint that they really are who they say.</p>
+
+          <div class="beginner-tip">
+            <strong data-i18n-ko>처음이라면:</strong>
+            <strong data-i18n-en>First time?</strong>
+            <span data-i18n-ko>이 한 가지만 — 친구의 이름·주소·공개키를 입력하고 "피어 추가". 다음 화면에 나오는 지문을 친구한테 전화로 불러줘서 같은지 확인하세요.</span>
+            <span data-i18n-en>Just one thing — enter alias / address / public key, click "Add peer". On the next screen, read the fingerprint to your friend over the phone and confirm it matches.</span>
+          </div>
+
           <ul class="step-list">
-            <li data-i18n-ko>상대 alias · address (<code>http://…</code> 또는 <code>nostr://…</code>) · public key (hex) 입력.</li>
-            <li data-i18n-en>Enter peer alias · address (<code>http://…</code> or <code>nostr://…</code>) · public key (hex).</li>
-            <li data-i18n-ko>"피어 추가" 클릭 시 fingerprint 다이얼로그 표시 — 다른 채널(전화·종이)로 fingerprint 일치 확인 후 confirm.</li>
-            <li data-i18n-en>Click "Add peer" → fingerprint dialog. Verify on a different channel (phone, paper), then confirm.</li>
-            <li data-i18n-ko>(선택) machine 입력 — ACL 화이트리스트로 사용.</li>
-            <li data-i18n-en>(Optional) enter machine — used as ACL whitelist key.</li>
+            <li data-i18n-ko>이름(별명) · 주소 (<code>http://…</code> 또는 <code>nostr://…</code>) · 공개키(긴 글자열) 를 입력합니다.</li>
+            <li data-i18n-en>Enter alias · address (<code>http://…</code> or <code>nostr://…</code>) · public key (a long string).</li>
+            <li data-i18n-ko>"피어 추가" 누르면 지문(짧은 식별자) 이 뜹니다. 친구한테 전화나 다른 채널로 같은지 확인 → 확정.</li>
+            <li data-i18n-en>Click "Add peer" → a fingerprint appears. Verify with the friend on a different channel (phone, paper) → confirm.</li>
+            <li data-i18n-ko>(선택) "머신" 항목 — 어느 컴퓨터인지 표시해 두면 권한 화이트리스트에 쓸 수 있습니다.</li>
+            <li data-i18n-en>(Optional) "machine" — labels which computer; used for permission whitelisting.</li>
           </ul>
-          <div class="warn"><strong data-i18n-ko>주의</strong><strong data-i18n-en>Caution</strong> — <span data-i18n-ko>fingerprint 미검증으로 추가하면 MITM 위험. 신원이 의심되면 거부.</span><span data-i18n-en>Adding without fingerprint check is MITM-prone. Deny anything you can't verify.</span></div>
-          <p class="muted" data-i18n-ko><strong>같은 작업의 CLI</strong>: <code class="inline">xgram peer add --alias eno --address http://… --pubkey 0x…</code> · <code class="inline">xgram peer list</code></p>
-          <p class="muted" data-i18n-en><strong>Same in CLI</strong>: <code class="inline">xgram peer add --alias eno --address http://… --pubkey 0x…</code> · <code class="inline">xgram peer list</code></p>
+          <div class="warn"><strong data-i18n-ko>주의</strong><strong data-i18n-en>Caution</strong> — <span data-i18n-ko>지문 확인 없이 추가하면 가짜 친구가 끼어들 수 있습니다. 의심스러우면 거절하세요.</span><span data-i18n-en>Adding without checking the fingerprint risks an imposter sneaking in. Deny anything you can't verify.</span></div>
+          <p class="muted" data-i18n-ko><strong>같은 작업의 명령어</strong>: <code class="inline">xgram peer add --alias eno --address http://… --pubkey 0x…</code> · <code class="inline">xgram peer list</code></p>
+          <p class="muted" data-i18n-en><strong>Same as command</strong>: <code class="inline">xgram peer add --alias eno --address http://… --pubkey 0x…</code> · <code class="inline">xgram peer list</code></p>
         </div>
       </section>
 
       <!-- ============================== Tab 5 — Notify ============================== -->
       <section id="tab-notify" class="anchor-target">
         <div class="container">
-          <div class="kicker">Tab 5 · 알림 / Notify</div>
-          <h2 data-i18n-ko>5. 알림 — Discord / Telegram 봇 마법사</h2>
+          <div class="kicker">탭 5 · 알림 / Notify</div>
+          <h2 data-i18n-ko>5. 알림 — Discord / Telegram 봇 연결 마법사</h2>
           <h2 data-i18n-en>5. Notify — Discord / Telegram bot wizard</h2>
           <figure class="screenshot">
-            <img src="/screenshots/gui-notify.png" alt="Notify 탭 — 봇 마법사 / Notify tab — bot wizard" loading="lazy" width="1280" height="800" />
-            <figcaption data-i18n-ko>실 Tauri Solid 컴포넌트 헤드리스 Chromium 렌더 — 실 GUI 와 시각적 동일 (blink 엔진), 데이터는 샘플.</figcaption>
-            <figcaption data-i18n-en>Real Tauri Solid components rendered in headless Chromium — visually identical to actual GUI (blink engine), with sample data.</figcaption>
+            <img src="/screenshots/gui-notify.png" alt="알림 탭 — 봇 연결 마법사 / Notify tab — bot wizard" loading="lazy" width="1280" height="800" />
+            <figcaption data-i18n-ko>실제 데스크톱 앱 화면을 그대로 그린 그림 — 표시된 데이터는 샘플입니다.</figcaption>
+            <figcaption data-i18n-en>Real desktop-app components rendered as-is — sample data shown.</figcaption>
           </figure>
-          <p data-i18n-ko><strong>이 탭은 무엇을 하나요</strong> — 봇 토큰 검증 → chat_id 자동 감지 → 저장 → 테스트 메시지를 클릭 한 번으로.</p>
-          <p data-i18n-en><strong>What this tab does</strong> — validate bot token → auto-detect chat_id → save → send test, all in one click.</p>
+          <p data-i18n-ko><strong>이 탭의 역할</strong> — 봇 토큰을 붙여넣으면 자동으로 검사 → 내 채팅 ID 찾기 → 저장 → 테스트 메시지까지, 클릭 한두 번으로 끝납니다.</p>
+          <p data-i18n-en><strong>What it does</strong> — paste a bot token and it auto-validates, detects your chat ID, saves, and sends a test — all in one or two clicks.</p>
+
+          <div class="beginner-tip">
+            <strong data-i18n-ko>처음이라면:</strong>
+            <strong data-i18n-en>First time?</strong>
+            <span data-i18n-ko>이 한 가지만 — Telegram 봇을 만들어 받은 토큰을 붙여넣고 "토큰 검증". 봇한테 <code>/start</code> 한 번 보낸 뒤 "내 chat_id 자동 감지" → "저장 + 테스트". 끝.</span>
+            <span data-i18n-en>Just one thing — paste your Telegram bot token, click "Validate", send <code>/start</code> to the bot once, click "Auto-detect chat_id", then "Save + send test". Done.</span>
+          </div>
+
           <ul class="step-list">
-            <li data-i18n-ko>Telegram: BotFather 에서 받은 토큰 붙여넣기 → "토큰 검증" → bot username 표시 확인.</li>
-            <li data-i18n-en>Telegram: paste BotFather token → "Validate" → confirm bot username.</li>
-            <li data-i18n-ko>봇에게 직접 <code>/start</code> 메시지 보낸 뒤 "내 chat_id 자동 감지" 클릭.</li>
-            <li data-i18n-en>Send <code>/start</code> to the bot, then click "Auto-detect chat_id".</li>
-            <li data-i18n-ko>"저장 + 테스트 전송" 클릭 → 봇에서 "OpenXgram GUI 연결 성공 ✓" 수신 확인.</li>
-            <li data-i18n-en>Click "Save + send test" → check the bot for "OpenXgram GUI connected ✓".</li>
-            <li data-i18n-ko>Discord 도 동일 — 채널 ID 또는 Webhook URL 추가 입력 가능.</li>
+            <li data-i18n-ko>Telegram: BotFather 에서 받은 토큰을 붙여넣고 "토큰 검증" 클릭 → 봇 이름이 표시되면 OK.</li>
+            <li data-i18n-en>Telegram: paste BotFather token, click "Validate" → bot username appears.</li>
+            <li data-i18n-ko>봇에게 직접 <code>/start</code> 한 번 보낸 뒤 "내 chat_id 자동 감지" 클릭 (봇이 어디로 보낼지 알아냅니다).</li>
+            <li data-i18n-en>Send <code>/start</code> to the bot once, then "Auto-detect chat_id" (figures out where to deliver).</li>
+            <li data-i18n-ko>"저장 + 테스트 전송" 누르면 봇에 "OpenXgram GUI 연결 성공 ✓" 가 도착합니다.</li>
+            <li data-i18n-en>Click "Save + send test" → "OpenXgram GUI connected ✓" arrives in the bot.</li>
+            <li data-i18n-ko>Discord 도 같은 방식 — 채널 ID 또는 Webhook 주소를 추가로 넣을 수 있습니다.</li>
             <li data-i18n-en>Discord follows the same flow — optional channel ID or webhook URL.</li>
           </ul>
-          <div class="tip"><strong data-i18n-ko>팁</strong><strong data-i18n-en>Tip</strong> — <span data-i18n-ko>토큰은 vault 에 저장됩니다. 평문 파일·환경변수에 두지 마세요.</span><span data-i18n-en>Tokens land in the vault. Don't keep them in plaintext files / env vars.</span></div>
-          <p class="muted" data-i18n-ko><strong>같은 작업의 CLI</strong>: <code class="inline">xgram notify setup-telegram</code> · <code class="inline">xgram notify setup-discord</code></p>
-          <p class="muted" data-i18n-en><strong>Same in CLI</strong>: <code class="inline">xgram notify setup-telegram</code> · <code class="inline">xgram notify setup-discord</code></p>
+          <div class="tip"><strong data-i18n-ko>팁</strong><strong data-i18n-en>Tip</strong> — <span data-i18n-ko>토큰은 자동으로 금고(Vault)에 들어갑니다. 평문 파일이나 환경변수에 두지 마세요.</span><span data-i18n-en>Tokens go into the Vault automatically. Don't keep them in plaintext files / env vars.</span></div>
+          <p class="muted" data-i18n-ko><strong>같은 작업의 명령어</strong>: <code class="inline">xgram notify setup-telegram</code> · <code class="inline">xgram notify setup-discord</code></p>
+          <p class="muted" data-i18n-en><strong>Same as command</strong>: <code class="inline">xgram notify setup-telegram</code> · <code class="inline">xgram notify setup-discord</code></p>
         </div>
       </section>
 
       <!-- ============================== Tab 6 — Channel ============================== -->
       <section id="tab-channel" class="anchor-target">
         <div class="container">
-          <div class="kicker">Tab 6 · 채널 / Channel</div>
-          <h2 data-i18n-ko>6. 채널 — 다중 에이전트 허브 라이브</h2>
-          <h2 data-i18n-en>6. Channel — live multi-agent hub</h2>
+          <div class="kicker">탭 6 · 채널 / Channel</div>
+          <h2 data-i18n-ko>6. 채널 — 단체 채팅방 라이브</h2>
+          <h2 data-i18n-en>6. Channel — group chat live view</h2>
           <figure class="screenshot">
-            <img src="/screenshots/gui-channel.png" alt="Channel 탭 — 다중 에이전트 허브 라이브 / Channel tab — live multi-agent hub" loading="lazy" width="1280" height="800" />
-            <figcaption data-i18n-ko>실 Tauri Solid 컴포넌트 헤드리스 Chromium 렌더 — 실 GUI 와 시각적 동일 (blink 엔진), 데이터는 샘플.</figcaption>
-            <figcaption data-i18n-en>Real Tauri Solid components rendered in headless Chromium — visually identical to actual GUI (blink engine), with sample data.</figcaption>
+            <img src="/screenshots/gui-channel.png" alt="채널 탭 — 단체 채팅방 라이브 / Channel tab — live group chat" loading="lazy" width="1280" height="800" />
+            <figcaption data-i18n-ko>실제 데스크톱 앱 화면을 그대로 그린 그림 — 표시된 데이터는 샘플입니다.</figcaption>
+            <figcaption data-i18n-en>Real desktop-app components rendered as-is — sample data shown.</figcaption>
           </figure>
-          <p data-i18n-ko><strong>이 탭은 무엇을 하나요</strong> — 어댑터 상태, 등록 피어 수, 예약 대기, 최근 메시지 20건 (KST 타임스탬프) 라이브.</p>
-          <p data-i18n-en><strong>What this tab does</strong> — adapter status, peer count, pending schedules, last 20 messages with KST timestamps — live.</p>
+          <p data-i18n-ko><strong>이 탭의 역할</strong> — <span class="analogy">단체 채팅방 (AI 들끼리 + 나)</span> 의 상태를 한눈에. 어떤 알림 채널이 연결됐는지, 친구는 몇 명인지, 예약된 메시지 몇 개가 대기 중인지, 최근 20 개 메시지(한국 시간 기준).</p>
+          <p data-i18n-en><strong>What it does</strong> — at-a-glance dashboard of <span class="analogy">your group chat (AIs + you)</span>: which notify channels are configured, peer count, pending schedules, latest 20 messages (KST).</p>
+
+          <div class="beginner-tip">
+            <strong data-i18n-ko>처음이라면:</strong>
+            <strong data-i18n-en>First time?</strong>
+            <span data-i18n-ko>이 한 가지만 — "새로고침" 한 번 클릭. 알림 어댑터 상태와 최근 메시지가 같이 갱신됩니다.</span>
+            <span data-i18n-en>Just one thing — click "Refresh" once. Adapter status and recent messages update together.</span>
+          </div>
+
           <ul class="step-list">
-            <li data-i18n-ko>"새로고침" 클릭으로 status + recent 동시 갱신.</li>
-            <li data-i18n-en>Click "Refresh" to refetch status + recent messages.</li>
-            <li data-i18n-ko>어댑터별 <span class="badge ok">연결됨</span> / <span class="badge">미설정</span> 배지 확인.</li>
-            <li data-i18n-en>Per-adapter <span class="badge ok">configured</span> / <span class="badge">not set</span> badges.</li>
-            <li data-i18n-ko>"피어 수" · "예약 대기" 카드로 허브 활동량 한눈에.</li>
-            <li data-i18n-en>Quick "Peers" / "Schedule pending" cards for hub-activity glance.</li>
+            <li data-i18n-ko>"새로고침" 버튼 — 상태와 최근 메시지를 동시에 갱신합니다.</li>
+            <li data-i18n-en>"Refresh" — refetches both status and recent messages.</li>
+            <li data-i18n-ko>알림 채널마다 <span class="badge ok">연결됨</span> / <span class="badge">미설정</span> 표시 확인.</li>
+            <li data-i18n-en>Per-channel <span class="badge ok">configured</span> / <span class="badge">not set</span> badges.</li>
+            <li data-i18n-ko>"피어 수" / "예약 대기" 카드 — 단체 채팅방이 얼마나 활발한지 한눈에.</li>
+            <li data-i18n-en>"Peers" / "Schedule pending" cards — how busy the hub is, at a glance.</li>
           </ul>
-          <p class="muted" data-i18n-ko><strong>같은 작업의 CLI</strong>: <code class="inline">xgram channel status</code> · <code class="inline">xgram channel recent --limit 20</code></p>
-          <p class="muted" data-i18n-en><strong>Same in CLI</strong>: <code class="inline">xgram channel status</code> · <code class="inline">xgram channel recent --limit 20</code></p>
+          <p class="muted" data-i18n-ko><strong>같은 작업의 명령어</strong>: <code class="inline">xgram channel status</code> · <code class="inline">xgram channel recent --limit 20</code></p>
+          <p class="muted" data-i18n-en><strong>Same as command</strong>: <code class="inline">xgram channel status</code> · <code class="inline">xgram channel recent --limit 20</code></p>
         </div>
       </section>
 
       <!-- ============================== Tab 7 — Schedule ============================== -->
       <section id="tab-schedule" class="anchor-target">
         <div class="container">
-          <div class="kicker">Tab 7 · 예약 / Schedule</div>
-          <h2 data-i18n-ko>7. 예약 — once / cron 메시지</h2>
-          <h2 data-i18n-en>7. Schedule — once / cron messages</h2>
+          <div class="kicker">탭 7 · 예약 / Schedule</div>
+          <h2 data-i18n-ko>7. 예약 — 예약 발송</h2>
+          <h2 data-i18n-en>7. Schedule — send-later</h2>
           <figure class="screenshot">
-            <img src="/screenshots/gui-schedule.png" alt="Schedule 탭 — 예약 + 통계 / Schedule tab — schedules + stats" loading="lazy" width="1280" height="800" />
-            <figcaption data-i18n-ko>실 Tauri Solid 컴포넌트 헤드리스 Chromium 렌더 — 실 GUI 와 시각적 동일 (blink 엔진), 데이터는 샘플.</figcaption>
-            <figcaption data-i18n-en>Real Tauri Solid components rendered in headless Chromium — visually identical to actual GUI (blink engine), with sample data.</figcaption>
+            <img src="/screenshots/gui-schedule.png" alt="예약 탭 — 예약 + 통계 / Schedule tab — schedules + stats" loading="lazy" width="1280" height="800" />
+            <figcaption data-i18n-ko>실제 데스크톱 앱 화면을 그대로 그린 그림 — 표시된 데이터는 샘플입니다.</figcaption>
+            <figcaption data-i18n-en>Real desktop-app components rendered as-is — sample data shown.</figcaption>
           </figure>
-          <p data-i18n-ko><strong>이 탭은 무엇을 하나요</strong> — 한 번(once) 또는 반복(cron) 으로 메시지 예약.</p>
-          <p data-i18n-en><strong>What this tab does</strong> — schedule a message once or recurring (cron, KST).</p>
+          <p data-i18n-ko><strong>이 탭의 역할</strong> — 메시지를 정해진 시각에 보내거나, 매일 같은 시간에 반복 발송합니다. <span class="analogy">이메일 예약 발송 / 알람</span> 처럼.</p>
+          <p data-i18n-en><strong>What it does</strong> — send a message at a chosen time, or recurring on a schedule. <span class="analogy">Like scheduled email / a recurring alarm</span>.</p>
+
+          <div class="beginner-tip">
+            <strong data-i18n-ko>처음이라면:</strong>
+            <strong data-i18n-en>First time?</strong>
+            <span data-i18n-ko>이 한 가지만 — 대상 = "역할명", 종류 = "한 번", 시각 = 5분 뒤. "예약 만들기" 누르면 5분 뒤 자동 발송됩니다.</span>
+            <span data-i18n-en>Just one thing — Target = "role", Kind = "once", Time = 5 minutes from now. Click "Create schedule" and it fires 5 min later.</span>
+          </div>
+
           <ul class="step-list">
-            <li data-i18n-ko>대상 종류 선택 — 역할명(role) 또는 플랫폼:채널.</li>
-            <li data-i18n-en>Pick target kind — role or platform:channel.</li>
-            <li data-i18n-ko>대상 입력 (예: <code>res</code> 또는 <code>discord:1234567890</code>).</li>
-            <li data-i18n-en>Enter target (e.g. <code>res</code> or <code>discord:1234567890</code>).</li>
-            <li data-i18n-ko>스케줄 종류 선택 — once (ISO 시각) 또는 cron (KST 표현).</li>
-            <li data-i18n-en>Pick kind — once (ISO datetime) or cron (KST expression).</li>
-            <li data-i18n-ko>"예약 만들기" 클릭. 통계 카드 (대기/발송/실패/취소) 와 목록에 즉시 반영.</li>
-            <li data-i18n-en>Click "Create schedule". Stats (pending/sent/failed/cancelled) and the list update immediately.</li>
+            <li data-i18n-ko>대상 종류 — 역할(예: <code>res</code>) 또는 플랫폼:채널(예: <code>discord:1234567890</code>) 중 선택.</li>
+            <li data-i18n-en>Target kind — pick role (e.g. <code>res</code>) or platform:channel (e.g. <code>discord:1234567890</code>).</li>
+            <li data-i18n-ko>대상 입력.</li>
+            <li data-i18n-en>Enter the target.</li>
+            <li data-i18n-ko>일정 종류 — "한 번(once)" 인지 "반복(cron)" 인지 선택.</li>
+            <li data-i18n-en>Schedule kind — once or recurring (cron).</li>
+            <li data-i18n-ko>"예약 만들기" 클릭 → 통계 카드(대기 / 발송 / 실패 / 취소) 와 목록에 즉시 반영.</li>
+            <li data-i18n-en>Click "Create schedule" → stats (pending / sent / failed / cancelled) and list update right away.</li>
           </ul>
-          <div class="tip"><strong data-i18n-ko>팁</strong><strong data-i18n-en>Tip</strong> — <span data-i18n-ko>cron 표현은 <strong>KST</strong> 기준입니다. 서버 TZ 가 UTC 여도 OpenXgram 데몬이 KST 로 해석.</span><span data-i18n-en>Cron expressions are interpreted in <strong>KST</strong>. Even if your server runs UTC, the daemon evaluates KST.</span></div>
-          <p class="muted" data-i18n-ko><strong>같은 작업의 CLI</strong>: <code class="inline">xgram schedule add</code> · <code class="inline">xgram schedule list</code> · <code class="inline">xgram schedule cancel &lt;id&gt;</code></p>
-          <p class="muted" data-i18n-en><strong>Same in CLI</strong>: <code class="inline">xgram schedule add</code> · <code class="inline">xgram schedule list</code> · <code class="inline">xgram schedule cancel &lt;id&gt;</code></p>
+          <div class="tip"><strong data-i18n-ko>팁</strong><strong data-i18n-en>Tip</strong> — <span data-i18n-ko>반복 시각은 <strong>한국 시간(KST)</strong> 기준입니다. 서버가 UTC 라도 한국 시간대로 입력하면 됩니다.</span><span data-i18n-en>Recurring times are in <strong>KST</strong>. Even if your server runs UTC, type the time as KST.</span></div>
+          <p class="muted" data-i18n-ko><strong>같은 작업의 명령어</strong>: <code class="inline">xgram schedule add</code> · <code class="inline">xgram schedule list</code> · <code class="inline">xgram schedule cancel &lt;id&gt;</code></p>
+          <p class="muted" data-i18n-en><strong>Same as command</strong>: <code class="inline">xgram schedule add</code> · <code class="inline">xgram schedule list</code> · <code class="inline">xgram schedule cancel &lt;id&gt;</code></p>
         </div>
       </section>
 
       <!-- ============================== Tab 8 — Chain ============================== -->
       <section id="tab-chain" class="anchor-target">
         <div class="container">
-          <div class="kicker">Tab 8 · 체인 / Chain</div>
-          <h2 data-i18n-ko>8. 체인 — YAML 워크플로우</h2>
-          <h2 data-i18n-en>8. Chain — YAML workflows</h2>
+          <div class="kicker">탭 8 · 체인 / Chain</div>
+          <h2 data-i18n-ko>8. 체인 — 도미노 메시지</h2>
+          <h2 data-i18n-en>8. Chain — domino workflow</h2>
           <figure class="screenshot">
-            <img src="/screenshots/gui-chain.png" alt="Chain 탭 — YAML 정의 + 실행 / Chain tab — YAML define + run" loading="lazy" width="1280" height="800" />
-            <figcaption data-i18n-ko>실 Tauri Solid 컴포넌트 헤드리스 Chromium 렌더 — 실 GUI 와 시각적 동일 (blink 엔진), 데이터는 샘플.</figcaption>
-            <figcaption data-i18n-en>Real Tauri Solid components rendered in headless Chromium — visually identical to actual GUI (blink engine), with sample data.</figcaption>
+            <img src="/screenshots/gui-chain.png" alt="체인 탭 — 자동 순서 / Chain tab — auto sequence" loading="lazy" width="1280" height="800" />
+            <figcaption data-i18n-ko>실제 데스크톱 앱 화면을 그대로 그린 그림 — 표시된 데이터는 샘플입니다.</figcaption>
+            <figcaption data-i18n-en>Real desktop-app components rendered as-is — sample data shown.</figcaption>
           </figure>
-          <p data-i18n-ko><strong>이 탭은 무엇을 하나요</strong> — 여러 단계를 YAML 로 정의해 한 번에 실행 (각 단계 응답·실패·skip 추적).</p>
-          <p data-i18n-en><strong>What this tab does</strong> — define multi-step workflows in YAML and run them with per-step result tracking.</p>
+          <p data-i18n-ko><strong>이 탭의 역할</strong> — 여러 단계를 자동으로 차례대로 실행합니다. <span class="analogy">도미노 — 첫 칸을 치면 끝까지 자동 진행</span>. 각 단계의 성공·실패·건너뜀이 따로 기록됩니다.</p>
+          <p data-i18n-en><strong>What it does</strong> — runs multiple steps in order automatically. <span class="analogy">Like dominoes — tip the first one, the rest follow</span>. Each step's success / failure / skip is tracked.</p>
+
+          <div class="beginner-tip">
+            <strong data-i18n-ko>처음이라면:</strong>
+            <strong data-i18n-en>First time?</strong>
+            <span data-i18n-ko>이 한 가지만 — 입력창의 예시 YAML 그대로 두고 "체인 생성", 그 뒤 "실행 (테스트 모드)" 누르세요. 어떤 단계가 어떻게 진행되는지 안전하게 볼 수 있습니다.</span>
+            <span data-i18n-en>Just one thing — keep the example YAML, click "Create chain", then "Run (dry-run)". You'll see each step in safe mode without real side-effects.</span>
+          </div>
+
           <ul class="step-list">
-            <li data-i18n-ko>새 체인 입력창에 YAML 작성 (예: <code>name: morning</code> + <code>steps:</code>).</li>
-            <li data-i18n-en>Write YAML in the new-chain box (e.g. <code>name: morning</code> + <code>steps:</code>).</li>
-            <li data-i18n-ko>"체인 생성" 클릭 → 목록에 추가.</li>
+            <li data-i18n-ko>입력창에 단계 정의(YAML — 사람이 읽기 쉬운 설정 형식<span class="jargon-label">기술 용어</span>)를 작성합니다.</li>
+            <li data-i18n-en>Write step definitions in YAML (a human-readable config format<span class="jargon-label">tech term</span>).</li>
+            <li data-i18n-ko>"체인 생성" 버튼 → 목록에 추가됩니다.</li>
             <li data-i18n-en>Click "Create chain" → it joins the list.</li>
-            <li data-i18n-ko>체인의 "실행 (dry-run)" 으로 결과 확인 — 각 step 마다 executed/skipped/error 표시.</li>
-            <li data-i18n-en>Run "Run (dry-run)" to inspect — per-step executed/skipped/error.</li>
+            <li data-i18n-ko>"실행 (테스트 모드)" 으로 어떻게 흐르는지 확인 — 단계마다 실행됨 / 건너뜀 / 오류 표시.</li>
+            <li data-i18n-en>"Run (dry-run)" to inspect — per-step executed / skipped / error.</li>
           </ul>
-          <p class="muted" data-i18n-ko><strong>같은 작업의 CLI</strong>: <code class="inline">xgram chain create -f morning.yaml</code> · <code class="inline">xgram chain run morning</code> · <code class="inline">xgram chain list</code></p>
-          <p class="muted" data-i18n-en><strong>Same in CLI</strong>: <code class="inline">xgram chain create -f morning.yaml</code> · <code class="inline">xgram chain run morning</code> · <code class="inline">xgram chain list</code></p>
+          <p class="muted" data-i18n-ko><strong>같은 작업의 명령어</strong>: <code class="inline">xgram chain create -f morning.yaml</code> · <code class="inline">xgram chain run morning</code> · <code class="inline">xgram chain list</code></p>
+          <p class="muted" data-i18n-en><strong>Same as command</strong>: <code class="inline">xgram chain create -f morning.yaml</code> · <code class="inline">xgram chain run morning</code> · <code class="inline">xgram chain list</code></p>
         </div>
       </section>
 
       <!-- ============================== Tab 9 — Settings ============================== -->
       <section id="tab-settings" class="anchor-target">
         <div class="container">
-          <div class="kicker">Tab 9 · 설정 / Settings</div>
-          <h2 data-i18n-ko>9. 설정 — USDC 일일 한도</h2>
-          <h2 data-i18n-en>9. Settings — USDC daily limit</h2>
+          <div class="kicker">탭 9 · 설정 / Settings</div>
+          <h2 data-i18n-ko>9. 설정 — 결제 일일 한도</h2>
+          <h2 data-i18n-en>9. Settings — daily payment limit</h2>
           <figure class="screenshot">
-            <img src="/screenshots/gui-settings.png" alt="Settings 탭 — USDC 일일 한도 + MFA / Settings tab — USDC daily limit + MFA" loading="lazy" width="1280" height="800" />
-            <figcaption data-i18n-ko>실 Tauri Solid 컴포넌트 헤드리스 Chromium 렌더 — 실 GUI 와 시각적 동일 (blink 엔진), 데이터는 샘플.</figcaption>
-            <figcaption data-i18n-en>Real Tauri Solid components rendered in headless Chromium — visually identical to actual GUI (blink engine), with sample data.</figcaption>
+            <img src="/screenshots/gui-settings.png" alt="설정 탭 — 결제 일일 한도 / Settings tab — daily payment limit" loading="lazy" width="1280" height="800" />
+            <figcaption data-i18n-ko>실제 데스크톱 앱 화면을 그대로 그린 그림 — 표시된 데이터는 샘플입니다.</figcaption>
+            <figcaption data-i18n-en>Real desktop-app components rendered as-is — sample data shown.</figcaption>
           </figure>
-          <p data-i18n-ko><strong>이 탭은 무엇을 하나요</strong> — USDC 결제 일일 한도 확인·변경. 변경 시 MFA 재인증.</p>
-          <p data-i18n-en><strong>What this tab does</strong> — view and change the USDC daily payment cap. Changes require MFA re-auth.</p>
+          <p data-i18n-ko><strong>이 탭의 역할</strong> — 하루에 결제로 쓸 수 있는 최대 금액(USDC) 을 보고 바꿉니다. 변경하려면 <span class="analogy">한 번 더 본인 확인</span> (MFA) 이 필요합니다.</p>
+          <p data-i18n-en><strong>What it does</strong> — view and change the maximum daily spend (USDC). Changing requires <span class="analogy">one more identity check</span> (MFA).</p>
+
+          <div class="beginner-tip">
+            <strong data-i18n-ko>처음이라면:</strong>
+            <strong data-i18n-en>First time?</strong>
+            <span data-i18n-ko>이 한 가지만 — 일단 "현재 한도" 만 확인하세요. 0 이면 결제가 모두 막혀 있다는 뜻입니다. 바꾸지 않으면 안전하게 유지됩니다.</span>
+            <span data-i18n-en>Just one thing — just read "Current limit". If it's 0, all payments are blocked. Leaving it as-is keeps things safe.</span>
+          </div>
+
           <ul class="step-list">
-            <li data-i18n-ko>현재 한도 확인 (USDC 단위).</li>
-            <li data-i18n-en>Read the current cap (USDC).</li>
-            <li data-i18n-ko>새 한도 입력 (소수점 2자리 가능) → 확인.</li>
-            <li data-i18n-en>Enter new cap (2 decimal places) → Confirm.</li>
-            <li data-i18n-ko>MFA 재인증 다이얼로그에서 진행 (PRD-MFA-02 통합 후 WebAuthn).</li>
-            <li data-i18n-en>Approve in the MFA re-auth dialog (WebAuthn once PRD-MFA-02 lands).</li>
+            <li data-i18n-ko>현재 한도(USDC) 확인.</li>
+            <li data-i18n-en>Read the current limit (USDC).</li>
+            <li data-i18n-ko>새 한도 입력 (소수점 두 자리까지) → "확인".</li>
+            <li data-i18n-en>Enter a new limit (2 decimal places) → "Confirm".</li>
+            <li data-i18n-ko>본인 확인 창에서 한 번 더 인증 (PRD-MFA-02 적용 후 보안키<span class="jargon-label">WebAuthn</span> 사용).</li>
+            <li data-i18n-en>Approve in the re-auth dialog (security-key<span class="jargon-label">WebAuthn</span> after PRD-MFA-02 lands).</li>
           </ul>
-          <div class="warn"><strong data-i18n-ko>주의</strong><strong data-i18n-en>Caution</strong> — <span data-i18n-ko>한도 0 으로 설정하면 모든 결제가 차단됩니다 (의도적인 kill-switch).</span><span data-i18n-en>Setting cap to 0 blocks all payments (intentional kill-switch).</span></div>
-          <p class="muted" data-i18n-ko><strong>같은 작업의 CLI</strong>: <code class="inline">xgram payment limit get</code> · <code class="inline">xgram payment limit set 50.00</code></p>
-          <p class="muted" data-i18n-en><strong>Same in CLI</strong>: <code class="inline">xgram payment limit get</code> · <code class="inline">xgram payment limit set 50.00</code></p>
+          <div class="warn"><strong data-i18n-ko>주의</strong><strong data-i18n-en>Caution</strong> — <span data-i18n-ko>한도를 0 으로 두면 모든 결제가 막힙니다 (의도된 비상 정지<span class="jargon-label">kill-switch</span>).</span><span data-i18n-en>Setting limit to 0 blocks all payments (intentional kill-switch).</span></div>
+          <p class="muted" data-i18n-ko><strong>같은 작업의 명령어</strong>: <code class="inline">xgram payment limit get</code> · <code class="inline">xgram payment limit set 50.00</code></p>
+          <p class="muted" data-i18n-en><strong>Same as command</strong>: <code class="inline">xgram payment limit get</code> · <code class="inline">xgram payment limit set 50.00</code></p>
         </div>
       </section>
 
       <!-- ============================== CLI map ============================== -->
       <section id="cli-map" class="anchor-target">
         <div class="container">
-          <div class="kicker">10 · GUI ↔ CLI 1:1 mapping</div>
-          <h2 data-i18n-ko>10. 같은 작업, 다른 인터페이스 — CLI 매핑</h2>
-          <h2 data-i18n-en>10. Same task, different surface — CLI mapping</h2>
-          <p data-i18n-ko>왼쪽 GUI 동작 = 오른쪽 CLI 명령. 자동화·스크립트가 필요할 때 그대로 옮겨 쓸 수 있습니다.</p>
-          <p data-i18n-en>GUI action on the left = CLI command on the right. Drop these into scripts as-is.</p>
+          <div class="kicker">10 · 화면 ↔ 명령어 대응표</div>
+          <h2 data-i18n-ko>10. 같은 작업, 다른 방법 — 화면 vs 명령어</h2>
+          <h2 data-i18n-en>10. Same task, different way — screen vs command</h2>
+          <p data-i18n-ko>왼쪽이 화면에서 누르는 동작, 오른쪽이 같은 일을 하는 명령어입니다. 자동화하고 싶을 때 그대로 옮겨 쓰면 됩니다.</p>
+          <p data-i18n-en>Left = the GUI action; right = the matching command. Drop straight into scripts when you want to automate.</p>
 
           <div class="map">
-            <div class="row"><span class="gui" data-i18n-ko>Onboarding · 초기화 상태 확인</span><span class="gui" data-i18n-en>Onboarding · check initialization</span><span class="cli">xgram status</span></div>
-            <div class="row"><span class="gui" data-i18n-ko>Onboarding · 신원 초기화</span><span class="gui" data-i18n-en>Onboarding · initialize identity</span><span class="cli">xgram init --alias myname</span></div>
-            <div class="row"><span class="gui" data-i18n-ko>Memory · 5 층 검색</span><span class="gui" data-i18n-en>Memory · 5-layer search</span><span class="cli">xgram session recall &lt;keyword&gt;</span></div>
-            <div class="row"><span class="gui" data-i18n-ko>Vault · pending 목록</span><span class="gui" data-i18n-en>Vault · pending list</span><span class="cli">xgram vault pending-list</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>시작하기 · 초기화 상태 확인</span><span class="gui" data-i18n-en>Onboarding · check init</span><span class="cli">xgram status</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>시작하기 · 신원 만들기</span><span class="gui" data-i18n-en>Onboarding · create identity</span><span class="cli">xgram init --alias myname</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>기억 · 검색</span><span class="gui" data-i18n-en>Memory · search</span><span class="cli">xgram session recall &lt;keyword&gt;</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>Vault · 대기 중 목록</span><span class="gui" data-i18n-en>Vault · pending</span><span class="cli">xgram vault pending-list</span></div>
             <div class="row"><span class="gui" data-i18n-ko>Vault · 승인</span><span class="gui" data-i18n-en>Vault · approve</span><span class="cli">xgram vault approve &lt;id&gt;</span></div>
-            <div class="row"><span class="gui" data-i18n-ko>Vault · reveal (30초)</span><span class="gui" data-i18n-en>Vault · reveal (30s)</span><span class="cli">xgram vault reveal &lt;key&gt;</span></div>
-            <div class="row"><span class="gui" data-i18n-ko>Peers · 등록</span><span class="gui" data-i18n-en>Peers · add</span><span class="cli">xgram peer add --alias eno --address … --pubkey 0x…</span></div>
-            <div class="row"><span class="gui" data-i18n-ko>Peers · 목록</span><span class="gui" data-i18n-en>Peers · list</span><span class="cli">xgram peer list</span></div>
-            <div class="row"><span class="gui" data-i18n-ko>Notify · Telegram 봇 마법사</span><span class="gui" data-i18n-en>Notify · Telegram wizard</span><span class="cli">xgram notify setup-telegram</span></div>
-            <div class="row"><span class="gui" data-i18n-ko>Notify · Discord 봇 마법사</span><span class="gui" data-i18n-en>Notify · Discord wizard</span><span class="cli">xgram notify setup-discord</span></div>
-            <div class="row"><span class="gui" data-i18n-ko>Channel · 상태</span><span class="gui" data-i18n-en>Channel · status</span><span class="cli">xgram channel status</span></div>
-            <div class="row"><span class="gui" data-i18n-ko>Channel · 최근 20건</span><span class="gui" data-i18n-en>Channel · recent 20</span><span class="cli">xgram channel recent --limit 20</span></div>
-            <div class="row"><span class="gui" data-i18n-ko>Schedule · 새 예약</span><span class="gui" data-i18n-en>Schedule · new</span><span class="cli">xgram schedule add --target res --kind cron --value '0 9 * * *' --payload …</span></div>
-            <div class="row"><span class="gui" data-i18n-ko>Schedule · 목록·통계</span><span class="gui" data-i18n-en>Schedule · list / stats</span><span class="cli">xgram schedule list</span></div>
-            <div class="row"><span class="gui" data-i18n-ko>Schedule · 취소</span><span class="gui" data-i18n-en>Schedule · cancel</span><span class="cli">xgram schedule cancel &lt;id&gt;</span></div>
-            <div class="row"><span class="gui" data-i18n-ko>Chain · YAML 등록</span><span class="gui" data-i18n-en>Chain · register YAML</span><span class="cli">xgram chain create -f morning.yaml</span></div>
-            <div class="row"><span class="gui" data-i18n-ko>Chain · 실행 (dry-run)</span><span class="gui" data-i18n-en>Chain · run (dry-run)</span><span class="cli">xgram chain run morning</span></div>
-            <div class="row"><span class="gui" data-i18n-ko>Chain · 삭제</span><span class="gui" data-i18n-en>Chain · delete</span><span class="cli">xgram chain delete morning</span></div>
-            <div class="row"><span class="gui" data-i18n-ko>Settings · 한도 조회</span><span class="gui" data-i18n-en>Settings · get cap</span><span class="cli">xgram payment limit get</span></div>
-            <div class="row"><span class="gui" data-i18n-ko>Settings · 한도 변경</span><span class="gui" data-i18n-en>Settings · set cap</span><span class="cli">xgram payment limit set 50.00</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>Vault · 잠깐 보기 (30 초)</span><span class="gui" data-i18n-en>Vault · reveal (30s)</span><span class="cli">xgram vault reveal &lt;key&gt;</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>피어 · 친구 추가</span><span class="gui" data-i18n-en>Peers · add</span><span class="cli">xgram peer add --alias eno --address … --pubkey 0x…</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>피어 · 목록</span><span class="gui" data-i18n-en>Peers · list</span><span class="cli">xgram peer list</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>알림 · Telegram 봇</span><span class="gui" data-i18n-en>Notify · Telegram</span><span class="cli">xgram notify setup-telegram</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>알림 · Discord 봇</span><span class="gui" data-i18n-en>Notify · Discord</span><span class="cli">xgram notify setup-discord</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>채널 · 상태</span><span class="gui" data-i18n-en>Channel · status</span><span class="cli">xgram channel status</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>채널 · 최근 20건</span><span class="gui" data-i18n-en>Channel · recent 20</span><span class="cli">xgram channel recent --limit 20</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>예약 · 새 예약</span><span class="gui" data-i18n-en>Schedule · new</span><span class="cli">xgram schedule add --target res --kind cron --value '0 9 * * *' --payload …</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>예약 · 목록·통계</span><span class="gui" data-i18n-en>Schedule · list / stats</span><span class="cli">xgram schedule list</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>예약 · 취소</span><span class="gui" data-i18n-en>Schedule · cancel</span><span class="cli">xgram schedule cancel &lt;id&gt;</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>체인 · 등록</span><span class="gui" data-i18n-en>Chain · register</span><span class="cli">xgram chain create -f morning.yaml</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>체인 · 실행 (테스트 모드)</span><span class="gui" data-i18n-en>Chain · run (dry-run)</span><span class="cli">xgram chain run morning</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>체인 · 삭제</span><span class="gui" data-i18n-en>Chain · delete</span><span class="cli">xgram chain delete morning</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>설정 · 한도 보기</span><span class="gui" data-i18n-en>Settings · get cap</span><span class="cli">xgram payment limit get</span></div>
+            <div class="row"><span class="gui" data-i18n-ko>설정 · 한도 변경</span><span class="gui" data-i18n-en>Settings · set cap</span><span class="cli">xgram payment limit set 50.00</span></div>
           </div>
         </div>
       </section>
@@ -470,50 +573,50 @@
       <!-- ============================== Troubleshooting ============================== -->
       <section id="troubleshooting" class="anchor-target">
         <div class="container">
-          <div class="kicker">11 · Troubleshooting</div>
-          <h2 data-i18n-ko>11. 트러블슈팅</h2>
+          <div class="kicker">11 · 문제 해결</div>
+          <h2 data-i18n-ko>11. 문제 해결</h2>
           <h2 data-i18n-en>11. Troubleshooting</h2>
 
           <div class="ts-box">
-            <span class="symptom" data-i18n-ko>증상 — GUI 실행 안 됨 / 빈 창</span>
+            <span class="symptom" data-i18n-ko>증상 — GUI 가 안 켜집니다 / 빈 창만 떠요</span>
             <span class="symptom" data-i18n-en>Symptom — GUI doesn't launch / blank window</span>
-            <p data-i18n-ko><strong>원인</strong>: WebKit 의존 라이브러리(<code>libwebkit2gtk-4.1</code>) 부재 또는 GPU/DRI3 미지원. 헤드리스 서버에선 정상 — 데스크톱 환경에서 실행하세요. 일반 데스크톱이면 <code>libwebkit2gtk-4.1</code> 설치 후 재시도.</p>
-            <p data-i18n-en><strong>Cause</strong>: missing <code>libwebkit2gtk-4.1</code> or no GPU/DRI3. Expected on headless servers — run on a desktop environment. Otherwise install <code>libwebkit2gtk-4.1</code> and retry.</p>
+            <p data-i18n-ko><strong>원인</strong>: 화면 그리기 라이브러리(<code>libwebkit2gtk-4.1</code>) 가 없거나, 그래픽 가속이 안 되는 환경입니다. 화면이 없는 서버라면 정상 — 데스크톱에서 실행하세요. 일반 데스크톱이라면 <code>libwebkit2gtk-4.1</code> 을 설치하고 다시 켜보세요.</p>
+            <p data-i18n-en><strong>Cause</strong>: missing display library <code>libwebkit2gtk-4.1</code> or no graphics acceleration. Expected on headless servers — run on a desktop. Otherwise install <code>libwebkit2gtk-4.1</code> and retry.</p>
           </div>
 
           <div class="ts-box">
-            <span class="symptom" data-i18n-ko>증상 — 탭 클릭 응답 없음</span>
+            <span class="symptom" data-i18n-ko>증상 — 탭을 눌러도 반응이 없어요</span>
             <span class="symptom" data-i18n-en>Symptom — tab click does nothing</span>
-            <p data-i18n-ko><strong>원인</strong>: 데몬이 떠 있지 않거나 포트 충돌. <code>xgram status</code> 로 데몬 상태 확인. 필요하면 <code>xgram daemon restart</code>.</p>
-            <p data-i18n-en><strong>Cause</strong>: daemon not running or port conflict. Check <code>xgram status</code>; <code>xgram daemon restart</code> if needed.</p>
+            <p data-i18n-ko><strong>원인</strong>: 백그라운드에서 도는 OpenXgram 데몬이 꺼져 있거나, 포트가 다른 프로그램과 겹쳤습니다. 터미널에서 <code>xgram status</code> 로 확인하고, 필요하면 <code>xgram daemon restart</code> 로 다시 켜세요.</p>
+            <p data-i18n-en><strong>Cause</strong>: the background daemon is down or has a port conflict. Check with <code>xgram status</code>; restart with <code>xgram daemon restart</code> if needed.</p>
           </div>
 
           <div class="ts-box">
-            <span class="symptom" data-i18n-ko>증상 — Memory 검색 결과가 항상 비어 있음</span>
+            <span class="symptom" data-i18n-ko>증상 — 기억 검색 결과가 항상 비어 있어요</span>
             <span class="symptom" data-i18n-en>Symptom — Memory search always empty</span>
-            <p data-i18n-ko><strong>원인</strong>: BGE-small 모델이 다운로드되지 않음. 첫 회상 시 ~120MB 자동 다운로드. 방화벽 환경이면 <code class="inline">xgram model fetch --offline-tarball ./bge-small.tar.gz</code> 로 오프라인 설치.</p>
-            <p data-i18n-en><strong>Cause</strong>: BGE-small model missing. ~120MB auto-downloads on first recall. Behind a firewall use <code class="inline">xgram model fetch --offline-tarball ./bge-small.tar.gz</code>.</p>
+            <p data-i18n-ko><strong>원인</strong>: 검색용 작은 AI 모델(약 120MB) 이 아직 안 받아졌습니다. 첫 검색 때 자동으로 받아집니다. 회사·학교 같은 방화벽 환경이면 미리 받은 파일로 설치할 수 있어요: <code class="inline">xgram model fetch --offline-tarball ./bge-small.tar.gz</code></p>
+            <p data-i18n-en><strong>Cause</strong>: the small search model (~120MB) hasn't been downloaded yet. Auto-downloads on first search. Behind a firewall, install offline: <code class="inline">xgram model fetch --offline-tarball ./bge-small.tar.gz</code></p>
           </div>
 
           <div class="ts-box">
-            <span class="symptom" data-i18n-ko>증상 — Notify 토큰 검증 실패</span>
+            <span class="symptom" data-i18n-ko>증상 — 알림에서 토큰 검사가 실패합니다</span>
             <span class="symptom" data-i18n-en>Symptom — Notify token validation fails</span>
-            <p data-i18n-ko><strong>원인</strong>: 잘못된 토큰 또는 네트워크 차단. Telegram 은 <code>https://api.telegram.org</code>, Discord 는 <code>https://discord.com/api</code> outbound 가 필요합니다.</p>
+            <p data-i18n-ko><strong>원인</strong>: 토큰이 잘못됐거나 인터넷이 막혀 있습니다. Telegram 은 <code>https://api.telegram.org</code>, Discord 는 <code>https://discord.com/api</code> 로 나가는 통신이 필요합니다.</p>
             <p data-i18n-en><strong>Cause</strong>: bad token or blocked outbound. Telegram needs <code>https://api.telegram.org</code>, Discord needs <code>https://discord.com/api</code>.</p>
           </div>
 
           <div class="ts-box">
-            <span class="symptom" data-i18n-ko>증상 — Channel 탭의 최근 메시지가 안 갱신</span>
-            <span class="symptom" data-i18n-en>Symptom — Channel tab "recent" stale</span>
-            <p data-i18n-ko><strong>원인</strong>: 자동 polling 대신 수동 갱신. 화면의 "새로고침" 버튼을 누르거나 다른 탭에서 돌아오면 다시 fetch 합니다.</p>
-            <p data-i18n-en><strong>Cause</strong>: refresh is manual. Click "Refresh" or revisit the tab to re-fetch.</p>
+            <span class="symptom" data-i18n-ko>증상 — 채널 탭의 최근 메시지가 안 바뀝니다</span>
+            <span class="symptom" data-i18n-en>Symptom — Channel "recent" stays stale</span>
+            <p data-i18n-ko><strong>원인</strong>: 자동 갱신이 아니고 수동입니다. "새로고침" 버튼을 누르거나, 다른 탭 갔다가 다시 돌아오면 새 데이터가 들어옵니다.</p>
+            <p data-i18n-en><strong>Cause</strong>: refresh is manual. Click "Refresh" or revisit the tab to fetch.</p>
           </div>
 
           <div class="ts-box">
-            <span class="symptom" data-i18n-ko>증상 — Schedule 의 cron 시각이 예상과 다름</span>
-            <span class="symptom" data-i18n-en>Symptom — Schedule cron fires at unexpected time</span>
-            <p data-i18n-ko><strong>원인</strong>: cron 표현은 <strong>KST</strong> 기준입니다. 서버 TZ 가 UTC 면 9 시간 차이 — KST 그대로 입력하세요.</p>
-            <p data-i18n-en><strong>Cause</strong>: cron is interpreted in <strong>KST</strong>. If your server is UTC, that's a 9-hour offset — enter KST as-is.</p>
+            <span class="symptom" data-i18n-ko>증상 — 예약된 시각이 예상과 달라요</span>
+            <span class="symptom" data-i18n-en>Symptom — Schedule fires at unexpected time</span>
+            <p data-i18n-ko><strong>원인</strong>: 모든 시각은 <strong>한국 시간(KST)</strong> 기준입니다. 서버가 UTC 라면 9 시간 차이가 생기는데, 입력은 그냥 한국 시간 그대로 적으면 됩니다.</p>
+            <p data-i18n-en><strong>Cause</strong>: all times are <strong>KST</strong>. If your server is UTC, that's a 9-hour offset — just enter KST as-is.</p>
           </div>
         </div>
       </section>
@@ -521,17 +624,17 @@
       <!-- ============================== Footer ============================== -->
       <section>
         <div class="container">
-          <div class="kicker">Next steps</div>
-          <h2 data-i18n-ko>다음으로</h2>
+          <div class="kicker">다음으로</div>
+          <h2 data-i18n-ko>다음 단계</h2>
           <h2 data-i18n-en>What's next</h2>
           <ul class="dotted">
-            <li data-i18n-ko><a href="/guide/">/guide/</a> — 10 튜토리얼 + FAQ + 트러블슈팅 (전체 사용 가이드)</li>
-            <li data-i18n-en><a href="/guide/">/guide/</a> — 10 tutorials + FAQ + troubleshooting (full guide)</li>
-            <li data-i18n-ko><a href="/quickstart/">/quickstart/</a> — 명령어 카탈로그 (한 화면 요약)</li>
-            <li data-i18n-en><a href="/quickstart/">/quickstart/</a> — command catalog (one-page summary)</li>
-            <li data-i18n-ko><a href="/architecture/">/architecture/</a> — 5 층 메모리 + Vault 내부 구조</li>
+            <li data-i18n-ko><a href="/guide/">/guide/</a> — 튜토리얼 10 개 + 자주 묻는 질문 (전체 가이드)</li>
+            <li data-i18n-en><a href="/guide/">/guide/</a> — 10 tutorials + FAQ + troubleshooting</li>
+            <li data-i18n-ko><a href="/quickstart/">/quickstart/</a> — 명령어 모음 (한 페이지)</li>
+            <li data-i18n-en><a href="/quickstart/">/quickstart/</a> — command catalog (one page)</li>
+            <li data-i18n-ko><a href="/architecture/">/architecture/</a> — 기억 5 단계와 금고 내부 구조</li>
             <li data-i18n-en><a href="/architecture/">/architecture/</a> — 5-layer memory + vault internals</li>
-            <li data-i18n-ko><a href="/onboard/">/onboard/</a> — AI 에 붙여넣기 한 번으로 시작</li>
+            <li data-i18n-ko><a href="/onboard/">/onboard/</a> — AI 에 한 번 붙여넣어 시작</li>
             <li data-i18n-en><a href="/onboard/">/onboard/</a> — paste once into your AI to start</li>
           </ul>
         </div>
