@@ -33,8 +33,10 @@ OpenXgram = 어떤 AI 든 (Claude · ChatGPT · Gemini · 로컬 모델) 같은 
    (e) 백업·신원 — 데이터 보존 + DID\n\
 \n\
 [2단계: 답변 기반 맞춤 안내]\n\
-- macOS/Linux: `curl -sSfL https://openxgram.org/install.sh | sh`\n\
-- Windows: GitHub Releases (https://github.com/OpenXgram/openxgram/releases) 에서 .zip 다운로드 + PATH 추가\n\
+- 사전 빌드 지원: Linux x86_64/aarch64 · macOS x86_64/aarch64 · Windows x86_64 (5 플랫폼 모두 자동 다운로드).\n\
+- macOS/Linux: `curl -sSfL https://openxgram.org/install.sh | sh` (install.sh 가 OS·arch 자동 감지 후 GitHub Releases 에서 받음)\n\
+- Windows: GitHub Releases (https://github.com/OpenXgram/openxgram/releases) 에서 `.zip` 다운로드 + PATH 추가, 또는 WSL2 에서 위 install.sh 실행\n\
+- 사전 빌드가 없는 플랫폼 / 고급 사용자만: `cargo install --path crates/openxgram-cli` (소스 빌드 — fallback)\n\
 - `xgram init --alias <사용자가-원하는-이름>`\n\
 - 12-단어 시드 출력 → 오프라인 보관 (종이·암호 매니저). 분실 시 모든 데이터 영구 손실.\n\
 \n\
@@ -50,7 +52,7 @@ OpenXgram = 어떤 AI 든 (Claude · ChatGPT · Gemini · 로컬 모델) 같은 
 - (b) 알림: `xgram notify setup-telegram` 또는 `xgram notify setup-discord` (대화형 마법사)\n\
 - (c) 다중 에이전트: `xgram channel serve --bind 127.0.0.1:7250`\n\
 - (d) 결제: `xgram payment new --amount 1.0 --chain base --to 0x…`\n\
-- (e) 백업: `xgram backup create`, `xgram identity did`\n\
+- (e) 백업: `xgram backup create`, `xgram identity did --password <PW>` (DID 출력 — `--data-dir` 옵션, `--format opendid-kr` 한국 OpenDID 형식)\n\
 \n\
 [5단계: 첫 사용 검증]\n\
 - `xgram session new --title \"첫 대화\"`\n\
@@ -88,8 +90,10 @@ Ask the user these three numbered:\n\
    (e) Backup & identity — durable data + DID\n\
 \n\
 [Step 2: tailored install]\n\
-- macOS/Linux: `curl -sSfL https://openxgram.org/install.sh | sh`\n\
-- Windows: download .zip from GitHub Releases (https://github.com/OpenXgram/openxgram/releases) and add to PATH.\n\
+- Pre-built support: Linux x86_64/aarch64 · macOS x86_64/aarch64 · Windows x86_64 (all 5 platforms auto-downloaded).\n\
+- macOS/Linux: `curl -sSfL https://openxgram.org/install.sh | sh` (install.sh auto-detects OS/arch and pulls the matching binary from GitHub Releases)\n\
+- Windows: download the `.zip` from GitHub Releases (https://github.com/OpenXgram/openxgram/releases) and add to PATH, or run the install.sh inside WSL2.\n\
+- Unsupported platforms / advanced users only: `cargo install --path crates/openxgram-cli` (source build — fallback only).\n\
 - `xgram init --alias <name>`\n\
 - 12-word seed prints — store it offline (paper, password manager). Lose it = all data permanently lost.\n\
 \n\
@@ -105,7 +109,7 @@ Ask the user these three numbered:\n\
 - (b) notify: `xgram notify setup-telegram` or `setup-discord` (interactive wizard)\n\
 - (c) multi-agent: `xgram channel serve --bind 127.0.0.1:7250`\n\
 - (d) payment: `xgram payment new --amount 1.0 --chain base --to 0x…`\n\
-- (e) backup: `xgram backup create`, `xgram identity did`\n\
+- (e) backup: `xgram backup create`, `xgram identity did --password <PW>` (prints the DID — `--data-dir` to override path, `--format opendid-kr` for Korean OpenDID).\n\
 \n\
 [Step 5: smoke test]\n\
 - `xgram session new --title \"first chat\"`\n\
