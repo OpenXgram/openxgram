@@ -135,10 +135,12 @@ pub fn run_onboard_prompt(lang: OnboardLang, copy: bool) -> Result<()> {
     };
 
     if copy {
-        // 항상 파일 저장 (모든 환경에서 보장된 결과). silent 금지 — 명시 안내.
-        let saved = try_save_to_file(&body)?;
-
-        // 추가로 클립보드 시도 (성공 시 좋고, 실패 시 파일이 보장)
+        // 절대 보장 원칙 — 사용자는 어떤 환경에서도 프롬프트를 손에 받는다.
+        // 3 경로 모두 시도하고, 결과를 명시한다. silent 실패 0.
+        //   1) 파일 저장 (~/.openxgram/onboard-prompt.txt) — 디스크/HOME 정상이면 항상 성공
+        //   2) 시스템 클립보드 — arboard → 외부 도구 (UI 환경에서 즉시 paste 가능)
+        //   3) 둘 다 실패 시 stdout — 사용자가 터미널에서 직접 복사 (마지막 안전망)
+        let saved = try_save_to_file(&body).unwrap_or(None);
         let clipboard_ok = match try_copy_arboard(&body) {
             Ok(()) => true,
             Err(e) => {
@@ -147,19 +149,32 @@ pub fn run_onboard_prompt(lang: OnboardLang, copy: bool) -> Result<()> {
             }
         };
 
+        // 결과 안내 (eprintln — stderr, paste 시 본문에 안 섞임)
         if clipboard_ok {
             eprintln!("✓ 클립보드에 복사됨. 좋아하는 AI 에 Cmd/Ctrl+V 로 붙여넣기.");
         } else {
             eprintln!("ℹ 클립보드 접근 불가 (헤드리스 환경 또는 클립보드 매니저 부재).");
         }
         if let Some(path) = &saved {
-            eprintln!("✓ 파일 저장 (항상): {}", path.display());
+            eprintln!("✓ 파일 저장: {}", path.display());
             if !clipboard_ok {
-                eprintln!("  복사 명령: macOS `cat {p} | pbcopy` · Linux `cat {p} | xclip -sel c` · WSL `cat {p} | clip.exe`",
-                    p = path.display());
+                eprintln!(
+                    "  수동 복사: macOS `cat {p} | pbcopy` · Linux `cat {p} | xclip -sel c` · WSL `cat {p} | clip.exe`",
+                    p = path.display()
+                );
             }
         }
         eprintln!("  자세한 사용 페이지: https://openxgram.org/onboard/");
+
+        // 절대 안전망: 클립보드도 파일도 실패하면 stdout 으로 본문 출력 (사용자 직접 복사)
+        if !clipboard_ok && saved.is_none() {
+            eprintln!("⚠️ 클립보드·파일 모두 접근 불가 — stdout 으로 본문 출력합니다 (직접 복사하세요).");
+            eprintln!("---BEGIN ONBOARD PROMPT---");
+            let stdout = std::io::stdout();
+            let mut handle = stdout.lock();
+            handle.write_all(body.as_bytes()).context("stdout write")?;
+            eprintln!("---END ONBOARD PROMPT---");
+        }
         return Ok(());
     }
 
