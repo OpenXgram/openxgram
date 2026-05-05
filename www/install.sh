@@ -79,6 +79,14 @@ case "$ARCH" in
   *) echo "unsupported arch: $ARCH — build from source: https://github.com/$REPO" >&2; exit 1 ;;
 esac
 
+# 지원 매트릭스 (release-binaries.yml 와 동기): asset 이름은 xgram-<tag>-<arch>-<os>.{tar.gz|zip}
+#   linux  x86_64   → xgram-<tag>-x86_64-linux.tar.gz
+#   linux  aarch64  → xgram-<tag>-aarch64-linux.tar.gz
+#   darwin x86_64   → xgram-<tag>-x86_64-darwin.tar.gz
+#   darwin aarch64  → xgram-<tag>-aarch64-darwin.tar.gz
+#   windows x86_64  → xgram-<tag>-x86_64-windows.zip   (이 install.sh 는 미사용 — 위 Windows 분기에서 안내)
+EXPECTED_ASSET_BASENAME="xgram-<tag>-${ARCH_ALIAS}-${OS_ALIAS}.tar.gz"
+
 # 설치 위치 결정
 if [ -z "$INSTALL_DIR" ]; then
   if [ -w "${HOME}/.local/bin" ] || mkdir -p "${HOME}/.local/bin" 2>/dev/null; then
@@ -159,12 +167,14 @@ select_asset_for_target() {
 
 PREBUILT_OK="0"
 echo "==> Step 1: GitHub Releases 에서 pre-built binary 조회 중..."
+echo "    expected asset: $EXPECTED_ASSET_BASENAME"
 META="$(fetch_release_meta || true)"
 if [ -n "$META" ] && select_asset_for_target "$META"; then
   echo "    found: $ASSET_NAME (tag: $ASSET_TAG)"
   PREBUILT_OK="1"
 else
   echo "    pre-built binary 미발견 — ${ARCH_ALIAS}-${OS_ALIAS} 용 asset 없음 또는 release 미공개."
+  echo "    (5 타겟 자동 빌드: linux x86_64/aarch64, darwin x86_64/aarch64, windows x86_64)"
   echo "    (silent fallback 금지: 명시적으로 cargo 빌드 경로로 진행합니다)"
 fi
 
@@ -258,7 +268,7 @@ cd openxgram
 
 # 특정 버전 태그 지정 시 checkout
 if [ "$VERSION" != "latest" ] && [ "$VERSION" != "main" ]; then
-  git fetch --depth 1 origin "tag/$VERSION" || git fetch --depth 1 origin "$VERSION"
+  git fetch --depth 1 origin "refs/tags/$VERSION:refs/tags/$VERSION" || git fetch --depth 1 origin "$VERSION"
   git checkout FETCH_HEAD
 fi
 

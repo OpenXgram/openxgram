@@ -1,0 +1,136 @@
+name: Build release binaries
+
+# 5 타겟 병렬 빌드:
+#   linux x86_64 / linux aarch64 (cross via gcc-aarch64-linux-gnu)
+#   macOS x86_64 (macos-13 runner) / macOS aarch64 (macos-14 runner)
+#   windows x86_64 (cross via mingw-w64 from ubuntu)
+#
+# 트리거: release(created/edited) 자동 + workflow_dispatch(tag) 수동.
+# 보안: untrusted github.event.* 입력은 env 로만 노출 (run 본문에 직접 보간 X).
+
+on:
+  release:
+    types: [created, edited]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.2.0-alpha.1)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+            asset_suffix: x86_64-linux.tar.gz
+          - label: linux-aarch64
+            target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+            asset_suffix: aarch64-linux.tar.gz
+          - label: macos-x86_64
+            target: x86_64-apple-darwin
+            os: macos-13
+            cross: false
+            asset_suffix: x86_64-darwin.tar.gz
+          - label: macos-aarch64
+            target: aarch64-apple-darwin
+            os: macos-14
+            cross: false
+            asset_suffix: aarch64-darwin.tar.gz
+          - label: windows-x86_64
+            target: x86_64-pc-windows-gnu
+            os: ubuntu-latest
+            cross: true
+            asset_suffix: x86_64-windows.zip
+    runs-on: ${{ matrix.os }}
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+      MATRIX_TARGET: ${{ matrix.target }}
+      MATRIX_LABEL: ${{ matrix.label }}
+      MATRIX_ASSET_SUFFIX: ${{ matrix.asset_suffix }}
+      MATRIX_CROSS: ${{ matrix.cross }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cross-compile toolchain (aarch64-linux / windows-gnu)
+        if: matrix.cross == true
+        run: |
+          set -eu
+          sudo apt-get update
+          if [ "$MATRIX_TARGET" = "aarch64-unknown-linux-gnu" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+          elif [ "$MATRIX_TARGET" = "x86_64-pc-windows-gnu" ]; then
+            sudo apt-get install -y mingw-w64
+          else
+            echo "unknown cross target: $MATRIX_TARGET" >&2
+            exit 1
+          fi
+
+      - name: Build openxgram-cli
+        env:
+          # 의존 crate 가 자체 rust-toolchain.toml 로 다른 채널을 강제하지 못하게 고정.
+          RUSTUP_TOOLCHAIN: stable
+          # cc crate cross-compile env (linux-aarch64 / windows-gnu).
+          # CARGO_TARGET_*_LINKER 는 .cargo/config.toml 에서 정적 지정.
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+          CC_x86_64_pc_windows_gnu: x86_64-w64-mingw32-gcc
+          AR_x86_64_pc_windows_gnu: x86_64-w64-mingw32-ar
+        run: cargo build --release --target "$MATRIX_TARGET" -p openxgram-cli
+
+      - name: Package + SHA256
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p dist
+          asset="xgram-${RELEASE_TAG}-${MATRIX_ASSET_SUFFIX}"
+          stage="$(mktemp -d)"
+          if [ "$MATRIX_TARGET" = "x86_64-pc-windows-gnu" ]; then
+            cp "target/$MATRIX_TARGET/release/xgram.exe" "$stage/xgram.exe"
+            ( cd "$stage" && \
+              if command -v sha256sum >/dev/null; then sha256sum xgram.exe > SHA256SUMS;
+              else shasum -a 256 xgram.exe > SHA256SUMS; fi )
+            ( cd "$stage" && zip -q "$OLDPWD/dist/$asset" xgram.exe SHA256SUMS )
+          else
+            cp "target/$MATRIX_TARGET/release/xgram" "$stage/xgram"
+            ( cd "$stage" && \
+              if command -v sha256sum >/dev/null; then sha256sum xgram > SHA256SUMS;
+              else shasum -a 256 xgram > SHA256SUMS; fi )
+            tar -C "$stage" -czf "dist/$asset" xgram SHA256SUMS
+          fi
+          ( cd dist && \
+            if command -v sha256sum >/dev/null; then sha256sum "$asset" > "$asset.sha256";
+            else shasum -a 256 "$asset" > "$asset.sha256"; fi )
+          ls -la dist/
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: |
+            dist/*
+          fail_on_unmatched_files: true

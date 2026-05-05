@@ -1,5 +1,6 @@
 use crate::error::DbError;
 use crate::migrate::MigrationRunner;
+use std::os::raw::c_char;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -61,9 +62,10 @@ impl Db {
 
         // 2. sqlite-vec를 auto_extension으로 등록 (Connection 열기 전에 등록해야 적용됨)
         unsafe {
+            // c_char 는 플랫폼별로 다름 (x86_64-linux: i8, aarch64-linux: u8) — 항상 c_char 사용.
             type SqliteExtEntryPoint = unsafe extern "C" fn(
                 *mut rusqlite::ffi::sqlite3,
-                *mut *mut i8,
+                *mut *mut c_char,
                 *const rusqlite::ffi::sqlite3_api_routines,
             ) -> i32;
             let ep: SqliteExtEntryPoint = std::mem::transmute::<*const (), SqliteExtEntryPoint>(
