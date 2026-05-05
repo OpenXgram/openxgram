@@ -747,6 +747,11 @@ kai:  send_message(to=<span class="s">"master"</span>, summary=<span class="s">"
               On first launch the app opens the <strong>Onboarding tab</strong>. If <code>xgram init</code> hasn't finished
               you'll see a <span class="badge warn">not ready</span> badge; once initialized, it auto-switches to the <strong>Memory tab</strong>.
             </p>
+            <figure class="screenshot">
+              <img src="/screenshots/gui-overview.png" alt="OpenXgram GUI 9 탭 네비게이션 — overview / 9-tab navigation overview" loading="lazy" width="1280" height="800" />
+              <figcaption data-i18n-ko>9 개 탭이 한 줄에 나란히 — 시작하기·기억·Vault·피어·알림·채널·예약·체인·설정.</figcaption>
+              <figcaption data-i18n-en>Nine tabs in one row — Onboarding · Memory · Vault · Peers · Notify · Channel · Schedule · Chain · Settings.</figcaption>
+            </figure>
           </div>
 
           <div class="step">
@@ -756,23 +761,84 @@ kai:  send_message(to=<span class="s">"master"</span>, summary=<span class="s">"
             <ul class="dotted">
               <li data-i18n-ko><strong>Onboarding</strong> — 첫 실행 환영 + init 진행 상태 (<span class="badge warn">아직</span> / <span class="badge ok">완료</span>) 확인 + Memory 탭으로 자동 진행 버튼.</li>
               <li data-i18n-en><strong>Onboarding</strong> — welcome screen, init readiness badge, button to proceed to Memory tab.</li>
+            </ul>
+            <figure class="screenshot">
+              <img src="/screenshots/gui-onboarding.png" alt="Onboarding 탭 — 첫 실행 환영 화면 / Onboarding tab — first-run welcome" loading="lazy" width="1280" height="800" />
+              <figcaption data-i18n-ko>Onboarding 탭 — init 상태 배지 + Memory 자동 진행.</figcaption>
+              <figcaption data-i18n-en>Onboarding tab — init readiness badge + auto-advance to Memory.</figcaption>
+            </figure>
+            <ul class="dotted">
               <li data-i18n-ko><strong>Memory</strong> — 5 층(L0~L4) 검색. 입력은 300ms 디바운스. 체크박스로 L0/L2/L4 레이어 필터, 결과는 점수 정렬로 표시.</li>
               <li data-i18n-en><strong>Memory</strong> — 5-layer (L0–L4) search with 300ms input debounce. Checkbox layer filters (L0/L2/L4); results sorted by score.</li>
+            </ul>
+            <figure class="screenshot">
+              <img src="/screenshots/gui-memory.png" alt="Memory 탭 — 5층 검색 결과 / Memory tab — 5-layer search results" loading="lazy" width="1280" height="800" />
+              <figcaption data-i18n-ko>Memory 탭 — L0/L2/L4 레이어 필터, 점수 정렬된 결과.</figcaption>
+              <figcaption data-i18n-en>Memory tab — L0/L2/L4 layer filters with score-sorted hits.</figcaption>
+            </figure>
+            <ul class="dotted">
               <li data-i18n-ko><strong>Vault</strong> — Pending 승인/거부 리스트 + 자격증명 reveal. Reveal 시 30초 마스킹 카운트다운 + 클립보드 복사도 30초 후 자동 클리어.</li>
               <li data-i18n-en><strong>Vault</strong> — pending approval list + credential reveal. Revealed values mask after 30s; clipboard auto-clears 30s after copy.</li>
+            </ul>
+            <figure class="screenshot">
+              <img src="/screenshots/gui-vault.png" alt="Vault 탭 — Pending 승인 + Reveal / Vault tab — pending approvals + reveal" loading="lazy" width="1280" height="800" />
+              <figcaption data-i18n-ko>Vault 탭 — 승인 대기 목록과 30초 마스킹 reveal.</figcaption>
+              <figcaption data-i18n-en>Vault tab — pending list + 30-second masked reveal.</figcaption>
+            </figure>
+            <ul class="dotted">
               <li data-i18n-ko><strong>Peers</strong> — 다른 머신·에이전트 추가. 폼에 alias·address·pubkey 입력 → fingerprint 다이얼로그로 검증 후 confirm.</li>
               <li data-i18n-en><strong>Peers</strong> — register other machines/agents. Enter alias·address·pubkey, then confirm via fingerprint dialog.</li>
+            </ul>
+            <figure class="screenshot">
+              <img src="/screenshots/gui-peers.png" alt="Peers 탭 — 피어 등록 / Peers tab — peer registration" loading="lazy" width="1280" height="800" />
+              <figcaption data-i18n-ko>Peers 탭 — alias·address·pubkey 입력 후 fingerprint 검증.</figcaption>
+              <figcaption data-i18n-en>Peers tab — alias·address·pubkey form with fingerprint confirmation.</figcaption>
+            </figure>
+            <ul class="dotted">
               <li data-i18n-ko><strong>Notify</strong> — Discord webhook + Telegram bot 마법사. 토큰 입력 → <code>getMe</code> 검증 → <code>chat_id</code> 자동 감지 → 저장 + 테스트 메시지 자동 전송.</li>
               <li data-i18n-en><strong>Notify</strong> — Discord webhook + Telegram bot wizard. Paste token → <code>getMe</code> validation → auto-detect <code>chat_id</code> → save + auto-send test message.</li>
+            </ul>
+            <figure class="screenshot">
+              <img src="/screenshots/gui-notify.png" alt="Notify 탭 — Discord/Telegram 마법사 / Notify tab — Discord/Telegram wizard" loading="lazy" width="1280" height="800" />
+              <figcaption data-i18n-ko>Notify 탭 — 토큰 검증 → chat_id 감지 → 저장 → 테스트 한 흐름.</figcaption>
+              <figcaption data-i18n-en>Notify tab — token validation → chat_id detection → save → test in one flow.</figcaption>
+            </figure>
+            <ul class="dotted">
               <li data-i18n-ko><strong>Channel</strong> — 다중 에이전트 허브 라이브 상태. 어댑터 구성 여부, 등록된 peer 수, 예약 메시지 pending 수, 최근 메시지 20건을 KST 타임스탬프로 표시.</li>
               <li data-i18n-en><strong>Channel</strong> — live multi-agent hub status. Adapter configuration, peer count, pending schedules, last 20 messages with KST timestamps.</li>
+            </ul>
+            <figure class="screenshot">
+              <img src="/screenshots/gui-channel.png" alt="Channel 탭 — 다중 에이전트 허브 라이브 / Channel tab — live multi-agent hub" loading="lazy" width="1280" height="800" />
+              <figcaption data-i18n-ko>Channel 탭 — 어댑터 상태, 피어 수, 예약 대기, 최근 메시지.</figcaption>
+              <figcaption data-i18n-en>Channel tab — adapter status, peer count, pending schedules, recent messages.</figcaption>
+            </figure>
+            <ul class="dotted">
               <li data-i18n-ko><strong>Schedule</strong> — 예약 메시지. <code>once</code> (특정 시각 1회) 또는 <code>cron</code> (반복) 지정. 대기/전송완료/실패/취소 통계와 목록, 개별 취소 버튼.</li>
               <li data-i18n-en><strong>Schedule</strong> — scheduled messages. <code>once</code> (one-shot) or <code>cron</code> (repeating). Stats for pending/sent/failed/cancelled plus per-row cancel.</li>
+            </ul>
+            <figure class="screenshot">
+              <img src="/screenshots/gui-schedule.png" alt="Schedule 탭 — 예약 메시지 / Schedule tab — scheduled messages" loading="lazy" width="1280" height="800" />
+              <figcaption data-i18n-ko>Schedule 탭 — once/cron 예약, 통계, 개별 취소.</figcaption>
+              <figcaption data-i18n-en>Schedule tab — once/cron entries, stats, per-row cancel.</figcaption>
+            </figure>
+            <ul class="dotted">
               <li data-i18n-ko><strong>Chain</strong> — 체인 워크플로우. YAML 로 step 정의 → 등록 → 실행 → 각 step 의 응답·실패·skip 결과를 한 화면에서 확인.</li>
               <li data-i18n-en><strong>Chain</strong> — chain workflows. Define steps in YAML → create → run → see per-step response/error/skip on one screen.</li>
+            </ul>
+            <figure class="screenshot">
+              <img src="/screenshots/gui-chain.png" alt="Chain 탭 — YAML 체인 에디터 / Chain tab — YAML chain editor" loading="lazy" width="1280" height="800" />
+              <figcaption data-i18n-ko>Chain 탭 — YAML step 정의, 실행, step별 결과.</figcaption>
+              <figcaption data-i18n-en>Chain tab — YAML step definition, run, per-step results.</figcaption>
+            </figure>
+            <ul class="dotted">
               <li data-i18n-ko><strong>Settings</strong> — 결제 일일 한도(USDC) 설정. 변경 시 MFA 재인증 다이얼로그가 뜹니다 (PRD-MFA-02 통합 시 WebAuthn).</li>
               <li data-i18n-en><strong>Settings</strong> — daily payment limit (USDC). Changes prompt MFA re-authentication (WebAuthn once PRD-MFA-02 lands).</li>
             </ul>
+            <figure class="screenshot">
+              <img src="/screenshots/gui-settings.png" alt="Settings 탭 — 결제 한도 / Settings tab — payment limits" loading="lazy" width="1280" height="800" />
+              <figcaption data-i18n-ko>Settings 탭 — USDC 일일 한도 + MFA 재인증.</figcaption>
+              <figcaption data-i18n-en>Settings tab — USDC daily limit + MFA re-auth on change.</figcaption>
+            </figure>
           </div>
 
           <div class="step">
@@ -828,6 +894,11 @@ kai:  send_message(to=<span class="s">"master"</span>, summary=<span class="s">"
             <h4 data-i18n-en>Launch</h4>
 <pre class="code"><span class="p">$</span> xgram tui
 <span class="c"># --data-dir &lt;PATH&gt; 로 데이터 디렉토리 지정 가능 (기본: ~/.openxgram)</span></pre>
+            <figure class="screenshot">
+              <img src="/screenshots/tui-welcome.png" alt="xgram tui welcome 화면 — 헤더 + Status + 푸터 / TUI welcome screen — header + status + footer" loading="lazy" width="1280" height="720" />
+              <figcaption data-i18n-ko>xgram tui — 미설치 상태에서 <code>xgram init</code> 안내가 보이는 ratatui 화면.</figcaption>
+              <figcaption data-i18n-en>xgram tui — ratatui screen prompting <code>xgram init</code> when no install manifest is found.</figcaption>
+            </figure>
           </div>
 
           <div class="step">
