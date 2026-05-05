@@ -60,14 +60,14 @@ fn add_then_list() {
     run_memory(
         &data_dir,
         MemoryAction::List {
-            kind: MemoryKind::Fact,
+            kind: Some(MemoryKind::Fact),
         },
     )
     .unwrap();
     run_memory(
         &data_dir,
         MemoryAction::List {
-            kind: MemoryKind::Reference,
+            kind: Some(MemoryKind::Reference),
         },
     )
     .unwrap();
@@ -98,7 +98,7 @@ fn requires_init_first() {
     let err = run_memory(
         &tmp.path().join("absent"),
         MemoryAction::List {
-            kind: MemoryKind::Fact,
+            kind: Some(MemoryKind::Fact),
         },
     )
     .unwrap_err();
