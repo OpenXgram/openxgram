@@ -18,6 +18,7 @@ export default defineConfig({
         architecture: resolve(__dirname, 'architecture/index.html'),
         docs: resolve(__dirname, 'docs/index.html'),
         onboard: resolve(__dirname, "onboard/index.html"),
+        manual: resolve(__dirname, "manual/index.html"),
       },
     },
   },
