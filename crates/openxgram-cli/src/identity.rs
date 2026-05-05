@@ -23,6 +23,9 @@ pub enum DidFormat {
 pub enum IdentityCli {
     /// DID 식별자 출력 — 기본 did:key, --format 으로 OpenDID/OmniOne
     Did {
+        /// 데이터 디렉토리 (생략 시 ~/.openxgram). keystore 위치 결정.
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
         #[arg(long, default_value = "master")]
         name: String,
         #[arg(long)]
@@ -34,6 +37,8 @@ pub enum IdentityCli {
     },
     /// W3C DID Document JSON-LD 출력
     DidDocument {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
         #[arg(long, default_value = "master")]
         name: String,
         #[arg(long)]
@@ -41,6 +46,8 @@ pub enum IdentityCli {
     },
     /// W3C Verifiable Credential 발급 (master 키로 ES256K 서명)
     IssueVc {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
         #[arg(long, default_value = "master")]
         name: String,
         #[arg(long)]
@@ -61,14 +68,24 @@ pub enum IdentityCli {
     },
 }
 
-pub fn run(ks: FsKeystore, action: IdentityCli) -> Result<()> {
+/// 액션의 `--data-dir` 가 지정됐으면 해당 위치의 keystore 를, 아니면 기본 keystore 를 사용.
+fn keystore_for(data_dir: &Option<PathBuf>, default_ks: FsKeystore) -> FsKeystore {
+    match data_dir {
+        Some(d) => FsKeystore::new(openxgram_core::paths::keystore_dir(d)),
+        None => default_ks,
+    }
+}
+
+pub fn run(default_ks: FsKeystore, action: IdentityCli) -> Result<()> {
     match action {
         IdentityCli::Did {
+            data_dir,
             name,
             password,
             format,
             network,
         } => {
+            let ks = keystore_for(&data_dir, default_ks);
             let kp = ks.load(&name, &password)?;
             let out = match format {
                 DidFormat::Key => did_key_from_master(&kp)?,
@@ -77,19 +94,26 @@ pub fn run(ks: FsKeystore, action: IdentityCli) -> Result<()> {
             };
             println!("{out}");
         }
-        IdentityCli::DidDocument { name, password } => {
+        IdentityCli::DidDocument {
+            data_dir,
+            name,
+            password,
+        } => {
+            let ks = keystore_for(&data_dir, default_ks);
             let kp = ks.load(&name, &password)?;
             let did = did_key_from_master(&kp)?;
             let doc = did_document(&did, &kp)?;
             println!("{}", serde_json::to_string_pretty(&doc)?);
         }
         IdentityCli::IssueVc {
+            data_dir,
             name,
             password,
             subject,
             claims,
             output,
         } => {
+            let ks = keystore_for(&data_dir, default_ks);
             let kp = ks.load(&name, &password)?;
             let issuer = did_key_from_master(&kp)?;
             let claims_v: serde_json::Value =

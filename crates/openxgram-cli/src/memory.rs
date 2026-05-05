@@ -28,7 +28,8 @@ pub enum MemoryAction {
         session_id: Option<String>,
     },
     List {
-        kind: MemoryKind,
+        /// None 이면 모든 kind (fact/decision/reference/rule) 출력.
+        kind: Option<MemoryKind>,
     },
     Pin {
         id: String,
@@ -58,18 +59,33 @@ pub fn run_memory(data_dir: &Path, action: MemoryAction) -> Result<()> {
             println!("  created_at: {}", m.created_at);
         }
         MemoryAction::List { kind } => {
-            let memories = store.list_by_kind(kind)?;
-            if memories.is_empty() {
-                println!("{kind} memory 없음.");
-                return Ok(());
+            let kinds: Vec<MemoryKind> = match kind {
+                Some(k) => vec![k],
+                None => vec![
+                    MemoryKind::Fact,
+                    MemoryKind::Decision,
+                    MemoryKind::Reference,
+                    MemoryKind::Rule,
+                ],
+            };
+            let mut total = 0usize;
+            for k in kinds {
+                let memories = store.list_by_kind(k)?;
+                if memories.is_empty() {
+                    continue;
+                }
+                total += memories.len();
+                println!("{k} memories ({})", memories.len());
+                for m in &memories {
+                    let pin = if m.pinned { "📌" } else { "  " };
+                    println!(
+                        "  {pin} {} — {} (acc={}, last={})",
+                        m.id, m.content, m.access_count, m.last_accessed
+                    );
+                }
             }
-            println!("{kind} memories ({})", memories.len());
-            for m in &memories {
-                let pin = if m.pinned { "📌" } else { "  " };
-                println!(
-                    "  {pin} {} — {} (acc={}, last={})",
-                    m.id, m.content, m.access_count, m.last_accessed
-                );
+            if total == 0 {
+                println!("memory 없음.");
             }
         }
         MemoryAction::Pin { id } => {

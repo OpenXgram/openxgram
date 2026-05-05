@@ -22,12 +22,18 @@ pub enum ScheduleAction {
     Once {
         #[arg(long)]
         at: String,
-        #[arg(long, conflicts_with = "to_platform")]
+        #[arg(long, conflicts_with_all = ["to_platform", "target_kind"])]
         to_role: Option<String>,
-        #[arg(long, conflicts_with = "to_role")]
+        #[arg(long, conflicts_with_all = ["to_role", "target_kind"])]
         to_platform: Option<String>,
         #[arg(long, requires = "to_platform")]
         channel_id: Option<String>,
+        /// `role` | `platform` — `--target` 와 함께 라우팅. 기본은 role:master.
+        #[arg(long, value_parser = ["role", "platform"])]
+        target_kind: Option<String>,
+        /// role 일 때는 role 이름 (예: master, eno), platform 일 때는 `discord:CHID`.
+        #[arg(long, requires = "target_kind")]
+        target: Option<String>,
         #[arg(long)]
         text: String,
         #[arg(long, default_value = "info")]
@@ -37,12 +43,16 @@ pub enum ScheduleAction {
     Cron {
         /// cron expr (5 또는 6 필드). 예: `"0 9 * * *"` (매일 09:00 KST).
         cron_expr: String,
-        #[arg(long, conflicts_with = "to_platform")]
+        #[arg(long, conflicts_with_all = ["to_platform", "target_kind"])]
         to_role: Option<String>,
-        #[arg(long, conflicts_with = "to_role")]
+        #[arg(long, conflicts_with_all = ["to_role", "target_kind"])]
         to_platform: Option<String>,
         #[arg(long, requires = "to_platform")]
         channel_id: Option<String>,
+        #[arg(long, value_parser = ["role", "platform"])]
+        target_kind: Option<String>,
+        #[arg(long, requires = "target_kind")]
+        target: Option<String>,
         #[arg(long)]
         text: String,
         #[arg(long, default_value = "info")]
@@ -92,7 +102,21 @@ fn resolve_target(
     to_role: Option<String>,
     to_platform: Option<String>,
     channel_id: Option<String>,
+    target_kind: Option<String>,
+    target: Option<String>,
 ) -> Result<(TargetKind, String)> {
+    // 신 시그니처 — `--target-kind role|platform` + `--target ...`
+    if let Some(kind) = target_kind {
+        let value = target.ok_or_else(|| anyhow!("--target required with --target-kind"))?;
+        return match kind.as_str() {
+            "role" => Ok((TargetKind::Role, value)),
+            "platform" => Ok((TargetKind::Platform, value)),
+            other => Err(anyhow!(
+                "--target-kind must be `role` or `platform` (got `{other}`)"
+            )),
+        };
+    }
+    // 기존 시그니처 (호환).
     if let Some(role) = to_role {
         return Ok((TargetKind::Role, role));
     }
@@ -100,7 +124,8 @@ fn resolve_target(
         let ch = channel_id.ok_or_else(|| anyhow!("--channel-id required with --to-platform"))?;
         return Ok((TargetKind::Platform, format!("{platform}:{ch}")));
     }
-    Err(anyhow!("either --to-role or --to-platform required"))
+    // 기본값: role:master — 사이트 안내와 일치.
+    Ok((TargetKind::Role, "master".to_string()))
 }
 
 pub fn run_schedule(data_dir: &Path, action: ScheduleAction) -> Result<()> {
@@ -112,10 +137,13 @@ pub fn run_schedule(data_dir: &Path, action: ScheduleAction) -> Result<()> {
             to_role,
             to_platform,
             channel_id,
+            target_kind,
+            target,
             text,
             msg_type,
         } => {
-            let (kind, target) = resolve_target(to_role, to_platform, channel_id)?;
+            let (kind, target) =
+                resolve_target(to_role, to_platform, channel_id, target_kind, target)?;
             let id = store
                 .insert(kind, &target, &text, &msg_type, ScheduleKind::Once, &at)
                 .context("INSERT scheduled (once)")?;
@@ -127,10 +155,13 @@ pub fn run_schedule(data_dir: &Path, action: ScheduleAction) -> Result<()> {
             to_role,
             to_platform,
             channel_id,
+            target_kind,
+            target,
             text,
             msg_type,
         } => {
-            let (kind, target) = resolve_target(to_role, to_platform, channel_id)?;
+            let (kind, target) =
+                resolve_target(to_role, to_platform, channel_id, target_kind, target)?;
             let id = store
                 .insert(
                     kind,

@@ -206,7 +206,16 @@ fn try_copy_external(text: &str) -> Result<bool> {
         &["clip.exe"],
     ];
     for cmd in candidates {
-        let mut child = match Command::new(cmd[0]).args(&cmd[1..]).stdin(Stdio::piped()).spawn() {
+        // stdout/stderr 묻기 — DISPLAY 미설정 환경에서 xclip/xsel 의 "Can't open display"
+        // 같은 노이즈가 사용자 안내(eprintln!) 와 섞이는 것을 방지.
+        // 의도적 silence: 우리 메시지(stderr) 로 결과를 명확히 보고하므로 외부 도구 stderr 은 불필요.
+        let mut child = match Command::new(cmd[0])
+            .args(&cmd[1..])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
             Ok(c) => c,
             Err(_) => continue,
         };

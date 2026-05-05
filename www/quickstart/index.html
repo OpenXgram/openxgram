@@ -561,13 +561,13 @@
             Schedule future messages by absolute time or cron (KST), or chain steps with delays
             and response-based branching.
           </p>
-<pre class="code"><span class="c"># 1) 1회 예약 — 2026-05-05 09:00 KST 에 res 에이전트로</span>
+<pre class="code"><span class="c"># 1) 1회 예약 — 2026-05-05 09:00 KST 에 master 역할로</span>
 <span class="p">$</span> xgram schedule once <span class="s">--at "2026-05-05T09:00:00+09:00"</span> \
-    <span class="s">--to-role res --text "morning briefing"</span>
+    <span class="s">--target-kind role --target master --text "morning briefing"</span>
 
 <span class="c"># 2) 반복 예약 — 매일 09:00 KST 디스코드 채널로</span>
 <span class="p">$</span> xgram schedule cron <span class="s">"0 9 * * *"</span> \
-    <span class="s">--to-platform discord --channel-id 12345 --text "daily standup"</span>
+    <span class="s">--target-kind platform --target discord:12345 --text "daily standup"</span>
 
 <span class="c"># 3) 예약 목록 / 취소 / 도달분 수동 실행</span>
 <span class="p">$</span> xgram schedule list
