@@ -135,12 +135,32 @@ pub fn run_onboard_prompt(lang: OnboardLang, copy: bool) -> Result<()> {
     };
 
     if copy {
-        if try_copy_clipboard(&body)? {
-            eprintln!("✓ 클립보드에 복사 완료. 좋아하는 AI 에 붙여넣기 → 3 질문 응답 → 5분 안에 끝.");
-            eprintln!("  자세한 사용 페이지: https://openxgram.org/onboard/");
-            return Ok(());
+        // 항상 파일 저장 (모든 환경에서 보장된 결과). silent 금지 — 명시 안내.
+        let saved = try_save_to_file(&body)?;
+
+        // 추가로 클립보드 시도 (성공 시 좋고, 실패 시 파일이 보장)
+        let clipboard_ok = match try_copy_arboard(&body) {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::debug!(error = %e, "arboard 실패 — 외부 도구 시도");
+                try_copy_external(&body).unwrap_or(false)
+            }
+        };
+
+        if clipboard_ok {
+            eprintln!("✓ 클립보드에 복사됨. 좋아하는 AI 에 Cmd/Ctrl+V 로 붙여넣기.");
+        } else {
+            eprintln!("ℹ 클립보드 접근 불가 (헤드리스 환경 또는 클립보드 매니저 부재).");
         }
-        eprintln!("⚠️ 클립보드 도구를 찾지 못했습니다. 본문을 stdout 으로 출력합니다.");
+        if let Some(path) = &saved {
+            eprintln!("✓ 파일 저장 (항상): {}", path.display());
+            if !clipboard_ok {
+                eprintln!("  복사 명령: macOS `cat {p} | pbcopy` · Linux `cat {p} | xclip -sel c` · WSL `cat {p} | clip.exe`",
+                    p = path.display());
+            }
+        }
+        eprintln!("  자세한 사용 페이지: https://openxgram.org/onboard/");
+        return Ok(());
     }
 
     let stdout = std::io::stdout();
@@ -149,14 +169,23 @@ pub fn run_onboard_prompt(lang: OnboardLang, copy: bool) -> Result<()> {
     Ok(())
 }
 
-/// 시스템에 따라 가능한 클립보드 도구를 찾아 복사. 실패 시 false.
-fn try_copy_clipboard(text: &str) -> Result<bool> {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
+/// arboard 로 native 클립보드 복사 (모든 OS 통일된 인터페이스).
+fn try_copy_arboard(text: &str) -> Result<()> {
+    let mut clipboard = arboard::Clipboard::new()
+        .map_err(|e| anyhow::anyhow!("arboard init: {e}"))?;
+    clipboard
+        .set_text(text.to_string())
+        .map_err(|e| anyhow::anyhow!("arboard set_text: {e}"))?;
+    Ok(())
+}
 
+/// 외부 클립보드 도구 fallback (arboard 가 헤드리스 등에서 실패할 때).
+fn try_copy_external(text: &str) -> Result<bool> {
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
     let candidates: &[&[&str]] = &[
         &["wl-copy"],
-        &["xclip", "-selection", "clipboard"],
+        &["xclip", "-selection", "clipboard", "-l", "1"],
         &["xsel", "--clipboard", "--input"],
         &["pbcopy"],
         &["clip.exe"],
@@ -174,4 +203,19 @@ fn try_copy_clipboard(text: &str) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+/// 마지막 폴백 — ~/.openxgram/onboard-prompt.txt 로 저장. 항상 작동하도록 보장.
+fn try_save_to_file(text: &str) -> Result<Option<std::path::PathBuf>> {
+    let home = match std::env::var_os("HOME") {
+        Some(h) => std::path::PathBuf::from(h),
+        None => return Ok(None),
+    };
+    let dir = home.join(".openxgram");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return Ok(None);
+    }
+    let path = dir.join("onboard-prompt.txt");
+    std::fs::write(&path, text).context("onboard-prompt.txt write")?;
+    Ok(Some(path))
 }
