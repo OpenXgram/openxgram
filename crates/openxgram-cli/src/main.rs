@@ -388,6 +388,25 @@ enum Commands {
         #[command(subcommand)]
         cmd: ChannelCli,
     },
+
+    /// 다른 LLM 에 붙여넣어 자동 온보딩을 시작하는 프롬프트 출력
+    Onboard {
+        #[command(subcommand)]
+        cmd: OnboardCli,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum OnboardCli {
+    /// 온보딩 프롬프트를 출력 (Claude/ChatGPT/Gemini 등에 붙여넣기)
+    Prompt {
+        /// 출력 언어 (ko / en / both, 기본 ko)
+        #[arg(long, value_enum, default_value_t = openxgram_cli::onboard::OnboardLang::Ko)]
+        lang: openxgram_cli::onboard::OnboardLang,
+        /// 클립보드에 직접 복사 (wl-copy / xclip / xsel / pbcopy / clip.exe 자동 감지)
+        #[arg(long)]
+        copy: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1879,6 +1898,12 @@ async fn main() -> anyhow::Result<()> {
             };
             channel::run(action).await?;
         }
+
+        Commands::Onboard { cmd } => match cmd {
+            OnboardCli::Prompt { lang, copy } => {
+                openxgram_cli::onboard::run_onboard_prompt(lang, copy)?;
+            }
+        },
     }
 
     Ok(())

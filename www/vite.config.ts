@@ -17,6 +17,7 @@ export default defineConfig({
         usecases: resolve(__dirname, 'usecases/index.html'),
         architecture: resolve(__dirname, 'architecture/index.html'),
         docs: resolve(__dirname, 'docs/index.html'),
+        onboard: resolve(__dirname, "onboard/index.html"),
       },
     },
   },
