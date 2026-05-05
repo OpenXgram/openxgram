@@ -68,6 +68,18 @@
 <span class="p">$</span> xgram init <span class="s">--alias my-laptop</span>
 <span class="c"># 12-단어 복구 시드를 출력합니다 (오프라인 보관 권장)</span>
 <span class="c"># 이후 모든 데이터는 ~/.openxgram/ 로컬 SQLite 한 파일에만 저장됩니다.</span></pre>
+          <p data-i18n-ko style="font-size: 14px; color: #666;">
+            <strong>지원 플랫폼 (pre-built):</strong>
+            Linux x86_64 · Linux aarch64 · macOS x86_64 (Intel) · macOS aarch64 (Apple Silicon) · Windows x86_64.
+            <code>install.sh</code> 가 OS·arch 를 자동 감지하여 <a href="https://github.com/OpenXgram/openxgram/releases/latest">GitHub Releases</a> 에서 받습니다.
+            asset 미존재 시 cargo fallback 으로 명시 안내. Windows 는 <code>.zip</code> 직접 다운로드 또는 WSL2.
+          </p>
+          <p data-i18n-en style="font-size: 14px; color: #666;">
+            <strong>Pre-built platforms:</strong>
+            Linux x86_64 · Linux aarch64 · macOS x86_64 (Intel) · macOS aarch64 (Apple Silicon) · Windows x86_64.
+            <code>install.sh</code> auto-detects OS·arch and pulls from <a href="https://github.com/OpenXgram/openxgram/releases/latest">GitHub Releases</a>.
+            Falls back to cargo with explicit notice if no asset matches. On Windows, download the <code>.zip</code> directly or use WSL2.
+          </p>
           <p data-i18n-ko>
             <strong>외부 전송 0:</strong> 위 두 명령은 인터넷에 데이터를 전혀 보내지 않습니다 (install.sh 내려받기 제외).
             블록체인 키페어(secp256k1)는 사용자 기기에서 생성되고, 이후 외부로 나가지 않습니다.
