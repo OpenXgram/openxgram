@@ -257,7 +257,7 @@
 <pre class="code"><span class="p">$</span> xgram memory add <span class="s">"마스터 별명: kandj. 한국어 우선."</span> --pin
 <span class="c"># 핀된 메모리는 회상 시 항상 상위에 노출됩니다 (ROUTINE 패턴 처리).</span>
 
-<span class="p">$</span> xgram memory list --pinned
+<span class="p">$</span> xgram memory list   <span class="c"># --kind 생략 시 모든 종류 출력. --kind fact 등으로 필터 가능</span>
 <span class="c"># 1. [pinned] 마스터 별명: kandj. 한국어 우선.</span></pre>
           </div>
         </div>
@@ -582,17 +582,17 @@ kai:  send_message(to=<span class="s">"master"</span>, summary=<span class="s">"
             <h4 data-i18n-ko>일회성 예약</h4>
             <h4 data-i18n-en>One-shot schedule</h4>
 <pre class="code"><span class="p">$</span> xgram schedule once --at <span class="s">"2026-05-05T09:00:00+09:00"</span> \
-    --notify discord --title <span class="s">"아침 점검"</span> \
-    --body <span class="s">"오늘 할 일 3가지를 확인하세요."</span></pre>
+    --target-kind role --target master \
+    --text <span class="s">"오늘 할 일 3가지를 확인하세요."</span></pre>
           </div>
 
           <div class="step">
             <span class="step-no">Step 7.2</span>
             <h4 data-i18n-ko>cron 반복 예약</h4>
             <h4 data-i18n-en>Recurring cron</h4>
-<pre class="code"><span class="p">$</span> xgram schedule cron --expr <span class="s">"0 9 * * MON"</span> \
-    --notify telegram --title <span class="s">"주간 회고"</span> \
-    --body <span class="s">"지난주 회상: xgram session recall --query 'last week' -k 10"</span>
+<pre class="code"><span class="p">$</span> xgram schedule cron <span class="s">"0 9 * * MON"</span> \
+    --target-kind role --target master \
+    --text <span class="s">"지난주 회상: xgram session recall --query 'last week' -k 10"</span>
 
 <span class="p">$</span> xgram schedule list
 <span class="c"># 1. cron  "0 9 * * MON"  → notify telegram (next: 2026-05-11 09:00 KST)</span></pre>

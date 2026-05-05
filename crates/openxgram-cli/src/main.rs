@@ -806,10 +806,10 @@ enum MemoryCli {
         #[arg(long)]
         session_id: Option<String>,
     },
-    /// kind 별 list (pinned 우선)
+    /// list (pinned 우선). `--kind` 없으면 모든 kind 출력.
     List {
         #[arg(long, value_enum)]
-        kind: MemoryKindArg,
+        kind: Option<MemoryKindArg>,
     },
     /// memory pin
     Pin { id: String },
@@ -874,7 +874,9 @@ impl From<MemoryCli> for MemoryAction {
                 content,
                 session_id,
             },
-            MemoryCli::List { kind } => MemoryAction::List { kind: kind.into() },
+            MemoryCli::List { kind } => MemoryAction::List {
+                kind: kind.map(Into::into),
+            },
             MemoryCli::Pin { id } => MemoryAction::Pin { id },
             MemoryCli::Unpin { id } => MemoryAction::Unpin { id },
             // Export/Import/ExportPrompt 는 main dispatch 에서 직접 처리 — 이 변환에 도달 불가.
