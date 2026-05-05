@@ -62,7 +62,14 @@
       .pro-tips li::before { content: "›"; position: absolute; left: 4px; top: 6px; color: var(--accent); font-weight: 700; }
       .pro-tips kbd { font-family: var(--mono); font-size: 11.5px; padding: 1px 5px; background: var(--bg-soft); border: 1px solid var(--border); border-radius: 3px; }
     </style>
-  </head>
+  
+    <style>
+      .input-guide { margin: 12px 0 16px; padding: 14px 16px; border-left: 3px solid #7df9c5; background: rgba(125, 249, 197, 0.04); border-radius: 6px; }
+      .input-guide h4 { margin: 12px 0 6px; font-size: 14px; color: #cdd3e0; }
+      .input-guide .bad { color: #ff6cab; font-size: 13px; }
+      .input-guide ol.clean { padding-left: 20px; }
+    </style>
+</head>
   <body>
     <header class="site-header">
       <div class="container row">
@@ -239,6 +246,36 @@
             <li data-n="6" data-i18n-ko><strong>"초기화 상태 다시 확인" 버튼</strong> — <code>refetch()</code> 호출. 터미널에서 init 한 직후 누릅니다.</li>
             <li data-n="6" data-i18n-en><strong>"Re-check initialization" button</strong> — calls <code>refetch()</code>. Press right after running init in your terminal.</li>
           </ul>
+        <div class="input-guide" data-i18n-ko>
+          <span class="block-label">B′ · Concrete inputs & click order</span>
+          <p class="muted">각 필드에 어떤 값을 어떻게 입력하는지, 그리고 클릭 순서.</p>
+          <h4>입력 예시</h4>
+          <ul class="clean dotted">
+        <li><strong>alias 입력</strong> — <code>my-laptop</code> · <code>home-server</code> · <code>work-mac</code> (영문/숫자/하이픈, 공백·한글 X)<br><span class="bad">잘못된 예: <code>My Laptop</code> (공백) · <code>내 노트북</code> (한글)</span></li>
+          </ul>
+          <h4>클릭 순서</h4>
+          <ol class="clean">
+        <li>초기 화면에서 안내 카드 읽기 (3 카드: 환영 · 시드 백업 · 알림 연결)</li>
+        <li>터미널을 열어 <code>xgram init --alias my-laptop</code> 실행</li>
+        <li>출력된 12 단어 시드를 종이·암호 매니저에 안전하게 저장 (분실 시 복구 불가)</li>
+        <li>GUI 로 돌아와 "준비됐어요" 클릭 → Memory 탭으로 자동 이동</li>
+          </ol>
+        </div>
+        <div class="input-guide" data-i18n-en>
+          <span class="block-label">B′ · Concrete inputs & click order</span>
+          <p class="muted">Exact values per field, plus click order.</p>
+          <h4>Field examples</h4>
+          <ul class="clean dotted">
+        <li><strong>alias input</strong> — <code>my-laptop</code> · <code>home-server</code> · <code>work-mac</code> (ASCII letters/digits/dash only)<br><span class="bad">Wrong: <code>My Laptop</code> (space) · <code>laptop!</code> (special char)</span></li>
+          </ul>
+          <h4>Click order</h4>
+          <ol class="clean">
+        <li>Read the 3 welcome cards (welcome · seed backup · notify hookup)</li>
+        <li>In a terminal: <code>xgram init --alias my-laptop</code></li>
+        <li>Save the 12-word seed offline (paper / password manager) — losing it means no recovery</li>
+        <li>Return to GUI and click "Ready" → auto-jumps to Memory tab</li>
+          </ol>
+        </div>
 
           <span class="block-label">C · Scenarios</span>
           <div class="scenario">
@@ -355,6 +392,38 @@
             <li data-n="6" data-i18n-ko><strong>로딩 인디케이터</strong> — invoke 진행 중 표시. 일반적으로 100~300ms 내 사라짐.</li>
             <li data-n="6" data-i18n-en><strong>Loading indicator</strong> — visible while invoke is in flight (typically 100–300ms).</li>
           </ul>
+        <div class="input-guide" data-i18n-ko>
+          <span class="block-label">B′ · Concrete inputs & click order</span>
+          <p class="muted">각 필드에 어떤 값을 어떻게 입력하는지, 그리고 클릭 순서.</p>
+          <h4>입력 예시</h4>
+          <ul class="clean dotted">
+        <li><strong>검색 입력창</strong> — <code>결제 자동화</code> · <code>사용자 페르소나</code> · <code>RBF tip</code> (자유 텍스트, 한글/영문 혼용 OK)<br><span class="bad">잘못된 예: 비워두면 결과 없음 (필수 1자 이상)</span></li>
+        <li><strong>L0 / L2 / L4 체크박스</strong> — 원하는 계층만 켜기. 처음엔 모두 켜기 (3개 체크). 좁히려면 L2(중요 사실)만<br><span class="bad">잘못된 예: 0개 켜면 결과 없음</span></li>
+          </ul>
+          <h4>클릭 순서</h4>
+          <ol class="clean">
+        <li>검색 입력창에 키워드 입력 (예: <code>결제 자동화</code>)</li>
+        <li>타이핑을 멈춘 뒤 0.3초 자동 검색 (직접 클릭 불필요)</li>
+        <li>결과 카드에 score (0~1, 높을수록 관련) + sender + 본문 표시</li>
+        <li>필요하면 L0/L2/L4 체크 박스로 계층 좁히기</li>
+          </ol>
+        </div>
+        <div class="input-guide" data-i18n-en>
+          <span class="block-label">B′ · Concrete inputs & click order</span>
+          <p class="muted">Exact values per field, plus click order.</p>
+          <h4>Field examples</h4>
+          <ul class="clean dotted">
+        <li><strong>search input</strong> — <code>payment automation</code> · <code>user persona</code> · <code>RBF tip</code> (free text, KR/EN mix OK)<br><span class="bad">Wrong: Empty input returns nothing (need at least 1 char)</span></li>
+        <li><strong>L0 / L2 / L4 checkboxes</strong> — Turn on layers you want. Start with all 3 ON. Narrow by leaving only L2 (key facts)<br><span class="bad">Wrong: All OFF returns nothing</span></li>
+          </ul>
+          <h4>Click order</h4>
+          <ol class="clean">
+        <li>Type a keyword (e.g. <code>payment automation</code>)</li>
+        <li>Search auto-runs 0.3s after you stop typing — no click needed</li>
+        <li>Result cards show score (0~1, higher = more relevant), sender, body</li>
+        <li>Narrow layers via L0/L2/L4 checkboxes</li>
+          </ol>
+        </div>
 
           <span class="block-label">C · Scenarios</span>
           <div class="scenario">
@@ -475,6 +544,38 @@
             <li data-n="7" data-i18n-ko><strong>"클립보드 복사 (30 초 후 자동 클리어)" 버튼</strong> — 복사 후 30 초 뒤 시스템 클립보드 비움.</li>
             <li data-n="7" data-i18n-en><strong>"Copy (auto-clear after 30s)" button</strong> — copy + auto-wipe system clipboard after 30s.</li>
           </ul>
+        <div class="input-guide" data-i18n-ko>
+          <span class="block-label">B′ · Concrete inputs & click order</span>
+          <p class="muted">각 필드에 어떤 값을 어떻게 입력하는지, 그리고 클릭 순서.</p>
+          <h4>입력 예시</h4>
+          <ul class="clean dotted">
+        <li><strong>Pending 항목 (자동 표시)</strong> — 다른 에이전트가 요청한 vault 접근. 직접 입력 X — 목록만 봄</li>
+        <li><strong>Reveal key 입력창</strong> — <code>github/token</code> · <code>discord/webhook</code> · <code>openai/api_key</code> (계층형 키, 슬래시 구분)<br><span class="bad">잘못된 예: <code>githubtoken</code> (구분 없음, 비추천) · <code>../etc</code> (디렉토리 traversal X)</span></li>
+          </ul>
+          <h4>클릭 순서</h4>
+          <ol class="clean">
+        <li>Pending 목록에서 항목 우측의 "승인" 또는 "거부" 클릭</li>
+        <li>Reveal 영역에 key 입력 (예: <code>github/token</code>)</li>
+        <li>"30초 공개" 클릭 → 값이 30초만 화면에 표시됨</li>
+        <li>"30초 후 자동 클리어로 복사" 클릭 → 클립보드에 복사 + 30초 후 자동 비움</li>
+          </ol>
+        </div>
+        <div class="input-guide" data-i18n-en>
+          <span class="block-label">B′ · Concrete inputs & click order</span>
+          <p class="muted">Exact values per field, plus click order.</p>
+          <h4>Field examples</h4>
+          <ul class="clean dotted">
+        <li><strong>Pending list (auto-shown)</strong> — Access requests from other agents. Read-only — no input</li>
+        <li><strong>Reveal key input</strong> — <code>github/token</code> · <code>discord/webhook</code> · <code>openai/api_key</code> (hierarchical, slash separated)<br><span class="bad">Wrong: <code>githubtoken</code> (no separator, discouraged) · <code>../etc</code> (no traversal)</span></li>
+          </ul>
+          <h4>Click order</h4>
+          <ol class="clean">
+        <li>Click "Approve" or "Deny" on a Pending row</li>
+        <li>Enter key in Reveal box (e.g. <code>github/token</code>)</li>
+        <li>Click "Reveal 30s" → shows value for 30s only</li>
+        <li>Click "Copy (auto-clear in 30s)" → puts in clipboard, wipes after 30s</li>
+          </ol>
+        </div>
 
           <span class="block-label">C · Scenarios</span>
           <div class="scenario">
@@ -595,6 +696,42 @@
             <li data-n="7" data-i18n-ko><strong>피어 목록</strong> — alias · address · pubkey 일부 · last_seen. 신원 추적용.</li>
             <li data-n="7" data-i18n-en><strong>Peer list</strong> — alias · address · pubkey snippet · last_seen.</li>
           </ul>
+        <div class="input-guide" data-i18n-ko>
+          <span class="block-label">B′ · Concrete inputs & click order</span>
+          <p class="muted">각 필드에 어떤 값을 어떻게 입력하는지, 그리고 클릭 순서.</p>
+          <h4>입력 예시</h4>
+          <ul class="clean dotted">
+        <li><strong>alias</strong> — <code>home-server</code> · <code>work-mac</code> · <code>phone</code> (대시 OK, 공백 X, 1~32자)<br><span class="bad">잘못된 예: <code>My Server</code> (공백)</span></li>
+        <li><strong>address</strong> — <code>http://192.168.1.10:7300</code> 또는 <code>nostr://relay.example.com</code> (URL 형식 필수)<br><span class="bad">잘못된 예: <code>192.168.1.10</code> (스킴 누락) · <code>my server</code> (공백)</span></li>
+        <li><strong>public_key_hex</strong> — <code>0x</code> + 64자 hex (총 66자) — 예: <code>0x020000...0001</code><br><span class="bad">잘못된 예: <code>020000...</code> (0x 누락) · 길이 부족</span></li>
+        <li><strong>machine (옵션)</strong> — ACL 화이트리스트용 머신 식별자. 비워둬도 됨. 예: <code>home-mac</code><br><span class="bad">잘못된 예: 공백 자체는 OK (생략 의미)</span></li>
+          </ul>
+          <h4>클릭 순서</h4>
+          <ol class="clean">
+        <li>① alias 입력 → ② address 입력 → ③ public_key_hex 입력 → (④ machine — 비워도 됨)</li>
+        <li>⑤ "Add Peer" 클릭</li>
+        <li>⑥ fingerprint 다이얼로그가 뜨면 상대 머신의 지문과 대조 후 "예"</li>
+        <li>⑦ 목록 갱신 — 새 peer 가 표시됨</li>
+          </ol>
+        </div>
+        <div class="input-guide" data-i18n-en>
+          <span class="block-label">B′ · Concrete inputs & click order</span>
+          <p class="muted">Exact values per field, plus click order.</p>
+          <h4>Field examples</h4>
+          <ul class="clean dotted">
+        <li><strong>alias</strong> — <code>home-server</code> · <code>work-mac</code> · <code>phone</code> (dashes OK, no spaces, 1~32 chars)<br><span class="bad">Wrong: <code>My Server</code> (space)</span></li>
+        <li><strong>address</strong> — <code>http://192.168.1.10:7300</code> or <code>nostr://relay.example.com</code> (URL form required)<br><span class="bad">Wrong: <code>192.168.1.10</code> (missing scheme) · <code>my server</code> (space)</span></li>
+        <li><strong>public_key_hex</strong> — <code>0x</code> + 64 hex chars (66 total) — e.g. <code>0x020000...0001</code><br><span class="bad">Wrong: <code>020000...</code> (no 0x prefix) · wrong length</span></li>
+        <li><strong>machine (optional)</strong> — Machine ID for ACL whitelist. May leave blank. e.g. <code>home-mac</code><br><span class="bad">Wrong: Empty itself is fine (meaning omit)</span></li>
+          </ul>
+          <h4>Click order</h4>
+          <ol class="clean">
+        <li>① alias → ② address → ③ public_key_hex → (④ machine — optional)</li>
+        <li>⑤ Click "Add Peer"</li>
+        <li>⑥ When fingerprint dialog opens, compare with the other machine's fingerprint, then "Yes"</li>
+        <li>⑦ List refreshes — new peer appears</li>
+          </ol>
+        </div>
 
           <span class="block-label">C · Scenarios</span>
           <div class="scenario">
@@ -715,6 +852,40 @@
             <li data-n="8" data-i18n-ko><strong>저장 시각 (savedAt)</strong> — 마지막 저장 KST 시각 표시.</li>
             <li data-n="8" data-i18n-en><strong>Saved-at (savedAt)</strong> — last save in KST.</li>
           </ul>
+        <div class="input-guide" data-i18n-ko>
+          <span class="block-label">B′ · Concrete inputs & click order</span>
+          <p class="muted">각 필드에 어떤 값을 어떻게 입력하는지, 그리고 클릭 순서.</p>
+          <h4>입력 예시</h4>
+          <ul class="clean dotted">
+        <li><strong>Telegram 봇 토큰</strong> — <code>1234567890:ABCdefGhIjKlMnOpQrStUvWxYz</code> 형식 (BotFather 가 발급한 그대로 붙여넣기)<br><span class="bad">잘못된 예: <code>ABCdef</code> (콜론 없음) · 빈 문자열</span></li>
+        <li><strong>Telegram chat_id</strong> — 본인 텔레그램 chat_id — <code>123456789</code> 같은 9~10자리 숫자만<br><span class="bad">잘못된 예: <code>@username</code> (사용자명 X) · <code>123-456</code> (대시 X)</span></li>
+        <li><strong>Discord 봇 토큰</strong> — <code>MTI…(long string)</code> Discord 개발자 포털 → Bot 탭 → Reset Token 으로 받은 그대로<br><span class="bad">잘못된 예: Webhook URL 을 토큰으로 잘못 입력 X</span></li>
+        <li><strong>Discord channel_id (옵션)</strong> — <code>123456789012345678</code> 같은 17~20자리 숫자 (개발자 모드 켜고 채널 우클릭 → ID 복사)<br><span class="bad">잘못된 예: 채널 이름 자체 X (반드시 숫자 ID)</span></li>
+        <li><strong>Discord webhook URL (옵션)</strong> — <code>https://discord.com/api/webhooks/{id}/{token}</code> 전체 URL<br><span class="bad">잘못된 예: 토큰만 X · /api/webhooks/ 부분 누락 X</span></li>
+          </ul>
+          <h4>클릭 순서</h4>
+          <ol class="clean">
+        <li>Telegram: ① 토큰 입력 → ② "검증" 클릭 → ✓ bot @… 표시되면 ③ 봇에 /start 메시지 보내기 → ④ "chat_id 자동 감지" 클릭 → ⑤ "저장 + 테스트" 클릭 → 휴대폰 알림 확인</li>
+        <li>Discord: ① 토큰 입력 → ② "검증" 클릭 → ③ channel_id 또는 webhook URL 입력 → ④ "저장" 클릭 → 채널에 테스트 메시지 도착 확인</li>
+          </ol>
+        </div>
+        <div class="input-guide" data-i18n-en>
+          <span class="block-label">B′ · Concrete inputs & click order</span>
+          <p class="muted">Exact values per field, plus click order.</p>
+          <h4>Field examples</h4>
+          <ul class="clean dotted">
+        <li><strong>Telegram bot token</strong> — <code>1234567890:ABCdefGhIjKlMnOpQrStUvWxYz</code> (paste exactly what BotFather gave you)<br><span class="bad">Wrong: <code>ABCdef</code> (no colon) · empty</span></li>
+        <li><strong>Telegram chat_id</strong> — Your chat_id — 9~10 digits like <code>123456789</code><br><span class="bad">Wrong: <code>@username</code> (handle, not allowed) · <code>123-456</code> (no dashes)</span></li>
+        <li><strong>Discord bot token</strong> — <code>MTI…(long string)</code> from Discord Dev Portal → Bot tab → Reset Token<br><span class="bad">Wrong: Don't paste a webhook URL here</span></li>
+        <li><strong>Discord channel_id (optional)</strong> — 17~20 digit number (right-click channel with Developer Mode on → Copy ID)<br><span class="bad">Wrong: Not the channel name (must be numeric ID)</span></li>
+        <li><strong>Discord webhook URL (optional)</strong> — Full URL: <code>https://discord.com/api/webhooks/{id}/{token}</code><br><span class="bad">Wrong: Not just the token · don't omit /api/webhooks/</span></li>
+          </ul>
+          <h4>Click order</h4>
+          <ol class="clean">
+        <li>Telegram: ① token → ② Validate → ✓ bot @… → ③ send /start to your bot → ④ Detect chat_id → ⑤ Save + Test → check phone</li>
+        <li>Discord: ① token → ② Validate → ③ channel_id or webhook URL → ④ Save → confirm test message in channel</li>
+          </ol>
+        </div>
 
           <span class="block-label">C · Scenarios</span>
           <div class="scenario">
@@ -831,6 +1002,40 @@
             <li data-n="6" data-i18n-ko><strong>빈 상태 메시지</strong> — 메시지 0 건이면 "No recent messages".</li>
             <li data-n="6" data-i18n-en><strong>Empty state</strong> — "No recent messages" when count = 0.</li>
           </ul>
+        <div class="input-guide" data-i18n-ko>
+          <span class="block-label">B′ · Concrete inputs & click order</span>
+          <p class="muted">각 필드에 어떤 값을 어떻게 입력하는지, 그리고 클릭 순서.</p>
+          <h4>입력 예시</h4>
+          <ul class="clean dotted">
+        <li><strong>Refresh 버튼</strong> — 수동 새로고침. 입력 없음 — 클릭만</li>
+        <li><strong>(상태 카드들)</strong> — 어댑터 / Peer / 예약 / 최근 메시지가 자동 표시. 직접 입력 X</li>
+          </ul>
+          <h4>클릭 순서</h4>
+          <ol class="clean">
+        <li>터미널에서 <code>xgram channel serve --bind 127.0.0.1:7250</code> 실행 (서버 기동)</li>
+        <li>GUI 의 Channel 탭이 자동으로 상태 폴링 (5초 주기)</li>
+        <li>어댑터 카드 — Discord/Telegram 등 등록된 플랫폼이 "connected" 인지 확인</li>
+        <li>Peer 카드 — 등록된 역할 (master/eno/kai…) 목록</li>
+        <li>최근 메시지 카드 — 들어온/보낸 메시지 stream</li>
+          </ol>
+        </div>
+        <div class="input-guide" data-i18n-en>
+          <span class="block-label">B′ · Concrete inputs & click order</span>
+          <p class="muted">Exact values per field, plus click order.</p>
+          <h4>Field examples</h4>
+          <ul class="clean dotted">
+        <li><strong>Refresh button</strong> — Manual refresh. No input — just click</li>
+        <li><strong>(Status cards)</strong> — Adapters / peers / scheduled / recent auto-shown. Read-only</li>
+          </ul>
+          <h4>Click order</h4>
+          <ol class="clean">
+        <li>Run <code>xgram channel serve --bind 127.0.0.1:7250</code> in a terminal</li>
+        <li>Channel tab polls status automatically (5s interval)</li>
+        <li>Adapters card — confirms Discord/Telegram etc. "connected"</li>
+        <li>Peers card — registered roles (master/eno/kai…)</li>
+        <li>Recent messages — stream of inbound/outbound</li>
+          </ol>
+        </div>
 
           <span class="block-label">C · Scenarios</span>
           <div class="scenario">
@@ -951,6 +1156,44 @@
             <li data-n="9" data-i18n-ko><strong>예약 목록</strong> — id · target · schedule · status · next_due_at_kst · last_error · cancel 버튼.</li>
             <li data-n="9" data-i18n-en><strong>Schedule list</strong> — id · target · schedule · status · next_due_at_kst · last_error · cancel button.</li>
           </ul>
+        <div class="input-guide" data-i18n-ko>
+          <span class="block-label">B′ · Concrete inputs & click order</span>
+          <p class="muted">각 필드에 어떤 값을 어떻게 입력하는지, 그리고 클릭 순서.</p>
+          <h4>입력 예시</h4>
+          <ul class="clean dotted">
+        <li><strong>target_kind 선택</strong> — <code>role</code> (역할명으로 라우팅) 또는 <code>platform</code> (플랫폼 직접)</li>
+        <li><strong>target</strong> — role 일 때: <code>master</code>, <code>eno</code>, <code>res</code>, <code>kai</code> 중 하나<br>platform 일 때: <code>discord:123456789012345678</code> 형식<br><span class="bad">잘못된 예: 공백 · 정의되지 않은 role 명</span></li>
+        <li><strong>payload</strong> — 전송할 메시지 본문 — 자유 텍스트, 줄바꿈 OK<br><span class="bad">잘못된 예: 비어있으면 전송 X</span></li>
+        <li><strong>schedule_kind 선택</strong> — <code>once</code> (1회) 또는 <code>cron</code> (반복)</li>
+        <li><strong>schedule_value</strong> — once: <code>2026-05-06T09:00:00+09:00</code> ISO8601 (KST)<br>cron: <code>0 9 * * *</code> (5필드, 분 시 일 월 요일)<br><span class="bad">잘못된 예: once 에 cron 쓰기 X · cron 표현식 오타 (예: 6필드)</span></li>
+          </ul>
+          <h4>클릭 순서</h4>
+          <ol class="clean">
+        <li>① target_kind 선택 → ② target 입력 → ③ payload 입력</li>
+        <li>④ schedule_kind 선택 → ⑤ schedule_value 입력 (예시 그대로 복사 가능)</li>
+        <li>⑥ "Create" 클릭 → ⑦ 목록에 새 항목 + status=pending</li>
+        <li>⑧ 시간 도달 시 자동 발송 → status=sent (취소하려면 ⑨ "Cancel" 클릭)</li>
+          </ol>
+        </div>
+        <div class="input-guide" data-i18n-en>
+          <span class="block-label">B′ · Concrete inputs & click order</span>
+          <p class="muted">Exact values per field, plus click order.</p>
+          <h4>Field examples</h4>
+          <ul class="clean dotted">
+        <li><strong>target_kind</strong> — <code>role</code> (route by role) or <code>platform</code> (direct)</li>
+        <li><strong>target</strong> — role: one of <code>master</code> / <code>eno</code> / <code>res</code> / <code>kai</code><br>platform: <code>discord:123456789012345678</code><br><span class="bad">Wrong: blank · undefined role</span></li>
+        <li><strong>payload</strong> — Message body — free text, newlines OK<br><span class="bad">Wrong: Empty = nothing sent</span></li>
+        <li><strong>schedule_kind</strong> — <code>once</code> or <code>cron</code></li>
+        <li><strong>schedule_value</strong> — once: ISO8601 like <code>2026-05-06T09:00:00+09:00</code><br>cron: <code>0 9 * * *</code> (5 fields)<br><span class="bad">Wrong: Mixing once-format with cron · 6-field cron</span></li>
+          </ul>
+          <h4>Click order</h4>
+          <ol class="clean">
+        <li>① target_kind → ② target → ③ payload</li>
+        <li>④ schedule_kind → ⑤ schedule_value</li>
+        <li>⑥ Create → ⑦ row appears with status=pending</li>
+        <li>⑧ When due, auto-fires → status=sent (or click ⑨ Cancel)</li>
+          </ol>
+        </div>
 
           <span class="block-label">C · Scenarios</span>
           <div class="scenario">
@@ -1071,6 +1314,38 @@
             <li data-n="7" data-i18n-ko><strong>RunResult 패널</strong> — chain_name · failed · steps[] (step_order · executed · response · error · skipped_reason).</li>
             <li data-n="7" data-i18n-en><strong>RunResult panel</strong> — chain_name · failed · steps[] (step_order · executed · response · error · skipped_reason).</li>
           </ul>
+        <div class="input-guide" data-i18n-ko>
+          <span class="block-label">B′ · Concrete inputs & click order</span>
+          <p class="muted">각 필드에 어떤 값을 어떻게 입력하는지, 그리고 클릭 순서.</p>
+          <h4>입력 예시</h4>
+          <ul class="clean dotted">
+        <li><strong>YAML textarea</strong> — name + steps 정의. placeholder 의 예제를 복사하면 즉시 작동:<br><code>name: morning\nsteps:\n  - to_role: res\n    text: "오늘 뉴스 요약 부탁"\n  - to_role: master\n    text: "리뷰 주세요"\n    delay_secs: 30</code><br><span class="bad">잘못된 예: 들여쓰기 깨진 yaml · steps 누락 · text 누락</span></li>
+          </ul>
+          <h4>클릭 순서</h4>
+          <ol class="clean">
+        <li>① YAML 입력 (또는 placeholder 그대로 복사)</li>
+        <li>② "Create" 클릭 → ③ 목록에 체인 표시</li>
+        <li>④ "Run" 클릭 → 단계별로 순차 실행 (delay_secs 만큼 대기 포함)</li>
+        <li>⑤ RunResult 영역에 단계별 성공/실패 표시</li>
+        <li>삭제하려면 ⑥ "Delete" 클릭</li>
+          </ol>
+        </div>
+        <div class="input-guide" data-i18n-en>
+          <span class="block-label">B′ · Concrete inputs & click order</span>
+          <p class="muted">Exact values per field, plus click order.</p>
+          <h4>Field examples</h4>
+          <ul class="clean dotted">
+        <li><strong>YAML textarea</strong> — Define name + steps. Copy the placeholder example to get started.<br><span class="bad">Wrong: broken indent · missing steps · missing text</span></li>
+          </ul>
+          <h4>Click order</h4>
+          <ol class="clean">
+        <li>① Enter YAML (or copy the placeholder)</li>
+        <li>② Create → ③ chain appears in list</li>
+        <li>④ Run → executes steps in order (waits delay_secs between)</li>
+        <li>⑤ RunResult shows per-step success/failure</li>
+        <li>⑥ Delete to remove</li>
+          </ol>
+        </div>
 
           <span class="block-label">C · Scenarios</span>
           <div class="scenario">
@@ -1183,6 +1458,38 @@
             <li data-n="5" data-i18n-ko><strong>Zod 스키마</strong> — <code>daily_limit_usdc_micro: z.number().int().nonnegative()</code> (코드에서 강제).</li>
             <li data-n="5" data-i18n-en><strong>Zod schema</strong> — <code>daily_limit_usdc_micro: z.number().int().nonnegative()</code> (enforced in code).</li>
           </ul>
+        <div class="input-guide" data-i18n-ko>
+          <span class="block-label">B′ · Concrete inputs & click order</span>
+          <p class="muted">각 필드에 어떤 값을 어떻게 입력하는지, 그리고 클릭 순서.</p>
+          <h4>입력 예시</h4>
+          <ul class="clean dotted">
+        <li><strong>일일 한도 입력</strong> — USDC 단위 숫자. 소수점 2자리까지. 예: <code>100</code>, <code>10.50</code>, <code>0</code> (무제한)<br><span class="bad">잘못된 예: 음수 X · 문자 X · 통화 기호 X (숫자만)</span></li>
+          </ul>
+          <h4>클릭 순서</h4>
+          <ol class="clean">
+        <li>현재 한도 확인 (자동 표시)</li>
+        <li>① 새 한도 입력 (예: <code>50.00</code>)</li>
+        <li>② "확인" 클릭</li>
+        <li>③ MFA 안내가 뜨면 한 번 더 본인 확인 후 적용</li>
+        <li>④ 적용된 한도 갱신 표시</li>
+          </ol>
+        </div>
+        <div class="input-guide" data-i18n-en>
+          <span class="block-label">B′ · Concrete inputs & click order</span>
+          <p class="muted">Exact values per field, plus click order.</p>
+          <h4>Field examples</h4>
+          <ul class="clean dotted">
+        <li><strong>daily limit input</strong> — USDC number. Up to 2 decimals. e.g. <code>100</code>, <code>10.50</code>, <code>0</code> (unlimited)<br><span class="bad">Wrong: no negative · no letters · no currency symbols</span></li>
+          </ul>
+          <h4>Click order</h4>
+          <ol class="clean">
+        <li>View current limit (auto-shown)</li>
+        <li>① Enter new limit (e.g. <code>50.00</code>)</li>
+        <li>② Click Save</li>
+        <li>③ MFA prompt — re-authenticate to apply</li>
+        <li>④ Updated limit displays</li>
+          </ol>
+        </div>
 
           <span class="block-label">C · Scenarios</span>
           <div class="scenario">
