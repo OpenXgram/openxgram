@@ -4,13 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Guide — OpenXgram 자세한 사용법</title>
-    <meta name="description" content="OpenXgram 처음 설치부터 다중 에이전트 허브 운영, 백업·복구·키 회전까지 — 8개 튜토리얼 + FAQ + 트러블슈팅. 사용자가 실제로 따라할 수 있는 단계별 안내." />
+    <meta name="description" content="OpenXgram 처음 설치부터 다중 에이전트 허브 운영, GUI 데스크톱 앱·TUI 터미널 UI 사용법까지 — 10개 튜토리얼 + FAQ + 트러블슈팅. 사용자가 실제로 따라할 수 있는 단계별 안내." />
 <script type="module" src="/src/main.ts"></script>
     <link rel="icon" type="image/svg+xml" href="/openxgram-logo.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta property="og:title" content="OpenXgram Guide — 자세한 사용법" />
-    <meta property="og:description" content="설치부터 백업·복구까지 8개 튜토리얼 + FAQ + 트러블슈팅." />
+    <meta property="og:description" content="설치부터 백업·복구·GUI/TUI 사용법까지 10개 튜토리얼 + FAQ + 트러블슈팅." />
     <meta property="og:image" content="https://openxgram.org/openxgram-logo.svg" />
     <meta name="twitter:card" content="summary" />
     <style>
@@ -61,15 +61,15 @@
         <div class="container">
           <div class="kicker" data-i18n-ko>처음부터 따라하는 자세한 가이드</div>
           <div class="kicker" data-i18n-en>Step-by-step detailed guide</div>
-          <h1 data-i18n-ko>Guide — 8 튜토리얼 + FAQ + 트러블슈팅</h1>
-          <h1 data-i18n-en>Guide — 8 tutorials + FAQ + troubleshooting</h1>
+          <h1 data-i18n-ko>Guide — 10 튜토리얼 + FAQ + 트러블슈팅</h1>
+          <h1 data-i18n-en>Guide — 10 tutorials + FAQ + troubleshooting</h1>
           <p class="lead" data-i18n-ko>
             <a href="/quickstart/">Quickstart</a> 가 명령어 카탈로그라면, 이 페이지는 <strong>실제로 사용자가 화면을 보면서 그대로 따라할 수 있는 튜토리얼</strong>입니다.
-            첫 설치 → 첫 대화 → 웹/터미널 AI 연동 → 메신저 알림 → 다중 에이전트 → 워크플로우 → 백업·키 회전 까지 8 단계.
+            첫 설치 → 첫 대화 → 웹/터미널 AI 연동 → 메신저 알림 → 다중 에이전트 → 워크플로우 → 백업·키 회전 → <strong>GUI 데스크톱 앱</strong> → <strong>TUI 터미널 UI</strong> 까지 10 단계.
           </p>
           <p class="lead" data-i18n-en>
             If <a href="/quickstart/">Quickstart</a> is the command catalog, this page is a <strong>walk-through tutorial you can follow on your screen</strong>.
-            From first install → first conversation → web/terminal AI hookup → messenger alerts → multi-agent → workflows → backup &amp; key rotation. Eight steps.
+            From first install → first conversation → web/terminal AI hookup → messenger alerts → multi-agent → workflows → backup &amp; key rotation → <strong>GUI desktop app</strong> → <strong>TUI terminal UI</strong>. Ten steps.
           </p>
         </div>
       </section>
@@ -89,6 +89,8 @@
               <li><a href="#tutorial-6" data-i18n-ko>다중 에이전트 채팅방 — Channel MCP</a><a href="#tutorial-6" data-i18n-en>Multi-agent chat — Channel MCP</a></li>
               <li><a href="#tutorial-7" data-i18n-ko>예약 + 체인 메시지 (워크플로우)</a><a href="#tutorial-7" data-i18n-en>Scheduling + chain messages (workflows)</a></li>
               <li><a href="#tutorial-8" data-i18n-ko>백업 · 복구 · 키 회전</a><a href="#tutorial-8" data-i18n-en>Backup · restore · key rotation</a></li>
+              <li><a href="#tutorial-9" data-i18n-ko>GUI 데스크톱 앱 (Tauri)</a><a href="#tutorial-9" data-i18n-en>GUI desktop app (Tauri)</a></li>
+              <li><a href="#tutorial-10" data-i18n-ko>TUI 터미널 UI (xgram tui)</a><a href="#tutorial-10" data-i18n-en>TUI terminal UI (xgram tui)</a></li>
               <li><a href="#faq" data-i18n-ko>FAQ — 자주 묻는 질문</a><a href="#faq" data-i18n-en>FAQ — frequently asked</a></li>
               <li><a href="#troubleshooting" data-i18n-ko>트러블슈팅</a><a href="#troubleshooting" data-i18n-en>Troubleshooting</a></li>
             </ol>
@@ -687,6 +689,197 @@ kai:  send_message(to=<span class="s">"master"</span>, summary=<span class="s">"
 <span class="c"># ✓ identity matches recovered seed
 # ✓ vault unsealed
 # ✓ db integrity OK</span></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== Tutorial 9 · GUI ============================== -->
+      <section id="tutorial-9" class="anchor-target">
+        <div class="container">
+          <div class="kicker">Tutorial 9 · GUI desktop app</div>
+          <h2 data-i18n-ko>GUI 데스크톱 앱 (Tauri)</h2>
+          <h2 data-i18n-en>GUI desktop app (Tauri)</h2>
+          <p data-i18n-ko>
+            CLI 가 부담스럽다면 <strong>Tauri 기반 데스크톱 앱</strong>으로 같은 기능을 시각적으로 사용할 수 있습니다.
+            Linux · macOS · Windows 모두 지원되며, 9 개 탭으로 메모리 검색·자격 승인·피어 추가·메신저 마법사·체인 워크플로우·결제 한도까지 한 화면에 모입니다.
+          </p>
+          <p data-i18n-en>
+            If the CLI feels heavy, the <strong>Tauri desktop app</strong> exposes the same functionality with a visual UI.
+            Runs on Linux · macOS · Windows. Nine tabs cover memory search, vault approval, peer registration, messenger wizards, chain workflows, and payment limits — all in one window.
+          </p>
+
+          <div class="step">
+            <span class="step-no">Step 9.1</span>
+            <h4 data-i18n-ko>빌드 (소스에서)</h4>
+            <h4 data-i18n-en>Build from source</h4>
+            <p data-i18n-ko>현재는 미리 빌드된 바이너리 배포가 없으므로 직접 빌드합니다 (~5분 소요).</p>
+            <p data-i18n-en>Pre-built binaries are not yet shipped — build it yourself (~5 min).</p>
+<pre class="code"><span class="c"># Linux 의존 (Ubuntu/Debian 기준)</span>
+<span class="p">$</span> sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev
+<span class="c"># macOS / Windows 는 추가 의존 없음 (WebKit / WebView2 OS 기본)</span>
+
+<span class="p">$</span> git clone https://github.com/openxgram/openxgram &amp;&amp; cd openxgram
+<span class="p">$</span> cargo install tauri-cli --version "^2.0"
+<span class="p">$</span> cd ui/tauri &amp;&amp; cargo tauri build
+<span class="c"># 산출물:
+#   Linux:   target/release/bundle/deb/*.deb · appimage/*.AppImage
+#   macOS:   target/release/bundle/dmg/*.dmg · macos/OpenXgram.app
+#   Windows: target/release/bundle/msi/*.msi (cross-build 시)</span></pre>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 9.2</span>
+            <h4 data-i18n-ko>개발 모드 (빠른 시작)</h4>
+            <h4 data-i18n-en>Dev mode (fast start)</h4>
+<pre class="code"><span class="p">$</span> cd ui/tauri &amp;&amp; cargo tauri dev
+<span class="c"># Vite + Solid 가 핫 리로드로 뜨고, Tauri 가 데스크톱 창을 자동 오픈합니다.</span></pre>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 9.3</span>
+            <h4 data-i18n-ko>첫 실행 — Onboarding 자동</h4>
+            <h4 data-i18n-en>First run — automatic onboarding</h4>
+            <p data-i18n-ko>
+              앱을 처음 켜면 <strong>Onboarding 탭</strong>으로 시작합니다. <code>xgram init</code> 이 안 끝났으면
+              <span class="badge warn">아직 준비되지 않음</span> 배지가 보이고, 끝나 있으면 자동으로 <strong>Memory 탭</strong>으로 전환됩니다.
+            </p>
+            <p data-i18n-en>
+              On first launch the app opens the <strong>Onboarding tab</strong>. If <code>xgram init</code> hasn't finished
+              you'll see a <span class="badge warn">not ready</span> badge; once initialized, it auto-switches to the <strong>Memory tab</strong>.
+            </p>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 9.4</span>
+            <h4 data-i18n-ko>9 개 탭 — 무엇을 누르면 무엇이 나오는가</h4>
+            <h4 data-i18n-en>The nine tabs — press X, see Y</h4>
+            <ul class="dotted">
+              <li data-i18n-ko><strong>Onboarding</strong> — 첫 실행 환영 + init 진행 상태 (<span class="badge warn">아직</span> / <span class="badge ok">완료</span>) 확인 + Memory 탭으로 자동 진행 버튼.</li>
+              <li data-i18n-en><strong>Onboarding</strong> — welcome screen, init readiness badge, button to proceed to Memory tab.</li>
+              <li data-i18n-ko><strong>Memory</strong> — 5 층(L0~L4) 검색. 입력은 300ms 디바운스. 체크박스로 L0/L2/L4 레이어 필터, 결과는 점수 정렬로 표시.</li>
+              <li data-i18n-en><strong>Memory</strong> — 5-layer (L0–L4) search with 300ms input debounce. Checkbox layer filters (L0/L2/L4); results sorted by score.</li>
+              <li data-i18n-ko><strong>Vault</strong> — Pending 승인/거부 리스트 + 자격증명 reveal. Reveal 시 30초 마스킹 카운트다운 + 클립보드 복사도 30초 후 자동 클리어.</li>
+              <li data-i18n-en><strong>Vault</strong> — pending approval list + credential reveal. Revealed values mask after 30s; clipboard auto-clears 30s after copy.</li>
+              <li data-i18n-ko><strong>Peers</strong> — 다른 머신·에이전트 추가. 폼에 alias·address·pubkey 입력 → fingerprint 다이얼로그로 검증 후 confirm.</li>
+              <li data-i18n-en><strong>Peers</strong> — register other machines/agents. Enter alias·address·pubkey, then confirm via fingerprint dialog.</li>
+              <li data-i18n-ko><strong>Notify</strong> — Discord webhook + Telegram bot 마법사. 토큰 입력 → <code>getMe</code> 검증 → <code>chat_id</code> 자동 감지 → 저장 + 테스트 메시지 자동 전송.</li>
+              <li data-i18n-en><strong>Notify</strong> — Discord webhook + Telegram bot wizard. Paste token → <code>getMe</code> validation → auto-detect <code>chat_id</code> → save + auto-send test message.</li>
+              <li data-i18n-ko><strong>Channel</strong> — 다중 에이전트 허브 라이브 상태. 어댑터 구성 여부, 등록된 peer 수, 예약 메시지 pending 수, 최근 메시지 20건을 KST 타임스탬프로 표시.</li>
+              <li data-i18n-en><strong>Channel</strong> — live multi-agent hub status. Adapter configuration, peer count, pending schedules, last 20 messages with KST timestamps.</li>
+              <li data-i18n-ko><strong>Schedule</strong> — 예약 메시지. <code>once</code> (특정 시각 1회) 또는 <code>cron</code> (반복) 지정. 대기/전송완료/실패/취소 통계와 목록, 개별 취소 버튼.</li>
+              <li data-i18n-en><strong>Schedule</strong> — scheduled messages. <code>once</code> (one-shot) or <code>cron</code> (repeating). Stats for pending/sent/failed/cancelled plus per-row cancel.</li>
+              <li data-i18n-ko><strong>Chain</strong> — 체인 워크플로우. YAML 로 step 정의 → 등록 → 실행 → 각 step 의 응답·실패·skip 결과를 한 화면에서 확인.</li>
+              <li data-i18n-en><strong>Chain</strong> — chain workflows. Define steps in YAML → create → run → see per-step response/error/skip on one screen.</li>
+              <li data-i18n-ko><strong>Settings</strong> — 결제 일일 한도(USDC) 설정. 변경 시 MFA 재인증 다이얼로그가 뜹니다 (PRD-MFA-02 통합 시 WebAuthn).</li>
+              <li data-i18n-en><strong>Settings</strong> — daily payment limit (USDC). Changes prompt MFA re-authentication (WebAuthn once PRD-MFA-02 lands).</li>
+            </ul>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 9.5</span>
+            <h4 data-i18n-ko>GUI 만의 장점</h4>
+            <h4 data-i18n-en>What GUI gives you</h4>
+            <ul class="dotted">
+              <li data-i18n-ko>봇 토큰 마법사 — CLI 의 5단계 카드를 클릭 한 번으로 끝내는 토큰 검증 → chat_id 감지 → 저장 → 테스트 흐름.</li>
+              <li data-i18n-en>Bot-token wizard — collapses the CLI 5-step setup into one click: validate → detect chat_id → save → test.</li>
+              <li data-i18n-ko>Channel 탭의 라이브 메시지 stream — 어떤 에이전트가 무엇을 보냈는지 시간 순으로 한눈에.</li>
+              <li data-i18n-en>Live Channel-tab message stream — see at a glance who sent what, in time order.</li>
+              <li data-i18n-ko>비밀번호·시드 입력은 GUI prompt — 터미널 echo 노출 없이 안전하게 표시·복사.</li>
+              <li data-i18n-en>Password / seed prompts in GUI — no terminal echo, safe to display and copy.</li>
+              <li data-i18n-ko>Vault reveal 의 30초 카운트다운과 자동 클립보드 클리어 — CLI 보다 명확한 시각적 보안 피드백.</li>
+              <li data-i18n-en>Vault reveal's 30-second countdown and auto-clipboard clear — clearer visual security feedback than the CLI.</li>
+            </ul>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 9.6</span>
+            <h4 data-i18n-ko>같은 데이터, 같은 백엔드</h4>
+            <h4 data-i18n-en>Same data, same backend</h4>
+            <p data-i18n-ko>
+              Tauri 앱은 별도 데몬을 띄우지 않습니다 — <code>~/.openxgram/</code> 의 SQLite·Vault·logs 를 CLI 와 동일하게 직접 사용합니다.
+              GUI 에서 등록한 peer 는 <code>xgram peer list</code> 에 그대로 보이고, CLI 로 저장한 메모리는 GUI Memory 탭에서 검색됩니다.
+            </p>
+            <p data-i18n-en>
+              The Tauri app does not spawn its own daemon — it reads the same <code>~/.openxgram/</code> SQLite·Vault·logs that the CLI uses.
+              A peer added in the GUI shows up in <code>xgram peer list</code>; a memory saved via CLI is searchable from the GUI Memory tab.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== Tutorial 10 · TUI ============================== -->
+      <section id="tutorial-10" class="anchor-target">
+        <div class="container">
+          <div class="kicker">Tutorial 10 · TUI terminal UI</div>
+          <h2 data-i18n-ko>TUI 터미널 UI (xgram tui)</h2>
+          <h2 data-i18n-en>TUI terminal UI (xgram tui)</h2>
+          <p data-i18n-ko>
+            서버·SSH·헤드리스 환경 등 <strong>터미널만 있는 곳</strong>에서 GUI 없이 상태를 확인하고 싶을 때 쓰는 화면 모드입니다.
+            ratatui 기반의 가벼운 welcome + status 화면으로 시작하며, 풀-피처 9 단계 마법사는 후속 PR 에서 합쳐집니다 (Phase 1 baseline).
+          </p>
+          <p data-i18n-en>
+            For <strong>terminal-only</strong> environments (servers, SSH, headless boxes) where you want a quick status check without a GUI.
+            Currently a lightweight ratatui welcome + status screen — the full nine-step interactive wizard lands in a follow-up PR (Phase 1 baseline).
+          </p>
+
+          <div class="step">
+            <span class="step-no">Step 10.1</span>
+            <h4 data-i18n-ko>실행</h4>
+            <h4 data-i18n-en>Launch</h4>
+<pre class="code"><span class="p">$</span> xgram tui
+<span class="c"># --data-dir &lt;PATH&gt; 로 데이터 디렉토리 지정 가능 (기본: ~/.openxgram)</span></pre>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 10.2</span>
+            <h4 data-i18n-ko>키바인딩</h4>
+            <h4 data-i18n-en>Key bindings</h4>
+            <ul class="dotted">
+              <li data-i18n-ko><kbd>Q</kbd> 또는 <kbd>Esc</kbd> — 종료 (alternate screen 을 빠져나오며 raw mode 도 자동 해제)</li>
+              <li data-i18n-en><kbd>Q</kbd> or <kbd>Esc</kbd> — exit (leaves the alternate screen and disables raw mode automatically)</li>
+            </ul>
+            <p class="muted" data-i18n-ko>
+              Phase 1 의 TUI 는 단일 welcome 화면이라 탭/이동 키는 없습니다. 추가 키바인딩(Tab·화살표·Enter 등)은
+              SPEC §10 의 9 단계 마법사가 통합되는 후속 PR 에서 도입됩니다 — 현재는 추측 표기를 피하기 위해 실제 동작하는 키만 안내합니다.
+            </p>
+            <p class="muted" data-i18n-en>
+              Phase 1 TUI is a single welcome screen, so there are no tab/navigation keys yet. Additional bindings
+              (Tab · arrows · Enter) ship with the SPEC §10 nine-step wizard in a follow-up PR — we list only keys that actually work today.
+            </p>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 10.3</span>
+            <h4 data-i18n-ko>화면 구성</h4>
+            <h4 data-i18n-en>Screen layout</h4>
+            <ul class="dotted">
+              <li data-i18n-ko><strong>헤더</strong> — <code>xgram TUI — OpenXgram (Phase 1)</code> 타이틀 박스.</li>
+              <li data-i18n-en><strong>Header</strong> — <code>xgram TUI — OpenXgram (Phase 1)</code> title box.</li>
+              <li data-i18n-ko><strong>Status (본문)</strong> — <code>~/.openxgram/install-manifest.toml</code> 을 읽어 설치 상태를 표시. 미설치면 <code>xgram init</code> 안내, 설치돼 있으면 manifest 정보 (버전·머신·생성 시각) 출력.</li>
+              <li data-i18n-en><strong>Status (body)</strong> — reads <code>~/.openxgram/install-manifest.toml</code> and shows install state. If absent, prompts <code>xgram init</code>; otherwise prints manifest fields (version · machine · created_at).</li>
+              <li data-i18n-ko><strong>Footer</strong> — 키바인딩 힌트 (<code>Q · Esc</code> = quit).</li>
+              <li data-i18n-en><strong>Footer</strong> — key-binding hint (<code>Q · Esc</code> = quit).</li>
+            </ul>
+          </div>
+
+          <div class="step">
+            <span class="step-no">Step 10.4</span>
+            <h4 data-i18n-ko>GUI vs TUI vs CLI — 언제 무엇을 쓰나</h4>
+            <h4 data-i18n-en>GUI vs TUI vs CLI — which one when</h4>
+            <ul class="dotted">
+              <li data-i18n-ko><strong>GUI</strong> — 처음 사용자, 마법사 기반 봇 토큰 등록, 라이브 메시지 stream, 시각적인 vault 승인 / reveal 작업.</li>
+              <li data-i18n-en><strong>GUI</strong> — first-time users, wizard-driven bot setup, live message stream, visual vault approval / reveal.</li>
+              <li data-i18n-ko><strong>TUI</strong> — 터미널만 있는 서버·SSH 세션, 빠른 설치 상태 확인, GUI 의존 라이브러리(WebKit) 가 없는 환경.</li>
+              <li data-i18n-en><strong>TUI</strong> — terminal-only servers / SSH sessions, quick install-state check, environments without GUI deps (WebKit).</li>
+              <li data-i18n-ko><strong>CLI</strong> — 자동화·스크립트·CI, 다른 도구와 파이프, AI 하네스(Claude Code · Cursor · Aider) 와 연동.</li>
+              <li data-i18n-en><strong>CLI</strong> — automation, scripts, CI, piping with other tools, AI harness integration (Claude Code · Cursor · Aider).</li>
+            </ul>
+            <p class="muted" data-i18n-ko>
+              세 인터페이스 모두 <strong>같은</strong> <code>~/.openxgram/</code> 데이터를 직접 읽고 씁니다 — GUI 에서 한 작업은 TUI/CLI 에서도 즉시 반영됩니다.
+            </p>
+            <p class="muted" data-i18n-en>
+              All three interfaces read and write the <strong>same</strong> <code>~/.openxgram/</code> data directly — work done in the GUI shows up immediately in the TUI/CLI.
+            </p>
           </div>
         </div>
       </section>
