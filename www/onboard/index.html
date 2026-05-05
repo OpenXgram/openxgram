@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Onboard — OpenXgram</title>
+    <meta name="description" content="좋아하는 AI 에 한 번 붙여넣으면 5분 안에 OpenXgram 설치 + 첫 메시지까지." />
+    <link rel="icon" type="image/svg+xml" href="/openxgram-logo.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta property="og:image" content="https://openxgram.org/openxgram-logo.svg" />
+    <meta name="twitter:card" content="summary" />
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container row">
+        <a class="brand" href="/"><svg class="brand-logo" width="22" height="22" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 24 Q26 21 30 24"/><path d="M34 24 Q38 21 42 24"/><path d="M20 36 C24 33 28 33 32 36 C36 33 40 33 44 36"/><path d="M20 36 C18 35 17 33 19 31"/><path d="M44 36 C46 35 47 33 45 31"/><path d="M26 42 Q32 45 38 42"/><path d="M28 46 L32 52 L36 46"/></svg><span>OpenXgram</span></a>
+        <nav class="nav">
+          <a href="/">Home</a>
+          <a href="/onboard/">Onboard</a>
+          <a href="/why/">Why</a>
+          <a href="/features/">Features</a>
+          <a href="/quickstart/">Quickstart</a>
+          <a href="/guide/">Guide</a>
+          <a href="/usecases/">Use cases</a>
+          <a href="/architecture/">Architecture</a>
+          <a href="/docs/">Docs</a>
+          <button class="lang-toggle" type="button">EN</button>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="container">
+          <div class="kicker" data-i18n-ko>가장 빠른 시작</div>
+          <div class="kicker" data-i18n-en>Fastest start</div>
+          <h1 data-i18n-ko>AI 에 붙여넣기 한 번 → 5분 안에 끝.</h1>
+          <h1 data-i18n-en>Paste into your AI once → done in 5 minutes.</h1>
+          <p class="lead" data-i18n-ko>
+            아래 프롬프트를 좋아하는 AI (Claude · ChatGPT · Gemini · Claude Desktop · Claude Code 등) 에 붙여넣으세요.
+            AI 가 운영체제·주 사용 AI·시급한 목적 3가지를 묻고, 답변에 맞춰 설치부터 첫 메시지까지 안내합니다.
+            모든 명령은 사용자(나) 의 기기 안에서만 실행 — 외부로 데이터가 나가지 않습니다.
+          </p>
+          <p class="lead" data-i18n-en>
+            Paste the prompt below into your favorite AI (Claude · ChatGPT · Gemini · Claude Desktop · Claude Code, etc.).
+            The AI will ask three questions (OS, primary AI, urgent goal) and walk you through install + first message.
+            Every command runs locally on your machine — nothing leaves your device.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
+          <div class="kicker">Step 1 · Copy</div>
+          <h2 data-i18n-ko>1) 프롬프트 복사</h2>
+          <h2 data-i18n-en>1) Copy the prompt</h2>
+          <div class="row" style="gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">
+            <button id="copy-btn" class="btn btn-primary" type="button" data-i18n-ko>📋 클립보드에 복사</button>
+            <button id="copy-btn-en" class="btn btn-primary" type="button" data-i18n-en>📋 Copy to clipboard</button>
+            <a class="btn" href="https://github.com/OpenXgram/openxgram/blob/main/crates/openxgram-cli/src/onboard.rs" target="_blank" rel="noopener" data-i18n-ko>소스 보기</a>
+            <a class="btn" href="https://github.com/OpenXgram/openxgram/blob/main/crates/openxgram-cli/src/onboard.rs" target="_blank" rel="noopener" data-i18n-en>View source</a>
+          </div>
+          <div id="copy-status" style="font-size:13px;color:#7df9c5;min-height:1.4em;margin-bottom:8px;"></div>
+          <pre class="code prompt-box" id="prompt-ko" data-i18n-ko>당신은 OpenXgram (https://openxgram.org/) 의 온보딩 도우미입니다.
+
+OpenXgram = 어떤 AI 든 (Claude · ChatGPT · Gemini · 로컬 모델) 같은 기억과 자격증명을 공유하는 블록체인 기반 AI 에이전트 메신저. 사용자(나)의 기기에서만 동작, 외부 노출 0.
+
+[당신의 임무]
+사용자가 OpenXgram 을 처음 설치하고 5분 안에 작동시키도록 돕습니다.
+
+[1단계: 한 번에 3가지 질문]
+다음을 사용자에게 한 번에 물어보세요 (1, 2, 3 번호 매겨서):
+1. 운영체제: macOS / Linux / Windows
+2. 주로 쓰는 AI: Claude / ChatGPT / Gemini / Cursor / Claude Code / Aider / 기타
+3. 가장 시급한 목적:
+   (a) 메모리·컨텍스트 공유 — 어떤 AI 든 같은 대화 이어가기
+   (b) Discord/Telegram 알림 — AI 가 휴대폰으로 보고
+   (c) 다중 에이전트 협업 — 여러 AI 가 같은 채팅방
+   (d) 결제 자동화 — USDC 자동 송금
+   (e) 백업·신원 — 데이터 보존 + DID
+
+[2단계: 답변 기반 맞춤 안내]
+- macOS/Linux: curl -sSfL https://openxgram.org/install.sh | sh
+- Windows: GitHub Releases 에서 .zip 다운로드 + PATH 추가
+- xgram init --alias &lt;사용자가-원하는-이름&gt;
+- 12-단어 시드 → 오프라인 보관 (분실 시 영구 손실)
+
+[3단계: 사용 AI 별 연동]
+- Claude Desktop: ~/.claude/mcp_servers.json 에 OpenXgram MCP 등록 (xgram mcp-serve)
+- Claude Code / Cursor / Aider: 프로젝트의 CLAUDE.md / .cursorrules / .aiderrules 에 OpenXgram 사용 규칙
+- ChatGPT Custom Instructions / Claude Project / Gemini Gems: xgram memory export-prompt 출력을 시스템 지침에 붙여넣기
+
+[4단계: 시급한 목적별 추가]
+- (a) 메모리: xgram session new / message / recall
+- (b) 알림: xgram notify setup-telegram 또는 setup-discord (대화형 마법사)
+- (c) 다중 에이전트: xgram channel serve --bind 127.0.0.1:7250
+- (d) 결제: xgram payment new
+- (e) 백업: xgram backup create, xgram identity did
+
+[5단계: 첫 사용 검증]
+- xgram session new --title "첫 대화"
+- xgram session message --session-id &lt;ID&gt; --sender me --body "안녕"
+- xgram session recall --query "안녕" --k 5
+- 회상 결과가 출력되면 5분 안에 모든 설정 완료.
+
+[원칙]
+- 한국어로 응답합니다 (사용자가 영어로 시작하면 영어).
+- 사용자 환경에 안 맞는 명령은 절대 제안하지 않습니다 (Windows 인데 sh 명령 X).
+- 모든 데이터가 사용자(나)의 기기에만 있음을 강조합니다.
+- jargon (마스터/아카식 같은 내부 용어) 사용 금지 — 일반 표현으로.
+- 한 단계씩 차근차근 안내합니다 (덤프 X).
+- 외부 클라우드 메모리 서비스(Mem0·Zep 등)는 절대 권하지 않습니다.
+
+지금 1단계 — 3가지 질문을 사용자에게 한 번에 물어보세요.</pre>
+          <pre class="code prompt-box" id="prompt-en" data-i18n-en>You are the onboarding assistant for OpenXgram (https://openxgram.org/).
+
+OpenXgram = a blockchain-based AI agent messenger that lets any AI (Claude · ChatGPT · Gemini · local models) share the same memory and credentials. Runs only on the user's machine — zero external exposure.
+
+[Your job]
+Help the user install OpenXgram and have it working within 5 minutes.
+
+[Step 1: ask 3 questions at once]
+Ask the user these three numbered:
+1. Operating system: macOS / Linux / Windows
+2. Primary AI: Claude / ChatGPT / Gemini / Cursor / Claude Code / Aider / other
+3. Most urgent goal:
+   (a) Memory & context sharing — same conversation across any AI
+   (b) Discord/Telegram alerts — AI pings your phone
+   (c) Multi-agent collaboration — many AIs in one room
+   (d) Payment automation — USDC auto-send
+   (e) Backup & identity — durable data + DID
+
+[Step 2: tailored install]
+- macOS/Linux: curl -sSfL https://openxgram.org/install.sh | sh
+- Windows: download .zip from GitHub Releases and add to PATH
+- xgram init --alias &lt;name&gt;
+- 12-word seed prints — store it offline (paper, password manager). Lose it = all data permanently lost.
+
+[Step 3: per-AI integration]
+- Claude Desktop: register MCP server in ~/.claude/mcp_servers.json (xgram mcp-serve)
+- Claude Code / Cursor / Aider: add OpenXgram rules to CLAUDE.md / .cursorrules / .aiderrules
+- ChatGPT Custom Instructions / Claude Project / Gemini Gems: paste output of `xgram memory export-prompt` into the system prompt
+
+[Step 4: per-goal extras]
+- (a) memory: xgram session new / message / recall
+- (b) notify: xgram notify setup-telegram or setup-discord (interactive wizard)
+- (c) multi-agent: xgram channel serve --bind 127.0.0.1:7250
+- (d) payment: xgram payment new
+- (e) backup: xgram backup create, xgram identity did
+
+[Step 5: smoke test]
+- xgram session new --title "first chat"
+- xgram session message --session-id &lt;ID&gt; --sender me --body "hello"
+- xgram session recall --query "hello" --k 5
+- If recall returns the message, you're done in under 5 minutes.
+
+[Rules]
+- Reply in English (Korean if the user opens in Korean).
+- Never suggest commands incompatible with the user's OS (no `sh` on Windows).
+- Stress that all data lives only on the user's machine.
+- Avoid jargon — plain language.
+- Walk through one step at a time (no info dumps).
+- Never recommend external cloud memory services (Mem0, Zep, etc.).
+
+Now ask the three questions in step 1 — all at once.</pre>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
+          <div class="kicker">Step 2 · Paste</div>
+          <h2 data-i18n-ko>2) 좋아하는 AI 에 붙여넣기</h2>
+          <h2 data-i18n-en>2) Paste into your favorite AI</h2>
+          <p data-i18n-ko>
+            아래 어디든 OK. 시스템 지침/Custom Instructions/Project/Gem 같은 영구 슬롯에 넣으면 다음 채팅도 자동 온보딩 모드.
+          </p>
+          <p data-i18n-en>
+            Anywhere works. Put it in System Prompt / Custom Instructions / Project / Gem to keep onboarding mode for future chats.
+          </p>
+          <div class="grid grid-3">
+            <div class="card">
+              <h3>Claude</h3>
+              <p data-i18n-ko>Project Instructions 또는 채팅창. <a href="https://claude.ai/" target="_blank" rel="noopener">claude.ai →</a></p>
+              <p data-i18n-en>Project Instructions or chat. <a href="https://claude.ai/" target="_blank" rel="noopener">claude.ai →</a></p>
+            </div>
+            <div class="card">
+              <h3>ChatGPT</h3>
+              <p data-i18n-ko>Custom Instructions (Settings → Personalization). <a href="https://chatgpt.com/" target="_blank" rel="noopener">chatgpt.com →</a></p>
+              <p data-i18n-en>Custom Instructions (Settings → Personalization). <a href="https://chatgpt.com/" target="_blank" rel="noopener">chatgpt.com →</a></p>
+            </div>
+            <div class="card">
+              <h3>Gemini</h3>
+              <p data-i18n-ko>Gem 으로 저장. <a href="https://gemini.google.com/" target="_blank" rel="noopener">gemini.google.com →</a></p>
+              <p data-i18n-en>Save as a Gem. <a href="https://gemini.google.com/" target="_blank" rel="noopener">gemini.google.com →</a></p>
+            </div>
+            <div class="card">
+              <h3>Claude Desktop</h3>
+              <p data-i18n-ko>Project Instructions. MCP 통합도 함께.</p>
+              <p data-i18n-en>Project Instructions. With MCP integration.</p>
+            </div>
+            <div class="card">
+              <h3>Claude Code / Cursor / Aider</h3>
+              <p data-i18n-ko>프로젝트 루트의 CLAUDE.md / .cursorrules / .aiderrules.</p>
+              <p data-i18n-en>Project root CLAUDE.md / .cursorrules / .aiderrules.</p>
+            </div>
+            <div class="card">
+              <h3 data-i18n-ko>이미 설치한 사용자</h3>
+              <h3 data-i18n-en>Already installed</h3>
+              <p data-i18n-ko>터미널: <code>xgram onboard prompt --copy</code> — 클립보드 자동 복사.</p>
+              <p data-i18n-en>Terminal: <code>xgram onboard prompt --copy</code> — auto-copy to clipboard.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
+          <div class="kicker">Step 3 · Answer 3 questions</div>
+          <h2 data-i18n-ko>3) 3 질문에 답변 → 끝</h2>
+          <h2 data-i18n-en>3) Answer 3 questions → done</h2>
+          <p data-i18n-ko>
+            AI 가 (1) 운영체제 (2) 주 사용 AI (3) 시급한 목적 — 단 3가지만 물어봅니다. 답변하면 정확한 명령을 한 줄씩 안내해 5분 안에 첫 메시지 저장·회상까지 완료됩니다.
+          </p>
+          <p data-i18n-en>
+            The AI asks just three: (1) OS, (2) primary AI, (3) urgent goal. Answer, and it walks you through exact commands until the first message is stored and recalled — under 5 minutes.
+          </p>
+          <p data-i18n-ko style="color:#7df9c5;">
+            <strong>외부 노출 0:</strong> AI 는 명령을 안내만 합니다. 명령은 사용자(나) 가 직접 터미널에서 실행하고, 모든 데이터는 사용자의 기기에서만 머무릅니다.
+          </p>
+          <p data-i18n-en style="color:#7df9c5;">
+            <strong>Zero external exposure:</strong> the AI just narrates commands; you run them locally and your data never leaves your machine.
+          </p>
+        </div>
+      </section>
+
+      <footer class="site-footer">
+        <div class="container row">
+          <div data-i18n-ko>© 2026 OpenXgram contributors</div>
+          <div data-i18n-en>© 2026 OpenXgram contributors</div>
+          <div class="mono">v0.2.0</div>
+        </div>
+      </footer>
+    </main>
+
+    <script>
+      (function () {
+        function copyText() {
+          const lang = document.documentElement.getAttribute("data-i18n") === "en" ? "en" : "ko";
+          var sel = "#prompt-" + lang;
+          var node = document.querySelector(sel);
+          if (!node) { return; }
+          var text = node.innerText;
+          var status = document.getElementById("copy-status");
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(function () {
+              if (status) status.textContent = "✓ 복사 완료. 좋아하는 AI 에 붙여넣으세요.";
+            }, function () {
+              fallback();
+            });
+          } else {
+            fallback();
+          }
+          function fallback() {
+            try {
+              var ta = document.createElement("textarea");
+              ta.value = text; document.body.appendChild(ta); ta.select();
+              document.execCommand("copy"); document.body.removeChild(ta);
+              if (status) status.textContent = "✓ 복사 완료. 좋아하는 AI 에 붙여넣으세요.";
+            } catch (e) {
+              if (status) status.textContent = "⚠ 복사 실패 — 프롬프트 박스 안 텍스트를 직접 선택해서 복사하세요.";
+            }
+          }
+        }
+        document.addEventListener("DOMContentLoaded", function () {
+          var btn = document.getElementById("copy-btn");
+          var btnEn = document.getElementById("copy-btn-en");
+          if (btn) btn.addEventListener("click", copyText);
+          if (btnEn) btnEn.addEventListener("click", copyText);
+        });
+      })();
+    </script>
+  </body>
+</html>

@@ -18,6 +18,7 @@ pub mod migrate;
 pub mod nostr_inbound;
 pub mod notify;
 pub mod notify_setup;
+pub mod onboard;
 pub mod orchestration;
 pub mod otel;
 pub mod patterns;
