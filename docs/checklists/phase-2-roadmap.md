@@ -1,5 +1,9 @@
 # Phase 2 Roadmap — OpenXgram
 
+> **상태: ✅ COMPLETED — v0.2.0-alpha.1 (2026-05-04 KST) Phase 2 GA 출하 완료.**
+> 실제 출하된 변경은 [CHANGELOG.md](../../CHANGELOG.md) `[0.2.0]` 섹션을 참조하세요.
+> 이 문서는 Phase 2 계획·범위 산정 원본 roadmap이며, 역사적 참조용으로 보존됩니다.
+>
 > Phase 1 (v0.1.0 GA) 머지 시점: 2026-05-04 KST. PR #45~#76 (32 PR) 누적.
 > 이 문서는 Phase 2 의 작업 단위·우선순위·검증 기준을 정리한다.
 
