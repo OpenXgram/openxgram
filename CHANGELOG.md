@@ -2,6 +2,18 @@
 
 OpenXgram 의 변경 이력. 모든 시간은 KST(Asia/Seoul). [Semantic Versioning](https://semver.org/) + BUILD 자동 증가 (CI/CD 갱신, 수동 변경 금지).
 
+## [0.2.0-rc.1] — 2026-05-06 KST (Production Candidate)
+
+Phase 2 GA 표면 동결 + 프로덕션 후보 진입. 외부 검증 기간(2~4주) 후 v0.2.0 stable로 graduate 예정.
+
+- **Security CI** — `cargo audit` (RustSec advisories) + `cargo deny` (license / source / advisories) 워크플로우 추가. `deny.toml` 정책으로 MIT 호환 permissive 라이선스만 허용.
+- **Transport** — rate-limit 테스트의 프로세스 env var race 구조적 해결: `spawn_server_with_rate_limit(addr, per_min)` export로 set_var/remove_var 의존 제거.
+- **Doc** — phase-1-mvp.md / phase-2-roadmap.md에 ✅ COMPLETED 배너 추가, README "Phase 1" 라벨 정리, 출하 표면 17 crate 반영, "Production Candidate" 섹션 추가.
+- **Workspace fmt drift** — main에 누적된 rustfmt 부채 29 파일 정리.
+- **CI** — release-binaries에 macOS x86_64 cross-compile 추가 (macos-14 → x86_64-apple-darwin).
+
+기능 변경 없음 — Phase 2 GA(v0.2.0) 표면 그대로. 외부 검증 가능 안정 표면 동결.
+
 ## [0.2.0] — 2026-05-04 KST (Phase 2 GA)
 
 Phase 2 누적 — Nostr 기반 P2P 전송 / USDC 결제 / 신뢰 인프라 / 관측성 / 데스크톱 GUI / 공식 사이트.
