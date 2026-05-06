@@ -28,12 +28,19 @@ allow = [
     "OpenSSL",
     "Unicode-3.0",
     "Unicode-DFS-2016",
+    # 추가 permissive — 의존성 트리에서 발견됨
+    "BSL-1.0",              # Boost Software License — MIT 호환 permissive
+    "NCSA",                 # University of Illinois/NCSA — MIT 호환 permissive
+    "CDLA-Permissive-2.0",  # Community Data License Agreement Permissive — 데이터셋용 permissive
 ]
 confidence-threshold = 0.85
 
 [bans]
 multiple-versions = "warn"
+# 워크스페이스 내부 path-deps(=`*`)는 정상 패턴이므로 허용.
+# 외부 crate에서 wildcard semver는 여전히 금지.
 wildcards = "deny"
+allow-wildcard-paths = true
 highlight = "all"
 deny = []
 skip = []
