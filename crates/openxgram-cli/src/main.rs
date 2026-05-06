@@ -57,11 +57,14 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// 현재 머신에 OpenXgram을 초기화합니다 (9단계 비대화 워크플로우, Phase 1: Step 1-6 + manifest)
+    /// 현재 머신에 OpenXgram을 초기화합니다.
+    ///
+    /// 플래그 없이 실행하면 인터랙티브 마법사(`xgram wizard`)로 자동 진입.
+    /// `--alias`를 넘기면 비대화 모드.
     Init {
-        /// 머신 별칭 (예: gcp-main)
+        /// 머신 별칭 (예: gcp-main). 미지정 시 인터랙티브 마법사로 진입.
         #[arg(long)]
-        alias: String,
+        alias: Option<String>,
         /// 머신 역할
         #[arg(long, value_enum, default_value_t = RoleArg::Primary)]
         role: RoleArg,
@@ -173,6 +176,14 @@ enum Commands {
     Notify {
         #[command(subcommand)]
         target: NotifyCli,
+    },
+
+    /// 외부 채널 (Discord/Telegram 등) 한 번에 연결 — 인터랙티브 마법사.
+    /// `xgram setup discord` / `xgram setup telegram` — 토큰 입력 → 검증 → vault 저장 → 테스트 메시지까지.
+    /// (별칭: `xgram notify setup-discord` / `notify setup-telegram` — 동일 동작)
+    Setup {
+        #[command(subcommand)]
+        target: SetupCli,
     },
 
     /// session 통계 백업을 Discord/Telegram 으로 push
@@ -651,6 +662,24 @@ enum NotifyCli {
         /// list_adapters 모드 — 등록된 어댑터 출력
         #[arg(long, default_value_t = false)]
         list_adapters: bool,
+    },
+}
+
+/// `xgram setup <target>` — Discord/Telegram 연결 인터랙티브 마법사 단일 진입점.
+/// `xgram notify setup-discord` / `notify setup-telegram` 와 동일한 마법사를 호출 (호환 유지).
+#[derive(Subcommand, Debug)]
+enum SetupCli {
+    /// Discord 봇 연결 — 토큰 검증 + 채널/webhook 입력 + vault 저장 + 테스트 메시지
+    Discord {
+        /// `~/.openxgram` 대신 임의 경로 (테스트용)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+    /// Telegram 봇 연결 — 토큰 검증 + chat_id 자동 감지 + vault 저장 + 테스트 메시지
+    Telegram {
+        /// `~/.openxgram` 대신 임의 경로 (테스트용)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
     },
 }
 
@@ -1387,17 +1416,32 @@ async fn main() -> anyhow::Result<()> {
             force,
             dry_run,
             import,
-        } => {
-            let opts = InitOpts {
-                alias,
-                role: role.into(),
-                data_dir: resolve_data_dir(data_dir)?,
-                force,
-                dry_run,
-                import,
-            };
-            init::run_init(&opts)?;
-        }
+        } => match alias {
+            // 비대화 모드 — 명시적 alias.
+            Some(alias) => {
+                let opts = InitOpts {
+                    alias,
+                    role: role.into(),
+                    data_dir: resolve_data_dir(data_dir)?,
+                    force,
+                    dry_run,
+                    import,
+                };
+                init::run_init(&opts)?;
+            }
+            // 플래그 없으면 인터랙티브 마법사로 진입 — `xgram wizard` 와 동일.
+            None => {
+                let outcome = wizard::run_wizard()?;
+                match outcome {
+                    wizard::WizardOutcome::Completed { cfg } => {
+                        print!("{}", wizard::render_done(&cfg));
+                    }
+                    wizard::WizardOutcome::Cancelled => {
+                        println!("취소됨.");
+                    }
+                }
+            }
+        },
 
         Commands::Status { data_dir } => {
             let opts = StatusOpts {
@@ -1511,6 +1555,29 @@ async fn main() -> anyhow::Result<()> {
             }
             NotifyDispatch::Setup(target, opts) => {
                 notify_setup::run_setup(target, opts).await?;
+            }
+        },
+
+        Commands::Setup { target } => match target {
+            SetupCli::Discord { data_dir } => {
+                notify_setup::run_setup(
+                    SetupTarget::Discord,
+                    SetupOpts {
+                        data_dir,
+                        detect_attempts: None,
+                    },
+                )
+                .await?;
+            }
+            SetupCli::Telegram { data_dir } => {
+                notify_setup::run_setup(
+                    SetupTarget::Telegram,
+                    SetupOpts {
+                        data_dir,
+                        detect_attempts: None,
+                    },
+                )
+                .await?;
             }
         },
 

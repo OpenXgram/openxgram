@@ -229,7 +229,7 @@ if [ "$PREBUILT_OK" = "1" ]; then
   echo ""
   echo "다음 단계:"
   echo "  xgram --version"
-  echo "  xgram init             # 12-단어 복구 시드 생성"
+  echo "  xgram init --alias <name>   # BIP39 24단어 복구 시드 + 마스터 키페어 생성"
   echo ""
   exit 0
 fi

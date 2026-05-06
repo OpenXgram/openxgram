@@ -2,6 +2,17 @@
 
 OpenXgram 의 변경 이력. 모든 시간은 KST(Asia/Seoul). [Semantic Versioning](https://semver.org/) + BUILD 자동 증가 (CI/CD 갱신, 수동 변경 금지).
 
+## [0.2.0-rc.2] — 2026-05-07 KST (UX 개선)
+
+자체 dogfood에서 발견된 마찰점 1차 정리 — "심플·편리·단순" 원칙. 깊은 리팩터(포트 자동 폴백, `--data-dir` 글로벌화)는 rc.3로 분할.
+
+- **`xgram setup discord` / `xgram setup telegram`** — 외부 채널 연결 단일 진입점 신규. 기존 `xgram notify setup-discord` / `setup-telegram` 도 호환 유지.
+- **`xgram init` 플래그 없이 실행** — 인터랙티브 마법사(`xgram wizard`)로 자동 진입. `--alias`를 넘기면 비대화 모드 (기존 동작).
+- **`install.sh` 사이트 배포 갭 수정** — `www/install.sh` → `www/public/install.sh` 이동. Vite의 publicDir만 dist로 복사되는 문제로 `https://openxgram.org/install.sh`가 404였던 것 정리.
+- **`install.sh` 메시지 정정** — 끝의 "12-단어 복구 시드" → "BIP39 24단어" + `--alias` 안내 추가.
+
+기능 변경 0건 (안정 표면 유지). UX 진입점 + 출하 파이프라인만 손봄.
+
 ## [0.2.0-rc.1] — 2026-05-06 KST (Production Candidate)
 
 Phase 2 GA 표면 동결 + 프로덕션 후보 진입. 외부 검증 기간(2~4주) 후 v0.2.0 stable로 graduate 예정.
