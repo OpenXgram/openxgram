@@ -278,3 +278,134 @@ input:focus-visible {
   .app-shell { padding: 10px; }
   .tabnav button { font-size: 12px; padding: 5px 8px; }
 }
+
+/* ── Messenger (v0.1) — 통합 친구 목록 + 대화 스레드 ──────────────────────── */
+.messenger-shell {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 0;
+  height: calc(100vh - 140px);
+  min-height: 480px;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0f0f0f;
+}
+.messenger-sidebar {
+  border-right: 1px solid #2a2a2a;
+  background: #161616;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.messenger-sidebar-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  border-bottom: 1px solid #232323;
+  font-size: 14px;
+}
+.messenger-add-btn {
+  background: #2a3a2a;
+  color: #7df9c5;
+  border: 1px solid #3a5a3a;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.messenger-friend-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+.messenger-friend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #1c1c1c;
+  cursor: pointer;
+}
+.messenger-friend:hover { background: #1c1c1c; }
+.messenger-friend.selected { background: #232a23; border-left: 3px solid #7df9c5; }
+.messenger-friend-icon {
+  width: 32px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  font-weight: bold;
+  font-size: 14px;
+}
+.messenger-friend-icon.kind-peer { background: #2a3a55; color: #b6d4ff; }
+.messenger-friend-icon.kind-discord { background: #4f4789; color: #d8d6ff; }
+.messenger-friend-icon.kind-telegram { background: #2c5a7a; color: #b6e1ff; }
+.messenger-friend-text { display: flex; flex-direction: column; min-width: 0; }
+.messenger-friend-name { font-size: 14px; color: #e6e6e6; }
+.messenger-friend-sub {
+  font-size: 11px; color: #888;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px;
+}
+.messenger-empty { padding: 18px 14px; color: #777; font-size: 12px; }
+
+.messenger-thread {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.messenger-thread-empty {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center; flex-direction: column;
+  color: #888;
+  text-align: center;
+  padding: 24px;
+}
+.messenger-thread-hint { font-size: 12px; color: #666; margin-top: 6px; }
+.messenger-thread-head {
+  padding: 12px 16px;
+  border-bottom: 1px solid #232323;
+  background: #141414;
+}
+.messenger-thread-head h2 { margin: 0; font-size: 16px; color: #e6e6e6; }
+.messenger-thread-head small { color: #888; font-size: 11px; }
+.messenger-thread-body {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+}
+.messenger-placeholder {
+  padding: 16px;
+  background: #1a1a1a;
+  border: 1px dashed #333;
+  border-radius: 6px;
+  color: #999;
+  font-size: 13px;
+  text-align: center;
+}
+.messenger-thread-input {
+  border-top: 1px solid #232323;
+  padding: 10px;
+  display: flex;
+  gap: 8px;
+  background: #141414;
+}
+.messenger-thread-input textarea {
+  flex: 1;
+  background: #1a1a1a;
+  color: #e6e6e6;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  padding: 8px;
+  resize: none;
+  font-family: inherit;
+}
+.messenger-thread-input button {
+  background: #2a3a2a; color: #7df9c5; border: 1px solid #3a5a3a;
+  border-radius: 4px; padding: 0 16px; cursor: pointer;
+}
+.messenger-thread-input button:disabled { opacity: 0.5; cursor: not-allowed; }

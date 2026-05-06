@@ -2,6 +2,7 @@ import { createResource, createSignal, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { I18nProvider, useI18n } from "./i18n";
 import { Onboarding } from "./components/Onboarding";
+import { Messenger } from "./components/Messenger";
 import { SearchView } from "./components/SearchView";
 import { VaultView } from "./components/VaultView";
 import { PeersView } from "./components/PeersView";
@@ -13,6 +14,7 @@ import { PaymentLimitsView } from "./components/PaymentLimitsView";
 
 type Tab =
   | "onboarding"
+  | "messenger"
   | "memory"
   | "vault"
   | "peers"
@@ -35,18 +37,19 @@ function Inner() {
   const [initialized] = createResource(checkInitialized);
   const [tab, setTab] = createSignal<Tab>("onboarding");
 
-  // 초기화된 사용자 → 첫 화면을 Memory 로 자동 전환 (한 번만).
+  // 초기화된 사용자 → 첫 화면을 Messenger 로 자동 전환 (한 번만).
   let autoSwitched = false;
   const maybeAutoSwitch = () => {
     if (!autoSwitched && initialized() === true && tab() === "onboarding") {
       autoSwitched = true;
-      setTab("memory");
+      setTab("messenger");
     }
   };
   queueMicrotask(maybeAutoSwitch);
 
   const tabs: { id: Tab; label: () => string }[] = [
     { id: "onboarding", label: () => t("tab.onboarding") },
+    { id: "messenger", label: () => t("tab.messenger") || "메신저" },
     { id: "memory", label: () => t("tab.memory") },
     { id: "vault", label: () => t("tab.vault") },
     { id: "peers", label: () => t("tab.peers") },
@@ -84,7 +87,10 @@ function Inner() {
       </nav>
       <main>
         <Show when={tab() === "onboarding"}>
-          <Onboarding onReady={() => setTab("memory")} />
+          <Onboarding onReady={() => setTab("messenger")} />
+        </Show>
+        <Show when={tab() === "messenger"}>
+          <Messenger />
         </Show>
         <Show when={tab() === "memory"}>
           <SearchView />
