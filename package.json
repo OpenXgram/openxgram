@@ -1,9 +1,9 @@
 {
   "name": "openxgram",
-  "version": "0.1.0.0",
+  "version": "0.2.0.0-rc.1",
   "description": "Memory & Credential Infrastructure for Multi-Agent, Multi-Machine, Multi-LLM",
   "private": true,
   "scripts": {
-    "placeholder": "echo 'Phase 1 MVP 구현 중'"
+    "placeholder": "echo 'OpenXgram v0.2.0-rc.1 — Phase 2 GA, production candidate'"
   }
 }

@@ -38,3 +38,22 @@ jobs:
         # serial_test::file_serial 로 파일 내 직렬화 + 파일 간 병렬화.
         # XGRAM_SKIP_PORT_PRECHECK=1 로 init port precheck skip.
         run: cargo test --workspace --all-targets
+
+  audit:
+    name: cargo audit (RustSec)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans licenses sources
+          rust-version: stable

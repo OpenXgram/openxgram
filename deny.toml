@@ -1,0 +1,60 @@
+# cargo-deny 정책 — `cargo deny check` 로 검증.
+# 보안 자문(advisories)은 hard fail, 라이선스/중복은 보수적이지만 실용적으로.
+
+[graph]
+all-features = false
+no-default-features = false
+
+[advisories]
+# RustSec advisory DB 위반 시 fail. 보안 취약점은 hard fail이지만,
+# unmaintained 알림 일부는 트랜시티브 deps에서 안전하게 무시 가능.
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "warn"
+ignore = [
+    # 트랜시티브 unmaintained — 외부 deps의 알려진 이슈, 보안 취약점 아님.
+    # 업스트림 마이그레이션 진행될 때까지 무시.
+    "RUSTSEC-2024-0384",  # `instant` is unmaintained — backoff/parking_lot 트랜시티브
+    "RUSTSEC-2024-0436",  # `paste` no longer maintained — 매크로 헬퍼, 보안 영향 없음
+]
+
+[licenses]
+# 우리 LICENSE 가 MIT 이므로 호환되는 permissive 만 통과.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unlicense",
+    "Zlib",
+    "MPL-2.0",
+    "CC0-1.0",
+    "OpenSSL",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    # 추가 permissive — 의존성 트리에서 발견됨
+    "BSL-1.0",              # Boost Software License — MIT 호환 permissive
+    "NCSA",                 # University of Illinois/NCSA — MIT 호환 permissive
+    "CDLA-Permissive-2.0",  # Community Data License Agreement Permissive — 데이터셋용 permissive
+]
+confidence-threshold = 0.85
+
+[bans]
+multiple-versions = "warn"
+# 우리는 비공개 워크스페이스 — crates.io에 publish 안 함.
+# 워크스페이스 내부 path-deps(=`*`)는 정상 패턴이고 외부에 노출되지 않으므로 허용.
+# (allow-wildcard-paths=true는 publish=false 크레이트에만 적용되는데,
+#  17 크레이트 전체에 publish 필드 추가하느니 비공개 정책 명시가 단순.)
+wildcards = "allow"
+highlight = "all"
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
