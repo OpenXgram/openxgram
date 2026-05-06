@@ -251,7 +251,8 @@
           <p class="muted">각 필드에 어떤 값을 어떻게 입력하는지, 그리고 클릭 순서.</p>
           <h4>입력 예시</h4>
           <ul class="clean dotted">
-        <li><strong>alias 입력</strong> — <code>my-laptop</code> · <code>home-server</code> · <code>work-mac</code> (영문/숫자/하이픈, 공백·한글 X)<br><span class="bad">잘못된 예: <code>My Laptop</code> (공백) · <code>내 노트북</code> (한글)</span></li>
+        <li><strong>alias 의 의미</strong> — 이 기기를 부를 본인용 이름. 한 사용자가 노트북·데스크톱·서버 여러 대를 같은 마스터 신원으로 묶을 때 어느 기기에서 일어난 일인지 구분하는 라벨. 메모리 출처·Vault ACL·감사 로그 서명 메타데이터에 박힙니다. 글로벌 식별자 아님 (그건 <code>did:key</code>).</li>
+        <li><strong>alias 입력 (자유 선택)</strong> — <code>my-laptop</code> · <code>home-server</code> · <code>work-mac</code> · <code>macbook-air</code> · <code>gcp-vm-tokyo</code> 등 본인이 알아보기 좋은 이름. <code>my-laptop</code> 은 그대로 따라 쓰는 게 아니라 예시.<br><span class="good">권장: <code>[a-z0-9-]</code> 만 사용 (영문/숫자/하이픈)</span><br><span class="bad">잘못된 예: <code>My Laptop</code> (공백) · <code>내 노트북</code> (한글) · <code>laptop!</code> (특수문자) · 빈 값</span></li>
           </ul>
           <h4>클릭 순서</h4>
           <ol class="clean">
@@ -266,7 +267,8 @@
           <p class="muted">Exact values per field, plus click order.</p>
           <h4>Field examples</h4>
           <ul class="clean dotted">
-        <li><strong>alias input</strong> — <code>my-laptop</code> · <code>home-server</code> · <code>work-mac</code> (ASCII letters/digits/dash only)<br><span class="bad">Wrong: <code>My Laptop</code> (space) · <code>laptop!</code> (special char)</span></li>
+        <li><strong>What alias means</strong> — your own name for this machine. When one user runs OpenXgram on several devices under the same master identity, the alias labels which device an event came from. It ends up in memory provenance, Vault ACL whitelist, and audit-log signatures. It is <em>not</em> a global identifier (that's <code>did:key</code>).</li>
+        <li><strong>alias input (free choice)</strong> — <code>my-laptop</code> · <code>home-server</code> · <code>work-mac</code> · <code>macbook-air</code> · <code>gcp-vm-tokyo</code> — anything that helps you recognise the device. <code>my-laptop</code> is an example, not a literal value.<br><span class="good">Recommended: <code>[a-z0-9-]</code> only (ASCII letters/digits/dash)</span><br><span class="bad">Wrong: <code>My Laptop</code> (space) · <code>laptop!</code> (special char) · empty</span></li>
           </ul>
           <h4>Click order</h4>
           <ol class="clean">

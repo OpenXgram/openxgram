@@ -143,6 +143,24 @@
 #
 #   다시 보여주지 않습니다. 종이/금고에 적어두세요.</span></pre>
             <div class="callout" data-i18n-ko>
+              <strong><code class="inline">--alias my-laptop</code> 의 <code class="inline">my-laptop</code> 은 예시</strong> — 그대로 따라 쓸 게 아니라 <strong>이 기기를 부를 이름</strong>을 본인이 정해서 넣습니다.
+              한 명의 사용자가 노트북·데스크톱·서버 등 여러 대를 같은 마스터 신원으로 묶을 때 어느 기기에서 일어난 일인지 구분하는 라벨이고,
+              메모리(L0 messages, L1 episodes) 출처·Vault ACL 머신 화이트리스트·감사 로그 서명 메타데이터에 모두 이 이름이 박힙니다.
+              <br><br>
+              <strong>예시</strong>: <code class="inline">macbook-air</code> · <code class="inline">home-desktop</code> · <code class="inline">work-thinkpad</code> · <code class="inline">gcp-vm-tokyo</code>.
+              <strong>제약</strong>: 빈 문자열 불가 · <code class="inline">[a-z0-9-]</code> 권장 · 같은 머신에서 두 번째 init 은 <code class="inline">--force</code> 필요.
+              <strong>로컬 식별자</strong>이므로 다른 사용자가 같은 alias 를 써도 충돌하지 않습니다 (글로벌 신원은 <code class="inline">did:key</code>).
+            </div>
+            <div class="callout" data-i18n-en>
+              <strong><code class="inline">--alias my-laptop</code> — <code class="inline">my-laptop</code> is an example</strong>, not a literal value. Pick <strong>your own name for this machine</strong>.
+              When one user runs OpenXgram on several devices under the same master identity, the alias labels which device an event came from,
+              and ends up in memory provenance (L0 messages, L1 episodes), Vault ACL machine whitelist, and audit-log signature metadata.
+              <br><br>
+              <strong>Examples</strong>: <code class="inline">macbook-air</code>, <code class="inline">home-desktop</code>, <code class="inline">work-thinkpad</code>, <code class="inline">gcp-vm-tokyo</code>.
+              <strong>Constraints</strong>: non-empty · <code class="inline">[a-z0-9-]</code> recommended · re-running init on the same machine needs <code class="inline">--force</code>.
+              It's a <strong>local identifier</strong>, so collisions across users are fine (global identity is <code class="inline">did:key</code>).
+            </div>
+            <div class="callout" data-i18n-ko>
               <strong>중요</strong> — 12-단어 시드는 마스터 신원을 복구하는 유일한 수단입니다. 노트북이 박살나면 이 시드만 있으면 다른 머신에서 같은 자격으로 복구할 수 있습니다. <strong>스크린샷 금지 / 평문 클라우드 저장 금지 / 종이 또는 하드웨어 지갑 권장.</strong>
             </div>
             <div class="callout" data-i18n-en>
