@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/OpenXgram/openxgram/blob/main/LICENSE)
 ![CI](https://github.com/OpenXgram/openxgram/actions/workflows/ci.yml/badge.svg)
-[![Version](https://img.shields.io/badge/version-0.2.0--rc.1-blue)](https://github.com/OpenXgram/openxgram/blob/main/version.json)
+[![Version](https://img.shields.io/badge/version-0.2.0--rc.2-blue)](https://github.com/OpenXgram/openxgram/blob/main/version.json)
 [![Status](https://img.shields.io/badge/status-production%20candidate-green)](https://github.com/OpenXgram/openxgram/blob/main/CHANGELOG.md)
 
 **Repository**: https://github.com/OpenXgram/openxgram  
@@ -217,7 +217,7 @@ xgram wizard   # 9단계: Welcome → Alias → Role → DataDir → SeedMode �
 - `backup-push` — Discord/Telegram 으로 session 통계 push
 - `wizard` (9단계) / `tui` — 인터랙티브 화면
 
-## 현재 출하 표면 (v0.2.0-rc.1)
+## 현재 출하 표면 (v0.2.0-rc.2)
 
 > Phase 1 GA(v0.1.0) + Phase 2 GA(v0.2.0) 누적. 세부 변경은 [CHANGELOG.md](CHANGELOG.md) 참조.
 
