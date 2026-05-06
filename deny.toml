@@ -1,0 +1,46 @@
+# cargo-deny 정책 — `cargo deny check` 로 검증.
+# 보안 자문(advisories)은 hard fail, 라이선스/중복은 보수적이지만 실용적으로.
+
+[graph]
+all-features = false
+no-default-features = false
+
+[advisories]
+# RustSec advisory DB 위반 시 fail.
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "warn"
+ignore = []
+
+[licenses]
+# 우리 LICENSE 가 MIT 이므로 호환되는 permissive 만 통과.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unlicense",
+    "Zlib",
+    "MPL-2.0",
+    "CC0-1.0",
+    "OpenSSL",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+]
+confidence-threshold = 0.85
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
