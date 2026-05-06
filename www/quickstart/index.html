@@ -68,6 +68,22 @@
 <span class="p">$</span> xgram init <span class="s">--alias my-laptop</span>
 <span class="c"># 12-단어 복구 시드를 출력합니다 (오프라인 보관 권장)</span>
 <span class="c"># 이후 모든 데이터는 ~/.openxgram/ 로컬 SQLite 한 파일에만 저장됩니다.</span></pre>
+          <div class="callout" data-i18n-ko style="margin-top: 12px;">
+            <strong><code class="inline">--alias my-laptop</code> 의 <code class="inline">my-laptop</code> 은 예시</strong> — 본인이 정하는 <strong>이 기기를 부를 이름</strong>입니다.
+            한 사용자가 노트북·데스크톱·서버 여러 대에서 동일한 마스터 신원을 쓸 때 어느 기기인지 구분하는 라벨이라,
+            본인이 알아보기 좋은 이름을 자유롭게 넣으면 됩니다 (예: <code class="inline">macbook-air</code> · <code class="inline">home-desktop</code> · <code class="inline">work-thinkpad</code> · <code class="inline">gcp-vm-tokyo</code>).
+            <br><br>
+            <strong>제약</strong>: 빈 문자열 불가 · <code class="inline">[a-z0-9-]</code> 권장 (공백·특수문자 피하기) · 같은 머신에서 두 번 init 시 <code class="inline">--force</code> 필요.
+            <strong>로컬 식별자</strong>라 다른 사용자와 같은 alias 여도 무관합니다 (글로벌 신원은 <code class="inline">did:key</code>).
+          </div>
+          <div class="callout" data-i18n-en style="margin-top: 12px;">
+            <strong><code class="inline">--alias my-laptop</code> — the <code class="inline">my-laptop</code> part is just an example</strong>. It's <strong>your name for this machine</strong>.
+            When one user runs OpenXgram on several devices under the same master identity, the alias is the label that tells them apart,
+            so pick whatever you'll recognise (e.g. <code class="inline">macbook-air</code>, <code class="inline">home-desktop</code>, <code class="inline">work-thinkpad</code>, <code class="inline">gcp-vm-tokyo</code>).
+            <br><br>
+            <strong>Constraints</strong>: non-empty · <code class="inline">[a-z0-9-]</code> recommended (avoid spaces and special chars) · re-running init on the same machine requires <code class="inline">--force</code>.
+            It's a <strong>local identifier</strong> — collisions with other users are fine (global identity is <code class="inline">did:key</code>).
+          </div>
           <p data-i18n-ko style="font-size: 14px; color: #666;">
             <strong>지원 플랫폼 (pre-built):</strong>
             Linux x86_64 · Linux aarch64 · macOS x86_64 (Intel) · macOS aarch64 (Apple Silicon) · Windows x86_64.
