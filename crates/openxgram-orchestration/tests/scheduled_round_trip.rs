@@ -3,7 +3,7 @@
 
 use openxgram_db::{Db, DbConfig};
 use openxgram_orchestration::{
-    kst_now_epoch, ScheduleKind, ScheduledStore, ScheduledStatus, TargetKind,
+    kst_now_epoch, ScheduleKind, ScheduledStatus, ScheduledStore, TargetKind,
 };
 
 fn temp_db() -> (tempfile::NamedTempFile, Db) {

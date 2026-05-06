@@ -161,7 +161,7 @@ pub fn compute_next_due_kst(cron_expr: &str, now_epoch: i64) -> Result<Option<i6
 fn normalize_cron(expr: &str) -> String {
     let parts: Vec<&str> = expr.split_whitespace().collect();
     match parts.len() {
-        5 => format!("0 {expr}"),       // add seconds=0
+        5 => format!("0 {expr}"), // add seconds=0
         6 | 7 => expr.to_string(),
         _ => expr.to_string(),
     }
@@ -333,15 +333,9 @@ fn row_to_msg(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduledMessage> {
         target: row.get(2)?,
         payload: row.get(3)?,
         msg_type: row.get(4)?,
-        schedule_kind: schedule_kind_str
-            .parse()
-            .map_err(|e: OrchestrationError| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    5,
-                    rusqlite::types::Type::Text,
-                    Box::new(e),
-                )
-            })?,
+        schedule_kind: schedule_kind_str.parse().map_err(|e: OrchestrationError| {
+            rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(e))
+        })?,
         schedule_value: row.get(6)?,
         status: status_str.parse().map_err(|e: OrchestrationError| {
             rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(e))

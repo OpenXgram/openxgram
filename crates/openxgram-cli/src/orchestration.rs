@@ -147,7 +147,10 @@ pub fn run_schedule(data_dir: &Path, action: ScheduleAction) -> Result<()> {
             let id = store
                 .insert(kind, &target, &text, &msg_type, ScheduleKind::Once, &at)
                 .context("INSERT scheduled (once)")?;
-            println!("scheduled once: {id}  at={at}  → {}:{target}", kind.as_str());
+            println!(
+                "scheduled once: {id}  at={at}  → {}:{target}",
+                kind.as_str()
+            );
             Ok(())
         }
         ScheduleAction::Cron {
@@ -223,9 +226,7 @@ pub fn run_schedule(data_dir: &Path, action: ScheduleAction) -> Result<()> {
                     m.target,
                     m.payload
                 );
-                store
-                    .mark_sent(&m.id)
-                    .context("mark_sent (dry-run)")?;
+                store.mark_sent(&m.id).context("mark_sent (dry-run)")?;
             }
             Ok(())
         }
@@ -237,8 +238,8 @@ pub fn run_chain(data_dir: &Path, action: ChainAction) -> Result<()> {
     let store = ChainStore::new(db.conn());
     match action {
         ChainAction::Create { file } => {
-            let raw = fs::read_to_string(&file)
-                .with_context(|| format!("read {}", file.display()))?;
+            let raw =
+                fs::read_to_string(&file).with_context(|| format!("read {}", file.display()))?;
             let def: ChainDefinition = serde_yaml::from_str(&raw)
                 .with_context(|| format!("parse YAML {}", file.display()))?;
             let id = store.create(&def).context("INSERT message_chains")?;
@@ -399,8 +400,8 @@ mod tests {
 
     #[test]
     fn chain_create_parses() {
-        let cli = TestCli::try_parse_from(["x", "chain", "create", "--file", "/tmp/c.yaml"])
-            .unwrap();
+        let cli =
+            TestCli::try_parse_from(["x", "chain", "create", "--file", "/tmp/c.yaml"]).unwrap();
         match cli.cmd {
             TestCmd::Chain {
                 action: ChainAction::Create { file },

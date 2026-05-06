@@ -61,7 +61,9 @@ pub fn did_key_from_master(master: &Keypair) -> Result<String, DidError> {
 
 /// did:key 문자열에서 33바이트 compressed secp256k1 pubkey 복원.
 pub fn pubkey_from_did_key(did: &str) -> Result<Vec<u8>, DidError> {
-    let rest = did.strip_prefix("did:key:z").ok_or(DidError::InvalidDidKey)?;
+    let rest = did
+        .strip_prefix("did:key:z")
+        .ok_or(DidError::InvalidDidKey)?;
     let raw = bs58::decode(rest).into_vec()?;
     if raw.len() != 35 || raw[0] != 0xe7 || raw[1] != 0x01 {
         return Err(DidError::InvalidDidKey);
@@ -106,12 +108,20 @@ pub fn did_document(did: &str, master: &Keypair) -> Result<Value, DidError> {
 /// - network: "mainnet" | "testnet" | 사용자 정의
 /// - id: pubkey SHA-256 의 base58btc 앞 22자 (안정적·짧은 식별자)
 pub fn opendid_kr_format(master: &Keypair, network: &str) -> Result<String, DidError> {
-    if network.is_empty() || !network.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+    if network.is_empty()
+        || !network
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
         return Err(DidError::InvalidNetwork(network.to_string()));
     }
     let pk = master.public_key_bytes();
     let digest = Sha256::digest(&pk);
-    let id: String = bs58::encode(&digest[..]).into_string().chars().take(22).collect();
+    let id: String = bs58::encode(&digest[..])
+        .into_string()
+        .chars()
+        .take(22)
+        .collect();
     Ok(format!("did:opendid:{network}:{id}"))
 }
 
@@ -121,7 +131,11 @@ pub fn opendid_kr_format(master: &Keypair, network: &str) -> Result<String, DidE
 pub fn omnione_format(master: &Keypair) -> Result<String, DidError> {
     let pk = master.public_key_bytes();
     let digest = Sha256::digest(&pk);
-    let id: String = bs58::encode(&digest[..]).into_string().chars().take(22).collect();
+    let id: String = bs58::encode(&digest[..])
+        .into_string()
+        .chars()
+        .take(22)
+        .collect();
     Ok(format!("did:omn:{id}"))
 }
 
@@ -171,7 +185,10 @@ pub fn issue_vc(
 /// VC 검증 — proof.jws 를 issuer_pubkey (compressed sec1 33 bytes) 로 ECDSA 검증.
 pub fn verify_vc(vc: &Value, issuer_pubkey: &[u8]) -> Result<bool, DidError> {
     let obj = vc.as_object().ok_or(DidError::VcMissingField("root"))?;
-    let proof = obj.get("proof").ok_or(DidError::VcMissingField("proof"))?.clone();
+    let proof = obj
+        .get("proof")
+        .ok_or(DidError::VcMissingField("proof"))?
+        .clone();
     let jws = proof
         .get("jws")
         .and_then(|v| v.as_str())

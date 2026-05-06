@@ -274,7 +274,10 @@ mod tests {
             .await;
 
         let client = ChannelMcpClient::new(server.uri(), Some("tok".into()));
-        let r = client.send_message("res", "조사 부탁", "request").await.unwrap();
+        let r = client
+            .send_message("res", "조사 부탁", "request")
+            .await
+            .unwrap();
         assert!(r.success);
         assert_eq!(r.message_id.as_deref(), Some("peer-7"));
     }

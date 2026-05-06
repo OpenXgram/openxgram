@@ -1,6 +1,8 @@
 //! 통합 테스트 — DID Document JSON-LD 필드 + VC 라운드트립.
 
-use openxgram_did::{did_document, did_key_from_master, issue_vc, omnione_format, opendid_kr_format, verify_vc};
+use openxgram_did::{
+    did_document, did_key_from_master, issue_vc, omnione_format, opendid_kr_format, verify_vc,
+};
 use openxgram_keystore::Keypair;
 use serde_json::json;
 

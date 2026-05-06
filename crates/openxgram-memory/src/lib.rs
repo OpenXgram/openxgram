@@ -19,6 +19,10 @@ pub mod traits;
 pub mod transfer;
 mod util;
 
+pub use claude_compat::{
+    export_claude, import_claude, parse_claude, ClaudeCategory, ClaudeEntry, ClaudeExport,
+    ClaudeImportSummary, CLAUDE_EXPORT_PROMPT,
+};
 #[cfg(feature = "fastembed")]
 pub use embed::FastEmbedder;
 pub use embed::{default_embedder, embedder_mode_label, DummyEmbedder, Embedder, EMBED_DIM};
@@ -33,10 +37,6 @@ pub use traits::{
     DERIVED_TRAIT_PREFIX,
 };
 pub use transfer::{export_session, import_session, ImportSummary, TextPackage};
-pub use claude_compat::{
-    export_claude, import_claude, parse_claude, ClaudeCategory, ClaudeEntry, ClaudeExport,
-    ClaudeImportSummary, CLAUDE_EXPORT_PROMPT,
-};
 
 use thiserror::Error;
 

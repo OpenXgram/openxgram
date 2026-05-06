@@ -172,7 +172,9 @@ pub fn run_onboard_prompt(lang: OnboardLang, copy: bool) -> Result<()> {
 
         // 절대 안전망: 클립보드도 파일도 실패하면 stdout 으로 본문 출력 (사용자 직접 복사)
         if !clipboard_ok && saved.is_none() {
-            eprintln!("⚠️ 클립보드·파일 모두 접근 불가 — stdout 으로 본문 출력합니다 (직접 복사하세요).");
+            eprintln!(
+                "⚠️ 클립보드·파일 모두 접근 불가 — stdout 으로 본문 출력합니다 (직접 복사하세요)."
+            );
             eprintln!("---BEGIN ONBOARD PROMPT---");
             let stdout = std::io::stdout();
             let mut handle = stdout.lock();
@@ -190,8 +192,8 @@ pub fn run_onboard_prompt(lang: OnboardLang, copy: bool) -> Result<()> {
 
 /// arboard 로 native 클립보드 복사 (모든 OS 통일된 인터페이스).
 fn try_copy_arboard(text: &str) -> Result<()> {
-    let mut clipboard = arboard::Clipboard::new()
-        .map_err(|e| anyhow::anyhow!("arboard init: {e}"))?;
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|e| anyhow::anyhow!("arboard init: {e}"))?;
     clipboard
         .set_text(text.to_string())
         .map_err(|e| anyhow::anyhow!("arboard set_text: {e}"))?;

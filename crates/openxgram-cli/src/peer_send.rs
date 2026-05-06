@@ -75,8 +75,8 @@ async fn send_via_nostr(
         .await
         .map_err(|e| anyhow!("relay 추가 실패: {e}"))?;
     let body = serde_json::to_string(envelope).context("envelope 직렬화 실패")?;
-    let peer_pk = PublicKey::from_hex(peer_pubkey_hex)
-        .map_err(|e| anyhow!("peer pubkey 파싱 실패: {e}"))?;
+    let peer_pk =
+        PublicKey::from_hex(peer_pubkey_hex).map_err(|e| anyhow!("peer pubkey 파싱 실패: {e}"))?;
     let ciphertext = encrypt_for_peer(sender_keys.secret_key(), &peer_pk, &body)
         .map_err(|e| anyhow!("nip44 wrap 실패: {e}"))?;
     let p_tag = NostrTag::public_key(peer_pk);
@@ -135,11 +135,17 @@ pub async fn run_peer_send(
                 // ADR-NOSTR-FALLBACK: 명시적 opt-in 일 때만 nostr 재시도
                 if let Some(relay_ws) = http_fallback_nostr_relay() {
                     tracing::info!(error = %e, relay = %relay_ws, "http 실패 — XGRAM_PEER_FALLBACK_NOSTR opt-in 으로 nostr 재시도");
-                    let nostr_keys =
-                        keys_from_master(&master).map_err(|e| anyhow!("nostr keys 변환 실패: {e}"))?;
+                    let nostr_keys = keys_from_master(&master)
+                        .map_err(|e| anyhow!("nostr keys 변환 실패: {e}"))?;
                     let sink = NostrSink::new(nostr_keys.clone());
-                    send_via_nostr(&sink, &nostr_keys, &relay_ws, &peer.public_key_hex, &envelope)
-                        .await?;
+                    send_via_nostr(
+                        &sink,
+                        &nostr_keys,
+                        &relay_ws,
+                        &peer.public_key_hex,
+                        &envelope,
+                    )
+                    .await?;
                     sink.shutdown().await;
                 } else {
                     return Err(e).with_context(|| format!("/v1/message POST 실패 ({url})"));
@@ -389,8 +395,7 @@ mod tests {
             }
         });
 
-        let filter =
-            Filter::new().kind(openxgram_nostr::NostrKindRaw::from(NostrKind::L0Message));
+        let filter = Filter::new().kind(openxgram_nostr::NostrKindRaw::from(NostrKind::L0Message));
         source.subscribe(filter).await.unwrap();
 
         send_via_nostr(&sink, &sender_keys, &url, &peer_pubkey_hex, &env)

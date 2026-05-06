@@ -71,12 +71,7 @@ impl<'a> DailyLimitStore<'a> {
 
     /// (agent_id, chain_id) 한도 upsert. daily_micro 음수 → InvalidAmount.
     /// updated_at_kst 는 호출 시점 KST.
-    pub fn set(
-        &mut self,
-        agent_id: &str,
-        chain_id: &str,
-        daily_micro: i64,
-    ) -> Result<DailyLimit> {
+    pub fn set(&mut self, agent_id: &str, chain_id: &str, daily_micro: i64) -> Result<DailyLimit> {
         if daily_micro < 0 {
             return Err(PaymentError::InvalidAmount(format!(
                 "daily_micro must be >= 0 (got {daily_micro})"
@@ -248,8 +243,14 @@ mod tests {
         let mut store = DailyLimitStore::new(&mut db);
         store.set("agent_a", "base", 111).unwrap();
         store.set("agent_b", "base", 222).unwrap();
-        assert_eq!(store.get("agent_a", "base").unwrap().unwrap().daily_micro, 111);
-        assert_eq!(store.get("agent_b", "base").unwrap().unwrap().daily_micro, 222);
+        assert_eq!(
+            store.get("agent_a", "base").unwrap().unwrap().daily_micro,
+            111
+        );
+        assert_eq!(
+            store.get("agent_b", "base").unwrap().unwrap().daily_micro,
+            222
+        );
     }
 
     #[test]
@@ -259,7 +260,17 @@ mod tests {
         let mut store = DailyLimitStore::new(&mut db);
         store.set("default", "base", 111).unwrap();
         store.set("default", "polygon", 222).unwrap();
-        assert_eq!(store.get("default", "base").unwrap().unwrap().daily_micro, 111);
-        assert_eq!(store.get("default", "polygon").unwrap().unwrap().daily_micro, 222);
+        assert_eq!(
+            store.get("default", "base").unwrap().unwrap().daily_micro,
+            111
+        );
+        assert_eq!(
+            store
+                .get("default", "polygon")
+                .unwrap()
+                .unwrap()
+                .daily_micro,
+            222
+        );
     }
 }

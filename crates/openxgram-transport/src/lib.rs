@@ -100,14 +100,24 @@ struct AppState {
 }
 
 pub async fn spawn_server(bind_addr: SocketAddr) -> Result<ServerHandle> {
-    spawn_server_inner(bind_addr, None, Arc::new(rate_limit::RateLimiter::default())).await
+    spawn_server_inner(
+        bind_addr,
+        None,
+        Arc::new(rate_limit::RateLimiter::default()),
+    )
+    .await
 }
 
 pub async fn spawn_server_with_metrics(
     bind_addr: SocketAddr,
     metrics: Option<MetricsProvider>,
 ) -> Result<ServerHandle> {
-    spawn_server_inner(bind_addr, metrics, Arc::new(rate_limit::RateLimiter::default())).await
+    spawn_server_inner(
+        bind_addr,
+        metrics,
+        Arc::new(rate_limit::RateLimiter::default()),
+    )
+    .await
 }
 
 /// Explicit per-minute rate limit — bypasses `XGRAM_RATE_LIMIT_PER_MIN` env var.
@@ -116,7 +126,12 @@ pub async fn spawn_server_with_rate_limit(
     bind_addr: SocketAddr,
     per_minute: u32,
 ) -> Result<ServerHandle> {
-    spawn_server_inner(bind_addr, None, Arc::new(rate_limit::RateLimiter::new(per_minute))).await
+    spawn_server_inner(
+        bind_addr,
+        None,
+        Arc::new(rate_limit::RateLimiter::new(per_minute)),
+    )
+    .await
 }
 
 async fn spawn_server_inner(

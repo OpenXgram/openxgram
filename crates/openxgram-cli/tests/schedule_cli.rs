@@ -2,9 +2,7 @@
 
 use openxgram_cli::orchestration::{ChainAction, ScheduleAction};
 use openxgram_db::{Db, DbConfig};
-use openxgram_orchestration::{
-    kst_now_epoch, ChainStore, ScheduledStatus, ScheduledStore,
-};
+use openxgram_orchestration::{kst_now_epoch, ChainStore, ScheduledStatus, ScheduledStore};
 use std::path::Path;
 use tempfile::tempdir;
 
@@ -70,11 +68,8 @@ fn schedule_cron_then_list_then_cancel() {
     )
     .unwrap();
     // list should run without panic
-    openxgram_cli::orchestration::run_schedule(
-        dir.path(),
-        ScheduleAction::List { status: None },
-    )
-    .unwrap();
+    openxgram_cli::orchestration::run_schedule(dir.path(), ScheduleAction::List { status: None })
+        .unwrap();
     // cancel by reading id
     let id = {
         let mut db = db_for(dir.path());

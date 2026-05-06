@@ -204,10 +204,22 @@ mod tests {
 
     #[test]
     fn confirmation_states_per_block_distance() {
-        assert_eq!(confirmation_from_blocks(None, 100), ConfirmationStatus::NotMined);
-        assert_eq!(confirmation_from_blocks(Some(100), 99), ConfirmationStatus::Reorg);
-        assert_eq!(confirmation_from_blocks(Some(100), 100), ConfirmationStatus::NotMined);
-        assert_eq!(confirmation_from_blocks(Some(100), 104), ConfirmationStatus::NotMined);
+        assert_eq!(
+            confirmation_from_blocks(None, 100),
+            ConfirmationStatus::NotMined
+        );
+        assert_eq!(
+            confirmation_from_blocks(Some(100), 99),
+            ConfirmationStatus::Reorg
+        );
+        assert_eq!(
+            confirmation_from_blocks(Some(100), 100),
+            ConfirmationStatus::NotMined
+        );
+        assert_eq!(
+            confirmation_from_blocks(Some(100), 104),
+            ConfirmationStatus::NotMined
+        );
         assert_eq!(
             confirmation_from_blocks(Some(100), 105),
             ConfirmationStatus::SoftConfirmed

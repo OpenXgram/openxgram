@@ -20,8 +20,8 @@ pub fn run_audit(data_dir: &Path, action: AuditAction) -> Result<VerifyReport> {
     match action {
         AuditAction::Verify => verify(&mut db),
         AuditAction::Backfill => {
-            let n = openxgram_vault::audit_chain::backfill_chain(&mut db)
-                .context("backfill 실패")?;
+            let n =
+                openxgram_vault::audit_chain::backfill_chain(&mut db).context("backfill 실패")?;
             Ok(VerifyReport::Backfilled(n))
         }
         AuditAction::Checkpoint => {
@@ -93,7 +93,10 @@ impl std::fmt::Display for VerifyReport {
                 write!(f, "✓ checkpoint 생성 완료 (seq={seq})")
             }
             Self::CheckpointSkipped => {
-                write!(f, "ℹ checkpoint 생략 — 새 audit entry 가 없거나 chain 이 비어있음")
+                write!(
+                    f,
+                    "ℹ checkpoint 생략 — 새 audit entry 가 없거나 chain 이 비어있음"
+                )
             }
         }
     }
@@ -156,7 +159,6 @@ mod tests {
     fn report_display_formats() {
         assert!(format!("{}", VerifyReport::Ok).contains("정상"));
         assert!(format!("{}", VerifyReport::Backfilled(3)).contains("3"));
-        assert!(format!("{}", VerifyReport::Failed(vec!["x".into()]))
-            .contains("실패"));
+        assert!(format!("{}", VerifyReport::Failed(vec!["x".into()])).contains("실패"));
     }
 }

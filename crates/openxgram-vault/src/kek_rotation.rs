@@ -13,7 +13,7 @@ use openxgram_core::time::{kst_now, kst_offset};
 use openxgram_db::Db;
 use rusqlite::params;
 
-use crate::audit_chain::{AuditEntry, chain_hash, next_seq_and_prev};
+use crate::audit_chain::{chain_hash, next_seq_and_prev, AuditEntry};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RotationError {
