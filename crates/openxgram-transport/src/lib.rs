@@ -100,12 +100,29 @@ struct AppState {
 }
 
 pub async fn spawn_server(bind_addr: SocketAddr) -> Result<ServerHandle> {
-    spawn_server_with_metrics(bind_addr, None).await
+    spawn_server_inner(bind_addr, None, Arc::new(rate_limit::RateLimiter::default())).await
 }
 
 pub async fn spawn_server_with_metrics(
     bind_addr: SocketAddr,
     metrics: Option<MetricsProvider>,
+) -> Result<ServerHandle> {
+    spawn_server_inner(bind_addr, metrics, Arc::new(rate_limit::RateLimiter::default())).await
+}
+
+/// Explicit per-minute rate limit — bypasses `XGRAM_RATE_LIMIT_PER_MIN` env var.
+/// Use this in tests so parallel cases don't race on shared process env.
+pub async fn spawn_server_with_rate_limit(
+    bind_addr: SocketAddr,
+    per_minute: u32,
+) -> Result<ServerHandle> {
+    spawn_server_inner(bind_addr, None, Arc::new(rate_limit::RateLimiter::new(per_minute))).await
+}
+
+async fn spawn_server_inner(
+    bind_addr: SocketAddr,
+    metrics: Option<MetricsProvider>,
+    rate_limiter: Arc<rate_limit::RateLimiter>,
 ) -> Result<ServerHandle> {
     let received = Arc::new(Mutex::new(Vec::new()));
     let state = AppState {
@@ -113,7 +130,7 @@ pub async fn spawn_server_with_metrics(
         started_at: std::time::Instant::now(),
         metrics,
         replay: Arc::new(replay::ReplayCache::default()),
-        rate_limiter: Arc::new(rate_limit::RateLimiter::default()),
+        rate_limiter,
     };
 
     let app = Router::new()
