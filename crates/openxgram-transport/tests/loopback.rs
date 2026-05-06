@@ -1,7 +1,9 @@
 //! transport loopback 통합 테스트 — 같은 프로세스 안에서 서버 + 클라이언트.
 
 use chrono::{FixedOffset, Utc};
-use openxgram_transport::{send_envelope, spawn_server, Envelope, TransportError};
+use openxgram_transport::{
+    send_envelope, spawn_server, spawn_server_with_rate_limit, Envelope, TransportError,
+};
 
 fn sample_envelope() -> Envelope {
     Envelope {
@@ -92,9 +94,10 @@ async fn replay_nonce_rejected_on_duplicate() {
 
 #[tokio::test]
 async fn rate_limit_returns_429_after_threshold() {
-    // override default 60/min → 3
-    unsafe { std::env::set_var("XGRAM_RATE_LIMIT_PER_MIN", "3") };
-    let server = spawn_server("127.0.0.1:0".parse().unwrap()).await.unwrap();
+    // 명시적 threshold — 프로세스 env var을 건드리면 병렬 테스트 race 발생
+    let server = spawn_server_with_rate_limit("127.0.0.1:0".parse().unwrap(), 3)
+        .await
+        .unwrap();
     let url = format!("http://{}/v1/message", server.bound_addr);
     let client = reqwest::Client::new();
     let mut env = sample_envelope();
@@ -108,7 +111,6 @@ async fn rate_limit_returns_429_after_threshold() {
     let r = client.post(&url).json(&env).send().await.unwrap();
     assert_eq!(r.status().as_u16(), 429);
     server.shutdown();
-    unsafe { std::env::remove_var("XGRAM_RATE_LIMIT_PER_MIN") };
 }
 
 #[tokio::test]

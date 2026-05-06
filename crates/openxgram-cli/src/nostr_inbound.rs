@@ -134,8 +134,8 @@ fn drain_into_batch(
 }
 
 pub fn open_db_for_inbound(data_dir: &std::path::Path) -> Result<openxgram_db::Db> {
-    use openxgram_db::{Db, DbConfig};
     use openxgram_core::paths::db_path;
+    use openxgram_db::{Db, DbConfig};
     let mut db = Db::open(DbConfig {
         path: db_path(data_dir),
         ..Default::default()
@@ -195,7 +195,9 @@ mod tests {
             relays: vec![url],
             poll_interval: Duration::from_millis(100),
         };
-        let handle = spawn_nostr_inbound_processor(cfg, master, sd_rx).await.unwrap();
+        let handle = spawn_nostr_inbound_processor(cfg, master, sd_rx)
+            .await
+            .unwrap();
 
         // 200ms 후 shutdown
         tokio::time::sleep(Duration::from_millis(200)).await;

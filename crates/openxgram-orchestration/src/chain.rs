@@ -102,9 +102,7 @@ impl ChainStepInput {
         }
         if let Some(platform) = &self.to_platform {
             let channel = self.channel_id.as_deref().ok_or_else(|| {
-                OrchestrationError::Send(format!(
-                    "platform `{platform}` step requires channel_id"
-                ))
+                OrchestrationError::Send(format!("platform `{platform}` step requires channel_id"))
             })?;
             return Ok((TargetKind::Platform, format!("{platform}:{channel}")));
         }
@@ -227,16 +225,15 @@ impl<'a> ChainStore<'a> {
                 target: row.get(4)?,
                 payload: row.get(5)?,
                 delay_secs: row.get(6)?,
-                condition_kind: cond_str
-                    .map(|s| s.parse())
-                    .transpose()
-                    .map_err(|e: OrchestrationError| {
+                condition_kind: cond_str.map(|s| s.parse()).transpose().map_err(
+                    |e: OrchestrationError| {
                         rusqlite::Error::FromSqlConversionFailure(
                             7,
                             rusqlite::types::Type::Text,
                             Box::new(e),
                         )
-                    })?,
+                    },
+                )?,
                 condition_value: row.get(8)?,
             })
         })?;
@@ -245,10 +242,9 @@ impl<'a> ChainStore<'a> {
     }
 
     pub fn delete_by_name(&self, name: &str) -> Result<()> {
-        let affected = self.conn.execute(
-            "DELETE FROM message_chains WHERE name=?1",
-            params![name],
-        )?;
+        let affected = self
+            .conn
+            .execute("DELETE FROM message_chains WHERE name=?1", params![name])?;
         if affected == 0 {
             return Err(OrchestrationError::ChainNotFound(name.to_string()));
         }

@@ -99,9 +99,7 @@ impl DiscordGatewayClient {
     pub fn new(token: impl Into<String>) -> Self {
         Self {
             token: token.into(),
-            intents: Intents::GUILD_MESSAGES
-                | Intents::DIRECT_MESSAGES
-                | Intents::MESSAGE_CONTENT,
+            intents: Intents::GUILD_MESSAGES | Intents::DIRECT_MESSAGES | Intents::MESSAGE_CONTENT,
         }
     }
 
@@ -155,29 +153,32 @@ fn message_stream(
     filter_channel: Option<u64>,
 ) -> impl Stream<Item = DiscordIncomingMessage> + Send {
     let event_flags = EventTypeFlags::MESSAGE_CREATE;
-    stream::unfold((shard, filter_channel), move |(mut shard, filter)| async move {
-        loop {
-            let item = shard.next_event(event_flags).await?;
-            let event = match item {
-                Ok(ev) => ev,
-                Err(source) => {
-                    tracing::warn!(?source, "discord gateway event error");
-                    continue;
-                }
-            };
-            if let Event::MessageCreate(msg_create) = event {
-                let Some(msg) = DiscordIncomingMessage::from_event(&msg_create) else {
-                    continue;
-                };
-                if let Some(want) = filter {
-                    if msg.channel_id != want {
+    stream::unfold(
+        (shard, filter_channel),
+        move |(mut shard, filter)| async move {
+            loop {
+                let item = shard.next_event(event_flags).await?;
+                let event = match item {
+                    Ok(ev) => ev,
+                    Err(source) => {
+                        tracing::warn!(?source, "discord gateway event error");
                         continue;
                     }
+                };
+                if let Event::MessageCreate(msg_create) = event {
+                    let Some(msg) = DiscordIncomingMessage::from_event(&msg_create) else {
+                        continue;
+                    };
+                    if let Some(want) = filter {
+                        if msg.channel_id != want {
+                            continue;
+                        }
+                    }
+                    return Some((msg, (shard, filter)));
                 }
-                return Some((msg, (shard, filter)));
             }
-        }
-    })
+        },
+    )
     .boxed()
 }
 

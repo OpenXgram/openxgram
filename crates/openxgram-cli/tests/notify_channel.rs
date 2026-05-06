@@ -47,7 +47,9 @@ async fn channel_send_to_platform_succeeds_via_jsonrpc() {
             reply_to: None,
         },
     };
-    run_notify(action).await.expect("send_to_platform 성공해야 함");
+    run_notify(action)
+        .await
+        .expect("send_to_platform 성공해야 함");
 }
 
 #[tokio::test]
@@ -92,7 +94,9 @@ async fn channel_missing_url_raises_explicit_error() {
         auth_token: None,
         mode: ChannelMode::ListAdapters,
     };
-    let err = run_notify(action).await.expect_err("미설정 시 raise 해야 함");
+    let err = run_notify(action)
+        .await
+        .expect_err("미설정 시 raise 해야 함");
     let msg = format!("{err}");
     assert!(
         msg.contains("--mcp-url") || msg.contains(CHANNEL_MCP_URL_ENV),

@@ -96,7 +96,9 @@ pub const HOT_PATHS: &[&str] = &[
 
 /// MeterProvider 등록 — Prometheus pull (기존 /v1/metrics) 와 병행.
 /// metrics_exporter_endpoint 미지정 시 None — pull 만 사용.
-pub fn init_meter(endpoint: Option<&str>) -> Result<Option<opentelemetry_sdk::metrics::SdkMeterProvider>> {
+pub fn init_meter(
+    endpoint: Option<&str>,
+) -> Result<Option<opentelemetry_sdk::metrics::SdkMeterProvider>> {
     let endpoint_str = match endpoint {
         Some(s) if !s.is_empty() => s.to_string(),
         _ => match std::env::var(ENV_OTLP_ENDPOINT) {

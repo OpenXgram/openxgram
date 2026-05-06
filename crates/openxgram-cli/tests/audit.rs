@@ -46,5 +46,8 @@ fn audit_verify_on_clean_db_reports_ok() {
 
     // Display 출력에 "정상" 포함
     let s = format!("{report}");
-    assert!(s.contains("정상"), "Display 메시지 'normal' 키워드 포함: {s}");
+    assert!(
+        s.contains("정상"),
+        "Display 메시지 'normal' 키워드 포함: {s}"
+    );
 }

@@ -309,13 +309,9 @@ mod tests {
         let receiver = NostrKeys::generate();
         let pt = "hello-master";
         let ct = encrypt_for_peer(sender.secret_key(), &receiver.public_key(), pt).unwrap();
-        let back = unwrap_ciphertext_from_peer(
-            receiver.secret_key(),
-            &sender.public_key(),
-            &[],
-            &ct,
-        )
-        .unwrap();
+        let back =
+            unwrap_ciphertext_from_peer(receiver.secret_key(), &sender.public_key(), &[], &ct)
+                .unwrap();
         assert_eq!(back, pt);
     }
 
@@ -336,13 +332,9 @@ mod tests {
         .unwrap();
         let rpk = ratchet.current(unix_ts).public;
         // ratchet pk 알면 unwrap 성공
-        let ok = unwrap_ciphertext_from_peer(
-            receiver.secret_key(),
-            &sender.public_key(),
-            &[rpk],
-            &ct,
-        )
-        .unwrap();
+        let ok =
+            unwrap_ciphertext_from_peer(receiver.secret_key(), &sender.public_key(), &[rpk], &ct)
+                .unwrap();
         assert_eq!(ok, pt);
         // ratchet pk 미인지 시 master fallback 도 실패 → 명시 에러
         let err =

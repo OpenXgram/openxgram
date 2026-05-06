@@ -70,7 +70,10 @@ pub async fn rotate_once(
 
     RATCHET_ROTATION_TOTAL.fetch_add(1, Ordering::Relaxed);
     RATCHET_LAST_ROTATED_UNIX_TS.store(now as i64, Ordering::Relaxed);
-    tracing::info!(unix_ts = now, "ratchet rotated + announce published (audit row deferred to PRD-AUDIT)");
+    tracing::info!(
+        unix_ts = now,
+        "ratchet rotated + announce published (audit row deferred to PRD-AUDIT)"
+    );
     Ok(())
 }
 

@@ -14,8 +14,8 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Context, Result};
 use futures_util::StreamExt;
 use openxgram_adapter::{
-    Adapter, ChannelMcpClient, DiscordGatewayClient, DiscordIncomingMessage,
-    DiscordWebhookAdapter, TelegramBotAdapter, TelegramUpdate,
+    Adapter, ChannelMcpClient, DiscordGatewayClient, DiscordIncomingMessage, DiscordWebhookAdapter,
+    TelegramBotAdapter, TelegramUpdate,
 };
 use openxgram_core::env::require_password;
 use openxgram_core::paths::{db_path, keystore_dir, MASTER_KEY_NAME};
@@ -206,9 +206,7 @@ async fn run_channel(
             summary,
             msg_type,
         } => {
-            let r = client
-                .send_message(&to_role, &summary, &msg_type)
-                .await?;
+            let r = client.send_message(&to_role, &summary, &msg_type).await?;
             if !r.success {
                 bail!(
                     "channel-mcp send_message 실패: {}",
@@ -300,7 +298,10 @@ async fn run_telegram_listen(
         if stop.load(Ordering::SeqCst) {
             break;
         }
-        let updates = match adapter.poll_updates(offset, Some(if once { 1 } else { 25 })).await {
+        let updates = match adapter
+            .poll_updates(offset, Some(if once { 1 } else { 25 }))
+            .await
+        {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("[telegram-listen] poll 오류: {e} — 5초 후 재시도");

@@ -9,9 +9,7 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use openxgram_core::paths::db_path;
 use openxgram_db::{Db, DbConfig};
-use openxgram_memory::{
-    export_claude, import_claude, parse_claude, MemoryKind, MemoryStore,
-};
+use openxgram_memory::{export_claude, import_claude, parse_claude, MemoryKind, MemoryStore};
 
 /// memory export/import 포맷.
 #[derive(Debug, Clone, Copy)]

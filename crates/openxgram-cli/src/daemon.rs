@@ -80,40 +80,41 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
 
     // Nostr inbound processor (PRD-NOSTR-10) — XGRAM_NOSTR_RELAYS env 가 설정된 경우만 활성.
     // master keystore 패스워드는 XGRAM_NOSTR_PASSWORD env 에서 로드 (없으면 skip).
-    let (nostr_shutdown_tx, nostr_handle) =
-        match crate::nostr_inbound::NostrInboundConfig::from_env(opts.data_dir.clone()) {
-            Some(cfg) => match std::env::var("XGRAM_NOSTR_PASSWORD") {
-                Ok(pw) => {
-                    use openxgram_keystore::Keystore;
-                    let ks = openxgram_keystore::FsKeystore::new(
-                        openxgram_core::paths::keystore_dir(&opts.data_dir),
-                    );
-                    match ks.load(openxgram_core::paths::MASTER_KEY_NAME, &pw) {
-                        Ok(master) => {
-                            let (tx, rx) = tokio::sync::watch::channel(false);
-                            let handle =
-                                crate::nostr_inbound::spawn_nostr_inbound_processor(cfg, master, rx)
-                                    .await
-                                    .context("nostr inbound processor 시작 실패")?;
-                            println!(
-                                "  ✓ nostr inbound processor running ({} relay(s))",
-                                handle_relay_count()
-                            );
-                            (Some(tx), Some(handle))
-                        }
-                        Err(e) => {
-                            tracing::warn!(error = %e, "nostr inbound — master 로드 실패 (skip)");
-                            (None, None)
-                        }
+    let (nostr_shutdown_tx, nostr_handle) = match crate::nostr_inbound::NostrInboundConfig::from_env(
+        opts.data_dir.clone(),
+    ) {
+        Some(cfg) => match std::env::var("XGRAM_NOSTR_PASSWORD") {
+            Ok(pw) => {
+                use openxgram_keystore::Keystore;
+                let ks = openxgram_keystore::FsKeystore::new(openxgram_core::paths::keystore_dir(
+                    &opts.data_dir,
+                ));
+                match ks.load(openxgram_core::paths::MASTER_KEY_NAME, &pw) {
+                    Ok(master) => {
+                        let (tx, rx) = tokio::sync::watch::channel(false);
+                        let handle =
+                            crate::nostr_inbound::spawn_nostr_inbound_processor(cfg, master, rx)
+                                .await
+                                .context("nostr inbound processor 시작 실패")?;
+                        println!(
+                            "  ✓ nostr inbound processor running ({} relay(s))",
+                            handle_relay_count()
+                        );
+                        (Some(tx), Some(handle))
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "nostr inbound — master 로드 실패 (skip)");
+                        (None, None)
                     }
                 }
-                Err(_) => {
-                    tracing::info!("XGRAM_NOSTR_RELAYS 설정됨 — XGRAM_NOSTR_PASSWORD 미설정으로 nostr inbound skip");
-                    (None, None)
-                }
-            },
-            None => (None, None),
-        };
+            }
+            Err(_) => {
+                tracing::info!("XGRAM_NOSTR_RELAYS 설정됨 — XGRAM_NOSTR_PASSWORD 미설정으로 nostr inbound skip");
+                (None, None)
+            }
+        },
+        None => (None, None),
+    };
 
     println!();
     println!("Ctrl-C 로 종료.");

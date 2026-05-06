@@ -125,9 +125,23 @@ fn classify_memory(m: &Memory) -> ClaudeCategory {
 fn looks_like_career(s: &str) -> bool {
     let lower = s.to_ascii_lowercase();
     [
-        "company", "role", "engineer", "developer", "ceo", "cto", "founder",
-        "startup", "team lead", "회사", "직장", "직책", "역할", "팀장", "엔지니어",
-        "개발자", "창업",
+        "company",
+        "role",
+        "engineer",
+        "developer",
+        "ceo",
+        "cto",
+        "founder",
+        "startup",
+        "team lead",
+        "회사",
+        "직장",
+        "직책",
+        "역할",
+        "팀장",
+        "엔지니어",
+        "개발자",
+        "창업",
     ]
     .iter()
     .any(|kw| lower.contains(kw))
@@ -137,8 +151,18 @@ fn looks_like_career(s: &str) -> bool {
 fn looks_like_identity(s: &str) -> bool {
     let lower = s.to_ascii_lowercase();
     [
-        "name is", "i am ", "이름은", "나이", "지역", "사는 곳", "고향", "거주",
-        "language", "언어", "korean", "english",
+        "name is",
+        "i am ",
+        "이름은",
+        "나이",
+        "지역",
+        "사는 곳",
+        "고향",
+        "거주",
+        "language",
+        "언어",
+        "korean",
+        "english",
     ]
     .iter()
     .any(|kw| lower.contains(kw))
@@ -274,7 +298,10 @@ fn parse_entry_line(line: &str) -> Option<ClaudeEntry> {
     }
     let close = line.find(']')?;
     let date_str = &line[1..close];
-    let rest = line[close + 1..].trim_start_matches(' ').trim_start_matches('-').trim();
+    let rest = line[close + 1..]
+        .trim_start_matches(' ')
+        .trim_start_matches('-')
+        .trim();
     let date = if date_str == "unknown" {
         None
     } else {
@@ -386,7 +413,10 @@ mod tests {
         let inst = parsed.buckets.get(&ClaudeCategory::Instructions).unwrap();
         assert_eq!(inst.len(), 2);
         // sorted oldest first
-        assert_eq!(inst[0].content, "Never auto-deploy without explicit master approval.");
+        assert_eq!(
+            inst[0].content,
+            "Never auto-deploy without explicit master approval."
+        );
         assert_eq!(inst[1].content, "Always reply in Korean.");
         let pref = parsed.buckets.get(&ClaudeCategory::Preferences).unwrap();
         assert_eq!(pref.len(), 2);
@@ -420,8 +450,9 @@ mod tests {
             pinned: true,
             importance: 1.0,
             access_count: 0,
-            created_at: chrono::Utc::now().with_timezone(&FixedOffset::east_opt(9*3600).unwrap()),
-            last_accessed: chrono::Utc::now().with_timezone(&FixedOffset::east_opt(9*3600).unwrap()),
+            created_at: chrono::Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap()),
+            last_accessed: chrono::Utc::now()
+                .with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap()),
         };
         assert_eq!(classify_memory(&m), ClaudeCategory::Instructions);
     }
@@ -436,8 +467,9 @@ mod tests {
             pinned: false,
             importance: 0.5,
             access_count: 0,
-            created_at: chrono::Utc::now().with_timezone(&FixedOffset::east_opt(9*3600).unwrap()),
-            last_accessed: chrono::Utc::now().with_timezone(&FixedOffset::east_opt(9*3600).unwrap()),
+            created_at: chrono::Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap()),
+            last_accessed: chrono::Utc::now()
+                .with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap()),
         };
         assert_eq!(classify_memory(&m), ClaudeCategory::Career);
     }

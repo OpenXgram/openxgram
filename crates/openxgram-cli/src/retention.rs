@@ -50,8 +50,8 @@ pub struct PreviewReport {
 /// preview — read-only count. db read connection 만 사용.
 pub fn preview(data_dir: &Path, policy: RetentionPolicy) -> Result<PreviewReport> {
     let mut db = open_db(data_dir)?;
-    let cutoff_ts = openxgram_core::time::kst_now()
-        - chrono::Duration::days(policy.older_than_days);
+    let cutoff_ts =
+        openxgram_core::time::kst_now() - chrono::Duration::days(policy.older_than_days);
     let cutoff_iso = cutoff_ts.to_rfc3339();
 
     let count = match policy.layer {
@@ -98,8 +98,8 @@ pub struct ApplyReport {
 /// dry_run=true 시 SELECT 만, false 시 DELETE.
 pub fn apply(data_dir: &Path, policy: RetentionPolicy, dry_run: bool) -> Result<ApplyReport> {
     let mut db = open_db(data_dir)?;
-    let cutoff_ts = openxgram_core::time::kst_now()
-        - chrono::Duration::days(policy.older_than_days);
+    let cutoff_ts =
+        openxgram_core::time::kst_now() - chrono::Duration::days(policy.older_than_days);
     let cutoff_iso = cutoff_ts.to_rfc3339();
 
     let count = match policy.layer {
@@ -140,12 +140,7 @@ pub fn apply(data_dir: &Path, policy: RetentionPolicy, dry_run: bool) -> Result<
     })
 }
 
-fn record_retention_audit(
-    db: &mut Db,
-    layer: Layer,
-    count: i64,
-    cutoff_iso: &str,
-) -> Result<()> {
+fn record_retention_audit(db: &mut Db, layer: Layer, count: i64, cutoff_iso: &str) -> Result<()> {
     use openxgram_vault::audit_chain::{chain_hash, next_seq_and_prev, AuditEntry};
     let id = uuid::Uuid::new_v4().to_string();
     let ts = openxgram_core::time::kst_now().to_rfc3339();

@@ -87,9 +87,7 @@ mod tests {
         let plaintext = b"vault backup payload";
 
         let engine = AgeWrapEngine;
-        let ct = engine
-            .encrypt(plaintext, &[recipient.to_string()])
-            .unwrap();
+        let ct = engine.encrypt(plaintext, &[recipient.to_string()]).unwrap();
         assert_ne!(ct, plaintext);
 
         // identity 로 복호 (passphrase 와 다른 path) — direct decryptor
