@@ -27,30 +27,38 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # with_gui: Tauri 데스크톱 앱(`xgram-desktop`) 도 같이 빌드 + tarball 동봉.
+          #   - linux-aarch64 / windows: 크로스 빌드 환경에서 webkit/webview2 호환 어려워 CLI 만 ship.
+          #     사용자 측에선 `xgram gui` 가 명시적 안내 에러 (silent fallback 금지).
           - label: linux-x86_64
             target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             cross: false
+            with_gui: true
             asset_suffix: x86_64-linux.tar.gz
           - label: linux-aarch64
             target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             cross: true
+            with_gui: false
             asset_suffix: aarch64-linux.tar.gz
           - label: macos-x86_64
             target: x86_64-apple-darwin
             os: macos-14
             cross: false
+            with_gui: true
             asset_suffix: x86_64-darwin.tar.gz
           - label: macos-aarch64
             target: aarch64-apple-darwin
             os: macos-14
             cross: false
+            with_gui: true
             asset_suffix: aarch64-darwin.tar.gz
           - label: windows-x86_64
             target: x86_64-pc-windows-gnu
             os: ubuntu-latest
             cross: true
+            with_gui: false
             asset_suffix: x86_64-windows.zip
     runs-on: ${{ matrix.os }}
     env:
@@ -59,6 +67,7 @@ jobs:
       MATRIX_LABEL: ${{ matrix.label }}
       MATRIX_ASSET_SUFFIX: ${{ matrix.asset_suffix }}
       MATRIX_CROSS: ${{ matrix.cross }}
+      MATRIX_WITH_GUI: ${{ matrix.with_gui }}
     steps:
       - uses: actions/checkout@v4
 
@@ -102,6 +111,42 @@ jobs:
           AR_x86_64_pc_windows_gnu: x86_64-w64-mingw32-ar
         run: cargo build --release --target "$MATRIX_TARGET" -p openxgram-cli
 
+      - name: Install GUI build dependencies (Linux)
+        if: matrix.with_gui == true && matrix.os == 'ubuntu-latest'
+        run: |
+          set -eu
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libssl-dev \
+            pkg-config
+
+      - name: Setup Node 20 (GUI frontend build)
+        if: matrix.with_gui == true
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ui/tauri/app/package-lock.json
+
+      - name: Build GUI frontend (Vite)
+        if: matrix.with_gui == true
+        working-directory: ui/tauri/app
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build openxgram-desktop (Tauri binary, no installers)
+        if: matrix.with_gui == true
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        # ui/tauri 는 워크스페이스 외부 — 자체 Cargo.lock 보유. tauri-cli 없이 cargo 만으로
+        # 바이너리 빌드 (frontendDist=app/dist 가 직전 step 에서 생성됨).
+        working-directory: ui/tauri
+        run: cargo build --release --target "$MATRIX_TARGET" -p openxgram-desktop
+
       - name: Package + SHA256
         shell: bash
         run: |
@@ -109,18 +154,36 @@ jobs:
           mkdir -p dist
           asset="xgram-${RELEASE_TAG}-${MATRIX_ASSET_SUFFIX}"
           stage="$(mktemp -d)"
+          # CLI 바이너리 필수.
           if [ "$MATRIX_TARGET" = "x86_64-pc-windows-gnu" ]; then
             cp "target/$MATRIX_TARGET/release/xgram.exe" "$stage/xgram.exe"
-            ( cd "$stage" && \
-              if command -v sha256sum >/dev/null; then sha256sum xgram.exe > SHA256SUMS;
-              else shasum -a 256 xgram.exe > SHA256SUMS; fi )
-            ( cd "$stage" && zip -q "$OLDPWD/dist/$asset" xgram.exe SHA256SUMS )
           else
             cp "target/$MATRIX_TARGET/release/xgram" "$stage/xgram"
-            ( cd "$stage" && \
-              if command -v sha256sum >/dev/null; then sha256sum xgram > SHA256SUMS;
-              else shasum -a 256 xgram > SHA256SUMS; fi )
-            tar -C "$stage" -czf "dist/$asset" xgram SHA256SUMS
+          fi
+          # GUI 바이너리 — with_gui=true 매트릭스에서만 빌드됨. 발견 시 함께 동봉.
+          gui_src="ui/tauri/target/$MATRIX_TARGET/release/openxgram-desktop"
+          if [ "$MATRIX_TARGET" = "x86_64-pc-windows-gnu" ]; then
+            gui_src="${gui_src}.exe"
+            gui_dest="xgram-desktop.exe"
+          else
+            gui_dest="xgram-desktop"
+          fi
+          if [ -f "$gui_src" ]; then
+            cp "$gui_src" "$stage/$gui_dest"
+            echo "✓ GUI binary 동봉: $gui_dest"
+          else
+            echo "(GUI binary 미빌드 — CLI only)"
+          fi
+          # SHA256SUMS — 모든 staged 파일에 대해.
+          ( cd "$stage" && \
+            files=$(ls -1) && \
+            if command -v sha256sum >/dev/null; then sha256sum $files > SHA256SUMS;
+            else shasum -a 256 $files > SHA256SUMS; fi )
+          # 패키징.
+          if [ "$MATRIX_TARGET" = "x86_64-pc-windows-gnu" ]; then
+            ( cd "$stage" && zip -q "$OLDPWD/dist/$asset" * )
+          else
+            tar -C "$stage" -czf "dist/$asset" .
           fi
           ( cd dist && \
             if command -v sha256sum >/dev/null; then sha256sum "$asset" > "$asset.sha256";
