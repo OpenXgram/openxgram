@@ -59,6 +59,20 @@ pub struct PeerDto {
     pub last_seen: Option<String>,
 }
 
+#[derive(Debug, Serialize, Default)]
+pub struct ChannelAdapterStatus {
+    pub platform: String,
+    pub configured: bool,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct ChannelStatusDto {
+    pub adapters: Vec<ChannelAdapterStatus>,
+    pub peer_count: usize,
+    pub schedule_pending: usize,
+}
+
 #[derive(Debug, Serialize)]
 struct ErrorDto {
     error: String,
@@ -82,6 +96,7 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/status", get(gui_status))
         .route("/v1/gui/initialized", get(gui_initialized))
         .route("/v1/gui/peers", get(gui_peers))
+        .route("/v1/gui/channel/status", get(gui_channel_status))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr)
@@ -199,6 +214,63 @@ async fn gui_peers(
         })
         .collect();
     Ok(Json(dtos))
+}
+
+/// `GET /v1/gui/channel/status` — notify.toml + DB 카운트 (peers, schedule pending).
+async fn gui_channel_status(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<ChannelStatusDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let notify =
+        crate::notify_setup::NotifyConfig::load(Some(state.data_dir.as_ref())).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorDto {
+                    error: format!("NotifyConfig load: {e}"),
+                }),
+            )
+        })?;
+    let mut adapters = Vec::new();
+    adapters.push(ChannelAdapterStatus {
+        platform: "telegram".into(),
+        configured: notify.telegram.is_some(),
+        note: notify
+            .telegram
+            .as_ref()
+            .map(|t| format!("chat_id={}", t.chat_id)),
+    });
+    adapters.push(ChannelAdapterStatus {
+        platform: "discord".into(),
+        configured: notify.discord.is_some(),
+        note: notify.discord.as_ref().map(|d| {
+            let mut parts = Vec::new();
+            if let Some(c) = &d.channel_id {
+                parts.push(format!("channel={c}"));
+            }
+            if d.webhook_url.is_some() {
+                parts.push("webhook".into());
+            }
+            if parts.is_empty() {
+                "(token only)".into()
+            } else {
+                parts.join(" + ")
+            }
+        }),
+    });
+
+    let mut db = state.db.lock().await;
+    let peer_count = PeerStore::new(&mut db).list().map(|v| v.len()).unwrap_or(0);
+    let schedule_pending = openxgram_orchestration::ScheduledStore::new(db.conn())
+        .list(Some(openxgram_orchestration::ScheduledStatus::Pending))
+        .map(|v| v.len())
+        .unwrap_or(0);
+
+    Ok(Json(ChannelStatusDto {
+        adapters,
+        peer_count,
+        schedule_pending,
+    }))
 }
 
 fn unauthorized(s: StatusCode) -> (StatusCode, Json<ErrorDto>) {
