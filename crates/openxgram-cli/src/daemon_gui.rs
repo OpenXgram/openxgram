@@ -19,17 +19,19 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use openxgram_core::paths::{db_path, manifest_path};
 use openxgram_db::{Db, DbConfig};
 use openxgram_manifest::InstallManifest;
-use openxgram_peer::PeerStore;
-use serde::Serialize;
+use openxgram_payment::DailyLimitStore;
+use openxgram_peer::{PeerRole, PeerStore};
+use openxgram_vault::VaultStore;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 #[derive(Clone)]
@@ -78,6 +80,34 @@ struct ErrorDto {
     error: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct PeerAddBody {
+    pub alias: String,
+    pub address: String,
+    pub public_key_hex: String,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PendingDto {
+    pub id: String,
+    pub key: String,
+    pub agent: String,
+    pub action: String,
+    pub status: String,
+    pub requested_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DenyBody {
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DailyLimitBody {
+    pub micro_usdc: i64,
+}
+
 /// GUI HTTP 서버 가동 — 별도 axum 인스턴스, transport(47300) 와 분리된 포트.
 pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Result<()> {
     let db = Db::open(DbConfig {
@@ -95,8 +125,21 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/health", get(gui_health))
         .route("/v1/gui/status", get(gui_status))
         .route("/v1/gui/initialized", get(gui_initialized))
-        .route("/v1/gui/peers", get(gui_peers))
+        .route("/v1/gui/peers", get(gui_peers).post(gui_peer_add))
         .route("/v1/gui/channel/status", get(gui_channel_status))
+        .route("/v1/gui/vault/pending", get(gui_vault_pending_list))
+        .route(
+            "/v1/gui/vault/pending/:id/approve",
+            post(gui_vault_pending_approve),
+        )
+        .route(
+            "/v1/gui/vault/pending/:id/deny",
+            post(gui_vault_pending_deny),
+        )
+        .route(
+            "/v1/gui/payment/daily-limit",
+            get(gui_payment_get_limit).put(gui_payment_set_limit),
+        )
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr)
@@ -271,6 +314,146 @@ async fn gui_channel_status(
         peer_count,
         schedule_pending,
     }))
+}
+
+/// `POST /v1/gui/peers` — 새 peer 등록.
+/// pubkey → keccak/EIP-55 eth_address 자동 도출 (PR #138 패턴 재사용).
+async fn gui_peer_add(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<PeerAddBody>,
+) -> Result<Json<PeerDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    if body.alias.trim().is_empty()
+        || body.address.trim().is_empty()
+        || body.public_key_hex.trim().is_empty()
+    {
+        return Err(bad_request("alias/address/public_key_hex 필수"));
+    }
+    let eth_addr = crate::peer::eth_address_from_pubkey_hex(&body.public_key_hex)
+        .map_err(|e| bad_request(&format!("public_key 파싱: {e}")))?;
+    let mut db = state.db.lock().await;
+    let p = PeerStore::new(&mut db)
+        .add_with_eth(
+            &body.alias,
+            &body.public_key_hex,
+            &body.address,
+            Some(&eth_addr),
+            PeerRole::Worker,
+            body.notes.as_deref(),
+        )
+        .map_err(|e| internal(&format!("peer add: {e}")))?;
+    Ok(Json(PeerDto {
+        id: p.id,
+        alias: p.alias,
+        address: p.address,
+        public_key_hex: p.public_key_hex,
+        role: p.role.as_str().to_string(),
+        created_at: p.created_at.to_rfc3339(),
+        last_seen: p.last_seen.map(|t| t.to_rfc3339()),
+    }))
+}
+
+/// `GET /v1/gui/vault/pending` — vault 의 pending 승인 요청 목록.
+async fn gui_vault_pending_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<PendingDto>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let rows = VaultStore::new(&mut db)
+        .list_pending()
+        .map_err(|e| internal(&format!("list_pending: {e}")))?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|p| PendingDto {
+                id: p.id,
+                key: p.key,
+                agent: p.agent,
+                action: p.action.as_str().to_string(),
+                status: p.status.as_str().to_string(),
+                requested_at: p.requested_at.to_rfc3339(),
+            })
+            .collect(),
+    ))
+}
+
+/// `POST /v1/gui/vault/pending/:id/approve` — pending 승인.
+async fn gui_vault_pending_approve(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    VaultStore::new(&mut db)
+        .approve_confirmation(&id)
+        .map_err(|e| internal(&format!("approve: {e}")))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /v1/gui/vault/pending/:id/deny` — pending 거부.
+async fn gui_vault_pending_deny(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    body: Option<Json<DenyBody>>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let _ = body; // Phase 2: 거부 사유 컬럼 추가 후 기록.
+    let mut db = state.db.lock().await;
+    VaultStore::new(&mut db)
+        .deny_confirmation(&id)
+        .map_err(|e| internal(&format!("deny: {e}")))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// Tauri 측 handlers_core.rs 와 동일 키 — 단일 master/chain 단위.
+const PAYMENT_LIMIT_AGENT: &str = "default";
+const PAYMENT_LIMIT_CHAIN: &str = "base";
+
+/// `GET /v1/gui/payment/daily-limit` — 현재 일일 USDC 한도 (micro USDC).
+async fn gui_payment_get_limit(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<i64>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let row = DailyLimitStore::new(&mut db)
+        .get(PAYMENT_LIMIT_AGENT, PAYMENT_LIMIT_CHAIN)
+        .map_err(|e| internal(&format!("daily limit get: {e}")))?;
+    Ok(Json(row.map(|r| r.daily_micro).unwrap_or(0)))
+}
+
+/// `PUT /v1/gui/payment/daily-limit` — 일일 USDC 한도 설정.
+async fn gui_payment_set_limit(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<DailyLimitBody>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    if body.micro_usdc < 0 {
+        return Err(bad_request("micro_usdc 는 0 이상"));
+    }
+    let mut db = state.db.lock().await;
+    DailyLimitStore::new(&mut db)
+        .set(PAYMENT_LIMIT_AGENT, PAYMENT_LIMIT_CHAIN, body.micro_usdc)
+        .map_err(|e| internal(&format!("daily limit set: {e}")))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn bad_request(msg: &str) -> (StatusCode, Json<ErrorDto>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(ErrorDto { error: msg.into() }),
+    )
+}
+
+fn internal(msg: &str) -> (StatusCode, Json<ErrorDto>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorDto { error: msg.into() }),
+    )
 }
 
 fn unauthorized(s: StatusCode) -> (StatusCode, Json<ErrorDto>) {

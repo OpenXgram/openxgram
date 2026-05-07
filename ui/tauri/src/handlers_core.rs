@@ -93,7 +93,21 @@ pub struct PendingDto {
 }
 
 #[tauri::command]
-pub fn vault_pending_list(state: State<'_, AppState>) -> Result<Vec<PendingDto>, String> {
+pub async fn vault_pending_list(state: State<'_, AppState>) -> Result<Vec<PendingDto>, String> {
+    if let Some(client) = crate::daemon_client::DaemonClient::from_env() {
+        let r = client.vault_pending_list().await?;
+        return Ok(r
+            .into_iter()
+            .map(|p| PendingDto {
+                id: p.id,
+                key: p.key,
+                agent: p.agent,
+                action: p.action,
+                status: p.status,
+                requested_at: p.requested_at,
+            })
+            .collect());
+    }
     let out: Option<Vec<PendingDto>> = with_db_optional(&state, |db| {
         let mut store = VaultStore::new(db);
         let rows = store
@@ -115,7 +129,13 @@ pub fn vault_pending_list(state: State<'_, AppState>) -> Result<Vec<PendingDto>,
 }
 
 #[tauri::command]
-pub fn vault_pending_approve(state: State<'_, AppState>, id: String) -> Result<(), String> {
+pub async fn vault_pending_approve(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    if let Some(client) = crate::daemon_client::DaemonClient::from_env() {
+        return client.vault_pending_approve(&id).await;
+    }
     with_db_required(&state, |db| {
         let mut store = VaultStore::new(db);
         store
@@ -125,11 +145,14 @@ pub fn vault_pending_approve(state: State<'_, AppState>, id: String) -> Result<(
 }
 
 #[tauri::command]
-pub fn vault_pending_deny(
+pub async fn vault_pending_deny(
     state: State<'_, AppState>,
     id: String,
     reason: Option<String>,
 ) -> Result<(), String> {
+    if let Some(client) = crate::daemon_client::DaemonClient::from_env() {
+        return client.vault_pending_deny(&id, reason).await;
+    }
     let _ = reason; // Phase 2: 거부 사유 컬럼 추가 후 기록.
     with_db_required(&state, |db| {
         let mut store = VaultStore::new(db);
@@ -297,7 +320,7 @@ pub struct PeerAddForm {
 }
 
 #[tauri::command]
-pub fn peer_add(
+pub async fn peer_add(
     state: State<'_, AppState>,
     alias: String,
     address: String,
@@ -306,6 +329,25 @@ pub fn peer_add(
 ) -> Result<PeerDto, String> {
     if alias.trim().is_empty() || address.trim().is_empty() || pubkey.trim().is_empty() {
         return Err("alias/address/pubkey 필수".into());
+    }
+    if let Some(client) = crate::daemon_client::DaemonClient::from_env() {
+        let r = client
+            .peer_add(&crate::daemon_client::PeerAddBody {
+                alias: alias.clone(),
+                address: address.clone(),
+                public_key_hex: pubkey.clone(),
+                notes: machine.clone(),
+            })
+            .await?;
+        return Ok(PeerDto {
+            id: r.id,
+            alias: r.alias,
+            address: r.address,
+            public_key_hex: r.public_key_hex,
+            role: r.role,
+            created_at: r.created_at,
+            last_seen: r.last_seen,
+        });
     }
     with_db_required(&state, |db| {
         let mut store = PeerStore::new(db);
@@ -351,7 +393,10 @@ const PAYMENT_LIMIT_AGENT: &str = "default";
 const PAYMENT_LIMIT_CHAIN: &str = "base";
 
 #[tauri::command]
-pub fn payment_get_daily_limit(state: State<'_, AppState>) -> Result<i64, String> {
+pub async fn payment_get_daily_limit(state: State<'_, AppState>) -> Result<i64, String> {
+    if let Some(client) = crate::daemon_client::DaemonClient::from_env() {
+        return client.payment_get_daily_limit().await;
+    }
     let out: Option<i64> = with_db_optional(&state, |db| {
         let mut store = DailyLimitStore::new(db);
         let row = store
@@ -363,9 +408,15 @@ pub fn payment_get_daily_limit(state: State<'_, AppState>) -> Result<i64, String
 }
 
 #[tauri::command]
-pub fn payment_set_daily_limit(state: State<'_, AppState>, micro_usdc: i64) -> Result<(), String> {
+pub async fn payment_set_daily_limit(
+    state: State<'_, AppState>,
+    micro_usdc: i64,
+) -> Result<(), String> {
     if micro_usdc < 0 {
         return Err("micro_usdc 음수 불가".into());
+    }
+    if let Some(client) = crate::daemon_client::DaemonClient::from_env() {
+        return client.payment_set_daily_limit(micro_usdc).await;
     }
     with_db_required(&state, |db| {
         let mut store = DailyLimitStore::new(db);

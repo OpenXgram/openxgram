@@ -8,7 +8,7 @@
 //!
 //! 절대 규칙: silent fallback 금지 — env 있는데 호출 실패 시 raise (lib fallback 안 함).
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub struct DaemonClient {
@@ -132,4 +132,103 @@ impl DaemonClient {
             .await
             .map_err(|e| format!("channel/status JSON: {e}"))
     }
+
+    pub async fn peer_add(&self, body: &PeerAddBody) -> Result<PeerDto, String> {
+        self.req(reqwest::Method::POST, "/v1/gui/peers")
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| format!("daemon POST /v1/gui/peers: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("peer_add HTTP: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("peer_add JSON: {e}"))
+    }
+
+    pub async fn vault_pending_list(&self) -> Result<Vec<PendingDto>, String> {
+        self.req(reqwest::Method::GET, "/v1/gui/vault/pending")
+            .send()
+            .await
+            .map_err(|e| format!("daemon vault/pending: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("HTTP: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("JSON: {e}"))
+    }
+
+    pub async fn vault_pending_approve(&self, id: &str) -> Result<(), String> {
+        self.req(
+            reqwest::Method::POST,
+            &format!("/v1/gui/vault/pending/{id}/approve"),
+        )
+        .send()
+        .await
+        .map_err(|e| format!("daemon approve: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("HTTP: {e}"))?;
+        Ok(())
+    }
+
+    pub async fn vault_pending_deny(&self, id: &str, reason: Option<String>) -> Result<(), String> {
+        let body = serde_json::json!({ "reason": reason });
+        self.req(
+            reqwest::Method::POST,
+            &format!("/v1/gui/vault/pending/{id}/deny"),
+        )
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("daemon deny: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("HTTP: {e}"))?;
+        Ok(())
+    }
+
+    pub async fn payment_get_daily_limit(&self) -> Result<i64, String> {
+        self.req(reqwest::Method::GET, "/v1/gui/payment/daily-limit")
+            .send()
+            .await
+            .map_err(|e| format!("daemon daily-limit: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("HTTP: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("JSON: {e}"))
+    }
+
+    pub async fn payment_set_daily_limit(&self, micro_usdc: i64) -> Result<(), String> {
+        self.req(reqwest::Method::PUT, "/v1/gui/payment/daily-limit")
+            .json(&DailyLimitBody { micro_usdc })
+            .send()
+            .await
+            .map_err(|e| format!("daemon set daily-limit: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("HTTP: {e}"))?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct PeerAddBody {
+    pub alias: String,
+    pub address: String,
+    pub public_key_hex: String,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PendingDto {
+    pub id: String,
+    pub key: String,
+    pub agent: String,
+    pub action: String,
+    pub status: String,
+    pub requested_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct DailyLimitBody {
+    pub micro_usdc: i64,
 }
