@@ -273,6 +273,19 @@ pub fn process_inbound(
             continue;
         }
 
+        // 4b. payment receipt 자동 인식 — 첫 줄이 magic prefix 면 L2 reference memory 로 추가 기록.
+        //     수취인 측이 "최근 받은 결제" 를 메모리 검색으로 즉시 회상 가능 (PRD §16 양쪽 메모리 기록).
+        if let Some(rest) = body.strip_prefix("xgr-payment-receipt-v1\n") {
+            match record_payment_receipt(&mut db, &peer.alias, &env.from, rest) {
+                Ok(memo_id) => tracing::info!(
+                    from = %env.from,
+                    memory_id = %memo_id,
+                    "payment receipt → L2 memory(reference) 기록"
+                ),
+                Err(e) => tracing::warn!(error = %e, "payment receipt 메모리 기록 실패"),
+            }
+        }
+
         // 5. peer last_seen 갱신
         if let Err(e) = PeerStore::new(&mut db).touch_by_eth_address(&env.from) {
             tracing::warn!(error = %e, "peer.touch 실패");
@@ -280,4 +293,33 @@ pub fn process_inbound(
         tracing::info!(from = %env.from, session = %session.id, "inbound envelope 저장 완료");
     }
     Ok(())
+}
+
+/// magic-prefix 가 떨어진 JSON body 를 파싱해서 사람이 읽기 쉬운 reference memory 로 기록.
+/// 반환: 새 memory id.
+fn record_payment_receipt(
+    db: &mut openxgram_db::Db,
+    sender_alias: &str,
+    sender_addr: &str,
+    json_body: &str,
+) -> Result<String> {
+    use openxgram_memory::{MemoryKind, MemoryStore};
+    let v: serde_json::Value = serde_json::from_str(json_body.trim())
+        .with_context(|| "payment receipt JSON 파싱 실패")?;
+    let amount = v
+        .get("amount_display")
+        .and_then(|x| x.as_str())
+        .unwrap_or("?? USDC");
+    let chain = v.get("chain").and_then(|x| x.as_str()).unwrap_or("?");
+    let tx_hash = v.get("tx_hash").and_then(|x| x.as_str()).unwrap_or("?");
+    let memo = v.get("memo").and_then(|x| x.as_str()).unwrap_or("");
+    let intent_id = v.get("intent_id").and_then(|x| x.as_str()).unwrap_or("?");
+    let content = format!(
+        "Received {amount} from {sender_alias} ({sender_addr}) on {chain}.\n\
+         tx_hash: {tx_hash}\n\
+         intent_id: {intent_id}\n\
+         memo: {memo}"
+    );
+    let m = MemoryStore::new(db).insert(None, MemoryKind::Reference, &content)?;
+    Ok(m.id)
 }

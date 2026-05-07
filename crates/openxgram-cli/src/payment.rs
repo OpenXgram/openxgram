@@ -9,7 +9,7 @@ use openxgram_core::env::require_password;
 use openxgram_core::paths::{db_path, keystore_dir, MASTER_KEY_NAME};
 use openxgram_db::{Db, DbConfig};
 use openxgram_keystore::{FsKeystore, Keystore};
-use openxgram_payment::{chain, PaymentStore};
+use openxgram_payment::{chain, submit_intent, PaymentState, PaymentStore};
 
 #[derive(Debug, Clone)]
 pub enum PaymentAction {
@@ -38,6 +38,112 @@ pub enum PaymentAction {
         id: String,
         reason: String,
     },
+}
+
+/// `payment submit` — signed intent 를 RPC 로 on-chain 제출.
+/// rpc_url 이 None 이면 chain 의 default_rpc 사용 (env override 가능).
+/// notify_peer_alias 가 있으면 송금 성공 직후 해당 peer 에게 결제 통지 envelope 발송.
+pub async fn run_payment_submit(
+    data_dir: &Path,
+    id: &str,
+    rpc_url: Option<&str>,
+    notify_peer_alias: Option<&str>,
+) -> Result<()> {
+    let pw = openxgram_core::env::require_password()?;
+    let ks = FsKeystore::new(keystore_dir(data_dir));
+    let master = ks
+        .load(MASTER_KEY_NAME, &pw)
+        .context("master 키 로드 실패")?;
+
+    let mut db = open_db(data_dir)?;
+    let mut store = PaymentStore::new(&mut db);
+    let intent = store
+        .get(id)?
+        .ok_or_else(|| anyhow::anyhow!("payment 없음: {id}"))?;
+    if intent.state != PaymentState::Signed {
+        bail!(
+            "state != signed (현재: {}). `xgram payment sign {id}` 먼저 실행.",
+            intent.state.as_str()
+        );
+    }
+
+    let rpc = resolve_rpc_url(&intent.chain, rpc_url)?;
+    println!("→ {} 로 RPC 제출 ({})", rpc, intent.amount_display());
+
+    let tx_hash = submit_intent(&intent, &master, &rpc)
+        .await
+        .context("on-chain submit 실패")?;
+    store.mark_submitted(id, &tx_hash)?;
+
+    println!("✓ payment submit 성공");
+    println!("  id      : {}", intent.id);
+    println!("  amount  : {}", intent.amount_display());
+    println!("  to      : {}", intent.payee_address);
+    println!("  chain   : {}", intent.chain);
+    println!("  tx_hash : {tx_hash}");
+
+    // 수취인 통지 — db 핸들 release 후 peer_send 호출 (peer_send 가 자체 DB open).
+    drop(store);
+    drop(db);
+
+    if let Some(alias) = notify_peer_alias {
+        let body = build_payment_receipt_body(&intent, &tx_hash, &master.address.0);
+        println!();
+        println!("→ peer '{alias}' 에 결제 통지 발송 중...");
+        crate::peer_send::run_peer_send(data_dir, alias, None, &body, &pw)
+            .await
+            .with_context(|| format!("peer '{alias}' 통지 실패"))?;
+        println!("✓ 통지 완료 — 수취인 inbox 에 결제 영수증 기록.");
+    }
+
+    println!();
+    println!("확정 모니터링: 별도 watcher 또는 `xgram payment mark-confirmed {id}` (수동).");
+    Ok(())
+}
+
+/// 수취인이 inbox 에서 식별 가능하도록 magic prefix + JSON 포맷.
+/// 첫 줄은 고정 식별자 "xgr-payment-receipt-v1" — 향후 receiver 측 구조화 파서 진입점.
+fn build_payment_receipt_body(
+    intent: &openxgram_payment::PaymentIntent,
+    tx_hash: &str,
+    sender_address: &str,
+) -> String {
+    let json = serde_json::json!({
+        "intent_id": intent.id,
+        "tx_hash": tx_hash,
+        "chain": intent.chain,
+        "amount_usdc_micro": intent.amount_usdc_micro,
+        "amount_display": intent.amount_display(),
+        "to": intent.payee_address,
+        "from": sender_address,
+        "memo": intent.memo,
+        "nonce": intent.nonce,
+    });
+    format!("xgr-payment-receipt-v1\n{json}")
+}
+
+fn resolve_rpc_url(chain_name: &str, override_url: Option<&str>) -> Result<String> {
+    if let Some(u) = override_url {
+        if !u.trim().is_empty() {
+            return Ok(u.to_string());
+        }
+    }
+    // chain 별 env 우선
+    let env_key = match chain_name {
+        "base" => "XGRAM_BASE_RPC_PRIMARY",
+        "base-sepolia" => "XGRAM_BASE_SEPOLIA_RPC",
+        _ => "",
+    };
+    if !env_key.is_empty() {
+        if let Ok(v) = std::env::var(env_key) {
+            if !v.trim().is_empty() {
+                return Ok(v);
+            }
+        }
+    }
+    let cfg = chain::lookup(chain_name)
+        .ok_or_else(|| anyhow::anyhow!("지원하지 않는 chain: {chain_name}"))?;
+    Ok(cfg.default_rpc.to_string())
 }
 
 pub fn run_payment(data_dir: &Path, action: PaymentAction) -> Result<()> {
