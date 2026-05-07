@@ -25,6 +25,7 @@ pub mod patterns;
 pub mod payment;
 pub mod peer;
 pub mod peer_send;
+pub mod pw;
 pub mod ratchet_cron;
 pub mod reset;
 pub mod retention;
