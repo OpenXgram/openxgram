@@ -15,7 +15,9 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use openxgram_core::env::{require_password, require_seed_phrase, MIN_PASSWORD_LEN};
+use openxgram_core::env::{require_seed_phrase, MIN_PASSWORD_LEN};
+
+use crate::pw::obtain_password_for_init;
 use openxgram_core::paths::{db_path, install_dirs, keystore_dir, manifest_path, MASTER_KEY_NAME};
 use openxgram_core::ports::{
     HTTP_PORT, HTTP_SERVICE, INBOUND_WEBHOOK_PORT, REQUIRED_PORTS, RPC_PORT, RPC_SERVICE,
@@ -54,7 +56,7 @@ pub fn run_init(opts: &InitOpts) -> Result<()> {
     let phrase = obtain_seed_phrase(opts)?;
 
     println!("[4/6] 마스터 키페어 ({MASTER_DERIVATION_PATH})");
-    let password = require_password()?;
+    let password = obtain_password_for_init()?;
     if password.len() < MIN_PASSWORD_LEN {
         bail!(
             "패스워드는 최소 {MIN_PASSWORD_LEN}자 (현재: {})",
@@ -112,14 +114,19 @@ fn precheck(opts: &InitOpts) -> Result<()> {
         );
     }
     // 통합 테스트 병렬 실행 시 동일 포트 contention 회피용 escape hatch.
-    // CI · 사용자 init 에서는 set 되지 않음 → 정상 점검.
     if std::env::var("XGRAM_SKIP_PORT_PRECHECK").is_ok() {
         return Ok(());
     }
+    // init 자체는 포트를 안 쓴다 (keystore·DB·manifest 만 만든다).
+    // 포트는 daemon 가동 시점에야 필요하므로, 선점 사실은 경고로만 알리고 init 은 진행.
+    // bail 로 막던 이전 동작은 사용자 마찰의 큰 원인이었다 (예: 데모 daemon 위에서 새 init).
     for &port in REQUIRED_PORTS {
         match TcpListener::bind(("127.0.0.1", port)) {
             Ok(l) => drop(l),
-            Err(e) => bail!("필수 포트 {port} 점유: {e}"),
+            Err(e) => eprintln!(
+                "  ⚠ 포트 {port} 현재 점유 ({e}) — init 은 진행 가능. \
+                 이후 `xgram daemon` 띄울 땐 다른 프로세스 정리 또는 --bind 로 다른 포트 지정 필요."
+            ),
         }
     }
     Ok(())
