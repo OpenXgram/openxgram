@@ -28,7 +28,24 @@ pub struct ChannelStatusDto {
 }
 
 #[tauri::command]
-pub fn channel_status(state: State<'_, AppState>) -> Result<ChannelStatusDto, String> {
+pub async fn channel_status(state: State<'_, AppState>) -> Result<ChannelStatusDto, String> {
+    // 원격 daemon 모드 — XGRAM_DAEMON_URL 설정 시 daemon /v1/gui/channel/status 호출.
+    if let Some(client) = crate::daemon_client::DaemonClient::from_env() {
+        let r = client.channel_status().await?;
+        return Ok(ChannelStatusDto {
+            adapters: r
+                .adapters
+                .into_iter()
+                .map(|a| ChannelAdapterStatus {
+                    platform: a.platform,
+                    configured: a.configured,
+                    note: a.note,
+                })
+                .collect(),
+            peer_count: r.peer_count,
+            schedule_pending: r.schedule_pending,
+        });
+    }
     // 1) notify.toml — 어댑터 설정 여부
     let notify = NotifyConfig::load(Some(&state.data_dir))
         .map_err(|e| format!("NotifyConfig load: {e}"))?;

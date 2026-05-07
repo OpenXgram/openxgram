@@ -36,6 +36,20 @@ pub struct PeerDto {
     pub last_seen: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ChannelAdapterStatus {
+    pub platform: String,
+    pub configured: bool,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChannelStatusDto {
+    pub adapters: Vec<ChannelAdapterStatus>,
+    pub peer_count: usize,
+    pub schedule_pending: usize,
+}
+
 impl DaemonClient {
     /// env 기반 — `XGRAM_DAEMON_URL` 없으면 None (로컬 모드).
     pub fn from_env() -> Option<Self> {
@@ -105,5 +119,17 @@ impl DaemonClient {
             .json()
             .await
             .map_err(|e| format!("peers JSON: {e}"))
+    }
+
+    pub async fn channel_status(&self) -> Result<ChannelStatusDto, String> {
+        self.req(reqwest::Method::GET, "/v1/gui/channel/status")
+            .send()
+            .await
+            .map_err(|e| format!("daemon /v1/gui/channel/status: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("channel/status HTTP: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("channel/status JSON: {e}"))
     }
 }
