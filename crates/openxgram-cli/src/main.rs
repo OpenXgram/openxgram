@@ -203,7 +203,7 @@ enum Commands {
     Daemon {
         #[arg(long)]
         data_dir: Option<PathBuf>,
-        /// transport bind 주소 (기본 127.0.0.1:7300, --tailscale 우선)
+        /// transport bind 주소 (기본 127.0.0.1:47300, --tailscale 우선)
         #[arg(long)]
         bind: Option<std::net::SocketAddr>,
         /// reflection cron 표현식 (기본 0 0 15 * * * = 자정 KST)
@@ -221,7 +221,7 @@ enum Commands {
         binary: Option<PathBuf>,
         #[arg(long)]
         data_dir: Option<PathBuf>,
-        #[arg(long, default_value = "127.0.0.1:7300")]
+        #[arg(long, default_value = "127.0.0.1:47300")]
         bind: String,
         /// unit 파일 출력 경로 (기본: ~/.config/systemd/user/openxgram-sidecar.service)
         #[arg(long)]
@@ -251,7 +251,7 @@ enum Commands {
     McpServe {
         #[arg(long)]
         data_dir: Option<PathBuf>,
-        /// HTTP transport bind 주소 (예: 127.0.0.1:7301). 생략 시 stdio.
+        /// HTTP transport bind 주소 (예: 127.0.0.1:47301). 생략 시 stdio.
         #[arg(long)]
         bind: Option<std::net::SocketAddr>,
     },

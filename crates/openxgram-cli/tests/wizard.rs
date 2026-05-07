@@ -70,7 +70,7 @@ fn welcome_to_done_via_full_9_steps() {
     assert!(!cfg.adapter_telegram);
     assert!(cfg.install_daemon);
     assert!(cfg.install_backup_timer);
-    assert_eq!(cfg.bind, "127.0.0.1:7300");
+    assert_eq!(cfg.bind, "127.0.0.1:47300");
 }
 
 #[test]

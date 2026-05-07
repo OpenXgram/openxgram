@@ -13,7 +13,7 @@
 //!   4. DataDir     (텍스트, 비어있으면 기본 ~/.openxgram)
 //!   5. SeedMode    (N=new, I=import via XGRAM_SEED)
 //!   6. Adapter     (D 토글 discord, T 토글 telegram)
-//!   7. Bind        (텍스트, 기본 127.0.0.1:7300)
+//!   7. Bind        (텍스트, 기본 127.0.0.1:47300)
 //!   8. DaemonInstall (Y/N)
 //!   9. BackupInstall (Y/N)
 //!
@@ -90,7 +90,7 @@ impl Default for WizardConfig {
             seed_mode: SeedMode::New,
             adapter_discord: false,
             adapter_telegram: false,
-            bind: "127.0.0.1:7300".into(),
+            bind: "127.0.0.1:47300".into(),
             install_daemon: false,
             install_backup_timer: false,
         }
@@ -347,7 +347,7 @@ fn body_for(state: &WizardState) -> (String, &'static str) {
         ),
         WizardState::Bind { cfg } => (
             format!(
-                "[6/9] Transport bind\n\nxgram daemon 의 HTTP 바인딩 주소. 기본 127.0.0.1:7300 (localhost 전용).\nTailscale/외부 노출은 추후 mTLS 와 함께.\n\n현재 입력: {}",
+                "[6/9] Transport bind\n\nxgram daemon 의 HTTP 바인딩 주소. 기본 127.0.0.1:47300 (localhost 전용).\nTailscale/외부 노출은 추후 mTLS 와 함께.\n\n현재 입력: {}",
                 cfg.bind
             ),
             "Enter: 다음 (bind 비어있지 않을 때)  /  Esc: 이전",

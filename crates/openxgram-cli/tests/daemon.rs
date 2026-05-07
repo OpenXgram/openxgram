@@ -12,7 +12,7 @@ use std::path::PathBuf;
 fn daemon_opts_constructable() {
     let _opts = DaemonOpts {
         data_dir: PathBuf::from("/tmp/x"),
-        bind_addr: Some("127.0.0.1:7300".parse().unwrap()),
+        bind_addr: Some("127.0.0.1:47300".parse().unwrap()),
         reflection_cron: Some("0 0 15 * * *".to_string()),
         tailscale: false,
     };

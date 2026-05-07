@@ -152,9 +152,9 @@ xgram vault delete --key discord/bot
 다른 클라이언트(비-Claude Code)는 HTTP transport 사용:
 
 ```bash
-xgram mcp-serve --bind 127.0.0.1:7301
-# POST http://127.0.0.1:7301/rpc — JSON-RPC 2.0 (initialize / tools/list / tools/call)
-# GET  http://127.0.0.1:7301/health
+xgram mcp-serve --bind 127.0.0.1:47301
+# POST http://127.0.0.1:47301/rpc — JSON-RPC 2.0 (initialize / tools/list / tools/call)
+# GET  http://127.0.0.1:47301/health
 ```
 
 ### Tailscale 자동 bind (PRD §15)

@@ -12,7 +12,7 @@ use openxgram_scheduler::{add_reflection_job, build_scheduler, NIGHTLY_REFLECTIO
 use openxgram_transport::{spawn_server_with_metrics, MetricsProvider};
 use std::sync::Arc;
 
-const DEFAULT_BIND: &str = "127.0.0.1:7300";
+const DEFAULT_BIND: &str = "127.0.0.1:47300";
 
 #[derive(Debug, Clone)]
 pub struct DaemonOpts {
@@ -30,7 +30,7 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
     } else if opts.tailscale {
         let ip = openxgram_transport::tailscale::local_ipv4()
             .context("--tailscale 요청 — `tailscale ip --4` 실패")?;
-        SocketAddr::new(std::net::IpAddr::V4(ip), 7300)
+        SocketAddr::new(std::net::IpAddr::V4(ip), 47300)
     } else {
         DEFAULT_BIND.parse().expect("DEFAULT_BIND parses")
     };
