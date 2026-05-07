@@ -316,8 +316,8 @@ mod tests {
 
     #[test]
     fn parse_route_http() {
-        let r = parse_route("http://127.0.0.1:7300", PK).unwrap();
-        assert!(matches!(r, SendRoute::Http(ref u) if u == "http://127.0.0.1:7300"));
+        let r = parse_route("http://127.0.0.1:47300", PK).unwrap();
+        assert!(matches!(r, SendRoute::Http(ref u) if u == "http://127.0.0.1:47300"));
     }
 
     #[test]

@@ -22,7 +22,7 @@ fn sample_opts() -> UnitOpts {
     UnitOpts {
         binary: PathBuf::from("/usr/local/bin/xgram"),
         data_dir: PathBuf::from("/home/user/.openxgram"),
-        bind: "127.0.0.1:7300".into(),
+        bind: "127.0.0.1:47300".into(),
     }
 }
 
@@ -34,7 +34,7 @@ fn render_unit_includes_required_sections() {
     assert!(unit.contains("[Service]"));
     assert!(unit.contains("[Install]"));
     assert!(unit.contains("ExecStart=/usr/local/bin/xgram daemon"));
-    assert!(unit.contains("--bind 127.0.0.1:7300"));
+    assert!(unit.contains("--bind 127.0.0.1:47300"));
     assert!(unit.contains("Restart=on-failure"));
     assert!(unit.contains("WantedBy=default.target"));
 }

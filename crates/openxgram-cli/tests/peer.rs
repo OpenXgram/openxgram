@@ -41,7 +41,7 @@ fn add_list_show_touch_delete_round_trip() {
             // PR #138 이후 CLI 의 peer add 가 pubkey 를 sec1 로 파싱해 eth_address 를 도출하므로 실 점이 필요.
             public_key_hex: "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
                 .into(),
-            address: "http://192.168.1.10:7300".into(),
+            address: "http://192.168.1.10:47300".into(),
             role: PeerRole::Secondary,
             notes: Some("home server".into()),
         },

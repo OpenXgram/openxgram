@@ -38,7 +38,7 @@ fn add_then_get_round_trip() {
         .add(
             "mac-mini",
             "0303030303030303030303030303030303030303030303030303030303030303",
-            "http://192.168.1.10:7300",
+            "http://192.168.1.10:47300",
             PeerRole::Secondary,
             Some("home server"),
         )

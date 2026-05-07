@@ -42,7 +42,7 @@ xgram dump --kind sizes
 
 # 6) cron 자동화 — daemon 의 reflection cron 과 별도 schedule
 xgram daemon-install \
-  --bind 127.0.0.1:7300 \
+  --bind 127.0.0.1:47300 \
   --reflection-cron "0 0 15 * * *"
 # retention cron 표현식 노출은 후속 PR
 ```
