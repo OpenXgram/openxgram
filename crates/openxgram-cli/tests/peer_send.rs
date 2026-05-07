@@ -11,6 +11,13 @@ use tempfile::tempdir;
 
 const TEST_PASSWORD: &str = "test-password-12345";
 
+// 유효한 secp256k1 compressed pubkey 테스트 벡터 (k=1..4 의 G·2G·3G·4G).
+// PR #138 이후 CLI 의 peer add 가 sec1 검증 + eth_address 도출하므로 실 점이 필요.
+const PK_G1: &str = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+const PK_G2: &str = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+const PK_G3: &str = "02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
+const PK_G4: &str = "02e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd13";
+
 fn init_opts(data_dir: PathBuf) -> InitOpts {
     InitOpts {
         alias: "peer-send-test".into(),
@@ -47,7 +54,7 @@ async fn send_to_peer_with_local_server() {
         &data_dir,
         PeerAction::Add {
             alias: "local-test".into(),
-            public_key_hex: "ab".repeat(33),
+            public_key_hex: PK_G1.into(),
             address,
             role: PeerRole::Worker,
             notes: None,
@@ -99,7 +106,7 @@ async fn broadcast_to_multiple_peers_partial_failure() {
         &data_dir,
         PeerAction::Add {
             alias: "alpha".into(),
-            public_key_hex: "01".repeat(33),
+            public_key_hex: PK_G2.into(),
             address: addr_a,
             role: PeerRole::Worker,
             notes: None,
@@ -112,7 +119,7 @@ async fn broadcast_to_multiple_peers_partial_failure() {
         &data_dir,
         PeerAction::Add {
             alias: "beta".into(),
-            public_key_hex: "02".repeat(33),
+            public_key_hex: PK_G3.into(),
             address: "http://127.0.0.1:1".into(), // 거의 확실히 닫힘
             role: PeerRole::Worker,
             notes: None,
@@ -147,7 +154,7 @@ async fn unsupported_address_scheme_raises() {
         &data_dir,
         PeerAction::Add {
             alias: "xmtp-peer".into(),
-            public_key_hex: "cd".repeat(33),
+            public_key_hex: PK_G4.into(),
             address: "xmtp://0xRecipient".into(),
             role: PeerRole::Worker,
             notes: None,

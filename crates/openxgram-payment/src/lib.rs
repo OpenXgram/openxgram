@@ -46,9 +46,8 @@ pub async fn submit_intent(
         });
     }
 
-    let cfg = chain::lookup(&intent.chain).ok_or_else(|| {
-        PaymentError::InvalidState(format!("unknown chain: {}", intent.chain))
-    })?;
+    let cfg = chain::lookup(&intent.chain)
+        .ok_or_else(|| PaymentError::InvalidState(format!("unknown chain: {}", intent.chain)))?;
     let usdc_addr: Address = cfg
         .usdc_contract
         .parse()

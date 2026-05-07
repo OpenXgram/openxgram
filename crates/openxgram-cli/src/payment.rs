@@ -55,36 +55,37 @@ pub async fn run_payment_submit(
         .load(MASTER_KEY_NAME, &pw)
         .context("master 키 로드 실패")?;
 
-    let mut db = open_db(data_dir)?;
-    let mut store = PaymentStore::new(&mut db);
-    let intent = store
-        .get(id)?
-        .ok_or_else(|| anyhow::anyhow!("payment 없음: {id}"))?;
-    if intent.state != PaymentState::Signed {
-        bail!(
-            "state != signed (현재: {}). `xgram payment sign {id}` 먼저 실행.",
-            intent.state.as_str()
-        );
-    }
+    // db/store 는 scope 안에서만 사용 → block 종료 시 자동 drop.
+    // peer_send 가 자체 db open 하므로, 그 전에 우리 핸들이 release 되어 있어야 한다.
+    let (intent, tx_hash) = {
+        let mut db = open_db(data_dir)?;
+        let mut store = PaymentStore::new(&mut db);
+        let intent = store
+            .get(id)?
+            .ok_or_else(|| anyhow::anyhow!("payment 없음: {id}"))?;
+        if intent.state != PaymentState::Signed {
+            bail!(
+                "state != signed (현재: {}). `xgram payment sign {id}` 먼저 실행.",
+                intent.state.as_str()
+            );
+        }
 
-    let rpc = resolve_rpc_url(&intent.chain, rpc_url)?;
-    println!("→ {} 로 RPC 제출 ({})", rpc, intent.amount_display());
+        let rpc = resolve_rpc_url(&intent.chain, rpc_url)?;
+        println!("→ {} 로 RPC 제출 ({})", rpc, intent.amount_display());
 
-    let tx_hash = submit_intent(&intent, &master, &rpc)
-        .await
-        .context("on-chain submit 실패")?;
-    store.mark_submitted(id, &tx_hash)?;
+        let tx_hash = submit_intent(&intent, &master, &rpc)
+            .await
+            .context("on-chain submit 실패")?;
+        store.mark_submitted(id, &tx_hash)?;
 
-    println!("✓ payment submit 성공");
-    println!("  id      : {}", intent.id);
-    println!("  amount  : {}", intent.amount_display());
-    println!("  to      : {}", intent.payee_address);
-    println!("  chain   : {}", intent.chain);
-    println!("  tx_hash : {tx_hash}");
-
-    // 수취인 통지 — db 핸들 release 후 peer_send 호출 (peer_send 가 자체 DB open).
-    drop(store);
-    drop(db);
+        println!("✓ payment submit 성공");
+        println!("  id      : {}", intent.id);
+        println!("  amount  : {}", intent.amount_display());
+        println!("  to      : {}", intent.payee_address);
+        println!("  chain   : {}", intent.chain);
+        println!("  tx_hash : {tx_hash}");
+        (intent, tx_hash)
+    };
 
     if let Some(alias) = notify_peer_alias {
         let body = build_payment_receipt_body(&intent, &tx_hash, &master.address.0);

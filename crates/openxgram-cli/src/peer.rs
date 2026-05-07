@@ -14,8 +14,8 @@ use openxgram_peer::{PeerRole, PeerStore};
 /// 압축 secp256k1 공개키 hex (66자) → EIP-55 EVM 주소.
 /// `peer add` 시 항상 eth_address 를 채워야 inbound envelope.from 매칭이 작동한다.
 fn eth_address_from_pubkey_hex(public_key_hex: &str) -> Result<String> {
-    let bytes = hex::decode(public_key_hex)
-        .map_err(|e| anyhow!("public_key hex decode 실패: {e}"))?;
+    let bytes =
+        hex::decode(public_key_hex).map_err(|e| anyhow!("public_key hex decode 실패: {e}"))?;
     let vk = VerifyingKey::from_sec1_bytes(&bytes)
         .map_err(|e| anyhow!("public_key sec1 파싱 실패: {e}"))?;
     Ok(AgentAddress::from_verifying_key(&vk).0)
