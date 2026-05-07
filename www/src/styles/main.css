@@ -147,6 +147,42 @@ pre.code .c { color: var(--fg-mute); font-style: italic; }
 pre.code .n { color: #b8c4ff; }     /* number */
 pre.code .p { color: var(--accent-3); } /* prompt $ */
 
+/* Per-command copy buttons (setupCopyButtons in main.ts) */
+pre.code .cmd-row {
+  display: inline;
+  position: relative;
+}
+pre.code .copy-cmd {
+  position: absolute;
+  right: 0;
+  top: 0;
+  margin-left: 8px;
+  padding: 0 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--fg-mute);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+}
+pre.code .cmd-row:hover .copy-cmd,
+pre.code .copy-cmd:focus-visible {
+  opacity: 1;
+}
+pre.code .copy-cmd:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+pre.code .copy-cmd.copied {
+  opacity: 1;
+  color: var(--accent-3);
+  border-color: var(--accent-3);
+}
+
 /* Diagram */
 .diagram { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; }
 .diagram svg { width: 100%; height: auto; display: block; }
