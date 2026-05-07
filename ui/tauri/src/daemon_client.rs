@@ -8,7 +8,7 @@
 //!
 //! 절대 규칙: silent fallback 금지 — env 있는데 호출 실패 시 raise (lib fallback 안 함).
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub struct DaemonClient {
@@ -132,4 +132,25 @@ impl DaemonClient {
             .await
             .map_err(|e| format!("channel/status JSON: {e}"))
     }
+
+    pub async fn peer_add(&self, body: &PeerAddBody) -> Result<PeerDto, String> {
+        self.req(reqwest::Method::POST, "/v1/gui/peers")
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| format!("daemon POST /v1/gui/peers: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("peer_add HTTP: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("peer_add JSON: {e}"))
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct PeerAddBody {
+    pub alias: String,
+    pub address: String,
+    pub public_key_hex: String,
+    pub notes: Option<String>,
 }

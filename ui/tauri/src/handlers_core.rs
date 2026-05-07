@@ -297,7 +297,7 @@ pub struct PeerAddForm {
 }
 
 #[tauri::command]
-pub fn peer_add(
+pub async fn peer_add(
     state: State<'_, AppState>,
     alias: String,
     address: String,
@@ -307,6 +307,27 @@ pub fn peer_add(
     if alias.trim().is_empty() || address.trim().is_empty() || pubkey.trim().is_empty() {
         return Err("alias/address/pubkey 필수".into());
     }
+    // 원격 daemon 모드: HTTP 클라이언트로 위임 (XGRAM_DAEMON_URL 설정 시).
+    if let Some(client) = crate::daemon_client::DaemonClient::from_env() {
+        let r = client
+            .peer_add(&crate::daemon_client::PeerAddBody {
+                alias: alias.clone(),
+                address: address.clone(),
+                public_key_hex: pubkey.clone(),
+                notes: machine.clone(),
+            })
+            .await?;
+        return Ok(PeerDto {
+            id: r.id,
+            alias: r.alias,
+            address: r.address,
+            public_key_hex: r.public_key_hex,
+            role: r.role,
+            created_at: r.created_at,
+            last_seen: r.last_seen,
+        });
+    }
+    // 로컬 모드 — 기존 lib 호출.
     with_db_required(&state, |db| {
         let mut store = PeerStore::new(db);
         let p = store

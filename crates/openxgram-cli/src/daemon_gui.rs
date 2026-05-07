@@ -28,8 +28,8 @@ use axum::{
 use openxgram_core::paths::{db_path, manifest_path};
 use openxgram_db::{Db, DbConfig};
 use openxgram_manifest::InstallManifest;
-use openxgram_peer::PeerStore;
-use serde::Serialize;
+use openxgram_peer::{PeerRole, PeerStore};
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 #[derive(Clone)]
@@ -95,7 +95,10 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/health", get(gui_health))
         .route("/v1/gui/status", get(gui_status))
         .route("/v1/gui/initialized", get(gui_initialized))
-        .route("/v1/gui/peers", get(gui_peers))
+        .route(
+            "/v1/gui/peers",
+            get(gui_peers).post(gui_peer_add),
+        )
         .route("/v1/gui/channel/status", get(gui_channel_status))
         .with_state(state);
 
@@ -214,6 +217,71 @@ async fn gui_peers(
         })
         .collect();
     Ok(Json(dtos))
+}
+
+/// `POST /v1/gui/peers` 본문.
+#[derive(Debug, Deserialize)]
+pub struct PeerAddBody {
+    pub alias: String,
+    pub address: String,
+    pub public_key_hex: String,
+    pub notes: Option<String>,
+}
+
+/// `POST /v1/gui/peers` — 새 peer 등록.
+/// pubkey → keccak256 → EIP-55 로 eth_address 자동 도출 (PR #138 패턴 재사용).
+async fn gui_peer_add(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<PeerAddBody>,
+) -> Result<Json<PeerDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    if body.alias.trim().is_empty()
+        || body.address.trim().is_empty()
+        || body.public_key_hex.trim().is_empty()
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorDto {
+                error: "alias/address/public_key_hex 필수".into(),
+            }),
+        ));
+    }
+    let eth_addr = crate::peer::eth_address_from_pubkey_hex(&body.public_key_hex).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorDto {
+                error: format!("public_key 파싱 실패: {e}"),
+            }),
+        )
+    })?;
+    let mut db = state.db.lock().await;
+    let p = PeerStore::new(&mut db)
+        .add_with_eth(
+            &body.alias,
+            &body.public_key_hex,
+            &body.address,
+            Some(&eth_addr),
+            PeerRole::Worker,
+            body.notes.as_deref(),
+        )
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorDto {
+                    error: format!("peer add: {e}"),
+                }),
+            )
+        })?;
+    Ok(Json(PeerDto {
+        id: p.id,
+        alias: p.alias,
+        address: p.address,
+        public_key_hex: p.public_key_hex,
+        role: p.role.as_str().to_string(),
+        created_at: p.created_at.to_rfc3339(),
+        last_seen: p.last_seen.map(|t| t.to_rfc3339()),
+    }))
 }
 
 /// `GET /v1/gui/channel/status` — notify.toml + DB 카운트 (peers, schedule pending).
