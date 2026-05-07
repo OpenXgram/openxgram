@@ -164,7 +164,15 @@ pub struct NotifyStatusDto {
 }
 
 #[tauri::command]
-pub fn notify_status(state: State<'_, AppState>) -> Result<NotifyStatusDto, String> {
+pub async fn notify_status(state: State<'_, AppState>) -> Result<NotifyStatusDto, String> {
+    if let Some(client) = crate::daemon_client::DaemonClient::from_env() {
+        let r = client.notify_status().await?;
+        return Ok(NotifyStatusDto {
+            telegram_configured: r.telegram_configured,
+            discord_configured: r.discord_configured,
+            discord_webhook_configured: r.discord_webhook_configured,
+        });
+    }
     let cfg = NotifyConfig::load(Some(&state.data_dir))
         .map_err(|e| format!("NotifyConfig load: {e}"))?;
     Ok(NotifyStatusDto {

@@ -108,6 +108,13 @@ pub struct DailyLimitBody {
     pub micro_usdc: i64,
 }
 
+#[derive(Debug, Serialize, Default)]
+pub struct NotifyStatusDto {
+    pub telegram_configured: bool,
+    pub discord_configured: bool,
+    pub discord_webhook_configured: bool,
+}
+
 /// GUI HTTP 서버 가동 — 별도 axum 인스턴스, transport(47300) 와 분리된 포트.
 pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Result<()> {
     let db = Db::open(DbConfig {
@@ -140,6 +147,7 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
             "/v1/gui/payment/daily-limit",
             get(gui_payment_get_limit).put(gui_payment_set_limit),
         )
+        .route("/v1/gui/notify/status", get(gui_notify_status))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr)
@@ -440,6 +448,26 @@ async fn gui_payment_set_limit(
         .set(PAYMENT_LIMIT_AGENT, PAYMENT_LIMIT_CHAIN, body.micro_usdc)
         .map_err(|e| internal(&format!("daily limit set: {e}")))?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// `GET /v1/gui/notify/status` — notify.toml 의 어댑터 설정 여부.
+async fn gui_notify_status(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<NotifyStatusDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let cfg = crate::notify_setup::NotifyConfig::load(Some(state.data_dir.as_ref()))
+        .map_err(|e| internal(&format!("NotifyConfig load: {e}")))?;
+    Ok(Json(NotifyStatusDto {
+        telegram_configured: cfg.telegram.is_some(),
+        discord_configured: cfg.discord.is_some(),
+        discord_webhook_configured: cfg
+            .discord
+            .as_ref()
+            .and_then(|d| d.webhook_url.as_deref())
+            .map(|s| !s.is_empty())
+            .unwrap_or(false),
+    }))
 }
 
 fn bad_request(msg: &str) -> (StatusCode, Json<ErrorDto>) {
