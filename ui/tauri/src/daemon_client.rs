@@ -1,0 +1,109 @@
+//! Daemon HTTP 클라이언트 — Tauri 핸들러가 원격 daemon 의 `/v1/gui/*` API 호출.
+//!
+//! 모드:
+//!   - **로컬 (default)**: env `XGRAM_DAEMON_URL` 미설정 — 핸들러는 lib 직접 호출 (기존 동작).
+//!   - **원격**: env `XGRAM_DAEMON_URL` 설정 시 (예: `http://100.x.x.x:47302`) HTTP 호출.
+//!
+//! 인증: env `XGRAM_DAEMON_TOKEN` (Bearer). 미설정·서버에서 require_auth 끈 dev 환경 시 생략 가능.
+//!
+//! 절대 규칙: silent fallback 금지 — env 있는데 호출 실패 시 raise (lib fallback 안 함).
+
+use serde::Deserialize;
+
+#[derive(Debug, Clone)]
+pub struct DaemonClient {
+    base_url: String,
+    token: Option<String>,
+    http: reqwest::Client,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StatusDto {
+    pub initialized: bool,
+    pub alias: Option<String>,
+    pub address: Option<String>,
+    pub data_dir: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PeerDto {
+    pub id: String,
+    pub alias: String,
+    pub address: String,
+    pub public_key_hex: String,
+    pub role: String,
+    pub created_at: String,
+    pub last_seen: Option<String>,
+}
+
+impl DaemonClient {
+    /// env 기반 — `XGRAM_DAEMON_URL` 없으면 None (로컬 모드).
+    pub fn from_env() -> Option<Self> {
+        let url = std::env::var("XGRAM_DAEMON_URL").ok()?;
+        if url.trim().is_empty() {
+            return None;
+        }
+        let token = std::env::var("XGRAM_DAEMON_TOKEN").ok().filter(|t| !t.is_empty());
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(8))
+            .build()
+            .ok()?;
+        Some(Self {
+            base_url: url.trim_end_matches('/').to_string(),
+            token,
+            http,
+        })
+    }
+
+    fn req(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+        let mut r = self.http.request(method, format!("{}{path}", self.base_url));
+        if let Some(t) = &self.token {
+            r = r.bearer_auth(t);
+        }
+        r
+    }
+
+    pub async fn health(&self) -> Result<bool, String> {
+        let r = self.req(reqwest::Method::GET, "/v1/gui/health")
+            .send()
+            .await
+            .map_err(|e| format!("daemon health 호출 실패: {e}"))?;
+        Ok(r.status().is_success())
+    }
+
+    pub async fn status(&self) -> Result<StatusDto, String> {
+        self.req(reqwest::Method::GET, "/v1/gui/status")
+            .send()
+            .await
+            .map_err(|e| format!("daemon /v1/gui/status: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("status HTTP: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("status JSON: {e}"))
+    }
+
+    pub async fn initialized(&self) -> Result<bool, String> {
+        self.req(reqwest::Method::GET, "/v1/gui/initialized")
+            .send()
+            .await
+            .map_err(|e| format!("daemon /v1/gui/initialized: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("initialized HTTP: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("initialized JSON: {e}"))
+    }
+
+    pub async fn peers(&self) -> Result<Vec<PeerDto>, String> {
+        self.req(reqwest::Method::GET, "/v1/gui/peers")
+            .send()
+            .await
+            .map_err(|e| format!("daemon /v1/gui/peers: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("peers HTTP: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("peers JSON: {e}"))
+    }
+}
