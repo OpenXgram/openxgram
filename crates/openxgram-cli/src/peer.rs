@@ -4,10 +4,22 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
+use k256::ecdsa::VerifyingKey;
 use openxgram_core::paths::db_path;
 use openxgram_db::{Db, DbConfig};
+use openxgram_keystore::AgentAddress;
 use openxgram_peer::{PeerRole, PeerStore};
+
+/// 압축 secp256k1 공개키 hex (66자) → EIP-55 EVM 주소.
+/// `peer add` 시 항상 eth_address 를 채워야 inbound envelope.from 매칭이 작동한다.
+fn eth_address_from_pubkey_hex(public_key_hex: &str) -> Result<String> {
+    let bytes = hex::decode(public_key_hex)
+        .map_err(|e| anyhow!("public_key hex decode 실패: {e}"))?;
+    let vk = VerifyingKey::from_sec1_bytes(&bytes)
+        .map_err(|e| anyhow!("public_key sec1 파싱 실패: {e}"))?;
+    Ok(AgentAddress::from_verifying_key(&vk).0)
+}
 
 #[derive(Debug, Clone)]
 pub enum PeerAction {
@@ -42,14 +54,23 @@ pub fn run_peer(data_dir: &Path, action: PeerAction) -> Result<()> {
             role,
             notes,
         } => {
-            let p = store.add(&alias, &public_key_hex, &address, role, notes.as_deref())?;
+            let eth_addr = eth_address_from_pubkey_hex(&public_key_hex)?;
+            let p = store.add_with_eth(
+                &alias,
+                &public_key_hex,
+                &address,
+                Some(&eth_addr),
+                role,
+                notes.as_deref(),
+            )?;
             println!("✓ peer 등록");
-            println!("  id        : {}", p.id);
-            println!("  alias     : {}", p.alias);
-            println!("  role      : {}", p.role.as_str());
-            println!("  address   : {}", p.address);
+            println!("  id          : {}", p.id);
+            println!("  alias       : {}", p.alias);
+            println!("  role        : {}", p.role.as_str());
+            println!("  address     : {}", p.address);
+            println!("  eth_address : {eth_addr}");
             println!(
-                "  public_key: {}…{}",
+                "  public_key  : {}…{}",
                 &p.public_key_hex[..8],
                 &p.public_key_hex[p.public_key_hex.len() - 8..]
             );

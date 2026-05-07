@@ -23,6 +23,64 @@ pub mod submit;
 
 pub use limits::{DailyLimit, DailyLimitStore};
 
+/// signed intent → on-chain USDC transfer 제출.
+///
+/// 흐름: ChainConfig 조회 → master Keypair 로 alloy wallet → ERC-20 transfer TransactionRequest →
+/// `provider.send_transaction` 으로 RPC 제출 → tx_hash 반환.
+///
+/// 호출자가 반환된 tx_hash 로 `PaymentStore::mark_submitted` 를 호출해 state 전이.
+/// 실 on-chain 자금이 부족하면 RPC 가 reject — 에러로 raise (silent fallback 금지).
+pub async fn submit_intent(
+    intent: &PaymentIntent,
+    master: &openxgram_keystore::Keypair,
+    rpc_url: &str,
+) -> Result<String> {
+    use alloy::network::TransactionBuilder;
+    use alloy::primitives::{Address, B256};
+    use alloy::providers::{Provider, ProviderBuilder};
+
+    if intent.state != PaymentState::Signed {
+        return Err(PaymentError::InvalidTransition {
+            from: intent.state.as_str().into(),
+            to: "submitted".into(),
+        });
+    }
+
+    let cfg = chain::lookup(&intent.chain).ok_or_else(|| {
+        PaymentError::InvalidState(format!("unknown chain: {}", intent.chain))
+    })?;
+    let usdc_addr: Address = cfg
+        .usdc_contract
+        .parse()
+        .map_err(|e| PaymentError::InvalidAmount(format!("USDC 컨트랙트 파싱: {e}")))?;
+    let payee: Address = intent
+        .payee_address
+        .parse()
+        .map_err(|e| PaymentError::InvalidAmount(format!("payee 주소 파싱: {e}")))?;
+    if intent.amount_usdc_micro <= 0 {
+        return Err(PaymentError::InvalidAmount(format!(
+            "amount must be > 0 (got {})",
+            intent.amount_usdc_micro
+        )));
+    }
+
+    let wallet = alloy_bridge::wallet_from_master(master)?;
+    let url = rpc_url
+        .parse()
+        .map_err(|e| PaymentError::InvalidAmount(format!("RPC URL 파싱: {e}")))?;
+    let provider = ProviderBuilder::new().wallet(wallet).connect_http(url);
+
+    let req = submit::build_usdc_transfer(usdc_addr, payee, intent.amount_usdc_micro as u64)
+        .with_chain_id(cfg.chain_id);
+
+    let pending = provider
+        .send_transaction(req)
+        .await
+        .map_err(|e| PaymentError::Signature(format!("RPC send_transaction 실패: {e}")))?;
+    let tx_hash: B256 = *pending.tx_hash();
+    Ok(format!("0x{}", hex::encode(tx_hash.as_slice())))
+}
+
 use chrono::{DateTime, FixedOffset};
 use openxgram_core::time::kst_now;
 use openxgram_db::{Db, DbError};

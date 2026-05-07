@@ -145,6 +145,9 @@ enum Commands {
 
     /// 키페어 관리
     Keypair {
+        /// 데이터 디렉토리 (생략 시 ~/.openxgram). keystore 위치 결정.
+        #[arg(long, global = true)]
+        data_dir: Option<PathBuf>,
         #[command(subcommand)]
         action: KeypairAction,
     },
@@ -1029,6 +1032,18 @@ enum PaymentCli {
     Show { id: String },
     /// 지원 chain 목록
     Chains,
+    /// signed intent 를 직접 RPC 로 on-chain 제출 (USDC transfer). 성공 시 자동으로 state=submitted.
+    Submit {
+        /// payment intent id
+        id: String,
+        /// RPC URL override. 미지정 시 chain 의 default 또는 env (XGRAM_BASE_RPC_PRIMARY / XGRAM_BASE_SEPOLIA_RPC)
+        #[arg(long)]
+        rpc_url: Option<String>,
+        /// 송금 직후 수취인 peer (alias) 에게 결제 통지 envelope 자동 발송.
+        /// 수취인 daemon 이 받으면 inbox 에 구조화 영수증 (xgr-payment-receipt-v1) 으로 기록 → 양쪽 메모리 일관.
+        #[arg(long)]
+        notify: Option<String>,
+    },
     /// 외부 도구로 제출 후 호출 — state=submitted
     MarkSubmitted {
         #[arg(long)]
@@ -1065,6 +1080,11 @@ impl From<PaymentCli> for PaymentAction {
             PaymentCli::List => PaymentAction::List,
             PaymentCli::Show { id } => PaymentAction::Show { id },
             PaymentCli::Chains => PaymentAction::Chains,
+            // Submit 은 비동기 RPC 호출이므로 dispatcher 가 별도 경로(run_payment_submit)로 처리한다.
+            // 여기로 흘러오면 dispatcher 버그.
+            PaymentCli::Submit { .. } => {
+                unreachable!("Submit is handled async in the dispatcher, not via PaymentAction")
+            }
             PaymentCli::MarkSubmitted { id, tx_hash } => {
                 PaymentAction::MarkSubmitted { id, tx_hash }
             }
@@ -1503,8 +1523,11 @@ async fn main() -> anyhow::Result<()> {
             uninstall::run_uninstall(&opts)?;
         }
 
-        Commands::Keypair { action } => {
-            let ks_dir = FsKeystore::default_path();
+        Commands::Keypair { data_dir, action } => {
+            let ks_dir = match data_dir {
+                Some(d) => openxgram_core::paths::keystore_dir(&d),
+                None => FsKeystore::default_path(),
+            };
             let ks = FsKeystore::new(&ks_dir);
             handle_keypair(ks, action)?;
         }
@@ -1867,7 +1890,22 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Payment { data_dir, action } => {
             let dir = resolve_data_dir(data_dir)?;
-            payment::run_payment(&dir, action.into())?;
+            match action {
+                PaymentCli::Submit {
+                    id,
+                    rpc_url,
+                    notify,
+                } => {
+                    payment::run_payment_submit(
+                        &dir,
+                        &id,
+                        rpc_url.as_deref(),
+                        notify.as_deref(),
+                    )
+                    .await?;
+                }
+                other => payment::run_payment(&dir, other.into())?,
+            }
         }
 
         Commands::Relay {

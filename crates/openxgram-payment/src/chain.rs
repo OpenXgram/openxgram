@@ -16,6 +16,15 @@ pub const BASE: ChainConfig = ChainConfig {
     default_rpc: "https://mainnet.base.org",
 };
 
+/// Base Sepolia 테스트넷 — Circle 공식 테스트 USDC 컨트랙트.
+/// Faucet: faucet.circle.com (USDC), Coinbase Faucet (ETH).
+pub const BASE_SEPOLIA: ChainConfig = ChainConfig {
+    name: "base-sepolia",
+    chain_id: 84532,
+    usdc_contract: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    default_rpc: "https://sepolia.base.org",
+};
+
 /// Polygon PoS — 대안.
 pub const POLYGON: ChainConfig = ChainConfig {
     name: "polygon",
@@ -32,7 +41,7 @@ pub const ETHEREUM: ChainConfig = ChainConfig {
     default_rpc: "https://eth.llamarpc.com",
 };
 
-pub const ALL: &[ChainConfig] = &[BASE, POLYGON, ETHEREUM];
+pub const ALL: &[ChainConfig] = &[BASE, BASE_SEPOLIA, POLYGON, ETHEREUM];
 
 pub fn lookup(name: &str) -> Option<ChainConfig> {
     ALL.iter().copied().find(|c| c.name == name)
