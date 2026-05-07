@@ -237,12 +237,43 @@ if [ "$PREBUILT_OK" = "1" ]; then
   if [ "$GUI_INSTALLED" = "1" ]; then
     echo "✓ GUI 도 함께 설치 → $INSTALL_DIR/xgram-desktop  (실행: xgram gui)"
   fi
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Tailscale 안내 — OpenXgram 이 머신 간 mTLS 메시 전송에 Tailscale 사용.
+  # 자동 설치는 Linux 만 (Tailscale 공식 installer). macOS/Windows 는 안내.
+  # ──────────────────────────────────────────────────────────────────────────
+  echo ""
+  if command -v tailscale >/dev/null 2>&1; then
+    ts_status="$(tailscale status --peers=false 2>/dev/null | head -1 || true)"
+    if echo "$ts_status" | grep -qE "Logged out|stopped"; then
+      echo "ℹ Tailscale 설치되어 있으나 로그아웃 상태 — 'tailscale up' 으로 인증"
+    else
+      echo "✓ Tailscale 발견 — 다른 머신과 메시 통신 가능"
+    fi
+  else
+    case "$OS" in
+      linux)
+        echo "ℹ Tailscale 미설치 (자율 에이전트 머신간 메시 전송용)."
+        echo "   설치:  curl -fsSL https://tailscale.com/install.sh | sh"
+        echo "   인증:  sudo tailscale up"
+        ;;
+      darwin)
+        echo "ℹ Tailscale 미설치 (자율 에이전트 머신간 메시 전송용)."
+        echo "   설치:  brew install --cask tailscale  ← 또는 App Store"
+        echo "   인증:  Tailscale 메뉴바 아이콘 → Log in"
+        ;;
+      *)
+        echo "ℹ Tailscale 미설치 — https://tailscale.com/download 에서 직접 설치"
+        ;;
+    esac
+  fi
+
   echo ""
   echo "다음 단계:"
   echo "  xgram --version"
   echo "  xgram init --alias <name>   # BIP39 24단어 복구 시드 + 마스터 키페어 생성"
   if [ "$GUI_INSTALLED" = "1" ]; then
-    echo "  xgram gui                   # 데스크톱 앱 실행"
+    echo "  xgram gui                   # 데스크톱 앱 실행 (원격 daemon 연결 후속 PR)"
   fi
   echo ""
   exit 0
