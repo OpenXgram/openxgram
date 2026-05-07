@@ -20,6 +20,7 @@
 
 use std::path::Path;
 
+pub mod daemon_client;
 pub mod handlers_channel;
 pub mod handlers_chain;
 pub mod handlers_core;

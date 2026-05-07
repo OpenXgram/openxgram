@@ -3433,6 +3433,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
+ "webpki-roots 1.0.7",
 ]
 
 [[package]]
@@ -4830,7 +4831,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-adapter"
-version = "0.2.0"
+version = "0.2.0-rc.3"
 dependencies = [
  "chrono",
  "futures-util",
@@ -4847,7 +4848,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-channel"
-version = "0.2.0"
+version = "0.2.0-rc.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4867,10 +4868,11 @@ dependencies = [
 
 [[package]]
 name = "openxgram-cli"
-version = "0.2.0"
+version = "0.2.0-rc.3"
 dependencies = [
  "age",
  "anyhow",
+ "arboard",
  "axum",
  "chrono",
  "clap",
@@ -4901,6 +4903,7 @@ dependencies = [
  "openxgram-vault",
  "ratatui",
  "reqwest 0.13.1",
+ "rpassword",
  "rusqlite",
  "serde",
  "serde_json",
@@ -4917,7 +4920,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-core"
-version = "0.2.0"
+version = "0.2.0-rc.3"
 dependencies = [
  "chrono",
  "thiserror 1.0.69",
@@ -4925,7 +4928,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-db"
-version = "0.2.0"
+version = "0.2.0-rc.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4952,6 +4955,7 @@ dependencies = [
  "openxgram-payment",
  "openxgram-peer",
  "openxgram-vault",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -4964,7 +4968,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-did"
-version = "0.2.0"
+version = "0.2.0-rc.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4981,7 +4985,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-keystore"
-version = "0.2.0"
+version = "0.2.0-rc.3"
 dependencies = [
  "anyhow",
  "argon2",
@@ -5001,7 +5005,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-manifest"
-version = "0.2.0"
+version = "0.2.0-rc.3"
 dependencies = [
  "chrono",
  "hex",
@@ -5014,7 +5018,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-mcp"
-version = "0.2.0"
+version = "0.2.0-rc.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -5024,7 +5028,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-memory"
-version = "0.2.0"
+version = "0.2.0-rc.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5041,7 +5045,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-nostr"
-version = "0.2.0"
+version = "0.2.0-rc.3"
 dependencies = [
  "chrono",
  "hex",
@@ -5060,7 +5064,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-orchestration"
-version = "0.2.0"
+version = "0.2.0-rc.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5080,7 +5084,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-payment"
-version = "0.2.0"
+version = "0.2.0-rc.3"
 dependencies = [
  "alloy",
  "chrono",
@@ -5100,7 +5104,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-peer"
-version = "0.2.0"
+version = "0.2.0-rc.3"
 dependencies = [
  "chrono",
  "openxgram-core",
@@ -5115,7 +5119,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-scheduler"
-version = "0.2.0"
+version = "0.2.0-rc.3"
 dependencies = [
  "anyhow",
  "openxgram-db",
@@ -5128,7 +5132,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-transport"
-version = "0.2.0"
+version = "0.2.0-rc.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -5143,7 +5147,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-vault"
-version = "0.2.0"
+version = "0.2.0-rc.3"
 dependencies = [
  "chrono",
  "hex",
@@ -6020,16 +6024,21 @@ dependencies = [
  "http-body",
  "http-body-util",
  "hyper",
+ "hyper-rustls",
  "hyper-util",
  "js-sys",
  "log",
  "percent-encoding",
  "pin-project-lite",
+ "quinn",
+ "rustls",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "serde_urlencoded",
  "sync_wrapper",
  "tokio",
+ "tokio-rustls",
  "tower",
  "tower-http",
  "tower-service",
@@ -6037,6 +6046,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "webpki-roots 1.0.7",
 ]
 
 [[package]]
@@ -6149,6 +6159,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpassword"
+version = "7.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ac5b223d9738ef56e0b98305410be40fa0941bf6036c56f1506751e43552d64"
+dependencies = [
+ "libc",
+ "rtoolbox",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "rs_merkle"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6165,6 +6186,16 @@ checksum = "a8a1f2315036ef6b1fbacd1972e8ee7688030b0a2121edfc2a6550febd41574d"
 dependencies = [
  "hashbrown 0.16.1",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "rtoolbox"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50a0e551c1e27e1731aba276dbeaeac73f53c7cd34d1bda485d02bd1e0f36844"
+dependencies = [
+ "libc",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

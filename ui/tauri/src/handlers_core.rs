@@ -69,8 +69,14 @@ pub fn dump(kind: String) -> StatusResult {
 // ── onboarding ──────────────────────────────────────────────────────────────
 
 /// `is_initialized` — DB 파일 존재 여부. Onboarding 분기에 사용.
+///
+/// 원격 daemon 모드 (`XGRAM_DAEMON_URL` 설정) 면 daemon `/v1/gui/initialized` 호출.
+/// 로컬 모드면 기존대로 manifest 파일 존재 검사.
 #[tauri::command]
-pub fn is_initialized(state: State<'_, AppState>) -> Result<bool, String> {
+pub async fn is_initialized(state: State<'_, AppState>) -> Result<bool, String> {
+    if let Some(client) = crate::daemon_client::DaemonClient::from_env() {
+        return client.initialized().await;
+    }
     Ok(is_data_initialized(&state))
 }
 
@@ -244,7 +250,24 @@ pub struct PeerDto {
 }
 
 #[tauri::command]
-pub fn peers_list(state: State<'_, AppState>) -> Result<Vec<PeerDto>, String> {
+pub async fn peers_list(state: State<'_, AppState>) -> Result<Vec<PeerDto>, String> {
+    // 원격 daemon 모드: HTTP 클라이언트로 위임 (XGRAM_DAEMON_URL 설정 시).
+    if let Some(client) = crate::daemon_client::DaemonClient::from_env() {
+        let remote = client.peers().await?;
+        return Ok(remote
+            .into_iter()
+            .map(|p| PeerDto {
+                id: p.id,
+                alias: p.alias,
+                address: p.address,
+                public_key_hex: p.public_key_hex,
+                role: p.role,
+                created_at: p.created_at,
+                last_seen: p.last_seen,
+            })
+            .collect());
+    }
+    // 로컬 모드 — 기존대로 lib 직접 호출.
     let out: Option<Vec<PeerDto>> = with_db_optional(&state, |db| {
         let mut store = PeerStore::new(db);
         let rows = store.list().map_err(|e| format!("peer list: {e}"))?;
