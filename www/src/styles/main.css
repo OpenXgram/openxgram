@@ -157,23 +157,22 @@ pre.code .copy-cmd {
   right: 0;
   top: 0;
   margin-left: 8px;
-  padding: 0 6px;
+  padding: 0 8px;
   font-family: var(--mono);
   font-size: 12px;
   line-height: 1.55;
   color: var(--fg-mute);
-  background: transparent;
+  background: var(--bg-elev, rgba(255, 255, 255, 0.04));
   border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+  opacity: 0.55;
+  transition: opacity 0.12s, color 0.12s, border-color 0.12s, background 0.12s;
 }
 pre.code .cmd-row:hover .copy-cmd,
+pre.code .copy-cmd:hover,
 pre.code .copy-cmd:focus-visible {
   opacity: 1;
-}
-pre.code .copy-cmd:hover {
   color: var(--accent);
   border-color: var(--accent);
 }
@@ -181,6 +180,10 @@ pre.code .copy-cmd.copied {
   opacity: 1;
   color: var(--accent-3);
   border-color: var(--accent-3);
+}
+/* 모바일·터치 — hover 없어 항상 100% 노출 */
+@media (hover: none) {
+  pre.code .copy-cmd { opacity: 1; }
 }
 
 /* Diagram */
