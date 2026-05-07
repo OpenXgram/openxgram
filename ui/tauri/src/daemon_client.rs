@@ -232,3 +232,24 @@ pub struct PendingDto {
 struct DailyLimitBody {
     pub micro_usdc: i64,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct NotifyStatusDto {
+    pub telegram_configured: bool,
+    pub discord_configured: bool,
+    pub discord_webhook_configured: bool,
+}
+
+impl DaemonClient {
+    pub async fn notify_status(&self) -> Result<NotifyStatusDto, String> {
+        self.req(reqwest::Method::GET, "/v1/gui/notify/status")
+            .send()
+            .await
+            .map_err(|e| format!("daemon notify/status: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("HTTP: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("JSON: {e}"))
+    }
+}
