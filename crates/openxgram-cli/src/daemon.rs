@@ -304,8 +304,8 @@ fn record_payment_receipt(
     json_body: &str,
 ) -> Result<String> {
     use openxgram_memory::{MemoryKind, MemoryStore};
-    let v: serde_json::Value = serde_json::from_str(json_body.trim())
-        .with_context(|| "payment receipt JSON 파싱 실패")?;
+    let v: serde_json::Value =
+        serde_json::from_str(json_body.trim()).with_context(|| "payment receipt JSON 파싱 실패")?;
     let amount = v
         .get("amount_display")
         .and_then(|x| x.as_str())

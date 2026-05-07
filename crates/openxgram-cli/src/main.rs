@@ -1896,13 +1896,8 @@ async fn main() -> anyhow::Result<()> {
                     rpc_url,
                     notify,
                 } => {
-                    payment::run_payment_submit(
-                        &dir,
-                        &id,
-                        rpc_url.as_deref(),
-                        notify.as_deref(),
-                    )
-                    .await?;
+                    payment::run_payment_submit(&dir, &id, rpc_url.as_deref(), notify.as_deref())
+                        .await?;
                 }
                 other => payment::run_payment(&dir, other.into())?,
             }
