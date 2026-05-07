@@ -206,6 +206,11 @@ enum Commands {
         /// transport bind 주소 (기본 127.0.0.1:47300, --tailscale 우선)
         #[arg(long)]
         bind: Option<std::net::SocketAddr>,
+        /// GUI HTTP API (`/v1/gui/*`) bind 주소. 기본 127.0.0.1:47302.
+        /// Tauri 데스크톱 앱·기타 클라이언트가 원격 daemon 데이터에 접근.
+        /// Tailscale IP 로 bind 시 mcp-token 인증 필수 (loopback 도 동일 — silent 노출 금지).
+        #[arg(long)]
+        gui_bind: Option<std::net::SocketAddr>,
         /// reflection cron 표현식 (기본 0 0 15 * * * = 자정 KST)
         #[arg(long)]
         reflection_cron: Option<String>,
@@ -1627,6 +1632,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Daemon {
             data_dir,
             bind,
+            gui_bind,
             reflection_cron,
             tailscale,
         } => {
@@ -1634,6 +1640,7 @@ async fn main() -> anyhow::Result<()> {
             daemon::run_daemon(DaemonOpts {
                 data_dir: dir,
                 bind_addr: bind,
+                gui_bind,
                 reflection_cron,
                 tailscale,
             })

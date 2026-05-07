@@ -13,11 +13,15 @@ use openxgram_transport::{spawn_server_with_metrics, MetricsProvider};
 use std::sync::Arc;
 
 const DEFAULT_BIND: &str = "127.0.0.1:47300";
+const DEFAULT_GUI_BIND: &str = "127.0.0.1:47302";
 
 #[derive(Debug, Clone)]
 pub struct DaemonOpts {
     pub data_dir: PathBuf,
     pub bind_addr: Option<SocketAddr>,
+    /// GUI HTTP API (`/v1/gui/*`) bind. None 이면 비활성화.
+    /// `Some(addr)` 면 해당 주소에 axum 서버 별도 가동 — Tauri 데스크톱 앱·기타 클라이언트용.
+    pub gui_bind: Option<SocketAddr>,
     pub reflection_cron: Option<String>,
     /// true 시 `tailscale ip --4` 결과를 기본 bind IP 로 사용. mTLS 는 WireGuard
     /// 터널이 네트워크 레이어에서 제공.
@@ -57,6 +61,15 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
         .await
         .context("transport server bind 실패")?;
     println!("  ✓ transport server bound: http://{}", server.bound_addr);
+
+    // GUI HTTP API (`/v1/gui/*`) — Tauri 데스크톱 앱이 원격 daemon 데이터에 접근.
+    // 별도 axum 서버, transport 와 다른 포트. 토큰 인증 (mcp_tokens 재사용).
+    let gui_bind = opts
+        .gui_bind
+        .unwrap_or_else(|| DEFAULT_GUI_BIND.parse().expect("DEFAULT_GUI_BIND parses"));
+    crate::daemon_gui::spawn_gui_server(opts.data_dir.clone(), gui_bind)
+        .await
+        .context("GUI HTTP API 서버 가동 실패")?;
 
     // inbound processor — 1초 주기로 server.drain_received() 한 후 envelope.from 매칭으로
     // peer.touch_by_eth_address. 매칭 실패는 silent (anonymous envelope 도 정상 도착).

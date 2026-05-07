@@ -4,6 +4,8 @@
 // 47xxx 대는 IANA 미등록·비공개 영역이라 일반 데스크톱·서버에서 거의 빈 상태.
 pub const RPC_PORT: u16 = 47300;
 pub const HTTP_PORT: u16 = 47301;
+/// daemon-gui HTTP API (`/v1/gui/*`) — Tauri 데스크톱 앱·기타 클라이언트용.
+pub const GUI_PORT: u16 = 47302;
 pub const INBOUND_WEBHOOK_PORT: u16 = 14921;
 
 pub const RPC_SERVICE: &str = "xgram-rpc";
