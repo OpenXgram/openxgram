@@ -13,6 +13,7 @@ fn daemon_opts_constructable() {
     let _opts = DaemonOpts {
         data_dir: PathBuf::from("/tmp/x"),
         bind_addr: Some("127.0.0.1:47300".parse().unwrap()),
+        gui_bind: None,
         reflection_cron: Some("0 0 15 * * *".to_string()),
         tailscale: false,
     };

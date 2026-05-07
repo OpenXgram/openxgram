@@ -7,6 +7,7 @@ pub mod backup;
 pub mod backup_push;
 pub mod channel;
 pub mod daemon;
+pub mod daemon_gui;
 pub mod doctor;
 pub mod dump;
 pub mod gui;
