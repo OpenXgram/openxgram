@@ -224,12 +224,26 @@ if [ "$PREBUILT_OK" = "1" ]; then
   $USE_SUDO mkdir -p "$INSTALL_DIR"
   $USE_SUDO mv xgram "$INSTALL_DIR/xgram"
 
+  # GUI 바이너리 — tarball 에 동봉된 경우만 설치 (linux-aarch64 / windows 는 미포함).
+  GUI_INSTALLED=0
+  if [ -f xgram-desktop ]; then
+    chmod +x xgram-desktop
+    $USE_SUDO mv xgram-desktop "$INSTALL_DIR/xgram-desktop"
+    GUI_INSTALLED=1
+  fi
+
   echo ""
   echo "✓ 설치 완료 (pre-built, tag: $ASSET_TAG) → $INSTALL_DIR/xgram"
+  if [ "$GUI_INSTALLED" = "1" ]; then
+    echo "✓ GUI 도 함께 설치 → $INSTALL_DIR/xgram-desktop  (실행: xgram gui)"
+  fi
   echo ""
   echo "다음 단계:"
   echo "  xgram --version"
   echo "  xgram init --alias <name>   # BIP39 24단어 복구 시드 + 마스터 키페어 생성"
+  if [ "$GUI_INSTALLED" = "1" ]; then
+    echo "  xgram gui                   # 데스크톱 앱 실행"
+  fi
   echo ""
   exit 0
 fi

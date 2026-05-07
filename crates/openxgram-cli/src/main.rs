@@ -321,6 +321,13 @@ enum Commands {
         data_dir: Option<PathBuf>,
     },
 
+    /// GUI(Tauri) 데스크톱 앱 실행 — 별 바이너리 `xgram-desktop` 호출
+    Gui {
+        /// xgram-desktop 에 그대로 전달할 추가 인자
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
     /// Peer 레지스트리 — 머신 간 통신 주소록 (cross-machine 메시지 baseline)
     Peer {
         #[arg(long, global = true)]
@@ -1848,6 +1855,10 @@ async fn main() -> anyhow::Result<()> {
                 data_dir: resolve_data_dir(data_dir)?,
             };
             tui::run_tui(&opts)?;
+        }
+
+        Commands::Gui { args } => {
+            openxgram_cli::gui::run_gui(&args)?;
         }
 
         Commands::Peer { data_dir, action } => {
