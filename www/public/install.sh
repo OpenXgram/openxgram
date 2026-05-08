@@ -381,6 +381,29 @@ if [ "$PREBUILT_OK" = "1" ]; then
     echo "    (daemon 이미 가동 중 — 건너뜀)"
   fi
 
+  # 4b. agent 런타임 가동 (inbox 폴링 + Discord forward)
+  #     XGRAM_DISCORD_WEBHOOK_URL env 가 설정돼 있으면 inbound 메시지를 Discord 채널로 미러링.
+  if ! pgrep -f "$INSTALL_DIR/xgram agent" >/dev/null 2>&1; then
+    echo "==> xgram agent 런타임 가동 (inbox 폴링)"
+    if [ -n "${XGRAM_DISCORD_WEBHOOK_URL:-}" ]; then
+      XGRAM_DISCORD_WEBHOOK_URL="$XGRAM_DISCORD_WEBHOOK_URL" nohup "$INSTALL_DIR/xgram" agent \
+        > "$DATA_DIR/agent.log" 2>&1 &
+      echo "    Discord webhook: 설정됨 (inbox 메시지 자동 forward)"
+    else
+      nohup "$INSTALL_DIR/xgram" agent \
+        > "$DATA_DIR/agent.log" 2>&1 &
+      echo "    Discord webhook: 미설정 (XGRAM_DISCORD_WEBHOOK_URL env 로 활성)"
+    fi
+    sleep 1
+    if ! pgrep -f "$INSTALL_DIR/xgram agent" >/dev/null 2>&1; then
+      echo "    [경고] agent 시작 실패. log 확인: $DATA_DIR/agent.log"
+    else
+      echo "    ✓ agent 가동 (log: $DATA_DIR/agent.log)"
+    fi
+  else
+    echo "    (agent 이미 가동 중 — 건너뜀)"
+  fi
+
   # 5. pair-desktop URL 출력
   echo ""
   echo "==> 페어링 URL 발급"
