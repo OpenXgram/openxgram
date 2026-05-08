@@ -91,20 +91,13 @@
   - [ ] 1.7.4.1 master 메시지 → 5초 안에 응답 텍스트
   - [ ] 1.7.4.2 컨텍스트가 누적돼 다음 응답에 반영
 
-### 1.8 서브에이전트 호출 라우팅 — ❌
-- [ ] 1.8.1 SubInvoker trait 추상화
-  - [ ] 1.8.1.1 trait 정의 (`async fn invoke(role, task) -> Result<String>`) — 6단계
-  - [ ] 1.8.1.2 enum dispatcher (OpenAgentX / Channel HTTP / Stub) — 6단계
-- [ ] 1.8.2 라우팅 규칙 (응답 텍스트 안의 위임 지시 detection)
-  - [ ] 1.8.2.1 "@{role} {task}" 패턴 정규식 — 6단계
-  - [ ] 1.8.2.2 multi-위임 (한 응답에 여러 @) 처리 — 6단계
-- [ ] 1.8.3 OpenAgentXInvoker
-  - [ ] 1.8.3.1 XGRAM_OPENAGENTX_URL env — 6단계
-  - [ ] 1.8.3.2 HTTP API 호출 (POST /agents/{role}/invoke) — 6단계
-  - [ ] 1.8.3.3 timeout + 에러 처리 — 6단계
-- [ ] 1.8.4 검증
-  - [ ] 1.8.4.1 "@eno 코드 리뷰해" → eno 응답 받기
-  - [ ] 1.8.4.2 timeout 시 graceful 메시지
+### 1.8 서브에이전트 호출 라우팅 — ~ (single-LLM 시뮬레이션 v0)
+- [~] 1.8.1 SubInvoker trait 추상화 — single-LLM 멀티 페르소나 (실 sub 라우팅은 다음)
+  - [x] 1.8.1.1 system prompt 가 subagents 목록 + 위임 패턴 instruction 포함
+  - [ ] 1.8.1.2 enum dispatcher (OpenAgentX / Channel HTTP / Stub) — 다음
+- [x] 1.8.2 라우팅 규칙 — LLM 이 단일 호출 안에서 acknowledge/sub/wrap 형식 출력
+- [ ] 1.8.3 OpenAgentXInvoker — 다음 (실 sub 노드 도입 시점)
+- [ ] 1.8.4 검증 — 실서버 deploy 후 master 가 "@eno 코드 리뷰" 던져 dialogue 형식 확인
 
 ### 1.9 응답 회신 라우터 — ❌
 - [~] 1.9.1 발신자 종류 판별 (sender prefix)
