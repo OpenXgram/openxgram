@@ -62,15 +62,15 @@
   - [ ] 1.5.4.1 master Discord 입력 → 5초 안에 inbox 세션 출현
   - [ ] 1.5.4.2 메모리 검색으로 회상 가능
 
-### 1.6 Telegram adapter — ❌
-- [ ] 1.6.1 Telegram Bot API 통합
-  - [ ] 1.6.1.1 XGRAM_TELEGRAM_BOT_TOKEN, CHAT_ID env — 6단계
-  - [ ] 1.6.1.2 long-polling 클라이언트 — 6단계
-  - [ ] 1.6.1.3 메시지 수신 → daemon inject — 6단계
-- [ ] 1.6.2 Outbound (응답 회신)
-  - [ ] 1.6.2.1 sendMessage API 호출 — 6단계
-  - [ ] 1.6.2.2 길이 제한 (4096자) trim — 6단계
-- [ ] 1.6.3 검증
+### 1.6 Telegram adapter — ~ (코드 ✓, 실서버 검증 보류)
+- [x] 1.6.1 Telegram Bot API 통합
+  - [x] 1.6.1.1 XGRAM_TELEGRAM_BOT_TOKEN, XGRAM_TELEGRAM_CHAT_ID env
+  - [x] 1.6.1.2 getUpdates 폴링 (offset cursor 자동)
+  - [x] 1.6.1.3 메시지 수신 → MessageStore inject (DB 직접)
+- [x] 1.6.2 Outbound (응답 회신)
+  - [x] 1.6.2.1 sendMessage API 호출
+  - [x] 1.6.2.2 길이 제한 4000자 trim
+- [ ] 1.6.3 검증 (실서버 deploy 후)
   - [ ] 1.6.3.1 Telegram 봇과 양방향 라운드트립
   - [ ] 1.6.3.2 Discord + Telegram 동시 활성 동작
 
@@ -102,8 +102,8 @@
 ### 1.9 응답 회신 라우터 — ❌
 - [~] 1.9.1 발신자 종류 판별 (sender prefix)
   - [x] 1.9.1.1 `discord:*` → Discord webhook
-  - [ ] 1.9.1.2 `telegram:*` → Telegram sendMessage
-  - [ ] 1.9.1.3 `peer:*` → xgram peer_send
+  - [x] 1.9.1.2 `telegram:*` → Telegram sendMessage
+  - [ ] 1.9.1.3 `peer:*` → xgram peer_send (Phase 2 의존)
 - [x] 1.9.2 회신 메모리 기록 (Discord 회신만 우선)
   - [x] 1.9.2.1 outbox-to-{target} 세션 ensure
   - [x] 1.9.2.2 응답 메시지 저장

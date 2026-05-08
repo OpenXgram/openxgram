@@ -219,6 +219,12 @@ enum Commands {
         /// Anthropic API key (LLM 응답 활성). XGRAM_ANTHROPIC_API_KEY env 폴백.
         #[arg(long)]
         anthropic_api_key: Option<String>,
+        /// Telegram bot token (옵션). XGRAM_TELEGRAM_BOT_TOKEN env 폴백.
+        #[arg(long)]
+        telegram_bot_token: Option<String>,
+        /// Telegram chat id (회신 대상). XGRAM_TELEGRAM_CHAT_ID env 폴백.
+        #[arg(long)]
+        telegram_chat_id: Option<String>,
         /// 폴링 주기 (초)
         #[arg(long, default_value_t = 5)]
         poll_interval_secs: u64,
@@ -1676,6 +1682,8 @@ async fn main() -> anyhow::Result<()> {
             discord_bot_token,
             discord_channel_id,
             anthropic_api_key,
+            telegram_bot_token,
+            telegram_chat_id,
             poll_interval_secs,
         } => {
             let dir = resolve_data_dir(data_dir)?;
@@ -1687,6 +1695,9 @@ async fn main() -> anyhow::Result<()> {
                 discord_channel_id.or_else(|| std::env::var("XGRAM_DISCORD_CHANNEL_ID").ok());
             let api_key =
                 anthropic_api_key.or_else(|| std::env::var("XGRAM_ANTHROPIC_API_KEY").ok());
+            let tg_token =
+                telegram_bot_token.or_else(|| std::env::var("XGRAM_TELEGRAM_BOT_TOKEN").ok());
+            let tg_chat = telegram_chat_id.or_else(|| std::env::var("XGRAM_TELEGRAM_CHAT_ID").ok());
             // alias 는 manifest 에서 — 실패 시 None.
             let agent_alias = openxgram_manifest::InstallManifest::read(
                 &openxgram_core::paths::manifest_path(&dir),
@@ -1701,6 +1712,8 @@ async fn main() -> anyhow::Result<()> {
                 discord_channel_id: channel_id,
                 anthropic_api_key: api_key,
                 agent_alias,
+                telegram_bot_token: tg_token,
+                telegram_chat_id: tg_chat,
             })
             .await?;
         }
