@@ -199,6 +199,23 @@ enum Commands {
         target: BackupTargetArg,
     },
 
+    /// 메인 에이전트 런타임 (Phase 1 v0 스켈레톤) — 자율 루프 + inbound 폴링.
+    ///
+    /// `xgram daemon` 가 살아있어야 함. agent 는 그 위에서 메시지 처리·서브 호출·채널 forwarding 담당.
+    Agent {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        /// daemon GUI HTTP API base URL (기본 http://127.0.0.1:47302)
+        #[arg(long, default_value = "http://127.0.0.1:47302")]
+        daemon_url: String,
+        /// daemon GUI token (Bearer). 미지정 시 desktop-link.json fallback.
+        #[arg(long)]
+        daemon_token: Option<String>,
+        /// 폴링 주기 (초)
+        #[arg(long, default_value_t = 5)]
+        poll_interval_secs: u64,
+    },
+
     /// 사이드카 데몬 — scheduler + transport server foreground 실행
     Daemon {
         #[arg(long)]
@@ -1641,6 +1658,21 @@ async fn main() -> anyhow::Result<()> {
                 data_dir: resolve_data_dir(data_dir)?,
                 session_id,
                 target: target.into(),
+            })
+            .await?;
+        }
+
+        Commands::Agent {
+            data_dir,
+            daemon_url,
+            daemon_token,
+            poll_interval_secs,
+        } => {
+            openxgram_cli::agent::run_agent(openxgram_cli::agent::AgentOpts {
+                data_dir,
+                daemon_url,
+                daemon_token,
+                poll_interval_secs,
             })
             .await?;
         }
