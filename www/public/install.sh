@@ -389,10 +389,12 @@ if [ "$PREBUILT_OK" = "1" ]; then
     XGRAM_DISCORD_WEBHOOK_URL="${XGRAM_DISCORD_WEBHOOK_URL:-}" \
     XGRAM_DISCORD_BOT_TOKEN="${XGRAM_DISCORD_BOT_TOKEN:-}" \
     XGRAM_DISCORD_CHANNEL_ID="${XGRAM_DISCORD_CHANNEL_ID:-}" \
+    XGRAM_ANTHROPIC_API_KEY="${XGRAM_ANTHROPIC_API_KEY:-}" \
       nohup "$INSTALL_DIR/xgram" agent \
       > "$DATA_DIR/agent.log" 2>&1 &
     echo "    Discord webhook: ${XGRAM_DISCORD_WEBHOOK_URL:+설정됨}${XGRAM_DISCORD_WEBHOOK_URL:-미설정}"
     echo "    Discord inbound: ${XGRAM_DISCORD_BOT_TOKEN:+bot 토큰 설정됨}${XGRAM_DISCORD_BOT_TOKEN:-bot 토큰 미설정}"
+    echo "    Anthropic LLM : ${XGRAM_ANTHROPIC_API_KEY:+활성 (claude-haiku 4.5)}${XGRAM_ANTHROPIC_API_KEY:-비활성 (echo 응답)}"
     sleep 1
     if ! pgrep -f "$INSTALL_DIR/xgram agent" >/dev/null 2>&1; then
       echo "    [경고] agent 시작 실패. log 확인: $DATA_DIR/agent.log"

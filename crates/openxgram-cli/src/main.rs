@@ -216,6 +216,9 @@ enum Commands {
         /// Discord channel id (inbound polling). XGRAM_DISCORD_CHANNEL_ID env 폴백.
         #[arg(long)]
         discord_channel_id: Option<String>,
+        /// Anthropic API key (LLM 응답 활성). XGRAM_ANTHROPIC_API_KEY env 폴백.
+        #[arg(long)]
+        anthropic_api_key: Option<String>,
         /// 폴링 주기 (초)
         #[arg(long, default_value_t = 5)]
         poll_interval_secs: u64,
@@ -1672,6 +1675,7 @@ async fn main() -> anyhow::Result<()> {
             discord_webhook_url,
             discord_bot_token,
             discord_channel_id,
+            anthropic_api_key,
             poll_interval_secs,
         } => {
             let dir = resolve_data_dir(data_dir)?;
@@ -1681,12 +1685,22 @@ async fn main() -> anyhow::Result<()> {
                 discord_bot_token.or_else(|| std::env::var("XGRAM_DISCORD_BOT_TOKEN").ok());
             let channel_id =
                 discord_channel_id.or_else(|| std::env::var("XGRAM_DISCORD_CHANNEL_ID").ok());
+            let api_key =
+                anthropic_api_key.or_else(|| std::env::var("XGRAM_ANTHROPIC_API_KEY").ok());
+            // alias 는 manifest 에서 — 실패 시 None.
+            let agent_alias = openxgram_manifest::InstallManifest::read(
+                &openxgram_core::paths::manifest_path(&dir),
+            )
+            .ok()
+            .map(|m| m.machine.alias);
             openxgram_cli::agent::run_agent(openxgram_cli::agent::AgentOpts {
                 data_dir: dir,
                 poll_interval_secs,
                 discord_webhook_url: discord,
                 discord_bot_token: bot_token,
                 discord_channel_id: channel_id,
+                anthropic_api_key: api_key,
+                agent_alias,
             })
             .await?;
         }

@@ -81,12 +81,12 @@
 - [x] 1.7.2 EchoGenerator (placeholder)
   - [x] 1.7.2.1 구현 (`"받았습니다: {input}"`)
   - [ ] 1.7.2.2 단위 테스트 — 다음 iteration
-- [ ] 1.7.3 AnthropicGenerator
-  - [ ] 1.7.3.1 XGRAM_ANTHROPIC_API_KEY env + keystore 옵션 — 6단계
-  - [ ] 1.7.3.2 messages API 호출 (claude-opus-4-7) — 6단계
-  - [ ] 1.7.3.3 system prompt: "You are {alias}, ..." — 6단계
-  - [ ] 1.7.3.4 context: 최근 N개 inbox 메시지 동봉 — 6단계
-  - [ ] 1.7.3.5 토큰 / 비용 로깅 — 6단계
+- [~] 1.7.3 AnthropicGenerator (기본 동작 ✓, context/비용 로깅 미완)
+  - [x] 1.7.3.1 XGRAM_ANTHROPIC_API_KEY env (keystore 옵션은 다음)
+  - [x] 1.7.3.2 messages API 호출 (claude-haiku-4-5-20251001 — 빠른 응답)
+  - [x] 1.7.3.3 system prompt: "You are {alias}, autonomous AI agent..."
+  - [ ] 1.7.3.4 context: 최근 N개 inbox 메시지 동봉 — 다음
+  - [ ] 1.7.3.5 토큰 / 비용 로깅 — 다음
 - [ ] 1.7.4 검증
   - [ ] 1.7.4.1 master 메시지 → 5초 안에 응답 텍스트
   - [ ] 1.7.4.2 컨텍스트가 누적돼 다음 응답에 반영
