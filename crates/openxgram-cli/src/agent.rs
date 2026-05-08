@@ -39,6 +39,10 @@ pub struct AgentOpts {
     pub anthropic_api_key: Option<String>,
     /// 자기 alias — system prompt 에 사용 (예: "Starian")
     pub agent_alias: Option<String>,
+    /// Telegram bot token (옵션). XGRAM_TELEGRAM_BOT_TOKEN env.
+    pub telegram_bot_token: Option<String>,
+    /// Telegram chat id (옵션 — 응답 회신 대상). XGRAM_TELEGRAM_CHAT_ID env.
+    pub telegram_chat_id: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -48,6 +52,9 @@ struct AgentState {
     /// Discord channel id → 마지막 message id (snowflake)
     #[serde(default)]
     discord_cursors: HashMap<String, String>,
+    /// Telegram getUpdates offset (다음 update_id)
+    #[serde(default)]
+    telegram_offset: i64,
 }
 
 impl AgentState {
@@ -115,11 +122,22 @@ pub async fn run_agent(opts: AgentOpts) -> Result<()> {
             }
         }
 
+        // Telegram inbound: getUpdates → inbox-from-telegram:{chat_id} 세션
+        if let Some(token) = opts.telegram_bot_token.as_deref() {
+            match poll_telegram_inbound(&dir, &mut state, token, &http).await {
+                Ok(n) if n > 0 => changed = true,
+                Ok(_) => {}
+                Err(e) => eprintln!("[agent][warn] telegram inbound 실패: {e}"),
+            }
+        }
+
         // inbox → outbound forward + 응답 생성 (Anthropic / Echo)
         match poll_once(
             &dir,
             &mut state,
             opts.discord_webhook_url.as_deref(),
+            opts.telegram_bot_token.as_deref(),
+            opts.telegram_chat_id.as_deref(),
             opts.anthropic_api_key.as_deref(),
             opts.agent_alias.as_deref().unwrap_or("Starian"),
             &http,
@@ -222,11 +240,133 @@ struct DiscordAuthor {
     bot: Option<bool>,
 }
 
+/// Telegram getUpdates 폴링 — 신규 메시지를 inbox-from-telegram:{chat_id} 세션에 저장.
+async fn poll_telegram_inbound(
+    data_dir: &std::path::Path,
+    state: &mut AgentState,
+    bot_token: &str,
+    http: &reqwest::Client,
+) -> Result<usize> {
+    let url = format!(
+        "https://api.telegram.org/bot{bot_token}/getUpdates?offset={}&timeout=0",
+        state.telegram_offset
+    );
+    let resp = http.get(&url).send().await.context("telegram getUpdates")?;
+    if !resp.status().is_success() {
+        anyhow::bail!("telegram API HTTP {}", resp.status());
+    }
+    let parsed: TelegramUpdates = resp.json().await.context("telegram JSON parse")?;
+    if !parsed.ok || parsed.result.is_empty() {
+        return Ok(0);
+    }
+
+    let mut db = Db::open(DbConfig {
+        path: data_dir.join("xgram.db"),
+        ..Default::default()
+    })
+    .context("DB open 실패")?;
+    db.migrate()?;
+    let embedder = default_embedder()?;
+
+    let mut count = 0usize;
+    let mut max_id = state.telegram_offset - 1;
+    for u in parsed.result {
+        if u.update_id > max_id {
+            max_id = u.update_id;
+        }
+        let Some(msg) = u.message else { continue };
+        let Some(text) = msg.text else { continue };
+        if msg.from.is_bot.unwrap_or(false) {
+            continue;
+        }
+        let sender = format!("telegram:{}", msg.chat.id);
+        let session_title = format!("inbox-from-{}", sender);
+        let session = openxgram_memory::SessionStore::new(&mut db)
+            .ensure_by_title(&session_title, "inbound")?;
+        openxgram_memory::MessageStore::new(&mut db, embedder.as_ref()).insert(
+            &session.id,
+            &sender,
+            &text,
+            "telegram",
+        )?;
+        count += 1;
+        eprintln!(
+            "[agent][telegram] {} → inbox: {}",
+            msg.from.username.as_deref().unwrap_or("?"),
+            text.lines().next().unwrap_or("")
+        );
+    }
+    state.telegram_offset = max_id + 1;
+    Ok(count)
+}
+
+#[derive(Debug, Deserialize)]
+struct TelegramUpdates {
+    ok: bool,
+    result: Vec<TelegramUpdate>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TelegramUpdate {
+    update_id: i64,
+    message: Option<TelegramMessageT>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TelegramMessageT {
+    chat: TelegramChat,
+    from: TelegramUser,
+    text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TelegramChat {
+    id: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct TelegramUser {
+    is_bot: Option<bool>,
+    username: Option<String>,
+}
+
+#[derive(Serialize)]
+struct TelegramSendBody<'a> {
+    chat_id: &'a str,
+    text: &'a str,
+}
+
+async fn post_to_telegram(
+    http: &reqwest::Client,
+    bot_token: &str,
+    chat_id: &str,
+    text: &str,
+) -> Result<()> {
+    // Telegram 메시지 길이 제한 4096자.
+    let truncated: String = text.chars().take(4000).collect();
+    let url = format!("https://api.telegram.org/bot{bot_token}/sendMessage");
+    let resp = http
+        .post(&url)
+        .json(&TelegramSendBody {
+            chat_id,
+            text: &truncated,
+        })
+        .send()
+        .await
+        .context("telegram sendMessage")?;
+    if !resp.status().is_success() {
+        anyhow::bail!("telegram sendMessage HTTP {}", resp.status());
+    }
+    Ok(())
+}
+
 /// 한 번의 폴링 — inbox-* 세션의 신규 메시지를 처리. 처리한 개수 반환.
 async fn poll_once(
     data_dir: &std::path::Path,
     state: &mut AgentState,
     discord_url: Option<&str>,
+    telegram_token: Option<&str>,
+    telegram_chat: Option<&str>,
     anthropic_key: Option<&str>,
     agent_alias: &str,
     http: &reqwest::Client,
@@ -277,7 +417,8 @@ async fn poll_once(
             // 발신자가 Discord 인 메시지는 echo 응답 생성 후 Discord 채널로 회신.
             // 그 외 발신자는 단순 forward (관전).
             let from_discord = m.sender.starts_with("discord:");
-            if from_discord {
+            let from_telegram = m.sender.starts_with("telegram:");
+            if from_discord || from_telegram {
                 let (response, signature) = match anthropic_key {
                     Some(k) => {
                         match generate_anthropic_response(http, k, agent_alias, &m.body).await {
@@ -290,10 +431,20 @@ async fn poll_once(
                     }
                     None => (generate_echo_response(&m.body), "echo-v0"),
                 };
-                if let Some(url) = discord_url {
-                    let payload = format!("🤖 **{agent_alias}**: {response}");
-                    if let Err(e) = post_to_discord(http, url, &payload).await {
-                        eprintln!("[agent][warn] Discord 회신 실패: {e}");
+                // 회신 라우팅: Discord 발신자는 Discord 로, Telegram 발신자는 Telegram 으로.
+                if from_discord {
+                    if let Some(url) = discord_url {
+                        let payload = format!("🤖 **{agent_alias}**: {response}");
+                        if let Err(e) = post_to_discord(http, url, &payload).await {
+                            eprintln!("[agent][warn] Discord 회신 실패: {e}");
+                        }
+                    }
+                } else if from_telegram {
+                    if let (Some(t), Some(c)) = (telegram_token, telegram_chat) {
+                        let payload = format!("🤖 {agent_alias}: {response}");
+                        if let Err(e) = post_to_telegram(http, t, c, &payload).await {
+                            eprintln!("[agent][warn] Telegram 회신 실패: {e}");
+                        }
                     }
                 }
                 // outbox 메모리 기록
