@@ -1,9 +1,9 @@
 {
   "name": "openxgram",
-  "version": "0.2.0.0-rc.8",
+  "version": "0.2.0.0-rc.9",
   "description": "Memory & Credential Infrastructure for Multi-Agent, Multi-Machine, Multi-LLM",
   "private": true,
   "scripts": {
-    "placeholder": "echo 'OpenXgram v0.2.0-rc.8 — pair-desktop / link 한 줄 페어링'"
+    "placeholder": "echo 'OpenXgram v0.2.0-rc.9 — pair-desktop / link 한 줄 페어링'"
   }
 }
