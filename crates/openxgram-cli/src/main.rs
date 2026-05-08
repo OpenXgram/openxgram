@@ -207,9 +207,15 @@ enum Commands {
     Agent {
         #[arg(long)]
         data_dir: Option<PathBuf>,
-        /// Discord webhook URL (옵션). 미지정 시 XGRAM_DISCORD_WEBHOOK_URL env 폴백.
+        /// Discord webhook URL (outbound forward). XGRAM_DISCORD_WEBHOOK_URL env 폴백.
         #[arg(long)]
         discord_webhook_url: Option<String>,
+        /// Discord bot token (inbound polling). XGRAM_DISCORD_BOT_TOKEN env 폴백.
+        #[arg(long)]
+        discord_bot_token: Option<String>,
+        /// Discord channel id (inbound polling). XGRAM_DISCORD_CHANNEL_ID env 폴백.
+        #[arg(long)]
+        discord_channel_id: Option<String>,
         /// 폴링 주기 (초)
         #[arg(long, default_value_t = 5)]
         poll_interval_secs: u64,
@@ -1664,15 +1670,23 @@ async fn main() -> anyhow::Result<()> {
         Commands::Agent {
             data_dir,
             discord_webhook_url,
+            discord_bot_token,
+            discord_channel_id,
             poll_interval_secs,
         } => {
             let dir = resolve_data_dir(data_dir)?;
             let discord =
                 discord_webhook_url.or_else(|| std::env::var("XGRAM_DISCORD_WEBHOOK_URL").ok());
+            let bot_token =
+                discord_bot_token.or_else(|| std::env::var("XGRAM_DISCORD_BOT_TOKEN").ok());
+            let channel_id =
+                discord_channel_id.or_else(|| std::env::var("XGRAM_DISCORD_CHANNEL_ID").ok());
             openxgram_cli::agent::run_agent(openxgram_cli::agent::AgentOpts {
                 data_dir: dir,
                 poll_interval_secs,
                 discord_webhook_url: discord,
+                discord_bot_token: bot_token,
+                discord_channel_id: channel_id,
             })
             .await?;
         }

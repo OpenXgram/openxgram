@@ -223,6 +223,7 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
             get(gui_chain_show).delete(gui_chain_delete),
         )
         .route("/v1/gui/schedule/{id}/cancel", post(gui_schedule_cancel))
+        .route("/v1/agent/inject", post(agent_inject))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr)
@@ -757,4 +758,86 @@ fn unauthorized(s: StatusCode) -> (StatusCode, Json<ErrorDto>) {
             error: "unauthorized — provide Authorization: Bearer <token>".into(),
         }),
     )
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AgentInjectBody {
+    /// 발신자 식별자 — `discord:<userid>`, `telegram:<chatid>`, `cli:<alias>` 등.
+    pub sender: String,
+    pub body: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AgentInjectResponse {
+    pub message_id: String,
+    pub session_id: String,
+}
+
+/// `POST /v1/agent/inject` — 외부 채널 (Discord/Telegram/...) 또는 self-trigger 메시지를 daemon inbox 로 주입.
+///
+/// 서명 검증을 거치지 않는다 (외부 소스 unsigned). 대신 mcp_token Bearer 로 외부 호출 권한 통제.
+/// 저장 흐름:
+/// - session: `inbox-from-{sender}` ensure
+/// - L0 message: sender, body, signature="external"
+async fn agent_inject(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<AgentInjectBody>,
+) -> Result<Json<AgentInjectResponse>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+
+    if body.sender.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorDto {
+                error: "sender 비어있음".into(),
+            }),
+        ));
+    }
+    if body.body.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorDto {
+                error: "body 비어있음".into(),
+            }),
+        ));
+    }
+
+    let mut db = state.db.lock().await;
+    let embedder = openxgram_memory::default_embedder().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorDto {
+                error: format!("embedder init: {e}"),
+            }),
+        )
+    })?;
+
+    let session_title = format!("inbox-from-{}", body.sender);
+    let session = openxgram_memory::SessionStore::new(&mut db)
+        .ensure_by_title(&session_title, "inbound")
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorDto {
+                    error: format!("session ensure: {e}"),
+                }),
+            )
+        })?;
+
+    let msg = openxgram_memory::MessageStore::new(&mut db, embedder.as_ref())
+        .insert(&session.id, &body.sender, &body.body, "external")
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorDto {
+                    error: format!("message insert: {e}"),
+                }),
+            )
+        })?;
+
+    Ok(Json(AgentInjectResponse {
+        message_id: msg.id,
+        session_id: session.id,
+    }))
 }
