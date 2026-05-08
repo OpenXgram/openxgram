@@ -268,17 +268,131 @@ if [ "$PREBUILT_OK" = "1" ]; then
     esac
   fi
 
+  # ──────────────────────────────────────────────────────────────────────────
+  # End-to-end setup — Tailscale auto-install + login + xgram init + daemon + pair-desktop.
+  # OXG_QUICK=0 으로 끄면 binary 만 설치하고 종료 (예: CI / 컨테이너).
+  # 인터랙티브 입력은 /dev/tty 로 직접 — `curl ... | sh` pipe 환경에서도 동작.
+  # ──────────────────────────────────────────────────────────────────────────
+  if [ "${OXG_QUICK:-1}" = "0" ]; then
+    echo ""
+    echo "OXG_QUICK=0 — binary 설치만 완료. 'xgram pair-desktop' 등은 수동 실행."
+    exit 0
+  fi
+
+  if [ ! -e /dev/tty ]; then
+    echo ""
+    echo "stdin/tty 미접근 — 인터랙티브 wizard 생략. 수동으로 다음을 실행:"
+    echo "  sudo tailscale up && xgram daemon & && xgram pair-desktop"
+    exit 0
+  fi
+
   echo ""
-  echo "다음 단계:"
-  echo "  xgram --version"
-  echo "  xgram init --alias <name>      # BIP39 24단어 복구 시드 + 마스터 키페어 생성"
+  echo "==> 자동 설정 시작 (Tailscale + xgram + daemon + pairing)"
+  echo "    중단하려면 Ctrl+C — 어느 시점이든 안전 (롤백 가능)."
   echo ""
-  echo "데스크탑에서 GCP/원격 서버에 GUI 로 연결하려면:"
-  echo "  [서버]    xgram pair-desktop          # 토큰 발급 + Tailscale IP → oxg://... URL 출력"
-  echo "  [데스크탑] xgram link 'oxg://...'      # 위 URL 한 줄 붙여넣기"
-  echo "  [서버]    xgram daemon &              # daemon 가동 (영구는 daemon-install)"
+
+  # 1. Tailscale 자동 설치 (Linux 만)
+  if ! command -v tailscale >/dev/null 2>&1; then
+    case "$OS" in
+      linux)
+        echo "==> Tailscale 설치 (sudo 필요)"
+        curl -fsSL https://tailscale.com/install.sh | sh
+        ;;
+      darwin)
+        if command -v brew >/dev/null 2>&1; then
+          echo "==> Tailscale 설치 (brew)"
+          brew install --cask tailscale
+        else
+          echo "[중단] macOS — Homebrew 미설치. 다음 중 하나 선택:"
+          echo "  - https://brew.sh 에서 brew 설치 후 재실행"
+          echo "  - 또는 App Store 에서 Tailscale 설치 + 로그인 후 OXG_QUICK=0 으로 재실행"
+          exit 1
+        fi
+        ;;
+    esac
+  fi
+
+  # 2. tailscale up 인증
+  ts_status="$(tailscale status --peers=false 2>/dev/null | head -1 || true)"
+  if echo "$ts_status" | grep -qE "Logged out|stopped" || ! tailscale ip --4 >/dev/null 2>&1; then
+    echo "==> Tailscale 로그인"
+    echo "    브라우저로 인증 URL 이 열림 — 로그인 후 이 터미널로 돌아오세요."
+    sudo tailscale up
+  fi
+  TS_IP="$(tailscale ip --4 2>/dev/null | head -1)"
+  if [ -z "$TS_IP" ]; then
+    echo "[중단] tailscale ip --4 출력 비어있음 — 인증 미완료."
+    exit 1
+  fi
+  echo "    Tailscale IP: $TS_IP"
+
+  # 3. xgram init (안 됐을 때만)
+  DATA_DIR="${XGRAM_DATA_DIR:-$HOME/.openxgram}"
+  if [ ! -f "$DATA_DIR/install-manifest.json" ]; then
+    echo ""
+    echo "==> xgram init"
+    printf "    이 머신 alias (예: gcp-server, macbook): " >/dev/tty
+    read -r ALIAS </dev/tty
+    if [ -z "$ALIAS" ]; then ALIAS="$(hostname -s 2>/dev/null || echo node)"; fi
+    printf "    keystore 패스워드 (12자 이상): " >/dev/tty
+    stty -echo </dev/tty 2>/dev/null
+    read -r PW1 </dev/tty
+    stty echo </dev/tty 2>/dev/null
+    printf "\n    패스워드 확인: " >/dev/tty
+    stty -echo </dev/tty 2>/dev/null
+    read -r PW2 </dev/tty
+    stty echo </dev/tty 2>/dev/null
+    printf "\n"
+    if [ "$PW1" != "$PW2" ]; then
+      echo "[중단] 패스워드 불일치"
+      exit 1
+    fi
+    XGRAM_KEYSTORE_PASSWORD="$PW1" xgram init --alias "$ALIAS"
+    PW="$PW1"
+  else
+    echo "    (xgram 이미 초기화됨 — 건너뜀)"
+  fi
+
+  # 4. daemon 백그라운드 가동 (이미 떠 있으면 skip)
+  if ! pgrep -f "$INSTALL_DIR/xgram daemon" >/dev/null 2>&1; then
+    echo "==> xgram daemon 가동 (Tailscale IP 에 bind, nohup background)"
+    mkdir -p "$DATA_DIR"
+    if [ -n "${PW:-}" ]; then
+      XGRAM_KEYSTORE_PASSWORD="$PW" nohup "$INSTALL_DIR/xgram" daemon \
+        --bind "$TS_IP:47300" --gui-bind "$TS_IP:47302" \
+        > "$DATA_DIR/daemon.log" 2>&1 &
+    else
+      printf "    keystore 패스워드 (daemon 가동용): " >/dev/tty
+      stty -echo </dev/tty 2>/dev/null
+      read -r PW </dev/tty
+      stty echo </dev/tty 2>/dev/null
+      printf "\n"
+      XGRAM_KEYSTORE_PASSWORD="$PW" nohup "$INSTALL_DIR/xgram" daemon \
+        --bind "$TS_IP:47300" --gui-bind "$TS_IP:47302" \
+        > "$DATA_DIR/daemon.log" 2>&1 &
+    fi
+    sleep 2
+    if ! pgrep -f "$INSTALL_DIR/xgram daemon" >/dev/null 2>&1; then
+      echo "[중단] daemon 시작 실패. log 확인: $DATA_DIR/daemon.log"
+      exit 1
+    fi
+    echo "    ✓ daemon 가동 (log: $DATA_DIR/daemon.log)"
+  else
+    echo "    (daemon 이미 가동 중 — 건너뜀)"
+  fi
+
+  # 5. pair-desktop URL 출력
+  echo ""
+  echo "==> 페어링 URL 발급"
+  PAIRING_OUTPUT="$("$INSTALL_DIR/xgram" pair-desktop 2>&1)"
+  echo "$PAIRING_OUTPUT"
+
+  echo ""
+  echo "✓ 서버측 설정 완료. 위 oxg://... URL 을 데스크탑에 그대로 가져가서:"
+  echo "    curl -sSfL https://openxgram.org/install.sh | sh"
+  echo "    xgram link '<oxg URL>'"
   if [ "$GUI_INSTALLED" = "1" ]; then
-    echo "  [데스크탑] xgram gui                   # 서버의 데이터 표시"
+    echo "    xgram gui"
   fi
   echo ""
   exit 0
