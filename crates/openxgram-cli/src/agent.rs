@@ -35,6 +35,10 @@ pub struct AgentOpts {
     pub discord_bot_token: Option<String>,
     /// Discord channel ID — inbound polling target (옵션). XGRAM_DISCORD_CHANNEL_ID env.
     pub discord_channel_id: Option<String>,
+    /// Anthropic API key — 활성 시 LLM 응답 (옵션). XGRAM_ANTHROPIC_API_KEY env.
+    pub anthropic_api_key: Option<String>,
+    /// 자기 alias — system prompt 에 사용 (예: "Starian")
+    pub agent_alias: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -111,8 +115,17 @@ pub async fn run_agent(opts: AgentOpts) -> Result<()> {
             }
         }
 
-        // inbox → outbound forward
-        match poll_once(&dir, &mut state, opts.discord_webhook_url.as_deref(), &http).await {
+        // inbox → outbound forward + 응답 생성 (Anthropic / Echo)
+        match poll_once(
+            &dir,
+            &mut state,
+            opts.discord_webhook_url.as_deref(),
+            opts.anthropic_api_key.as_deref(),
+            opts.agent_alias.as_deref().unwrap_or("Starian"),
+            &http,
+        )
+        .await
+        {
             Ok(n) if n > 0 => changed = true,
             Ok(_) => {}
             Err(e) => eprintln!("[agent][warn] poll 실패: {e}"),
@@ -214,6 +227,8 @@ async fn poll_once(
     data_dir: &std::path::Path,
     state: &mut AgentState,
     discord_url: Option<&str>,
+    anthropic_key: Option<&str>,
+    agent_alias: &str,
     http: &reqwest::Client,
 ) -> Result<usize> {
     let mut db = Db::open(DbConfig {
@@ -263,9 +278,20 @@ async fn poll_once(
             // 그 외 발신자는 단순 forward (관전).
             let from_discord = m.sender.starts_with("discord:");
             if from_discord {
-                let response = generate_echo_response(&m.body);
+                let (response, signature) = match anthropic_key {
+                    Some(k) => {
+                        match generate_anthropic_response(http, k, agent_alias, &m.body).await {
+                            Ok(t) => (t, "anthropic-haiku-4.5"),
+                            Err(e) => {
+                                eprintln!("[agent][warn] Anthropic 호출 실패 — echo fallback: {e}");
+                                (generate_echo_response(&m.body), "echo-v0-fallback")
+                            }
+                        }
+                    }
+                    None => (generate_echo_response(&m.body), "echo-v0"),
+                };
                 if let Some(url) = discord_url {
-                    let payload = format!("🤖 **Starian**: {response}");
+                    let payload = format!("🤖 **{agent_alias}**: {response}");
                     if let Err(e) = post_to_discord(http, url, &payload).await {
                         eprintln!("[agent][warn] Discord 회신 실패: {e}");
                     }
@@ -277,7 +303,7 @@ async fn poll_once(
                     .context("outbox session ensure")?;
                 let mut store2 = MessageStore::new(&mut db, embedder.as_ref());
                 store2
-                    .insert(&outbox.id, "starian", &response, "echo-v0")
+                    .insert(&outbox.id, agent_alias, &response, signature)
                     .context("outbox message insert")?;
             } else if let Some(url) = discord_url {
                 let body = format!("**{}** ({}): {}", session.title, m.sender, m.body);
@@ -298,8 +324,7 @@ async fn poll_once(
     Ok(processed)
 }
 
-/// Echo 응답 생성기 (Phase 1 v0).
-/// 다음 iteration: AnthropicGenerator (LLM 호출) / OpenAgentXGenerator.
+/// Echo 응답 생성기 (Phase 1 v0 fallback).
 fn generate_echo_response(input: &str) -> String {
     let trimmed = input.lines().next().unwrap_or(input).trim();
     if trimmed.is_empty() {
@@ -307,6 +332,75 @@ fn generate_echo_response(input: &str) -> String {
     } else {
         format!("받았습니다: {trimmed}")
     }
+}
+
+#[derive(Serialize)]
+struct AnthropicMessageReq<'a> {
+    model: &'a str,
+    max_tokens: u32,
+    system: String,
+    messages: Vec<AnthropicMessage<'a>>,
+}
+
+#[derive(Serialize)]
+struct AnthropicMessage<'a> {
+    role: &'a str,
+    content: &'a str,
+}
+
+#[derive(Deserialize)]
+struct AnthropicResp {
+    content: Vec<AnthropicContent>,
+}
+
+#[derive(Deserialize)]
+struct AnthropicContent {
+    #[serde(rename = "type")]
+    kind: String,
+    text: Option<String>,
+}
+
+/// Anthropic claude-haiku 4.5 호출 — 빠른 응답.
+async fn generate_anthropic_response(
+    http: &reqwest::Client,
+    api_key: &str,
+    alias: &str,
+    input: &str,
+) -> Result<String> {
+    let system = format!(
+        "You are {alias}, an autonomous AI agent in the OpenXgram network. \
+        Reply concisely in the user's language. Keep responses under 200 words."
+    );
+    let req = AnthropicMessageReq {
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 1024,
+        system,
+        messages: vec![AnthropicMessage {
+            role: "user",
+            content: input,
+        }],
+    };
+    let resp = http
+        .post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .json(&req)
+        .send()
+        .await
+        .context("Anthropic POST")?;
+    if !resp.status().is_success() {
+        let st = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("Anthropic HTTP {st}: {body}");
+    }
+    let parsed: AnthropicResp = resp.json().await.context("Anthropic JSON parse")?;
+    let text = parsed
+        .content
+        .into_iter()
+        .filter(|c| c.kind == "text")
+        .find_map(|c| c.text)
+        .unwrap_or_else(|| "(no text content)".into());
+    Ok(text)
 }
 
 #[derive(Serialize)]
