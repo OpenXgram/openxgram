@@ -1,9 +1,9 @@
 {
   "name": "openxgram",
-  "version": "0.2.0.0-rc.4",
+  "version": "0.2.0.0-rc.5",
   "description": "Memory & Credential Infrastructure for Multi-Agent, Multi-Machine, Multi-LLM",
   "private": true,
   "scripts": {
-    "placeholder": "echo 'OpenXgram v0.2.0-rc.4 — daemon /v1/gui/* HTTP API + Tauri 원격 클라이언트 (read-only + 핵심 mutation)'"
+    "placeholder": "echo 'OpenXgram v0.2.0-rc.5 — pair-desktop / link 한 줄 페어링'"
   }
 }

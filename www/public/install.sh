@@ -271,9 +271,14 @@ if [ "$PREBUILT_OK" = "1" ]; then
   echo ""
   echo "다음 단계:"
   echo "  xgram --version"
-  echo "  xgram init --alias <name>   # BIP39 24단어 복구 시드 + 마스터 키페어 생성"
+  echo "  xgram init --alias <name>      # BIP39 24단어 복구 시드 + 마스터 키페어 생성"
+  echo ""
+  echo "데스크탑에서 GCP/원격 서버에 GUI 로 연결하려면:"
+  echo "  [서버]    xgram pair-desktop          # 토큰 발급 + Tailscale IP → oxg://... URL 출력"
+  echo "  [데스크탑] xgram link 'oxg://...'      # 위 URL 한 줄 붙여넣기"
+  echo "  [서버]    xgram daemon &              # daemon 가동 (영구는 daemon-install)"
   if [ "$GUI_INSTALLED" = "1" ]; then
-    echo "  xgram gui                   # 데스크톱 앱 실행 (원격 daemon 연결 후속 PR)"
+    echo "  [데스크탑] xgram gui                   # 서버의 데이터 표시"
   fi
   echo ""
   exit 0
