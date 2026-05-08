@@ -115,6 +115,29 @@ pub struct NotifyStatusDto {
     pub discord_webhook_configured: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ScheduleDto {
+    pub id: String,
+    pub target_kind: String,
+    pub target: String,
+    pub payload: String,
+    pub msg_type: String,
+    pub schedule_kind: String,
+    pub schedule_value: String,
+    pub status: String,
+    pub created_at_kst: i64,
+    pub next_due_at_kst: Option<i64>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct ScheduleStatsDto {
+    pub pending: usize,
+    pub sent: usize,
+    pub failed: usize,
+    pub cancelled: usize,
+}
+
 /// GUI HTTP 서버 가동 — 별도 axum 인스턴스, transport(47300) 와 분리된 포트.
 pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Result<()> {
     let db = Db::open(DbConfig {
@@ -148,6 +171,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
             get(gui_payment_get_limit).put(gui_payment_set_limit),
         )
         .route("/v1/gui/notify/status", get(gui_notify_status))
+        .route("/v1/gui/schedule", get(gui_schedule_list))
+        .route("/v1/gui/schedule/stats", get(gui_schedule_stats))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr)
@@ -468,6 +493,62 @@ async fn gui_notify_status(
             .map(|s| !s.is_empty())
             .unwrap_or(false),
     }))
+}
+
+/// `GET /v1/gui/schedule` — 예약 메시지 전체 목록 (status 필터 없음).
+async fn gui_schedule_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ScheduleDto>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let store = openxgram_orchestration::ScheduledStore::new(db.conn());
+    let rows = store
+        .list(None)
+        .map_err(|e| internal(&format!("schedule list: {e}")))?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|m| ScheduleDto {
+                id: m.id,
+                target_kind: m.target_kind.as_str().to_string(),
+                target: m.target,
+                payload: m.payload,
+                msg_type: m.msg_type,
+                schedule_kind: m.schedule_kind.as_str().to_string(),
+                schedule_value: m.schedule_value,
+                status: m.status.as_str().to_string(),
+                created_at_kst: m.created_at_kst,
+                next_due_at_kst: m.next_due_at_kst,
+                last_error: m.last_error,
+            })
+            .collect(),
+    ))
+}
+
+/// `GET /v1/gui/schedule/stats` — pending/sent/failed/cancelled 카운트.
+async fn gui_schedule_stats(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<ScheduleStatsDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let store = openxgram_orchestration::ScheduledStore::new(db.conn());
+    let mut stats = ScheduleStatsDto::default();
+    for status in [
+        openxgram_orchestration::ScheduledStatus::Pending,
+        openxgram_orchestration::ScheduledStatus::Sent,
+        openxgram_orchestration::ScheduledStatus::Failed,
+        openxgram_orchestration::ScheduledStatus::Cancelled,
+    ] {
+        let n = store.list(Some(status)).map(|v| v.len()).unwrap_or(0);
+        match status {
+            openxgram_orchestration::ScheduledStatus::Pending => stats.pending = n,
+            openxgram_orchestration::ScheduledStatus::Sent => stats.sent = n,
+            openxgram_orchestration::ScheduledStatus::Failed => stats.failed = n,
+            openxgram_orchestration::ScheduledStatus::Cancelled => stats.cancelled = n,
+        }
+    }
+    Ok(Json(stats))
 }
 
 fn bad_request(msg: &str) -> (StatusCode, Json<ErrorDto>) {
