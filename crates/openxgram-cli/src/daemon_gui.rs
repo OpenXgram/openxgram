@@ -200,11 +200,11 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/channel/status", get(gui_channel_status))
         .route("/v1/gui/vault/pending", get(gui_vault_pending_list))
         .route(
-            "/v1/gui/vault/pending/:id/approve",
+            "/v1/gui/vault/pending/{id}/approve",
             post(gui_vault_pending_approve),
         )
         .route(
-            "/v1/gui/vault/pending/:id/deny",
+            "/v1/gui/vault/pending/{id}/deny",
             post(gui_vault_pending_deny),
         )
         .route(
@@ -219,10 +219,10 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/schedule/stats", get(gui_schedule_stats))
         .route("/v1/gui/chain", get(gui_chain_list))
         .route(
-            "/v1/gui/chain/:name",
+            "/v1/gui/chain/{name}",
             get(gui_chain_show).delete(gui_chain_delete),
         )
-        .route("/v1/gui/schedule/:id/cancel", post(gui_schedule_cancel))
+        .route("/v1/gui/schedule/{id}/cancel", post(gui_schedule_cancel))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr)
