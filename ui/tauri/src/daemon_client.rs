@@ -285,6 +285,37 @@ pub struct ScheduleStatsDto {
     pub cancelled: usize,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ChainDto {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub created_at_kst: i64,
+    pub enabled: bool,
+    pub step_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChainStepDto {
+    pub step_order: i64,
+    pub target_kind: String,
+    pub target: String,
+    pub payload: String,
+    pub delay_secs: i64,
+    pub condition_kind: Option<String>,
+    pub condition_value: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChainDetailDto {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub created_at_kst: i64,
+    pub enabled: bool,
+    pub steps: Vec<ChainStepDto>,
+}
+
 impl DaemonClient {
     pub async fn notify_status(&self) -> Result<NotifyStatusDto, String> {
         self.req(reqwest::Method::GET, "/v1/gui/notify/status")
@@ -315,6 +346,30 @@ impl DaemonClient {
             .send()
             .await
             .map_err(|e| format!("daemon schedule/stats: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("HTTP: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("JSON: {e}"))
+    }
+
+    pub async fn chain_list(&self) -> Result<Vec<ChainDto>, String> {
+        self.req(reqwest::Method::GET, "/v1/gui/chain")
+            .send()
+            .await
+            .map_err(|e| format!("daemon chain: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("HTTP: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("JSON: {e}"))
+    }
+
+    pub async fn chain_show(&self, name: &str) -> Result<ChainDetailDto, String> {
+        self.req(reqwest::Method::GET, &format!("/v1/gui/chain/{name}"))
+            .send()
+            .await
+            .map_err(|e| format!("daemon chain/{name}: {e}"))?
             .error_for_status()
             .map_err(|e| format!("HTTP: {e}"))?
             .json()
