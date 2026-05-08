@@ -138,6 +138,37 @@ pub struct ScheduleStatsDto {
     pub cancelled: usize,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ChainDto {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub created_at_kst: i64,
+    pub enabled: bool,
+    pub step_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ChainStepDto {
+    pub step_order: i64,
+    pub target_kind: String,
+    pub target: String,
+    pub payload: String,
+    pub delay_secs: i64,
+    pub condition_kind: Option<String>,
+    pub condition_value: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ChainDetailDto {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub created_at_kst: i64,
+    pub enabled: bool,
+    pub steps: Vec<ChainStepDto>,
+}
+
 /// GUI HTTP 서버 가동 — 별도 axum 인스턴스, transport(47300) 와 분리된 포트.
 pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Result<()> {
     let db = Db::open(DbConfig {
@@ -173,6 +204,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/notify/status", get(gui_notify_status))
         .route("/v1/gui/schedule", get(gui_schedule_list))
         .route("/v1/gui/schedule/stats", get(gui_schedule_stats))
+        .route("/v1/gui/chain", get(gui_chain_list))
+        .route("/v1/gui/chain/:name", get(gui_chain_show))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr)
@@ -549,6 +582,67 @@ async fn gui_schedule_stats(
         }
     }
     Ok(Json(stats))
+}
+
+/// `GET /v1/gui/chain` — 등록된 chain 목록 (각 step_count 포함).
+async fn gui_chain_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ChainDto>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let store = openxgram_orchestration::ChainStore::new(db.conn());
+    let chains = store
+        .list()
+        .map_err(|e| internal(&format!("chain list: {e}")))?;
+    let mut out = Vec::with_capacity(chains.len());
+    for c in chains {
+        let steps = store
+            .list_steps(&c.id)
+            .map_err(|e| internal(&format!("chain list_steps: {e}")))?;
+        out.push(ChainDto {
+            id: c.id,
+            name: c.name,
+            description: c.description,
+            created_at_kst: c.created_at_kst,
+            enabled: c.enabled,
+            step_count: steps.len(),
+        });
+    }
+    Ok(Json(out))
+}
+
+/// `GET /v1/gui/chain/:name` — chain 상세 (steps 포함).
+async fn gui_chain_show(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+) -> Result<Json<ChainDetailDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let store = openxgram_orchestration::ChainStore::new(db.conn());
+    let (chain, steps) = store
+        .get_by_name(&name)
+        .map_err(|e| internal(&format!("chain get_by_name: {e}")))?;
+    Ok(Json(ChainDetailDto {
+        id: chain.id,
+        name: chain.name,
+        description: chain.description,
+        created_at_kst: chain.created_at_kst,
+        enabled: chain.enabled,
+        steps: steps
+            .into_iter()
+            .map(|s| ChainStepDto {
+                step_order: s.step_order,
+                target_kind: s.target_kind.as_str().to_string(),
+                target: s.target,
+                payload: s.payload,
+                delay_secs: s.delay_secs,
+                condition_kind: s.condition_kind.map(|c| c.as_str().to_string()),
+                condition_value: s.condition_value,
+            })
+            .collect(),
+    }))
 }
 
 fn bad_request(msg: &str) -> (StatusCode, Json<ErrorDto>) {

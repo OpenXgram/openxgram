@@ -60,7 +60,21 @@ pub struct ChainRunDto {
 }
 
 #[tauri::command]
-pub fn chain_list(state: State<'_, AppState>) -> Result<Vec<ChainDto>, String> {
+pub async fn chain_list(state: State<'_, AppState>) -> Result<Vec<ChainDto>, String> {
+    if let Some(client) = crate::daemon_client::DaemonClient::from_env() {
+        let r = client.chain_list().await?;
+        return Ok(r
+            .into_iter()
+            .map(|c| ChainDto {
+                id: c.id,
+                name: c.name,
+                description: c.description,
+                created_at_kst: c.created_at_kst,
+                enabled: c.enabled,
+                step_count: c.step_count,
+            })
+            .collect());
+    }
     let out: Option<Vec<ChainDto>> = with_db_optional(&state, |db| {
         let store = ChainStore::new(db.conn());
         let chains = store.list().map_err(|e| format!("chain list: {e}"))?;
@@ -84,7 +98,33 @@ pub fn chain_list(state: State<'_, AppState>) -> Result<Vec<ChainDto>, String> {
 }
 
 #[tauri::command]
-pub fn chain_show(state: State<'_, AppState>, name: String) -> Result<ChainDetailDto, String> {
+pub async fn chain_show(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<ChainDetailDto, String> {
+    if let Some(client) = crate::daemon_client::DaemonClient::from_env() {
+        let r = client.chain_show(&name).await?;
+        return Ok(ChainDetailDto {
+            id: r.id,
+            name: r.name,
+            description: r.description,
+            created_at_kst: r.created_at_kst,
+            enabled: r.enabled,
+            steps: r
+                .steps
+                .into_iter()
+                .map(|s| ChainStepDto {
+                    step_order: s.step_order,
+                    target_kind: s.target_kind,
+                    target: s.target,
+                    payload: s.payload,
+                    delay_secs: s.delay_secs,
+                    condition_kind: s.condition_kind,
+                    condition_value: s.condition_value,
+                })
+                .collect(),
+        });
+    }
     with_db_required(&state, |db| {
         let store = ChainStore::new(db.conn());
         let (chain, steps) = store
