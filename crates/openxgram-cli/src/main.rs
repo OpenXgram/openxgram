@@ -199,18 +199,17 @@ enum Commands {
         target: BackupTargetArg,
     },
 
-    /// 메인 에이전트 런타임 (Phase 1 v0 스켈레톤) — 자율 루프 + inbound 폴링.
+    /// 메인 에이전트 런타임 (Phase 1 v1) — inbox 폴링 + 처리 + 채널 forward.
     ///
-    /// `xgram daemon` 가 살아있어야 함. agent 는 그 위에서 메시지 처리·서브 호출·채널 forwarding 담당.
+    /// daemon 이 inbox-* 세션에 저장한 inbound 메시지를 폴링해서
+    /// 콘솔 로그 + Discord webhook outbound (옵션) 으로 전달.
+    /// daemon 과 같은 머신에서 별도 프로세스로 가동.
     Agent {
         #[arg(long)]
         data_dir: Option<PathBuf>,
-        /// daemon GUI HTTP API base URL (기본 http://127.0.0.1:47302)
-        #[arg(long, default_value = "http://127.0.0.1:47302")]
-        daemon_url: String,
-        /// daemon GUI token (Bearer). 미지정 시 desktop-link.json fallback.
+        /// Discord webhook URL (옵션). 미지정 시 XGRAM_DISCORD_WEBHOOK_URL env 폴백.
         #[arg(long)]
-        daemon_token: Option<String>,
+        discord_webhook_url: Option<String>,
         /// 폴링 주기 (초)
         #[arg(long, default_value_t = 5)]
         poll_interval_secs: u64,
@@ -1664,15 +1663,16 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Agent {
             data_dir,
-            daemon_url,
-            daemon_token,
+            discord_webhook_url,
             poll_interval_secs,
         } => {
+            let dir = resolve_data_dir(data_dir)?;
+            let discord =
+                discord_webhook_url.or_else(|| std::env::var("XGRAM_DISCORD_WEBHOOK_URL").ok());
             openxgram_cli::agent::run_agent(openxgram_cli::agent::AgentOpts {
-                data_dir,
-                daemon_url,
-                daemon_token,
+                data_dir: dir,
                 poll_interval_secs,
+                discord_webhook_url: discord,
             })
             .await?;
         }
