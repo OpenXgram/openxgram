@@ -78,9 +78,9 @@
 - [ ] 1.7.1 응답 백엔드 trait 추상화 (`ResponseGenerator`)
   - [ ] 1.7.1.1 trait 정의 (`async fn generate(context, input) -> Result<String>`) — 6단계
   - [ ] 1.7.1.2 enum dispatcher (Echo / Anthropic / OpenAgentX) — 6단계
-- [ ] 1.7.2 EchoGenerator (placeholder)
-  - [ ] 1.7.2.1 구현 (`"received: {input}"` 형식) — 6단계
-  - [ ] 1.7.2.2 단위 테스트 — 6단계
+- [x] 1.7.2 EchoGenerator (placeholder)
+  - [x] 1.7.2.1 구현 (`"받았습니다: {input}"`)
+  - [ ] 1.7.2.2 단위 테스트 — 다음 iteration
 - [ ] 1.7.3 AnthropicGenerator
   - [ ] 1.7.3.1 XGRAM_ANTHROPIC_API_KEY env + keystore 옵션 — 6단계
   - [ ] 1.7.3.2 messages API 호출 (claude-opus-4-7) — 6단계
@@ -107,13 +107,13 @@
   - [ ] 1.8.4.2 timeout 시 graceful 메시지
 
 ### 1.9 응답 회신 라우터 — ❌
-- [ ] 1.9.1 발신자 종류 판별 (sender prefix)
-  - [ ] 1.9.1.1 `discord:*` → Discord webhook — 6단계
-  - [ ] 1.9.1.2 `telegram:*` → Telegram sendMessage — 6단계
-  - [ ] 1.9.1.3 `peer:*` → xgram peer_send — 6단계
-- [ ] 1.9.2 회신 메모리 기록
-  - [ ] 1.9.2.1 outbox-to-{target} 세션 ensure — 6단계
-  - [ ] 1.9.2.2 응답 메시지 저장 — 6단계
+- [~] 1.9.1 발신자 종류 판별 (sender prefix)
+  - [x] 1.9.1.1 `discord:*` → Discord webhook
+  - [ ] 1.9.1.2 `telegram:*` → Telegram sendMessage
+  - [ ] 1.9.1.3 `peer:*` → xgram peer_send
+- [x] 1.9.2 회신 메모리 기록 (Discord 회신만 우선)
+  - [x] 1.9.2.1 outbox-to-{target} 세션 ensure
+  - [x] 1.9.2.2 응답 메시지 저장
 - [ ] 1.9.3 검증
   - [ ] 1.9.3.1 master 가 보낸 채널에 응답 도착
   - [ ] 1.9.3.2 outbox 세션이 메모리에 정상 저장

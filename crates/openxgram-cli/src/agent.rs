@@ -238,10 +238,12 @@ async fn poll_once(
             .get(&session.id)
             .cloned()
             .unwrap_or_default();
-        let mut store = MessageStore::new(&mut db, embedder.as_ref());
-        let messages = store
-            .list_for_session(&session.id)
-            .with_context(|| format!("messages list_for_session({})", session.id))?;
+        let messages = {
+            let mut store = MessageStore::new(&mut db, embedder.as_ref());
+            store
+                .list_for_session(&session.id)
+                .with_context(|| format!("messages list_for_session({})", session.id))?
+        };
 
         let mut last_ts = watermark.clone();
         for m in messages {
@@ -257,14 +259,30 @@ async fn poll_once(
                 m.body.lines().next().unwrap_or("")
             );
 
-            // 발신자가 Discord 인 메시지는 다시 Discord 로 forward 하지 않는다 (피드백 루프 방지).
-            let skip_discord_forward = m.sender.starts_with("discord:");
-            if let Some(url) = discord_url {
-                if !skip_discord_forward {
-                    let body = format!("**{}** ({}): {}", session.title, m.sender, m.body);
-                    if let Err(e) = post_to_discord(http, url, &body).await {
-                        eprintln!("[agent][warn] Discord 전송 실패: {e}");
+            // 발신자가 Discord 인 메시지는 echo 응답 생성 후 Discord 채널로 회신.
+            // 그 외 발신자는 단순 forward (관전).
+            let from_discord = m.sender.starts_with("discord:");
+            if from_discord {
+                let response = generate_echo_response(&m.body);
+                if let Some(url) = discord_url {
+                    let payload = format!("🤖 **Starian**: {response}");
+                    if let Err(e) = post_to_discord(http, url, &payload).await {
+                        eprintln!("[agent][warn] Discord 회신 실패: {e}");
                     }
+                }
+                // outbox 메모리 기록
+                let outbox_title = format!("outbox-to-{}", m.sender);
+                let outbox = openxgram_memory::SessionStore::new(&mut db)
+                    .ensure_by_title(&outbox_title, "outbound")
+                    .context("outbox session ensure")?;
+                let mut store2 = MessageStore::new(&mut db, embedder.as_ref());
+                store2
+                    .insert(&outbox.id, "starian", &response, "echo-v0")
+                    .context("outbox message insert")?;
+            } else if let Some(url) = discord_url {
+                let body = format!("**{}** ({}): {}", session.title, m.sender, m.body);
+                if let Err(e) = post_to_discord(http, url, &body).await {
+                    eprintln!("[agent][warn] Discord 전송 실패: {e}");
                 }
             }
 
@@ -278,6 +296,17 @@ async fn poll_once(
     }
 
     Ok(processed)
+}
+
+/// Echo 응답 생성기 (Phase 1 v0).
+/// 다음 iteration: AnthropicGenerator (LLM 호출) / OpenAgentXGenerator.
+fn generate_echo_response(input: &str) -> String {
+    let trimmed = input.lines().next().unwrap_or(input).trim();
+    if trimmed.is_empty() {
+        "받았습니다.".to_string()
+    } else {
+        format!("받았습니다: {trimmed}")
+    }
 }
 
 #[derive(Serialize)]
