@@ -333,6 +333,22 @@ enum Commands {
         args: Vec<String>,
     },
 
+    /// 데스크탑 페어링 — `oxg://alias@host:port#token=xxx` URL 로 원격 daemon 연결.
+    /// 이후 GUI/CLI 가 환경변수 없이도 자동으로 원격 daemon 사용.
+    Link {
+        /// 페어링 URL (서버의 install.sh / `xgram pair-desktop` 출력)
+        url: String,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+
+    /// 서버측 데스크탑 페어링 — Tailscale IP + mcp-token 발급 + `oxg://...` URL 출력.
+    /// 데스크탑에서 받은 URL 을 `xgram link <url>` 로 적용.
+    PairDesktop {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+
     /// Peer 레지스트리 — 머신 간 통신 주소록 (cross-machine 메시지 baseline)
     Peer {
         #[arg(long, global = true)]
@@ -1866,6 +1882,16 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Gui { args } => {
             openxgram_cli::gui::run_gui(&args)?;
+        }
+
+        Commands::Link { url, data_dir } => {
+            let dir = resolve_data_dir(data_dir)?;
+            openxgram_cli::link::run_link(&dir, &url).await?;
+        }
+
+        Commands::PairDesktop { data_dir } => {
+            let dir = resolve_data_dir(data_dir)?;
+            openxgram_cli::pair_desktop::run_pair_desktop(&dir)?;
         }
 
         Commands::Peer { data_dir, action } => {

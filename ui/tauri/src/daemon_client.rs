@@ -51,20 +51,42 @@ pub struct ChannelStatusDto {
 }
 
 impl DaemonClient {
-    /// env 기반 — `XGRAM_DAEMON_URL` 없으면 None (로컬 모드).
+    /// env 우선 — `XGRAM_DAEMON_URL` 설정 시 그것 사용.
+    /// 미설정이면 `<data_dir>/desktop-link.json` (xgram link 명령으로 저장된 페어링) 폴백.
+    /// 둘 다 없으면 None (로컬 모드).
     pub fn from_env() -> Option<Self> {
-        let url = std::env::var("XGRAM_DAEMON_URL").ok()?;
-        if url.trim().is_empty() {
-            return None;
-        }
-        let token = std::env::var("XGRAM_DAEMON_TOKEN").ok().filter(|t| !t.is_empty());
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(8))
             .build()
             .ok()?;
+        if let Ok(url) = std::env::var("XGRAM_DAEMON_URL") {
+            if !url.trim().is_empty() {
+                let token = std::env::var("XGRAM_DAEMON_TOKEN")
+                    .ok()
+                    .filter(|t| !t.is_empty());
+                return Some(Self {
+                    base_url: url.trim_end_matches('/').to_string(),
+                    token,
+                    http,
+                });
+            }
+        }
+        // desktop-link.json 폴백.
+        let data_dir = crate::state::AppState::default_data_dir().ok()?;
+        let p = data_dir.join("desktop-link.json");
+        if !p.is_file() {
+            return None;
+        }
+        let s = std::fs::read_to_string(&p).ok()?;
+        #[derive(serde::Deserialize)]
+        struct Link {
+            daemon_url: String,
+            daemon_token: String,
+        }
+        let link: Link = serde_json::from_str(&s).ok()?;
         Some(Self {
-            base_url: url.trim_end_matches('/').to_string(),
-            token,
+            base_url: link.daemon_url.trim_end_matches('/').to_string(),
+            token: Some(link.daemon_token),
             http,
         })
     }
