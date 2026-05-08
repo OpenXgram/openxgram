@@ -262,12 +262,59 @@ pub struct NotifyStatusDto {
     pub discord_webhook_configured: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ScheduleDto {
+    pub id: String,
+    pub target_kind: String,
+    pub target: String,
+    pub payload: String,
+    pub msg_type: String,
+    pub schedule_kind: String,
+    pub schedule_value: String,
+    pub status: String,
+    pub created_at_kst: i64,
+    pub next_due_at_kst: Option<i64>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ScheduleStatsDto {
+    pub pending: usize,
+    pub sent: usize,
+    pub failed: usize,
+    pub cancelled: usize,
+}
+
 impl DaemonClient {
     pub async fn notify_status(&self) -> Result<NotifyStatusDto, String> {
         self.req(reqwest::Method::GET, "/v1/gui/notify/status")
             .send()
             .await
             .map_err(|e| format!("daemon notify/status: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("HTTP: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("JSON: {e}"))
+    }
+
+    pub async fn schedule_list(&self) -> Result<Vec<ScheduleDto>, String> {
+        self.req(reqwest::Method::GET, "/v1/gui/schedule")
+            .send()
+            .await
+            .map_err(|e| format!("daemon schedule: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("HTTP: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("JSON: {e}"))
+    }
+
+    pub async fn schedule_stats(&self) -> Result<ScheduleStatsDto, String> {
+        self.req(reqwest::Method::GET, "/v1/gui/schedule/stats")
+            .send()
+            .await
+            .map_err(|e| format!("daemon schedule/stats: {e}"))?
             .error_for_status()
             .map_err(|e| format!("HTTP: {e}"))?
             .json()

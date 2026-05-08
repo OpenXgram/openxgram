@@ -41,7 +41,26 @@ fn parse_schedule_kind(s: &str) -> Result<ScheduleKind, String> {
 }
 
 #[tauri::command]
-pub fn schedule_list(state: State<'_, AppState>) -> Result<Vec<ScheduleDto>, String> {
+pub async fn schedule_list(state: State<'_, AppState>) -> Result<Vec<ScheduleDto>, String> {
+    if let Some(client) = crate::daemon_client::DaemonClient::from_env() {
+        let r = client.schedule_list().await?;
+        return Ok(r
+            .into_iter()
+            .map(|s| ScheduleDto {
+                id: s.id,
+                target_kind: s.target_kind,
+                target: s.target,
+                payload: s.payload,
+                msg_type: s.msg_type,
+                schedule_kind: s.schedule_kind,
+                schedule_value: s.schedule_value,
+                status: s.status,
+                created_at_kst: s.created_at_kst,
+                next_due_at_kst: s.next_due_at_kst,
+                last_error: s.last_error,
+            })
+            .collect());
+    }
     let out: Option<Vec<ScheduleDto>> = with_db_optional(&state, |db| {
         let store = ScheduledStore::new(db.conn());
         let rows = store.list(None).map_err(|e| format!("schedule list: {e}"))?;
@@ -124,7 +143,16 @@ pub struct ScheduleStats {
 }
 
 #[tauri::command]
-pub fn schedule_stats(state: State<'_, AppState>) -> Result<ScheduleStats, String> {
+pub async fn schedule_stats(state: State<'_, AppState>) -> Result<ScheduleStats, String> {
+    if let Some(client) = crate::daemon_client::DaemonClient::from_env() {
+        let r = client.schedule_stats().await?;
+        return Ok(ScheduleStats {
+            pending: r.pending,
+            sent: r.sent,
+            failed: r.failed,
+            cancelled: r.cancelled,
+        });
+    }
     let out: Option<ScheduleStats> = with_db_optional(&state, |db| {
         let store = ScheduledStore::new(db.conn());
         let mut stats = ScheduleStats::default();
