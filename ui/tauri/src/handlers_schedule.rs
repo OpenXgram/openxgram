@@ -126,10 +126,15 @@ pub fn schedule_create(
 }
 
 #[tauri::command]
-pub fn schedule_cancel(state: State<'_, AppState>, id: String) -> Result<(), String> {
+pub async fn schedule_cancel(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    if let Some(client) = crate::daemon_client::DaemonClient::from_env() {
+        return client.schedule_cancel(&id).await;
+    }
     with_db_required(&state, |db| {
         let store = ScheduledStore::new(db.conn());
-        store.cancel(&id).map_err(|e| format!("schedule cancel: {e}"))
+        store
+            .cancel(&id)
+            .map_err(|e| format!("schedule cancel: {e}"))
     })
 }
 

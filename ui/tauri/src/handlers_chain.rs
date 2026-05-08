@@ -175,7 +175,10 @@ pub fn chain_create_yaml(state: State<'_, AppState>, yaml: String) -> Result<Str
 }
 
 #[tauri::command]
-pub fn chain_delete(state: State<'_, AppState>, name: String) -> Result<(), String> {
+pub async fn chain_delete(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    if let Some(client) = crate::daemon_client::DaemonClient::from_env() {
+        return client.chain_delete(&name).await;
+    }
     with_db_required(&state, |db| {
         let store = ChainStore::new(db.conn());
         store
