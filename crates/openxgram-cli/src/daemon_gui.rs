@@ -138,6 +138,16 @@ pub struct ScheduleStatsDto {
     pub cancelled: usize,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ScheduleCreateBody {
+    pub target_kind: String,
+    pub target: String,
+    pub payload: String,
+    pub msg_type: Option<String>,
+    pub schedule_kind: String,
+    pub schedule_value: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ChainDto {
     pub id: String,
@@ -202,7 +212,10 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
             get(gui_payment_get_limit).put(gui_payment_set_limit),
         )
         .route("/v1/gui/notify/status", get(gui_notify_status))
-        .route("/v1/gui/schedule", get(gui_schedule_list))
+        .route(
+            "/v1/gui/schedule",
+            get(gui_schedule_list).post(gui_schedule_create),
+        )
         .route("/v1/gui/schedule/stats", get(gui_schedule_stats))
         .route("/v1/gui/chain", get(gui_chain_list))
         .route(
@@ -647,6 +660,52 @@ async fn gui_chain_show(
             })
             .collect(),
     }))
+}
+
+/// `POST /v1/gui/schedule` — 새 예약 등록. 반환: 새 schedule id.
+async fn gui_schedule_create(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<ScheduleCreateBody>,
+) -> Result<Json<String>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    if body.target.trim().is_empty()
+        || body.payload.trim().is_empty()
+        || body.schedule_value.trim().is_empty()
+    {
+        return Err(bad_request("target/payload/schedule_value 필수"));
+    }
+    let tk = match body.target_kind.as_str() {
+        "role" => openxgram_orchestration::TargetKind::Role,
+        "platform" => openxgram_orchestration::TargetKind::Platform,
+        other => {
+            return Err(bad_request(&format!(
+                "target_kind '{other}' 허용 안 됨 (role|platform)"
+            )))
+        }
+    };
+    let sk = match body.schedule_kind.as_str() {
+        "once" => openxgram_orchestration::ScheduleKind::Once,
+        "cron" => openxgram_orchestration::ScheduleKind::Cron,
+        other => {
+            return Err(bad_request(&format!(
+                "schedule_kind '{other}' 허용 안 됨 (once|cron)"
+            )))
+        }
+    };
+    let mt = body.msg_type.unwrap_or_else(|| "info".into());
+    let mut db = state.db.lock().await;
+    let id = openxgram_orchestration::ScheduledStore::new(db.conn())
+        .insert(
+            tk,
+            &body.target,
+            &body.payload,
+            &mt,
+            sk,
+            &body.schedule_value,
+        )
+        .map_err(|e| internal(&format!("schedule insert: {e}")))?;
+    Ok(Json(id))
 }
 
 /// `POST /v1/gui/schedule/:id/cancel` — 예약 취소.
