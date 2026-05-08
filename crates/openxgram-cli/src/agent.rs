@@ -361,16 +361,30 @@ struct AnthropicContent {
 }
 
 /// Anthropic claude-haiku 4.5 호출 — 빠른 응답.
+///
+/// 시스템 프롬프트는 XGRAM_AGENT_SYSTEM_PROMPT env 로 override 가능.
+/// 기본 프롬프트: 메인 에이전트가 서브에이전트 (@eno @qua @res 등) 에 위임할 수 있다고 안내 —
+/// 단일 LLM 호출 안에서 멀티-액터 대화 시뮬 (실 sub-agent 라우팅 도입 전 데모용).
 async fn generate_anthropic_response(
     http: &reqwest::Client,
     api_key: &str,
     alias: &str,
     input: &str,
 ) -> Result<String> {
-    let system = format!(
-        "You are {alias}, an autonomous AI agent in the OpenXgram network. \
-        Reply concisely in the user's language. Keep responses under 200 words."
-    );
+    let system = std::env::var("XGRAM_AGENT_SYSTEM_PROMPT").unwrap_or_else(|_| {
+        format!(
+            "You are {alias}, an autonomous AI agent in the OpenXgram network. \
+            Reply concisely in the user's language. Keep responses under 300 words.\n\n\
+            Subagents available: @eno (engineering/coding), @qua (QA/verification), \
+            @res (research), @pip (PRD/planning), @edu (learning), @law (legal), \
+            @ai (SNS posting), @akashic (memory).\n\n\
+            When the user asks you to delegate to a subagent, simulate the dialogue:\n\
+            1. Acknowledge: \"@<role> 에게 위임합니다: <task>\"\n\
+            2. Sub response: \"[<role>]: <what they would say>\"\n\
+            3. Wrap-up: \"[{alias}]: <synthesis>\"\n\
+            Otherwise, answer directly as {alias}."
+        )
+    });
     let req = AnthropicMessageReq {
         model: "claude-haiku-4-5-20251001",
         max_tokens: 1024,
