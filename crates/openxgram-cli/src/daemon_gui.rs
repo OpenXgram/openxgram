@@ -205,7 +205,11 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/schedule", get(gui_schedule_list))
         .route("/v1/gui/schedule/stats", get(gui_schedule_stats))
         .route("/v1/gui/chain", get(gui_chain_list))
-        .route("/v1/gui/chain/:name", get(gui_chain_show))
+        .route(
+            "/v1/gui/chain/:name",
+            get(gui_chain_show).delete(gui_chain_delete),
+        )
+        .route("/v1/gui/schedule/:id/cancel", post(gui_schedule_cancel))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr)
@@ -643,6 +647,34 @@ async fn gui_chain_show(
             })
             .collect(),
     }))
+}
+
+/// `POST /v1/gui/schedule/:id/cancel` — 예약 취소.
+async fn gui_schedule_cancel(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    openxgram_orchestration::ScheduledStore::new(db.conn())
+        .cancel(&id)
+        .map_err(|e| internal(&format!("schedule cancel: {e}")))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /v1/gui/chain/:name` — chain 삭제 (steps cascade).
+async fn gui_chain_delete(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    openxgram_orchestration::ChainStore::new(db.conn())
+        .delete_by_name(&name)
+        .map_err(|e| internal(&format!("chain delete: {e}")))?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 fn bad_request(msg: &str) -> (StatusCode, Json<ErrorDto>) {

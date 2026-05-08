@@ -376,4 +376,27 @@ impl DaemonClient {
             .await
             .map_err(|e| format!("JSON: {e}"))
     }
+
+    pub async fn schedule_cancel(&self, id: &str) -> Result<(), String> {
+        self.req(
+            reqwest::Method::POST,
+            &format!("/v1/gui/schedule/{id}/cancel"),
+        )
+        .send()
+        .await
+        .map_err(|e| format!("daemon schedule cancel: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("HTTP: {e}"))?;
+        Ok(())
+    }
+
+    pub async fn chain_delete(&self, name: &str) -> Result<(), String> {
+        self.req(reqwest::Method::DELETE, &format!("/v1/gui/chain/{name}"))
+            .send()
+            .await
+            .map_err(|e| format!("daemon chain delete: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("HTTP: {e}"))?;
+        Ok(())
+    }
 }
