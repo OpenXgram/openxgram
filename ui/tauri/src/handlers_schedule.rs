@@ -96,7 +96,7 @@ pub struct ScheduleCreateForm {
 }
 
 #[tauri::command]
-pub fn schedule_create(
+pub async fn schedule_create(
     state: State<'_, AppState>,
     target_kind: String,
     target: String,
@@ -105,6 +105,18 @@ pub fn schedule_create(
     schedule_kind: String,
     schedule_value: String,
 ) -> Result<String, String> {
+    if let Some(client) = crate::daemon_client::DaemonClient::from_env() {
+        return client
+            .schedule_create(&crate::daemon_client::ScheduleCreateBody {
+                target_kind: target_kind.clone(),
+                target: target.clone(),
+                payload: payload.clone(),
+                msg_type: msg_type.clone(),
+                schedule_kind: schedule_kind.clone(),
+                schedule_value: schedule_value.clone(),
+            })
+            .await;
+    }
     let tk = parse_target_kind(&target_kind)?;
     let sk = parse_schedule_kind(&schedule_kind)?;
     let mt = msg_type.unwrap_or_else(|| "info".into());

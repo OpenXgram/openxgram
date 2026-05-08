@@ -399,4 +399,30 @@ impl DaemonClient {
             .map_err(|e| format!("HTTP: {e}"))?;
         Ok(())
     }
+
+    pub async fn schedule_create(
+        &self,
+        body: &ScheduleCreateBody,
+    ) -> Result<String, String> {
+        self.req(reqwest::Method::POST, "/v1/gui/schedule")
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| format!("daemon schedule create: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("HTTP: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("JSON: {e}"))
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ScheduleCreateBody {
+    pub target_kind: String,
+    pub target: String,
+    pub payload: String,
+    pub msg_type: Option<String>,
+    pub schedule_kind: String,
+    pub schedule_value: String,
 }
