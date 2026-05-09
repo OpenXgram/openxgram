@@ -13,6 +13,7 @@ fn sample_envelope() -> Envelope {
         timestamp: Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap()),
         signature_hex: "00".repeat(64),
         nonce: None,
+        conversation_id: None,
     }
 }
 

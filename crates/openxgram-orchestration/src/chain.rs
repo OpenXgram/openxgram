@@ -348,6 +348,9 @@ impl ChainRunner {
             // 3) send
             let send_result = match step.target_kind {
                 TargetKind::Role => sender.send_to_role(&step.target, &step.payload).await,
+                TargetKind::SelfTrigger => Err(OrchestrationError::Send(
+                    "SelfTrigger 는 chain step 미지원 — schedule cron 으로 등록".into(),
+                )),
                 TargetKind::Platform => {
                     // target = "platform:channel_id"
                     let (platform, channel) = match step.target.split_once(':') {

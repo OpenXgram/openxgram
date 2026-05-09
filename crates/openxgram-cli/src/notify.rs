@@ -491,6 +491,7 @@ impl StoreCtx {
             sender,
             body,
             &signature,
+            None,
         )?;
         println!("  → L0 저장 (id={})", msg.id);
         Ok(())

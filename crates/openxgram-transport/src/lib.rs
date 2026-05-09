@@ -44,6 +44,10 @@ pub struct Envelope {
     /// None 이면 backward-compat — 검증 안 함 (legacy 메시지 호환).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nonce: Option<String>,
+    /// 같은 inbound→응답 묶음을 cross-node 로 동기하기 위한 hint.
+    /// 서명에는 포함되지 않음 (전송 메타데이터). None 이면 수신측이 새 conversation 시작.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<String>,
 }
 
 #[derive(Debug, Error)]

@@ -99,6 +99,18 @@ pub async fn run_peer_send(
     body: &str,
     password: &str,
 ) -> Result<()> {
+    run_peer_send_with_conv(data_dir, alias, sender, body, password, None).await
+}
+
+/// 1.9.1.3 / 2.3.4 — conversation_id 동봉 버전. 메인 진입점은 `run_peer_send` (None) 호출.
+pub async fn run_peer_send_with_conv(
+    data_dir: &Path,
+    alias: &str,
+    sender: Option<&str>,
+    body: &str,
+    password: &str,
+    conversation_id: Option<String>,
+) -> Result<()> {
     let mut db = open_db(data_dir)?;
     let mut store = PeerStore::new(&mut db);
     let peer = store
@@ -126,6 +138,7 @@ pub async fn run_peer_send(
         timestamp: kst_now(),
         signature_hex,
         nonce: Some(uuid::Uuid::new_v4().to_string()),
+        conversation_id,
     };
 
     match parse_route(&address, &peer.public_key_hex)? {
@@ -224,6 +237,7 @@ pub async fn run_peer_broadcast(
             timestamp: now,
             signature_hex: signature_hex.clone(),
             nonce: Some(uuid::Uuid::new_v4().to_string()),
+            conversation_id: None,
         };
         match route {
             SendRoute::Http(url) => {
@@ -378,6 +392,7 @@ mod tests {
             timestamp: kst_now(),
             signature_hex: "00".repeat(64),
             nonce: Some("nonce-x".into()),
+            conversation_id: None,
         };
 
         // sink 가 relay 에 먼저 연결 (안정적인 publish 순서)
@@ -446,6 +461,7 @@ mod tests {
             timestamp: kst_now(),
             signature_hex: "00".repeat(64),
             nonce: Some("n1".into()),
+            conversation_id: None,
         };
         send_via_nostr(&sink, &sender_keys, &ws_url, &peer_pubkey, &env)
             .await

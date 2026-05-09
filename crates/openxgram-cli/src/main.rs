@@ -467,6 +467,239 @@ enum Commands {
         #[command(subcommand)]
         cmd: OnboardCli,
     },
+
+    /// 1머신 N봇 — 봇 추가/목록/제거/링크 (a 작업)
+    Bot {
+        #[command(subcommand)]
+        cmd: BotCli,
+    },
+
+    /// 친구 초대 URL + QR 출력 (oxg-friend://)
+    Invite {
+        /// 데이터 디렉토리 (기본 ~/.openxgram)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        /// alias 표시 (없으면 manifest 의 머신 alias)
+        #[arg(long)]
+        alias: Option<String>,
+        /// 외부 접속 가능한 transport address (예: http://1.2.3.4:47300)
+        #[arg(long, default_value = "http://127.0.0.1:47300")]
+        address: String,
+    },
+
+    /// 친구 추가 — 받은 oxg-friend://... URL 로 양방향 peer 등록
+    Friend {
+        #[command(subcommand)]
+        cmd: FriendCli,
+    },
+
+    /// HITL — 봇이 사람한테 물어본 질문 목록 / 응답 (d 작업)
+    Human {
+        #[command(subcommand)]
+        cmd: HumanCli,
+    },
+
+    /// 채널 등록 (Discord / Telegram / xgram-peer / ...) — 다채널 라우팅 (e 작업)
+    Channels {
+        #[command(subcommand)]
+        cmd: ChannelsCli,
+    },
+
+    /// 핸들 → 채널 디렉터리 cache 관리 (e 작업)
+    Directory {
+        #[command(subcommand)]
+        cmd: DirectoryCli,
+    },
+
+    /// `xgram find @<h>` — 핸들 검색 (directory cache → ENS resolver → indexer)
+    Find {
+        /// `@handle` 또는 keyword
+        query: String,
+        /// indexer URL (--indexer 사용 시 indexer 의 search 결과)
+        #[arg(long)]
+        indexer: Option<String>,
+    },
+
+    /// `xgram chat` — 30초 데모 진입점. 첫 가동 시 자동 init, 즉시 봇과 REPL 대화.
+    Chat {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+
+    /// `xgram openagentx call <agent> <prompt> [--pay <micros>]` — OpenAgentX 마켓 에이전트 호출 (step 11/12)
+    Openagentx {
+        #[command(subcommand)]
+        cmd: OpenagentxCli,
+    },
+
+    /// `xgram eas list/count/attest` — EAS 어테스테이션 (step 18)
+    Eas {
+        #[command(subcommand)]
+        cmd: EasCli,
+    },
+
+    /// `xgram send @<h> <body>` — 다채널 자동 라우팅 (e 작업 마무리)
+    Send {
+        /// `@handle`
+        handle: String,
+        /// 메시지 본문
+        body: String,
+        /// 강제 채널 종류 (discord / telegram / xgram-peer / ...)
+        #[arg(long)]
+        kind: Option<String>,
+        /// 동일 thread 로 묶을 conversation_id
+        #[arg(long)]
+        conversation_id: Option<String>,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum EasCli {
+    /// 최근 attestation 목록
+    List {
+        #[arg(long, default_value = "20")]
+        limit: usize,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+    /// kind 별 카운트
+    Count {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+    /// 수동 attestation 추가 (시연용)
+    Attest {
+        /// kind: message | payment | endorsement
+        #[arg(long)]
+        kind: String,
+        /// fields JSON
+        fields: String,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum OpenagentxCli {
+    /// 마켓 에이전트 호출 — 응답 받기 + (옵션) USDC 결제 draft 생성
+    Call {
+        /// agent id (예: "@translator-pro")
+        agent: String,
+        /// prompt
+        prompt: String,
+        /// 유료 호출 시 micro USDC (1 USDC = 1_000_000)
+        #[arg(long)]
+        pay: Option<u64>,
+        /// 결제 메모
+        #[arg(long)]
+        memo: Option<String>,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ChannelsCli {
+    /// 본 노드의 채널 추가
+    Add {
+        kind: String,
+        address: String,
+        #[arg(long, default_value = "public")]
+        visibility: String,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+    /// 등록된 채널 목록
+    List {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+    /// 채널 제거
+    Remove {
+        kind: String,
+        address: String,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum DirectoryCli {
+    /// 핸들의 채널 lookup
+    Lookup { handle: String },
+    /// 핸들의 채널 수동 등록 (cache 갱신)
+    Set {
+        handle: String,
+        /// JSON: [{"kind":"discord","address":"..","visibility":"public"}, ...]
+        channels_json: String,
+    },
+    /// step 13 — 자기 봇을 외부 디렉터리에 등록 ("홍보")
+    Register {
+        /// indexer 서비스 URL (예: https://openxgram.org/registry)
+        #[arg(long)]
+        to: String,
+        /// 평판 카운트 동봉 (messages / payments / endorsements)
+        #[arg(long)]
+        with_counts: bool,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum HumanCli {
+    /// 미응답 HITL 요청 목록
+    Pending {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+    /// 봇 질문에 응답
+    Respond {
+        request_id: String,
+        answer: String,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum FriendCli {
+    /// 받은 invite URL 로 친구 추가 (자동 handshake)
+    Accept {
+        /// oxg-friend:// URL
+        url: String,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum BotCli {
+    /// 새 봇 등록 (data_dir 자동 생성, 포트 자동 할당, 레지스트리 갱신)
+    Add {
+        /// 봇 이름 (영숫자/-/_)
+        name: String,
+        /// 봇 alias (생략 시 name 그대로)
+        #[arg(long)]
+        alias: Option<String>,
+    },
+    /// 등록된 봇 목록
+    List,
+    /// 봇 제거 (data_dir 까지 삭제)
+    Remove {
+        name: String,
+        /// 가동 중이어도 강제 종료 + 제거
+        #[arg(long)]
+        force: bool,
+    },
+    /// 봇 가동 (data_dir 의 daemon + agent 백그라운드 spawn)
+    Start { name: String },
+    /// 봇 종료 (TERM)
+    Stop { name: String },
+    /// 두 봇을 양방향 peer 로 등록 (같은 머신 내)
+    Link { a: String, b: String },
 }
 
 #[derive(Subcommand, Debug)]
@@ -586,6 +819,24 @@ enum SessionCli {
     Delete { id: String },
     /// 모든 session 에 reflection 일괄 실행 (cron 전 단계)
     ReflectAll,
+    /// step 5/6 — 다른 LLM 앱 (Claude/ChatGPT/Gemini) 에 복붙 가능한 transcript 출력
+    Transcript {
+        session_id: String,
+        /// 출력 포맷 — claude / chatgpt / gemini / plain (기본 plain)
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    /// step 5/6/8 — AI 앱 export 파일을 OpenXgram session 으로 import
+    ImportApp {
+        /// 파일 경로 (예: conversations.json / MyActivity.json / session.jsonl)
+        file: PathBuf,
+        /// 포맷 — chatgpt | gemini | claude-code
+        #[arg(long)]
+        format: String,
+        /// (옵션) session 제목 override
+        #[arg(long)]
+        title: Option<String>,
+    },
 }
 
 impl From<SessionCli> for SessionAction {
@@ -609,6 +860,11 @@ impl From<SessionCli> for SessionAction {
             SessionCli::Import { input, verify } => SessionAction::Import { input, verify },
             SessionCli::Delete { id } => SessionAction::Delete { id },
             SessionCli::ReflectAll => SessionAction::ReflectAll,
+            SessionCli::Transcript { session_id, format } => {
+                SessionAction::Transcript { session_id, format }
+            }
+            // ImportApp 은 SessionAction 변환 안 함 — main dispatch 에서 직접 처리.
+            SessionCli::ImportApp { .. } => unreachable!("ImportApp 은 dispatch 에서 직접 처리"),
         }
     }
 }
@@ -906,6 +1162,12 @@ enum MemoryCli {
     Pin { id: String },
     /// memory unpin
     Unpin { id: String },
+    /// 같은 conversation_id 로 묶인 모든 메시지 출력 (timestamp 오름차순)
+    Show {
+        /// conversation_id (UUID)
+        #[arg(long)]
+        conversation: String,
+    },
     /// L2 memories + L4 traits 를 Claude 호환 markdown 으로 export
     Export {
         /// 결과 파일 경로 (생략 시 stdout)
@@ -970,6 +1232,7 @@ impl From<MemoryCli> for MemoryAction {
             },
             MemoryCli::Pin { id } => MemoryAction::Pin { id },
             MemoryCli::Unpin { id } => MemoryAction::Unpin { id },
+            MemoryCli::Show { conversation } => MemoryAction::ShowConversation { id: conversation },
             // Export/Import/ExportPrompt 는 main dispatch 에서 직접 처리 — 이 변환에 도달 불가.
             MemoryCli::Export { .. } | MemoryCli::Import { .. } | MemoryCli::ExportPrompt => {
                 unreachable!("export/import/export-prompt 는 dispatch 에서 처리되어야 함")
@@ -1091,6 +1354,11 @@ enum PaymentCli {
     Show { id: String },
     /// 지원 chain 목록
     Chains,
+    /// 수익 요약 (받은 금액 / 보낸 금액 / 순수익) — step 14
+    Summary {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
     /// signed intent 를 직접 RPC 로 on-chain 제출 (USDC transfer). 성공 시 자동으로 state=submitted.
     Submit {
         /// payment intent id
@@ -1149,6 +1417,9 @@ impl From<PaymentCli> for PaymentAction {
             }
             PaymentCli::MarkConfirmed { id } => PaymentAction::MarkConfirmed { id },
             PaymentCli::MarkFailed { id, reason } => PaymentAction::MarkFailed { id, reason },
+            PaymentCli::Summary { .. } => {
+                unreachable!("Summary 는 별도 dispatch 처리")
+            }
         }
     }
 }
@@ -1599,7 +1870,22 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Session { data_dir, action } => {
             let dir = resolve_data_dir(data_dir)?;
-            session::run_session(&dir, action.into())?;
+            // ImportApp 은 별도 함수 호출
+            if let SessionCli::ImportApp { file, format, title } = action {
+                let fmt = openxgram_cli::import_app::ImportFormat::parse(&format)?;
+                let summary = openxgram_cli::import_app::run_import_app(
+                    &dir,
+                    &file,
+                    fmt,
+                    title.as_deref(),
+                )?;
+                println!(
+                    "✓ import 완료 — session '{}' (id={}) / 메시지 {} 개",
+                    summary.title, summary.session_id, summary.messages_inserted
+                );
+            } else {
+                session::run_session(&dir, action.into())?;
+            }
         }
 
         Commands::Memory { data_dir, action } => match action {
@@ -2016,6 +2302,13 @@ async fn main() -> anyhow::Result<()> {
                     payment::run_payment_submit(&dir, &id, rpc_url.as_deref(), notify.as_deref())
                         .await?;
                 }
+                PaymentCli::Summary { data_dir: dd } => {
+                    let summary_dir = match dd {
+                        Some(p) => p,
+                        None => dir.clone(),
+                    };
+                    openxgram_cli::payment_summary::run_summary(&summary_dir)?;
+                }
                 other => payment::run_payment(&dir, other.into())?,
             }
         }
@@ -2121,6 +2414,202 @@ async fn main() -> anyhow::Result<()> {
         Commands::Onboard { cmd } => match cmd {
             OnboardCli::Prompt { lang, copy } => {
                 openxgram_cli::onboard::run_onboard_prompt(lang, copy)?;
+            }
+        },
+
+        Commands::Bot { cmd } => match cmd {
+            BotCli::Add { name, alias } => {
+                openxgram_cli::bot::bot_add(&name, alias.as_deref())?;
+            }
+            BotCli::List => {
+                openxgram_cli::bot::bot_list()?;
+            }
+            BotCli::Remove { name, force } => {
+                openxgram_cli::bot::bot_remove(&name, force)?;
+            }
+            BotCli::Start { name } => {
+                openxgram_cli::bot::bot_start(&name)?;
+            }
+            BotCli::Stop { name } => {
+                openxgram_cli::bot::bot_stop(&name)?;
+            }
+            BotCli::Link { a, b } => {
+                openxgram_cli::bot::bot_link(&a, &b)?;
+            }
+        },
+
+        Commands::Invite { data_dir, alias, address } => {
+            let dir = resolve_data_dir(data_dir)?;
+            let alias = alias.unwrap_or_else(|| "me".into());
+            openxgram_cli::invite::run_invite(&dir, &alias, &address)?;
+        }
+
+        Commands::Friend { cmd } => match cmd {
+            FriendCli::Accept { url, data_dir } => {
+                let dir = resolve_data_dir(data_dir)?;
+                openxgram_cli::invite::run_friend_accept(&dir, &url)?;
+            }
+        },
+
+        Commands::Channels { cmd } => match cmd {
+            ChannelsCli::Add {
+                kind,
+                address,
+                visibility,
+                data_dir,
+            } => {
+                let dir = resolve_data_dir(data_dir)?;
+                openxgram_cli::channels::channel_add(&dir, &kind, &address, &visibility)?;
+            }
+            ChannelsCli::List { data_dir } => {
+                let dir = resolve_data_dir(data_dir)?;
+                let list = openxgram_cli::channels::channel_list(&dir)?;
+                if list.is_empty() {
+                    println!("(등록된 채널 없음)");
+                } else {
+                    for c in list {
+                        println!("{:<12} {:<40} {}", c.kind, c.address, c.visibility);
+                    }
+                }
+            }
+            ChannelsCli::Remove {
+                kind,
+                address,
+                data_dir,
+            } => {
+                let dir = resolve_data_dir(data_dir)?;
+                openxgram_cli::channels::channel_remove(&dir, &kind, &address)?;
+            }
+        },
+
+        Commands::Directory { cmd } => match cmd {
+            DirectoryCli::Lookup { handle } => {
+                let chans = openxgram_cli::channels::directory_lookup(&handle)?;
+                if chans.is_empty() {
+                    println!("(채널 없음 — directory cache miss; xgram identity publish 시 등록 권장)");
+                } else {
+                    for c in chans {
+                        println!("{:<12} {:<40} {}", c.kind, c.address, c.visibility);
+                    }
+                }
+            }
+            DirectoryCli::Set {
+                handle,
+                channels_json,
+            } => {
+                let chans: Vec<openxgram_cli::channels::Channel> =
+                    serde_json::from_str(&channels_json)
+                        .map_err(|e| anyhow::anyhow!("channels_json 파싱 (JSON): {e}"))?;
+                openxgram_cli::channels::directory_set(&handle, chans)?;
+                println!("✓ {handle} 디렉터리 cache 갱신");
+            }
+            DirectoryCli::Register {
+                to,
+                with_counts,
+                data_dir,
+            } => {
+                let dir = resolve_data_dir(data_dir)?;
+                openxgram_cli::identity_handle::register_to_directory(&dir, &to, with_counts)
+                    .await?;
+            }
+        },
+
+        Commands::Find { query, indexer } => {
+            openxgram_cli::find::run_find(openxgram_cli::find::FindOpts { query, indexer })
+                .await?;
+        }
+
+        Commands::Chat { data_dir } => {
+            openxgram_cli::chat::run_chat(data_dir).await?;
+        }
+
+        Commands::Eas { cmd } => match cmd {
+            EasCli::List { limit, data_dir } => {
+                let dir = resolve_data_dir(data_dir)?;
+                openxgram_cli::eas::run_list(&dir, limit)?;
+            }
+            EasCli::Count { data_dir } => {
+                let dir = resolve_data_dir(data_dir)?;
+                openxgram_cli::eas::run_count(&dir)?;
+            }
+            EasCli::Attest { kind, fields, data_dir } => {
+                let dir = resolve_data_dir(data_dir)?;
+                let k = match kind.as_str() {
+                    "message" => openxgram_eas::AttestationKind::Message,
+                    "payment" => openxgram_eas::AttestationKind::Payment,
+                    "endorsement" => openxgram_eas::AttestationKind::Endorsement,
+                    other => anyhow::bail!("kind = message | payment | endorsement (got: {other})"),
+                };
+                openxgram_cli::eas::run_attest(&dir, k, &fields)?;
+            }
+        },
+
+        Commands::Openagentx { cmd } => match cmd {
+            OpenagentxCli::Call {
+                agent,
+                prompt,
+                pay,
+                memo,
+                data_dir,
+            } => {
+                let dir = resolve_data_dir(data_dir)?;
+                let answer = openxgram_cli::openagentx::run_call(
+                    &dir,
+                    openxgram_cli::openagentx::CallOpts {
+                        agent,
+                        prompt,
+                        pay_micros: pay,
+                        memo,
+                    },
+                )
+                .await?;
+                println!("{answer}");
+            }
+        },
+
+        Commands::Send {
+            handle,
+            body,
+            kind,
+            conversation_id,
+            data_dir,
+        } => {
+            let dir = resolve_data_dir(data_dir)?;
+            openxgram_cli::send::run_send(
+                &dir,
+                openxgram_cli::send::SendOpts {
+                    handle,
+                    body,
+                    prefer_kind: kind,
+                    conversation_id,
+                },
+            )
+            .await?;
+        }
+
+        Commands::Human { cmd } => match cmd {
+            HumanCli::Pending { data_dir } => {
+                let dir = resolve_data_dir(data_dir)?;
+                let pending = openxgram_cli::hitl::list_pending_requests(&dir)?;
+                if pending.is_empty() {
+                    println!("(미응답 요청 없음)");
+                } else {
+                    println!("미응답 HITL 요청 {} 건", pending.len());
+                    for r in pending {
+                        println!("  [{}] {}", r.id, r.question);
+                        for o in r.options {
+                            println!("    - {o}");
+                        }
+                    }
+                }
+            }
+            HumanCli::Respond {
+                request_id,
+                answer,
+                data_dir,
+            } => {
+                let dir = resolve_data_dir(data_dir)?;
+                openxgram_cli::hitl::respond_human(&dir, &request_id, &answer)?;
             }
         },
     }

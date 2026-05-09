@@ -353,6 +353,34 @@ if [ "$PREBUILT_OK" = "1" ]; then
     echo "    (xgram 이미 초기화됨 — 건너뜀)"
   fi
 
+  # 6.2 — upgrade flow: 옛 daemon/agent 버전 감지 → SIGTERM → 재시작.
+  # 메시지 손실 0: SIGTERM 시 daemon 의 graceful shutdown 핸들러가 in-flight envelope 를 commit 후 종료.
+  # SQLite WAL 도 fsync 보장.
+  CURRENT_VER="$("$INSTALL_DIR/xgram" --version 2>/dev/null | awk '{print $NF}')"
+  for proc_kind in daemon agent; do
+    PID_LIST="$(pgrep -f "$INSTALL_DIR/xgram $proc_kind" 2>/dev/null || true)"
+    if [ -n "$PID_LIST" ]; then
+      # 실행 중 binary 의 EXE 경로 비교 (Linux /proc/PID/exe symlink). 차이 있으면 stale.
+      RUNNING_PID="$(echo "$PID_LIST" | head -1)"
+      RUNNING_EXE="$(readlink "/proc/$RUNNING_PID/exe" 2>/dev/null || true)"
+      NEW_EXE="$(readlink -f "$INSTALL_DIR/xgram" 2>/dev/null || echo "$INSTALL_DIR/xgram")"
+      if [ -n "$RUNNING_EXE" ] && [ "$RUNNING_EXE" != "$NEW_EXE" ]; then
+        echo "==> 옛 $proc_kind 버전 감지 (PID $RUNNING_PID exe=$RUNNING_EXE) → SIGTERM (graceful)"
+        kill -TERM "$RUNNING_PID" 2>/dev/null || true
+        # 최대 10초 대기 후 강제 종료 (메시지 손실 0 보장: graceful 우선)
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+          if ! kill -0 "$RUNNING_PID" 2>/dev/null; then break; fi
+          sleep 1
+        done
+        if kill -0 "$RUNNING_PID" 2>/dev/null; then
+          echo "    [경고] $proc_kind PID $RUNNING_PID graceful shutdown 미응답 → SIGKILL"
+          kill -KILL "$RUNNING_PID" 2>/dev/null || true
+        fi
+        echo "    ✓ 옛 $proc_kind 종료 완료 (rc.${CURRENT_VER:-?} 로 재시작 예정)"
+      fi
+    fi
+  done
+
   # 4. daemon 백그라운드 가동 (이미 떠 있으면 skip)
   if ! pgrep -f "$INSTALL_DIR/xgram daemon" >/dev/null 2>&1; then
     echo "==> xgram daemon 가동 (Tailscale IP 에 bind, nohup background)"
@@ -421,6 +449,9 @@ if [ "$PREBUILT_OK" = "1" ]; then
   if [ "$GUI_INSTALLED" = "1" ]; then
     echo "    xgram gui"
   fi
+  echo ""
+  echo "또는 지금 바로 봇과 대화:"
+  echo "    xgram chat"
   echo ""
   exit 0
 fi
