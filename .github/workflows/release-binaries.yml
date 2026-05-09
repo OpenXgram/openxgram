@@ -1,9 +1,9 @@
 name: Build release binaries
 
 # 5 타겟 병렬 빌드:
-#   linux x86_64 / linux aarch64 (cross via gcc-aarch64-linux-gnu)
-#   macOS x86_64 / aarch64 (macos-14 ARM runner — x86_64 via cross-compile, ARM native)
-#   windows x86_64 (cross via mingw-w64 from ubuntu)
+#   linux x86_64 / linux aarch64 (cross via gcc-aarch64-linux-gnu, aarch64 는 CLI 만)
+#   macOS x86_64 / aarch64 (macos-14 ARM runner — x86_64 via cross-compile, ARM native, 둘 다 GUI 동봉)
+#   windows x86_64 (windows-latest msvc native — WebView2 사전 포함, GUI 동봉)
 #
 # 트리거: release(created/edited) 자동 + workflow_dispatch(tag) 수동.
 # 보안: untrusted github.event.* 입력은 env 로만 노출 (run 본문에 직접 보간 X).
@@ -28,8 +28,9 @@ jobs:
       matrix:
         include:
           # with_gui: Tauri 데스크톱 앱(`xgram-desktop`) 도 같이 빌드 + tarball 동봉.
-          #   - linux-aarch64 / windows: 크로스 빌드 환경에서 webkit/webview2 호환 어려워 CLI 만 ship.
-          #     사용자 측에선 `xgram gui` 가 명시적 안내 에러 (silent fallback 금지).
+          #   - linux-aarch64: 크로스 빌드 환경에서 webkit 호환 어려워 CLI 만 ship.
+          #   - windows: native windows-latest 로 빌드 (WebView2 사전 포함) — GUI 동봉.
+          #   - 미동봉 매트릭스에선 `xgram gui` 가 명시적 안내 에러 (silent fallback 금지).
           - label: linux-x86_64
             target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
@@ -55,10 +56,10 @@ jobs:
             with_gui: true
             asset_suffix: aarch64-darwin.tar.gz
           - label: windows-x86_64
-            target: x86_64-pc-windows-gnu
-            os: ubuntu-latest
-            cross: true
-            with_gui: false
+            target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+            with_gui: true
             asset_suffix: x86_64-windows.zip
     runs-on: ${{ matrix.os }}
     env:
@@ -85,30 +86,26 @@ jobs:
             target
           key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install cross-compile toolchain (aarch64-linux / windows-gnu)
+      - name: Install cross-compile toolchain (aarch64-linux only)
         if: matrix.cross == true
         run: |
           set -eu
           sudo apt-get update
           if [ "$MATRIX_TARGET" = "aarch64-unknown-linux-gnu" ]; then
             sudo apt-get install -y gcc-aarch64-linux-gnu
-          elif [ "$MATRIX_TARGET" = "x86_64-pc-windows-gnu" ]; then
-            sudo apt-get install -y mingw-w64
           else
             echo "unknown cross target: $MATRIX_TARGET" >&2
             exit 1
           fi
 
       - name: Build openxgram-cli
+        shell: bash
         env:
           # 의존 crate 가 자체 rust-toolchain.toml 로 다른 채널을 강제하지 못하게 고정.
           RUSTUP_TOOLCHAIN: stable
-          # cc crate cross-compile env (linux-aarch64 / windows-gnu).
-          # CARGO_TARGET_*_LINKER 는 .cargo/config.toml 에서 정적 지정.
+          # cc crate cross-compile env (aarch64-linux 전용 — windows 는 native msvc).
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
-          CC_x86_64_pc_windows_gnu: x86_64-w64-mingw32-gcc
-          AR_x86_64_pc_windows_gnu: x86_64-w64-mingw32-ar
         run: cargo build --release --target "$MATRIX_TARGET" -p openxgram-cli
 
       - name: Install GUI build dependencies (Linux)
@@ -140,6 +137,7 @@ jobs:
 
       - name: Build openxgram-desktop (Tauri binary, no installers)
         if: matrix.with_gui == true
+        shell: bash
         env:
           RUSTUP_TOOLCHAIN: stable
         # ui/tauri 는 워크스페이스 외부 — 자체 Cargo.lock 보유. tauri-cli 없이 cargo 만으로
@@ -155,19 +153,21 @@ jobs:
           asset="xgram-${RELEASE_TAG}-${MATRIX_ASSET_SUFFIX}"
           stage="$(mktemp -d)"
           # CLI 바이너리 필수.
-          if [ "$MATRIX_TARGET" = "x86_64-pc-windows-gnu" ]; then
-            cp "target/$MATRIX_TARGET/release/xgram.exe" "$stage/xgram.exe"
-          else
-            cp "target/$MATRIX_TARGET/release/xgram" "$stage/xgram"
-          fi
+          case "$MATRIX_TARGET" in
+            *windows*) cp "target/$MATRIX_TARGET/release/xgram.exe" "$stage/xgram.exe" ;;
+            *)         cp "target/$MATRIX_TARGET/release/xgram"     "$stage/xgram" ;;
+          esac
           # GUI 바이너리 — with_gui=true 매트릭스에서만 빌드됨. 발견 시 함께 동봉.
           gui_src="ui/tauri/target/$MATRIX_TARGET/release/openxgram-desktop"
-          if [ "$MATRIX_TARGET" = "x86_64-pc-windows-gnu" ]; then
-            gui_src="${gui_src}.exe"
-            gui_dest="xgram-desktop.exe"
-          else
-            gui_dest="xgram-desktop"
-          fi
+          case "$MATRIX_TARGET" in
+            *windows*)
+              gui_src="${gui_src}.exe"
+              gui_dest="xgram-desktop.exe"
+              ;;
+            *)
+              gui_dest="xgram-desktop"
+              ;;
+          esac
           if [ -f "$gui_src" ]; then
             cp "$gui_src" "$stage/$gui_dest"
             echo "✓ GUI binary 동봉: $gui_dest"
@@ -180,11 +180,10 @@ jobs:
             if command -v sha256sum >/dev/null; then sha256sum $files > SHA256SUMS;
             else shasum -a 256 $files > SHA256SUMS; fi )
           # 패키징.
-          if [ "$MATRIX_TARGET" = "x86_64-pc-windows-gnu" ]; then
-            ( cd "$stage" && zip -q "$OLDPWD/dist/$asset" * )
-          else
-            tar -C "$stage" -czf "dist/$asset" .
-          fi
+          case "$MATRIX_TARGET" in
+            *windows*) ( cd "$stage" && zip -q "$OLDPWD/dist/$asset" * ) ;;
+            *)         tar -C "$stage" -czf "dist/$asset" . ;;
+          esac
           ( cd dist && \
             if command -v sha256sum >/dev/null; then sha256sum "$asset" > "$asset.sha256";
             else shasum -a 256 "$asset" > "$asset.sha256"; fi )
