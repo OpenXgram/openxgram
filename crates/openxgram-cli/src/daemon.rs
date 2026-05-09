@@ -275,12 +275,16 @@ pub fn process_inbound(
         };
 
         // 4. L0 message 자동 저장 (PRD-2.0.2)
+        // sender 는 라우팅용 prefix 형식 — `peer:{alias}` (회신 시 alias 로 peer_send).
+        // env.from (eth_address) 은 signature_hex 와 함께 검증 가능.
         let body = String::from_utf8_lossy(&payload_bytes).into_owned();
+        let sender_label = format!("peer:{}", peer.alias);
         if let Err(e) = MessageStore::new(&mut db, embedder.as_ref()).insert(
             &session.id,
-            &env.from,
+            &sender_label,
             &body,
             &env.signature_hex,
+            env.conversation_id.as_deref(),
         ) {
             tracing::warn!(error = %e, "L0 message insert 실패");
             continue;

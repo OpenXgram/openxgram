@@ -679,9 +679,10 @@ async fn gui_schedule_create(
     let tk = match body.target_kind.as_str() {
         "role" => openxgram_orchestration::TargetKind::Role,
         "platform" => openxgram_orchestration::TargetKind::Platform,
+        "self" => openxgram_orchestration::TargetKind::SelfTrigger,
         other => {
             return Err(bad_request(&format!(
-                "target_kind '{other}' 허용 안 됨 (role|platform)"
+                "target_kind '{other}' 허용 안 됨 (role|platform|self)"
             )))
         }
     };
@@ -765,12 +766,16 @@ pub struct AgentInjectBody {
     /// 발신자 식별자 — `discord:<userid>`, `telegram:<chatid>`, `cli:<alias>` 등.
     pub sender: String,
     pub body: String,
+    /// 옵션 — 기존 대화에 이어 붙일 conversation_id. 미지정 시 새 conversation 생성.
+    #[serde(default)]
+    pub conversation_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct AgentInjectResponse {
     pub message_id: String,
     pub session_id: String,
+    pub conversation_id: String,
 }
 
 /// `POST /v1/agent/inject` — 외부 채널 (Discord/Telegram/...) 또는 self-trigger 메시지를 daemon inbox 로 주입.
@@ -826,7 +831,13 @@ async fn agent_inject(
         })?;
 
     let msg = openxgram_memory::MessageStore::new(&mut db, embedder.as_ref())
-        .insert(&session.id, &body.sender, &body.body, "external")
+        .insert(
+            &session.id,
+            &body.sender,
+            &body.body,
+            "external",
+            body.conversation_id.as_deref(),
+        )
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -839,5 +850,6 @@ async fn agent_inject(
     Ok(Json(AgentInjectResponse {
         message_id: msg.id,
         session_id: session.id,
+        conversation_id: msg.conversation_id,
     }))
 }

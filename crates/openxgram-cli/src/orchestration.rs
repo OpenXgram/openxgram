@@ -29,7 +29,7 @@ pub enum ScheduleAction {
         #[arg(long, requires = "to_platform")]
         channel_id: Option<String>,
         /// `role` | `platform` — `--target` 와 함께 라우팅. 기본은 role:master.
-        #[arg(long, value_parser = ["role", "platform"])]
+        #[arg(long, value_parser = ["role", "platform", "self"])]
         target_kind: Option<String>,
         /// role 일 때는 role 이름 (예: master, eno), platform 일 때는 `discord:CHID`.
         #[arg(long, requires = "target_kind")]
@@ -49,7 +49,7 @@ pub enum ScheduleAction {
         to_platform: Option<String>,
         #[arg(long, requires = "to_platform")]
         channel_id: Option<String>,
-        #[arg(long, value_parser = ["role", "platform"])]
+        #[arg(long, value_parser = ["role", "platform", "self"])]
         target_kind: Option<String>,
         #[arg(long, requires = "target_kind")]
         target: Option<String>,
@@ -105,14 +105,15 @@ fn resolve_target(
     target_kind: Option<String>,
     target: Option<String>,
 ) -> Result<(TargetKind, String)> {
-    // 신 시그니처 — `--target-kind role|platform` + `--target ...`
+    // 신 시그니처 — `--target-kind role|platform|self` + `--target ...`
     if let Some(kind) = target_kind {
         let value = target.ok_or_else(|| anyhow!("--target required with --target-kind"))?;
         return match kind.as_str() {
             "role" => Ok((TargetKind::Role, value)),
             "platform" => Ok((TargetKind::Platform, value)),
+            "self" => Ok((TargetKind::SelfTrigger, value)),
             other => Err(anyhow!(
-                "--target-kind must be `role` or `platform` (got `{other}`)"
+                "--target-kind must be `role`, `platform`, or `self` (got `{other}`)"
             )),
         };
     }

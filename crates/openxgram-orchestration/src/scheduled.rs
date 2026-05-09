@@ -17,6 +17,9 @@ use crate::{OrchestrationError, Result};
 pub enum TargetKind {
     Role,
     Platform,
+    /// 자기 자신에게 보내는 트리거 — agent 가 inbox-from-self:<target> 세션으로 inject.
+    /// 자율 행동 (매일 정리 / periodic 재검토 등) 의 시작점.
+    SelfTrigger,
 }
 
 impl TargetKind {
@@ -24,6 +27,7 @@ impl TargetKind {
         match self {
             Self::Role => "role",
             Self::Platform => "platform",
+            Self::SelfTrigger => "self",
         }
     }
 }
@@ -34,6 +38,7 @@ impl FromStr for TargetKind {
         match s {
             "role" => Ok(Self::Role),
             "platform" => Ok(Self::Platform),
+            "self" => Ok(Self::SelfTrigger),
             other => Err(OrchestrationError::InvalidTargetKind(other.to_string())),
         }
     }

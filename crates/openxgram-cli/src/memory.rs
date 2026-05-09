@@ -9,7 +9,10 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use openxgram_core::paths::db_path;
 use openxgram_db::{Db, DbConfig};
-use openxgram_memory::{export_claude, import_claude, parse_claude, MemoryKind, MemoryStore};
+use openxgram_memory::{
+    default_embedder, export_claude, import_claude, parse_claude, MemoryKind, MemoryStore,
+    MessageStore,
+};
 
 /// memory export/import 포맷.
 #[derive(Debug, Clone, Copy)]
@@ -35,10 +38,17 @@ pub enum MemoryAction {
     Unpin {
         id: String,
     },
+    /// 같은 conversation_id 로 묶인 모든 메시지 (timestamp 오름차순) 출력.
+    ShowConversation {
+        id: String,
+    },
 }
 
 pub fn run_memory(data_dir: &Path, action: MemoryAction) -> Result<()> {
     let mut db = open_db(data_dir)?;
+    if let MemoryAction::ShowConversation { id } = &action {
+        return show_conversation(&mut db, id);
+    }
     let mut store = MemoryStore::new(&mut db);
     match action {
         MemoryAction::Add {
@@ -94,6 +104,30 @@ pub fn run_memory(data_dir: &Path, action: MemoryAction) -> Result<()> {
             store.set_pinned(&id, false)?;
             println!("✓ unpinned: {id}");
         }
+        MemoryAction::ShowConversation { .. } => unreachable!("handled above"),
+    }
+    Ok(())
+}
+
+fn show_conversation(db: &mut Db, conversation_id: &str) -> Result<()> {
+    let embedder = default_embedder().context("embedder 초기화")?;
+    let msgs = MessageStore::new(db, embedder.as_ref())
+        .list_for_conversation(conversation_id)
+        .context("conversation 조회")?;
+    if msgs.is_empty() {
+        println!("conversation {conversation_id}: 메시지 없음.");
+        return Ok(());
+    }
+    println!("conversation {conversation_id} ({} messages)", msgs.len());
+    for m in &msgs {
+        let preview = m.body.lines().next().unwrap_or("").chars().take(160).collect::<String>();
+        println!(
+            "  [{}] {} {} → {}",
+            m.timestamp.format("%Y-%m-%d %H:%M:%S"),
+            m.session_id,
+            m.sender,
+            preview
+        );
     }
     Ok(())
 }

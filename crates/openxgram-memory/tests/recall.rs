@@ -49,10 +49,10 @@ fn insert_and_recall_self_returns_distance_zero() {
 
     {
         let mut store = MessageStore::new(&mut db, &embedder);
-        store.insert("s1", "alice", "hello world", "sig").unwrap();
-        store.insert("s1", "bob", "foo bar baz", "sig").unwrap();
+        store.insert("s1", "alice", "hello world", "sig", None).unwrap();
+        store.insert("s1", "bob", "foo bar baz", "sig", None).unwrap();
         store
-            .insert("s1", "alice", "openxgram memory", "sig")
+            .insert("s1", "alice", "openxgram memory", "sig", None)
             .unwrap();
     }
 
@@ -77,7 +77,7 @@ fn recall_top_k_limits_results() {
         let mut store = MessageStore::new(&mut db, &embedder);
         for i in 0..10 {
             store
-                .insert("s1", "alice", &format!("message {i}"), "sig")
+                .insert("s1", "alice", &format!("message {i}"), "sig", None)
                 .unwrap();
         }
     }

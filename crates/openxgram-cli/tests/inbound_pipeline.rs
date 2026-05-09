@@ -53,6 +53,7 @@ fn make_envelope(
         timestamp: openxgram_core::time::kst_now(),
         signature_hex: hex::encode(signature),
         nonce: None,
+        conversation_id: None,
     }
 }
 
@@ -180,6 +181,7 @@ fn invalid_signature_drops_envelope() {
         timestamp: openxgram_core::time::kst_now(),
         signature_hex: hex::encode(&bogus_sig),
         nonce: None,
+        conversation_id: None,
     };
 
     process_inbound(&data_dir, &[env]).unwrap();
@@ -214,6 +216,7 @@ fn unknown_peer_drops_envelope() {
         timestamp: openxgram_core::time::kst_now(),
         signature_hex: hex::encode([0u8; 64]),
         nonce: None,
+        conversation_id: None,
     };
     process_inbound(&data_dir, &[env]).unwrap();
 

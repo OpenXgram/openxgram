@@ -18,6 +18,9 @@ pub struct Message {
     pub body: String,
     pub signature: String,
     pub timestamp: DateTime<FixedOffset>,
+    /// inbound + 그에 따른 응답·서브 호출·outbox 회신을 묶는 ID.
+    /// 신규 inbound 는 새 ID, 응답/회신은 inbound 의 ID 를 재사용.
+    pub conversation_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -38,12 +41,17 @@ impl<'a, E: Embedder + ?Sized> MessageStore<'a, E> {
     }
 
     /// 메시지 + 임베딩을 한 트랜잭션으로 저장.
+    ///
+    /// `conversation_id`:
+    /// - `None` → 새 UUID 생성 (신규 inbound 가 시작하는 conversation)
+    /// - `Some(id)` → 같은 conversation 에 묶음 (응답·서브 호출·회신)
     pub fn insert(
         &mut self,
         session_id: &str,
         sender: &str,
         body: &str,
         signature: &str,
+        conversation_id: Option<&str>,
     ) -> Result<Message> {
         let embedding = self.embedder.embed(body);
         if embedding.len() != self.embedder.dim() {
@@ -54,6 +62,9 @@ impl<'a, E: Embedder + ?Sized> MessageStore<'a, E> {
         }
 
         let id = Uuid::new_v4().to_string();
+        let conv_id = conversation_id
+            .map(str::to_string)
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
         let now = kst_now();
         let now_rfc3339 = now.to_rfc3339();
         let embedding_bytes = floats_to_bytes(&embedding);
@@ -62,9 +73,9 @@ impl<'a, E: Embedder + ?Sized> MessageStore<'a, E> {
         let tx = conn.transaction()?;
 
         let affected = tx.execute(
-            "INSERT INTO messages (id, session_id, sender, body, signature, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![id, session_id, sender, body, signature, now_rfc3339],
+            "INSERT INTO messages (id, session_id, sender, body, signature, timestamp, conversation_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![id, session_id, sender, body, signature, now_rfc3339, conv_id],
         )?;
         if affected != 1 {
             return Err(MemoryError::UnexpectedRowCount {
@@ -93,16 +104,35 @@ impl<'a, E: Embedder + ?Sized> MessageStore<'a, E> {
             body: body.into(),
             signature: signature.into(),
             timestamp: now,
+            conversation_id: conv_id,
         })
     }
 
     /// session 내 모든 메시지 (timestamp 오름차순).
     pub fn list_for_session(&mut self, session_id: &str) -> Result<Vec<Message>> {
-        let mut stmt = self.db.conn().prepare(
-            "SELECT id, session_id, sender, body, signature, timestamp
+        self.query_messages(
+            "SELECT id, session_id, sender, body, signature, timestamp, conversation_id
              FROM messages WHERE session_id = ?1 ORDER BY timestamp",
-        )?;
-        let rows = stmt.query_map([session_id], |r| {
+            rusqlite::params![session_id],
+        )
+    }
+
+    /// 동일 conversation_id 의 모든 메시지 (timestamp 오름차순) — cross-session.
+    pub fn list_for_conversation(&mut self, conversation_id: &str) -> Result<Vec<Message>> {
+        self.query_messages(
+            "SELECT id, session_id, sender, body, signature, timestamp, conversation_id
+             FROM messages WHERE conversation_id = ?1 ORDER BY timestamp",
+            rusqlite::params![conversation_id],
+        )
+    }
+
+    fn query_messages(
+        &mut self,
+        sql: &str,
+        params: impl rusqlite::Params,
+    ) -> Result<Vec<Message>> {
+        let mut stmt = self.db.conn().prepare(sql)?;
+        let rows = stmt.query_map(params, |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
@@ -110,11 +140,12 @@ impl<'a, E: Embedder + ?Sized> MessageStore<'a, E> {
                 r.get::<_, String>(3)?,
                 r.get::<_, String>(4)?,
                 r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(6)?,
             ))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (id, session_id, sender, body, signature, ts) = row?;
+            let (id, session_id, sender, body, signature, ts, conv) = row?;
             out.push(Message {
                 id,
                 session_id,
@@ -122,6 +153,7 @@ impl<'a, E: Embedder + ?Sized> MessageStore<'a, E> {
                 body,
                 signature,
                 timestamp: parse_ts(&ts)?,
+                conversation_id: conv.unwrap_or_default(),
             });
         }
         Ok(out)
@@ -133,7 +165,7 @@ impl<'a, E: Embedder + ?Sized> MessageStore<'a, E> {
         let conn = self.db.conn();
         let mut stmt = conn.prepare(
             "SELECT m.id, m.session_id, m.sender, m.body, m.signature, m.timestamp,
-                    emb.distance
+                    m.conversation_id, emb.distance
              FROM message_embeddings emb
              JOIN message_embedding_map map ON map.embedding_rowid = emb.rowid
              JOIN messages m ON m.id = map.message_id
@@ -150,7 +182,8 @@ impl<'a, E: Embedder + ?Sized> MessageStore<'a, E> {
                 body: r.get(3)?,
                 signature: r.get(4)?,
                 timestamp_rfc3339: ts,
-                distance: r.get(6)?,
+                conversation_id: r.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                distance: r.get(7)?,
             })
         })?;
 
@@ -165,6 +198,7 @@ impl<'a, E: Embedder + ?Sized> MessageStore<'a, E> {
                     body: raw.body,
                     signature: raw.signature,
                     timestamp: parse_ts(&raw.timestamp_rfc3339)?,
+                    conversation_id: raw.conversation_id,
                 },
                 distance: raw.distance,
             });
@@ -180,5 +214,6 @@ struct RawRow {
     body: String,
     signature: String,
     timestamp_rfc3339: String,
+    conversation_id: String,
     distance: f32,
 }

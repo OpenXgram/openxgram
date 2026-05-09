@@ -17,6 +17,8 @@ members = [
     "crates/openxgram-orchestration",
     "crates/openxgram-channel",
     "crates/openxgram-did",
+    "crates/openxgram-eas",
+    "crates/openxgram-indexer-sdk",
     "crates/openxgram-cli",
 ]
 # ui/tauri 는 platform 의존(webkit2gtk 등) 이라 워크스페이스 외부.
@@ -24,7 +26,7 @@ members = [
 exclude = ["ui/tauri"]
 
 [workspace.package]
-version = "0.2.0-rc.13"
+version = "0.2.0-rc.14"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/OpenXgram/openxgram"

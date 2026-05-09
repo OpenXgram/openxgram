@@ -46,6 +46,10 @@ pub struct PkgMessage {
     pub body: String,
     pub signature: String,
     pub timestamp: DateTime<FixedOffset>,
+    /// 같은 inbound 묶음을 cross-machine 으로 보존하기 위한 ID. 옛 패키지(없는 경우)는
+    /// import 시 새 conversation 으로 fallback.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub conversation_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +94,7 @@ pub fn export_session(
             body: m.body,
             signature: m.signature,
             timestamp: m.timestamp,
+            conversation_id: m.conversation_id,
         })
         .collect();
 
@@ -176,7 +181,12 @@ pub fn import_session(
     {
         let mut store = MessageStore::new(db, &embedder);
         for msg in &package.messages {
-            store.insert(&new_session_id, &msg.sender, &msg.body, &msg.signature)?;
+            let conv = if msg.conversation_id.is_empty() {
+                None
+            } else {
+                Some(msg.conversation_id.as_str())
+            };
+            store.insert(&new_session_id, &msg.sender, &msg.body, &msg.signature, conv)?;
             messages_inserted += 1;
         }
     }

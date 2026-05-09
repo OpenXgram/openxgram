@@ -48,6 +48,12 @@ pub enum SessionAction {
         id: String,
     },
     ReflectAll,
+    /// step 5/6 — 다른 LLM 앱에 복붙 가능한 평문 transcript 출력.
+    /// `--format` claude / chatgpt / gemini / plain (기본 plain).
+    Transcript {
+        session_id: String,
+        format: String,
+    },
 }
 
 pub fn run_session(data_dir: &Path, action: SessionAction) -> Result<()> {
@@ -69,7 +75,39 @@ pub fn run_session(data_dir: &Path, action: SessionAction) -> Result<()> {
         SessionAction::Import { input, verify } => cmd_import(&mut db, input.as_deref(), verify),
         SessionAction::Delete { id } => cmd_delete(&mut db, &id),
         SessionAction::ReflectAll => cmd_reflect_all(&mut db),
+        SessionAction::Transcript { session_id, format } => {
+            cmd_transcript(&mut db, &session_id, &format)
+        }
     }
+}
+
+/// step 5/6 — session 의 모든 메시지를 평문 transcript 로 출력.
+/// `--format` 별로 헤더/footer 가 다름 — claude/chatgpt/gemini 가 paste 시 친화적.
+fn cmd_transcript(db: &mut Db, session_id: &str, format: &str) -> Result<()> {
+    use openxgram_memory::{default_embedder, MessageStore};
+
+    let session = SessionStore::new(db)
+        .get_by_id(session_id)?
+        .ok_or_else(|| anyhow!("session 없음: {session_id}"))?;
+    let embedder = default_embedder()?;
+    let messages = MessageStore::new(db, embedder.as_ref()).list_for_session(session_id)?;
+
+    let header = match format {
+        "claude" => "다음은 Claude 와 진행 중이던 대화입니다. 이어서 답해주세요.\n\n",
+        "chatgpt" => "Below is an in-progress conversation. Please continue.\n\n",
+        "gemini" => "다음 대화 컨텍스트를 이어가 주세요.\n\n",
+        "plain" | _ => "",
+    };
+    print!("{header}");
+    for m in &messages {
+        let ts = m.timestamp.format("%Y-%m-%d %H:%M");
+        println!("[{ts}] {}: {}", m.sender, m.body);
+    }
+    if !matches!(format, "plain" | "") {
+        println!();
+        println!("(끝 — OpenXgram session_id={session_id})");
+    }
+    Ok(())
 }
 
 fn cmd_delete(db: &mut Db, id: &str) -> Result<()> {
@@ -179,11 +217,13 @@ fn cmd_message(
         sender,
         body,
         &signature_hex,
+        None,
     )?;
     println!("✓ 메시지 저장 (서명: secp256k1 ECDSA, master)");
-    println!("  id        : {}", msg.id);
-    println!("  session   : {}", msg.session_id);
-    println!("  sender    : {}", msg.sender);
+    println!("  id              : {}", msg.id);
+    println!("  session         : {}", msg.session_id);
+    println!("  conversation_id : {}", msg.conversation_id);
+    println!("  sender          : {}", msg.sender);
     println!(
         "  signature : {}…{}",
         &signature_hex[..16],

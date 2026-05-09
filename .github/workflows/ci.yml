@@ -39,6 +39,22 @@ jobs:
         # XGRAM_SKIP_PORT_PRECHECK=1 로 init port precheck skip.
         run: cargo test --workspace --all-targets
 
+  # 6.3.1 — agent 통합 테스트 OS 매트릭스 (linux/macOS/windows).
+  # agent.rs 의 platform-conditional 모듈도 cross-OS 빌드 검증 포함.
+  test-agent-os-matrix:
+    name: agent test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test (agent + response + sub_invoker + self-trigger)
+        run: cargo test -p openxgram-cli --test agent_inject --test self_trigger_e2e --test cross_node_conversation --test two_node_e2e --lib response::tests --lib sub_invoker::tests
+
   audit:
     name: cargo audit (RustSec)
     runs-on: ubuntu-latest

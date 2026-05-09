@@ -23,6 +23,8 @@ use serde_json::{json, Value};
 
 pub struct OpenxgramDispatcher {
     db: Db,
+    /// peer_send 등 keystore 접근 도구가 master 키 로드할 때 사용.
+    data_dir: std::path::PathBuf,
     /// XGRAM_KEYSTORE_PASSWORD 환경변수가 있으면 저장. vault tools 활성 여부의 키.
     vault_password: Option<String>,
     /// HTTP transport 측에서 Bearer 토큰 검증 후 주입. None 이면 master 호출 가정.
@@ -44,6 +46,7 @@ impl OpenxgramDispatcher {
         let vault_password = openxgram_core::env::require_password().ok();
         Ok(Self {
             db,
+            data_dir: data_dir.to_path_buf(),
             vault_password,
             current_agent: None,
         })
@@ -97,7 +100,34 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     "required": ["kind"]
                 }),
             },
+            ToolSpec {
+                name: "list_peers".into(),
+                description: "등록된 peer (다른 봇/노드) 목록 — alias / address / public_key".into(),
+                input_schema: json!({"type": "object", "properties": {}}),
+            },
+            ToolSpec {
+                name: "list_bots".into(),
+                description: "이 머신에 등록된 OpenXgram 봇 목록 (xgram bot list)".into(),
+                input_schema: json!({"type": "object", "properties": {}}),
+            },
         ];
+
+        // peer_send — keystore 패스워드 필요 (서명용). vault 패스워드와 동일 가정.
+        if self.vault_password.is_some() {
+            tools.push(ToolSpec {
+                name: "peer_send".into(),
+                description: "지정한 peer alias 에게 message 송신 (master 키로 서명)".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "alias": {"type": "string"},
+                        "body": {"type": "string"},
+                        "conversation_id": {"type": "string"}
+                    },
+                    "required": ["alias", "body"]
+                }),
+            });
+        }
 
         // vault tools — XGRAM_KEYSTORE_PASSWORD 환경에 있을 때만 노출
         if self.vault_password.is_some() {
@@ -197,6 +227,67 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     })
                     .collect();
                 Ok(json!({"memories": items, "count": items.len()}))
+            }
+            "list_peers" => {
+                use openxgram_peer::PeerStore;
+                let peers = PeerStore::new(&mut self.db).list().map_err(internal)?;
+                let items: Vec<Value> = peers
+                    .iter()
+                    .map(|p| {
+                        json!({
+                            "alias": p.alias,
+                            "public_key_hex": p.public_key_hex,
+                            "address": p.address,
+                            "role": p.role.as_str(),
+                            "eth_address": p.eth_address,
+                        })
+                    })
+                    .collect();
+                Ok(json!({"peers": items, "count": items.len()}))
+            }
+            "list_bots" => {
+                let root = crate::bot::xgram_root().map_err(internal)?;
+                let reg = crate::bot::BotRegistry::load(&root).map_err(internal)?;
+                let items: Vec<Value> = reg
+                    .bots
+                    .iter()
+                    .map(|b| {
+                        json!({
+                            "name": b.name,
+                            "alias": b.alias,
+                            "transport_port": b.transport_port,
+                            "gui_port": b.gui_port,
+                            "data_dir": b.data_dir.display().to_string(),
+                            "status": if crate::bot::pid_alive(&b.data_dir) { "running" } else { "stopped" },
+                        })
+                    })
+                    .collect();
+                Ok(json!({"bots": items, "count": items.len()}))
+            }
+            "peer_send" => {
+                let pw = self.require_vault()?.to_string();
+                let alias = args
+                    .get("alias")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'alias'"))?
+                    .to_string();
+                let body = args
+                    .get("body")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'body'"))?
+                    .to_string();
+                let conv = args
+                    .get("conversation_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let data_dir = self.data_dir.clone();
+                let handle = tokio::runtime::Handle::current();
+                handle
+                    .block_on(crate::peer_send::run_peer_send_with_conv(
+                        &data_dir, &alias, None, &body, &pw, conv,
+                    ))
+                    .map_err(|e| internal(e))?;
+                Ok(json!({"sent": true, "alias": alias}))
             }
             "vault_list" => {
                 self.require_vault()?;
