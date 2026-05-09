@@ -108,6 +108,41 @@
         </div>
       </section>
 
+      <section style="background: #0f172a; padding: 24px 0; border-top: 1px solid #1f2937; border-bottom: 1px solid #1f2937;">
+        <div class="container">
+          <div class="kicker" data-i18n-ko>install.sh 단계별</div>
+          <div class="kicker" data-i18n-en>install.sh step-by-step</div>
+          <h2 data-i18n-ko style="margin-top: 4px;">curl ... | sh — 무엇이 일어나나</h2>
+          <h2 data-i18n-en style="margin-top: 4px;">What curl ... | sh actually does</h2>
+          <p data-i18n-ko style="font-size: 14px; color: #94a3b8;">총 5분 내. prompt 3개 (alias / 패스워드 / 패스워드 확인) + Tailscale 브라우저 로그인 1회.</p>
+          <p data-i18n-en style="font-size: 14px; color: #94a3b8;">Total &lt;5 min. 3 prompts (alias / password / confirm) + Tailscale browser login once.</p>
+          <ol style="font-size: 14px;">
+            <li><strong>OS / arch 자동 감지</strong> (linux · darwin · windows × x86_64 · aarch64)</li>
+            <li><strong>GitHub Releases</strong> 에서 <code class="inline">xgram-v0.2.0-rc.15-{ARCH}-{OS}.tar.gz</code> URL 조회</li>
+            <li><strong>tarball + sha256 다운로드</strong></li>
+            <li><strong>SHA256 검증</strong> (silent fallback 금지)</li>
+            <li><strong>~/.local/bin/xgram</strong> 에 binary 복사 + chmod +x</li>
+            <li><strong>Tailscale 체크</strong> — 미설치 시 자동 설치 시도 (Linux: <code class="inline">sudo apt</code> / macOS: <code class="inline">brew</code>)</li>
+            <li><strong>Tailscale 로그인</strong> — <code class="inline">sudo tailscale up</code> → 브라우저 링크 클릭 (Tailscale 무료 계정)</li>
+            <li><strong>xgram init</strong> 대화형 — alias 입력, 패스워드 입력 + 확인 → BIP39 24단어 시드 출력 (메모 권장)</li>
+            <li><strong>daemon 가동</strong> — <code class="inline">nohup xgram daemon --bind &lt;Tailscale IP&gt;:47300</code> 백그라운드</li>
+            <li><strong>agent 가동</strong> — env 에 Discord / Telegram / Anthropic 토큰 있으면 자동 inbound 폴링 + LLM 응답</li>
+          </ol>
+          <p data-i18n-ko style="font-size: 13px; color: #64748b; margin-top: 12px;">
+            <strong>필수</strong>: sudo (Tailscale 설치/up), Tailscale 무료 계정, 패스워드, alias.
+            <strong>옵션</strong>: Discord/Telegram bot token + chat id, Anthropic API key (없어도 echo 응답으로 동작).
+          </p>
+          <p data-i18n-en style="font-size: 13px; color: #64748b; margin-top: 12px;">
+            <strong>Required</strong>: sudo (for Tailscale install/up), free Tailscale account, password, alias.
+            <strong>Optional</strong>: Discord/Telegram bot token + chat id, Anthropic API key (works with echo fallback if absent).
+          </p>
+          <p style="font-size: 14px;">
+            <a href="/demo/" style="color:#7df9c5;" data-i18n-ko>22-step 시연 plan (/demo/) →</a>
+            <a href="/demo/" style="color:#7df9c5;" data-i18n-en>22-step demo plan (/demo/) →</a>
+          </p>
+        </div>
+      </section>
+
       <section>
         <div class="container">
           <div class="kicker" data-i18n-ko>인터페이스 선택 — CLI · TUI · GUI</div>
