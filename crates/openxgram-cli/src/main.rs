@@ -520,12 +520,6 @@ enum Commands {
         indexer: Option<String>,
     },
 
-    /// `xgram chat` — 30초 데모 진입점. 첫 가동 시 자동 init, 즉시 봇과 REPL 대화.
-    Chat {
-        #[arg(long)]
-        data_dir: Option<PathBuf>,
-    },
-
     /// `xgram openagentx call <agent> <prompt> [--pay <micros>]` — OpenAgentX 마켓 에이전트 호출 (step 11/12)
     Openagentx {
         #[command(subcommand)]
@@ -2517,10 +2511,6 @@ async fn main() -> anyhow::Result<()> {
         Commands::Find { query, indexer } => {
             openxgram_cli::find::run_find(openxgram_cli::find::FindOpts { query, indexer })
                 .await?;
-        }
-
-        Commands::Chat { data_dir } => {
-            openxgram_cli::chat::run_chat(data_dir).await?;
         }
 
         Commands::Eas { cmd } => match cmd {
