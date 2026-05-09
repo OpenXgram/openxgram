@@ -450,9 +450,6 @@ if [ "$PREBUILT_OK" = "1" ]; then
     echo "    xgram gui"
   fi
   echo ""
-  echo "또는 지금 바로 봇과 대화:"
-  echo "    xgram chat"
-  echo ""
   exit 0
 fi
 
