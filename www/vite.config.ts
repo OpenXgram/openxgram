@@ -19,6 +19,7 @@ export default defineConfig({
         docs: resolve(__dirname, 'docs/index.html'),
         onboard: resolve(__dirname, "onboard/index.html"),
         manual: resolve(__dirname, "manual/index.html"),
+        demo: resolve(__dirname, "demo/index.html"),
       },
     },
   },
