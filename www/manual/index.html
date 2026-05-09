@@ -122,6 +122,33 @@
         </div>
       </section>
 
+      <section style="background: #0f172a; padding: 24px 0; border-top: 1px solid #1f2937; border-bottom: 1px solid #1f2937;">
+        <div class="container">
+          <div class="kicker" data-i18n-ko>v0.2.0-rc.15 — 새 명령</div>
+          <div class="kicker" data-i18n-en>v0.2.0-rc.15 — new commands</div>
+          <h2 data-i18n-ko style="margin-top: 4px;">최신 release 의 신규 기능</h2>
+          <h2 data-i18n-en style="margin-top: 4px;">What's new in the latest release</h2>
+          <p data-i18n-ko style="font-size: 14px; color: #94a3b8;">
+            아래 명령들은 9 탭 GUI 외에 CLI 로만 사용. 자세한 시연 흐름은 <a href="/demo/" style="color:#7df9c5;">22-step demo plan (/demo/) →</a>
+          </p>
+          <p data-i18n-en style="font-size: 14px; color: #94a3b8;">
+            CLI-only commands beyond the 9 GUI tabs. See the full flow: <a href="/demo/" style="color:#7df9c5;">22-step demo plan (/demo/) →</a>
+          </p>
+          <ul style="font-size: 14px;">
+            <li><code class="inline">xgram bot add/start/list/link/remove</code> — 1머신 N봇 first-class (MCP server 자동 spawn + 토큰 + .mcp.json 스니펫)</li>
+            <li><code class="inline">xgram invite</code> / <code class="inline">xgram friend accept &lt;oxg-friend://...&gt;</code> — 친구 초대 QR/link + 자동 handshake</li>
+            <li><code class="inline">xgram human pending/respond</code> — HITL (봇이 사람 호출 → Discord/Telegram push)</li>
+            <li><code class="inline">xgram openagentx call @agent "prompt" --pay &lt;micros&gt;</code> — OpenAgentX 마켓 호출 + USDC payment_intent</li>
+            <li><code class="inline">xgram payment summary</code> — 수익 대시보드 (수신/송신/순수익)</li>
+            <li><code class="inline">xgram find @h</code> / <code class="inline">xgram directory register --to &lt;url&gt;</code> — 핸들 디렉터리 + 등록</li>
+            <li><code class="inline">xgram channels add/list/remove</code> + <code class="inline">xgram send @h "body"</code> — 다채널 라우팅 (Discord/Telegram/xgram-peer/...)</li>
+            <li><code class="inline">xgram session import-app &lt;file&gt; --format chatgpt|gemini|claude-code</code> — 외부 LLM 앱 export 메모리 통합</li>
+            <li><code class="inline">xgram session transcript &lt;id&gt; --format claude|chatgpt|gemini</code> — 다른 앱에 복붙 가능한 transcript 출력</li>
+            <li><code class="inline">xgram eas list/count</code> — EAS 어테스테이션 (평판 backbone)</li>
+          </ul>
+        </div>
+      </section>
+
       <!-- ============================== Interface choice ============================== -->
       <section id="interfaces" class="anchor-target">
         <div class="container">
