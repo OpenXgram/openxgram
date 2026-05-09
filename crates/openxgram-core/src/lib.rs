@@ -11,7 +11,7 @@ pub mod time;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CoreError {
-    #[error("HOME 환경변수 누락")]
+    #[error("HOME 환경변수 누락 (Windows: USERPROFILE 도 미설정)")]
     NoHome,
 
     #[error("환경변수 {0} 누락")]

@@ -17,9 +17,11 @@ pub const MANIFEST_FILENAME: &str = "install-manifest.json";
 pub const MASTER_KEY_NAME: &str = "master";
 pub const MASTER_KEYFILE: &str = "master.json";
 
-/// 기본 데이터 디렉토리 (`$HOME/.openxgram`). HOME 미설정 시 raise.
+/// 기본 데이터 디렉토리 (`$HOME/.openxgram`). HOME 미설정 시 Windows `USERPROFILE` fallback, 그래도 없으면 raise.
 pub fn default_data_dir() -> Result<PathBuf> {
-    let home = std::env::var("HOME").map_err(|_| CoreError::NoHome)?;
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| CoreError::NoHome)?;
     Ok(PathBuf::from(home).join(APP_DIR_NAME))
 }
 
