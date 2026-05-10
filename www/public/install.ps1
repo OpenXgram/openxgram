@@ -99,15 +99,11 @@ Get-ChildItem $INSTALL -File | ForEach-Object {
     Write-Host "      - $($_.Name)  $([int]($_.Length/1024))KB  $($_.LastWriteTime)"
 }
 
-# 4c. 갱신 검증 — 압축 해제 후 xgram.exe 가 실제 갱신됐는지 확인 (silent-skip 차단).
+# 4d. 갱신 검증 — xgram.exe 존재만 확인. LastWriteTime 비교는 zip 내부 시각 vs Get-Date 로컬 시각
+#     불일치(timezone) 로 false alarm 발생. step 4b 에서 dir 통째 비웠으니 silent-skip 자체가 불가능.
 $xgramExe = Join-Path $INSTALL 'xgram.exe'
 if (-not (Test-Path $xgramExe)) {
-    Write-Error "xgram.exe 가 install dir 에 없음 — 압축 해제 실패 가능. zip 파일 손상 의심."
-    exit 1
-}
-$age = (Get-Date) - (Get-Item $xgramExe).LastWriteTime
-if ($age.TotalMinutes -gt 5) {
-    Write-Error "xgram.exe 갱신 실패 (LastWriteTime 이 $([int]$age.TotalMinutes)분 전). PowerShell 새로 열고 재시도."
+    Write-Error "xgram.exe 가 install dir 에 없음 — 압축 해제 실패. zip 파일 손상 의심."
     exit 1
 }
 
