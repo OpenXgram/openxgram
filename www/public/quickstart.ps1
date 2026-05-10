@@ -79,14 +79,14 @@ if (-not (Test-Path $Manifest)) {
 }
 Write-Host ''
 
-# 3. 외부 채널 / LLM 토큰 — Enter 로 skip
-Write-Host '── 외부 채널 / LLM 연동 (모두 선택 — Enter 로 skip) ──'
+# 3. 외부 채널 — Enter 로 skip. (LLM 키는 wizard 에서 묻지 않음.)
+Write-Host '── 외부 채널 (모두 선택 — Enter 로 skip) ──'
 $discordWebhook   = Read-Host 'Discord webhook URL'
 $discordBotToken  = Read-Host 'Discord bot token'
 $discordChannelId = Read-Host 'Discord channel id'
 $telegramBotToken = Read-Host 'Telegram bot token'
 $telegramChatId   = Read-Host 'Telegram chat id'
-$anthropicApiKey  = Read-Host 'Anthropic API key'
+$anthropicApiKey  = ''
 Write-Host ''
 
 # 4. .env.ps1 저장 (PowerShell 친화 — source 가능)
@@ -126,16 +126,15 @@ $daemonProc = Start-Process -FilePath (Get-Command xgram).Source `
     -PassThru
 Start-Sleep -Seconds 2
 
-# 7. agent — Discord/Telegram/Anthropic 키 있을 때만
-$hasChannel = $discordWebhook -or $telegramBotToken -or $anthropicApiKey
+# 7. agent — Discord/Telegram 채널 토큰 있을 때만 가동 (forward 만)
+$hasChannel = $discordWebhook -or $telegramBotToken
 $agentProc = $null
 if ($hasChannel) {
-    Write-Host '→ agent 가동 (외부 채널 forward + LLM 응답)'
+    Write-Host '→ agent 가동 (외부 채널 forward)'
     $agentArgs = @('agent')
     if ($discordWebhook)   { $agentArgs += @('--discord-webhook-url', $discordWebhook) }
     if ($discordBotToken)  { $agentArgs += @('--discord-bot-token', $discordBotToken) }
     if ($discordChannelId) { $agentArgs += @('--discord-channel-id', $discordChannelId) }
-    if ($anthropicApiKey)  { $agentArgs += @('--anthropic-api-key', $anthropicApiKey) }
     $agentLog = Join-Path $DataDir 'agent.log'
     $agentProc = Start-Process -FilePath (Get-Command xgram).Source `
         -ArgumentList $agentArgs `

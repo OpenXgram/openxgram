@@ -63,14 +63,15 @@ else
 fi
 echo ""
 
-# 3. 외부 채널 / LLM 토큰 — Enter 로 skip
-echo "── 외부 채널 / LLM 연동 (모두 선택 — Enter 로 skip) ──"
+# 3. 외부 채널 — Enter 로 skip. (LLM 키는 wizard 에서 묻지 않음 — 사용자가 직접
+#    `xgram agent --anthropic-api-key ...` 또는 vault 에 명시 등록할 때만 활성.)
+echo "── 외부 채널 (모두 선택 — Enter 로 skip) ──"
 read -r -p "Discord webhook URL (Enter skip): " DISCORD_WEBHOOK || DISCORD_WEBHOOK=""
 read -r -p "Discord bot token   (Enter skip): " DISCORD_BOT_TOKEN || DISCORD_BOT_TOKEN=""
 read -r -p "Discord channel id  (Enter skip): " DISCORD_CHANNEL_ID || DISCORD_CHANNEL_ID=""
 read -r -p "Telegram bot token  (Enter skip): " TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN=""
 read -r -p "Telegram chat id    (Enter skip): " TELEGRAM_CHAT_ID || TELEGRAM_CHAT_ID=""
-read -r -p "Anthropic API key   (Enter skip): " ANTHROPIC_API_KEY || ANTHROPIC_API_KEY=""
+ANTHROPIC_API_KEY=""
 echo ""
 
 # 4. .env 저장 (chmod 600 — 평문이지만 home dir 보호 가정. vault 이전은 후속)
@@ -104,14 +105,13 @@ setsid bash -c "
 disown
 sleep 2
 
-# 7. agent — discord/telegram/anthropic 키 있을 때만
-if [ -n "$DISCORD_WEBHOOK" ] || [ -n "$TELEGRAM_BOT_TOKEN" ] || [ -n "$ANTHROPIC_API_KEY" ]; then
-    echo "→ agent 가동 (외부 채널 forward + LLM 응답)"
+# 7. agent — Discord/Telegram 채널 토큰 있을 때만 가동 (forward 만, LLM 응답은 별도)
+if [ -n "$DISCORD_WEBHOOK" ] || [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+    echo "→ agent 가동 (외부 채널 forward)"
     AGENT_ARGS=()
     [ -n "$DISCORD_WEBHOOK" ]    && AGENT_ARGS+=(--discord-webhook-url "$DISCORD_WEBHOOK")
     [ -n "$DISCORD_BOT_TOKEN" ]  && AGENT_ARGS+=(--discord-bot-token "$DISCORD_BOT_TOKEN")
     [ -n "$DISCORD_CHANNEL_ID" ] && AGENT_ARGS+=(--discord-channel-id "$DISCORD_CHANNEL_ID")
-    [ -n "$ANTHROPIC_API_KEY" ]  && AGENT_ARGS+=(--anthropic-api-key "$ANTHROPIC_API_KEY")
     setsid bash -c "
         source '$ENV_FILE'
         exec xgram agent ${AGENT_ARGS[*]@Q}
