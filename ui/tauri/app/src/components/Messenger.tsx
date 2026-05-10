@@ -246,19 +246,12 @@ export function Messenger() {
                     </ul>
                   </Show>
                 </section>
-                <footer class="messenger-thread-input">
-                  <textarea
-                    rows={2}
-                    placeholder={
-                      t("messenger.input-placeholder") ||
-                      "메시지 송신은 v0.2-β — 현재는 CLI 사용: xgram peer send <alias> <body>"
-                    }
-                    disabled
-                  />
-                  <button type="button" disabled>
-                    {t("messenger.send") || "보내기"}
-                  </button>
-                </footer>
+                <PeerInput
+                  friend={f()}
+                  onSent={() => {
+                    void refetchMessages();
+                  }}
+                />
               </>
             );
           }}
@@ -267,3 +260,62 @@ export function Messenger() {
     </div>
   );
 }
+
+// 채널(Discord/Telegram) 친구는 입력 비활성, peer 만 송신 가능.
+function PeerInput(props: { friend: Friend; onSent: () => void }) {
+  const { t } = useI18n();
+  const [text, setText] = createSignal("");
+  const [sending, setSending] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  const isPeer = () => props.friend.kind === "peer";
+
+  async function send() {
+    const body = text().trim();
+    if (!body) return;
+    if (!isPeer()) {
+      setError(t("messenger.send-peer-only") || "송신은 peer 친구에게만 가능 (Discord/Telegram 채널 송신은 별도)");
+      return;
+    }
+    setSending(true);
+    setError(null);
+    try {
+      await invoke("peer_send", { alias: props.friend.display, body });
+      setText("");
+      props.onSent();
+    } catch (e: any) {
+      setError(typeof e === "string" ? e : (e?.message ?? String(e)));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <footer class="messenger-thread-input">
+      <textarea
+        rows={2}
+        value={text()}
+        onInput={(ev) => setText(ev.currentTarget.value)}
+        placeholder={
+          isPeer()
+            ? (t("messenger.input-placeholder") || "메시지 입력 (Enter 보내기, Shift+Enter 줄바꿈)")
+            : (t("messenger.send-peer-only") || "Discord/Telegram 채널 송신은 별도")
+        }
+        disabled={!isPeer() || sending()}
+        onKeyDown={(ev) => {
+          if (ev.key === "Enter" && !ev.shiftKey) {
+            ev.preventDefault();
+            void send();
+          }
+        }}
+      />
+      <button type="button" disabled={!isPeer() || sending() || !text().trim()} onClick={() => void send()}>
+        {sending() ? (t("messenger.sending") || "보내는 중…") : (t("messenger.send") || "보내기")}
+      </button>
+      <Show when={error()}>
+        <div class="messenger-thread-error" role="alert">{error()}</div>
+      </Show>
+    </footer>
+  );
+}
+

@@ -55,6 +55,7 @@ pub fn run() {
             handlers_core::vault_pending_deny,
             handlers_core::memory_search,
             handlers_core::messages_recent,
+            handlers_core::peer_send,
             handlers_core::peers_list,
             handlers_core::peer_add,
             handlers_core::vault_get,

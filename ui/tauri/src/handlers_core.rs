@@ -427,6 +427,24 @@ pub async fn payment_set_daily_limit(
     })
 }
 
+// ── peer_send — Messenger 송신 (v0.2-β) ─────────────────────────────────────
+
+#[tauri::command]
+pub async fn peer_send(
+    state: State<'_, AppState>,
+    alias: String,
+    body: String,
+) -> Result<(), String> {
+    let password = std::env::var("XGRAM_KEYSTORE_PASSWORD").map_err(|_| {
+        "XGRAM_KEYSTORE_PASSWORD 미설정 — keystore 패스워드를 환경변수로 export 후 \
+         xgram gui 재실행. 예: export XGRAM_KEYSTORE_PASSWORD='...'"
+            .to_string()
+    })?;
+    openxgram_cli::peer_send::run_peer_send(&state.data_dir, &alias, None, &body, &password)
+        .await
+        .map_err(|e| format!("peer_send: {e}"))
+}
+
 // ── messages_recent — Messenger 활동 흐름 모니터링 ──────────────────────────
 
 #[derive(Serialize, Clone)]
