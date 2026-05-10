@@ -76,16 +76,32 @@ if ($running) {
     Start-Sleep -Milliseconds 800
 }
 
+# 4b. PS 5.1 의 Expand-Archive -Force 는 기존 .exe 를 덮어쓰지 못하는 버그 있음.
+#     알려진 파일들을 명시 삭제 후 압축 해제. 잠금/권한 문제면 명시 raise.
+foreach ($name in @('xgram.exe', 'xgram-desktop.exe', 'SHA256SUMS')) {
+    $p = Join-Path $INSTALL $name
+    if (Test-Path $p) {
+        try {
+            Remove-Item -Path $p -Force -ErrorAction Stop
+        } catch {
+            Write-Error "$name 삭제 실패 (잠금 또는 권한 문제): $($_.Exception.Message)"
+            exit 1
+        }
+    }
+}
+
 Expand-Archive -Path $tmpZip -DestinationPath $INSTALL -Force
 
-# 4b. 갱신 검증 — xgram.exe 의 timestamp 가 방금 시점인지 확인 (잠금으로 silent-skip 됐을 가능성 차단).
+# 4c. 갱신 검증 — 압축 해제 후 xgram.exe 가 실제 갱신됐는지 확인 (silent-skip 차단).
 $xgramExe = Join-Path $INSTALL 'xgram.exe'
-if (Test-Path $xgramExe) {
-    $age = (Get-Date) - (Get-Item $xgramExe).LastWriteTime
-    if ($age.TotalMinutes -gt 5) {
-        Write-Error "xgram.exe 갱신 실패 (LastWriteTime 이 $([int]$age.TotalMinutes)분 전). 이전 프로세스가 핸들을 안 놓고 있는 듯. PowerShell 다시 열고 재시도."
-        exit 1
-    }
+if (-not (Test-Path $xgramExe)) {
+    Write-Error "xgram.exe 가 install dir 에 없음 — 압축 해제 실패 가능. zip 파일 손상 의심."
+    exit 1
+}
+$age = (Get-Date) - (Get-Item $xgramExe).LastWriteTime
+if ($age.TotalMinutes -gt 5) {
+    Write-Error "xgram.exe 갱신 실패 (LastWriteTime 이 $([int]$age.TotalMinutes)분 전). PowerShell 새로 열고 재시도."
+    exit 1
 }
 
 Remove-Item $tmpZip, $tmpSha -ErrorAction SilentlyContinue
