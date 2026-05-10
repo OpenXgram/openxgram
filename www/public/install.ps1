@@ -63,7 +63,31 @@ Write-Host "==> Step 4: install → $INSTALL"
 if (-not (Test-Path $INSTALL)) {
     New-Item -ItemType Directory -Force -Path $INSTALL | Out-Null
 }
+
+# 4a. 잠긴 .exe 가 있으면 Expand-Archive 가 silent skip 함 → 실행 중 프로세스 먼저 종료.
+$running = Get-Process -Name xgram, xgram-desktop -ErrorAction SilentlyContinue
+if ($running) {
+    Write-Host "    → 실행 중인 OpenXgram 프로세스 종료 후 갱신 (재부팅 불필요)"
+    foreach ($p in $running) {
+        Write-Host "      - $($p.Name) (PID $($p.Id))"
+        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    }
+    # Windows 가 핸들을 실제로 놓을 때까지 잠깐 대기.
+    Start-Sleep -Milliseconds 800
+}
+
 Expand-Archive -Path $tmpZip -DestinationPath $INSTALL -Force
+
+# 4b. 갱신 검증 — xgram.exe 의 timestamp 가 방금 시점인지 확인 (잠금으로 silent-skip 됐을 가능성 차단).
+$xgramExe = Join-Path $INSTALL 'xgram.exe'
+if (Test-Path $xgramExe) {
+    $age = (Get-Date) - (Get-Item $xgramExe).LastWriteTime
+    if ($age.TotalMinutes -gt 5) {
+        Write-Error "xgram.exe 갱신 실패 (LastWriteTime 이 $([int]$age.TotalMinutes)분 전). 이전 프로세스가 핸들을 안 놓고 있는 듯. PowerShell 다시 열고 재시도."
+        exit 1
+    }
+}
+
 Remove-Item $tmpZip, $tmpSha -ErrorAction SilentlyContinue
 
 # 5. PATH 영구 추가 (User scope, 이미 있으면 skip)
