@@ -93,9 +93,9 @@ if ($existingFiles) {
 }
 
 # 4c. PS 5.1 Expand-Archive 우회 — .NET 의 ZipFile.ExtractToDirectory 사용.
-#     overwriteFiles=$true 인자로 신뢰성 있게 덮어쓰기 (Force 버그 회피).
+#     2-arg 버전 (.NET Framework 4.5+ 모두 지원). 4b 에서 dest 비웠으니 overwrite 인자 불필요.
 Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
-[System.IO.Compression.ZipFile]::ExtractToDirectory($tmpZip, $INSTALL, $true)
+[System.IO.Compression.ZipFile]::ExtractToDirectory($tmpZip, $INSTALL)
 
 # 4c. 갱신 검증 — 압축 해제 후 xgram.exe 가 실제 갱신됐는지 확인 (silent-skip 차단).
 $xgramExe = Join-Path $INSTALL 'xgram.exe'
