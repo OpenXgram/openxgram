@@ -148,14 +148,15 @@ pre.code .n { color: #b8c4ff; }     /* number */
 pre.code .p { color: var(--accent-3); } /* prompt $ */
 
 /* Per-command copy buttons (setupCopyButtons in main.ts) */
+/* inline 으로 텍스트와 같은 흐름에 두되, 버튼은 inline-block 으로 자체 박스 유지.
+   기존엔 position: absolute; right: 0 이라 cmd-row 오른쪽 끝(=텍스트 끝)에 겹쳐
+   마지막 글자를 가렸음. 이제 텍스트 뒤에 8px margin 으로 자연스럽게 따라붙음. */
 pre.code .cmd-row {
   display: inline;
-  position: relative;
 }
 pre.code .copy-cmd {
-  position: absolute;
-  right: 0;
-  top: 0;
+  display: inline-block;
+  vertical-align: baseline;
   margin-left: 8px;
   padding: 0 8px;
   font-family: var(--mono);
