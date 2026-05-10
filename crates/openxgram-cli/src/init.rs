@@ -176,6 +176,9 @@ fn setup_master_keypair(
             println!("⚠ 안전한 곳에 보관 — 다시 표시되지 않습니다.");
             println!("  {mnemonic}");
             println!();
+            // 마스터 결정 2026-04-30 (CLAUDE.md 12.1.1): 시드 백업 확인 Y/N.
+            // N 또는 비-y 입력 시 설치 중단. 비-TTY (CI/test) 는 경고 후 통과.
+            confirm_seed_backed_up(data_dir)?;
             addr
         }
         Some(phrase) => ks
@@ -187,6 +190,44 @@ fn setup_master_keypair(
         address: address.to_string(),
         derivation_path: MASTER_DERIVATION_PATH.into(),
     })
+}
+
+/// 시드 백업 확인 prompt — TTY 면 Y/N 묻고, 비-TTY 면 자동화로 간주해 통과.
+/// N (또는 비-y) 입력 시 즉시 종료. 마스터 결정 2026-04-30 정책 적용.
+fn confirm_seed_backed_up(data_dir: &Path) -> Result<()> {
+    use std::io::{self, BufRead, IsTerminal, Write};
+
+    if !io::stdin().is_terminal() {
+        eprintln!("⚠ TTY 아님 — 시드 백업 확인 프롬프트 건너뜀 (자동화 모드).");
+        return Ok(());
+    }
+
+    print!("위 시드를 안전한 곳에 기록했습니까? [y/N]: ");
+    io::stdout().flush().ok();
+
+    let mut input = String::new();
+    io::stdin()
+        .lock()
+        .read_line(&mut input)
+        .context("표준 입력 읽기 실패")?;
+
+    match input.trim().to_lowercase().as_str() {
+        "y" | "yes" => {
+            println!();
+            Ok(())
+        }
+        _ => {
+            println!();
+            eprintln!("✗ 시드 백업이 확인되지 않아 설치를 중단합니다.");
+            eprintln!("  data_dir 을 삭제하고 다시 실행해 새 시드를 받으세요:");
+            eprintln!("  - macOS / Linux: rm -rf {}", data_dir.display());
+            eprintln!(
+                "  - Windows (PowerShell): Remove-Item -Recurse -Force {}",
+                data_dir.display()
+            );
+            bail!("시드 백업 미확인 — 백업 없이는 진행 불가 (절대 규칙)");
+        }
+    }
 }
 
 fn ensure_data_dirs(data_dir: &Path, dry_run: bool) -> Result<Vec<DirectoryEntry>> {
