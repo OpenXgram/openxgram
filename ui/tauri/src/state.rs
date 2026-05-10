@@ -33,9 +33,11 @@ impl AppState {
 }
 
 fn dirs_home() -> Result<PathBuf, String> {
+    // Windows 는 HOME 없고 USERPROFILE 사용. CLI 의 paths::default_data_dir 와 동일 fallback.
     std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
         .map(PathBuf::from)
-        .map_err(|e| format!("$HOME 미설정: {e}"))
+        .map_err(|e| format!("$HOME / $USERPROFILE 둘 다 미설정: {e}"))
 }
 
 pub fn with_db_optional<F, T>(state: &AppState, f: F) -> Result<Option<T>, String>
