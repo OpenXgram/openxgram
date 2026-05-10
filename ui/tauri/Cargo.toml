@@ -22,7 +22,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2" }
+# custom-protocol: release 빌드가 bundled frontend (frontendDist) 로 페이지를 로드하도록 활성화.
+# 미활성 시 release 에서도 devUrl (http://localhost:1420) 로 가서 'localhost 연결 거부' 페이지가 뜸.
+tauri = { version = "2", features = ["custom-protocol"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
 serde = { version = "1", features = ["derive"] }
