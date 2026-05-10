@@ -9,10 +9,12 @@
 //! 셋 다 못 찾으면 빌드 안내 명시 — silent fallback 금지.
 
 use std::env;
+use std::fs::OpenOptions;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
+use openxgram_core::paths::default_data_dir;
 
 /// `xgram-desktop` 바이너리 이름 (Windows 는 .exe).
 fn desktop_binary_name() -> &'static str {
@@ -77,20 +79,34 @@ pub fn run_gui(args: &[String]) -> Result<()> {
             )
         })?;
 
-    println!("→ launching {}", bin.display());
-    let status = Command::new(&bin)
+    // 백그라운드 detach — GUI 는 자체 윈도우 루프를 가지므로 부모 CLI 가 기다릴 필요 없음.
+    // stdin 은 닫고 stdout/stderr 는 data_dir/desktop.log 로 redirect (디버깅용).
+    let log_path = default_data_dir()
+        .map(|d| d.join("desktop.log"))
+        .unwrap_or_else(|_| PathBuf::from("/tmp/xgram-desktop.log"));
+    let log_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .with_context(|| format!("desktop log 파일 생성 실패: {}", log_path.display()))?;
+    let log_err = log_file
+        .try_clone()
+        .context("desktop log 파일 핸들 복제 실패")?;
+
+    let child = Command::new(&bin)
         .args(args)
-        .status()
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(log_err))
+        .spawn()
         .with_context(|| format!("xgram-desktop 실행 실패: {}", bin.display()))?;
 
-    if !status.success() {
-        bail!(
-            "xgram-desktop 종료 코드 {}",
-            status
-                .code()
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "?".into())
-        );
-    }
+    let pid = child.id();
+    drop(child); // wait 안 함 — 백그라운드 운영. 부모 종료해도 OS 가 reparent.
+
+    println!("✓ xgram-desktop 백그라운드 가동 (PID {pid})");
+    println!("  바이너리 : {}", bin.display());
+    println!("  로그     : {}", log_path.display());
+    println!("  종료     : kill {pid}    또는 GUI 창 닫기");
     Ok(())
 }

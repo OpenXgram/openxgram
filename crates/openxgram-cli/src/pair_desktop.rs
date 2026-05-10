@@ -71,22 +71,41 @@ pub fn run_pair_desktop(data_dir: &Path) -> Result<()> {
         bail!("tailscale ip --4 출력 비어있음 — `sudo tailscale up` 으로 인증 후 재시도");
     }
 
-    // 3. mcp-token 발급.
+    // 3. (선택) Tailscale MagicDNS hostname — IP 변동에도 강한 URL 제공.
+    let ts_dns = tailnet_dns_name();
+
+    // 4. mcp-token 발급.
     let mut db = crate::mcp_tokens::open_db(data_dir).context("mcp-token DB open 실패")?;
     let (_id, token) = crate::mcp_tokens::create_token(&mut db, "desktop", Some("desktop pairing"))
         .context("mcp-token 발급 실패 — keystore/db 상태 확인")?;
 
-    // 4. URL 출력.
-    let pairing = format!("oxg://{alias}@{ts_ip}:{GUI_PORT}#token={token}");
+    // 5. URL 출력 — IP / DNS 둘 다 표시 (DNS 우선 권장, IP fallback).
+    let pairing_ip = format!("oxg://{alias}@{ts_ip}:{GUI_PORT}#token={token}");
     println!();
     println!("✓ 페어링 준비 완료");
     println!();
-    println!("┌──────────────────────────────────────────────────────────────────┐");
-    println!("│ 데스크탑에서 한 줄 입력:                                         │");
-    println!("│                                                                  │");
-    println!("│   xgram link '{pairing}'");
-    println!("│                                                                  │");
-    println!("└──────────────────────────────────────────────────────────────────┘");
+    if let Some(dns) = &ts_dns {
+        let pairing_dns = format!("oxg://{alias}@{dns}:{GUI_PORT}#token={token}");
+        println!("┌──────────────────────────────────────────────────────────────────┐");
+        println!("│ 데스크탑에서 한 줄 입력 (Tailscale MagicDNS — IP 변동에 강함):   │");
+        println!("│                                                                  │");
+        println!("│   xgram link '{pairing_dns}'");
+        println!("│                                                                  │");
+        println!("│ 또는 IP 직접 (MagicDNS 비활성 환경):                             │");
+        println!("│                                                                  │");
+        println!("│   xgram link '{pairing_ip}'");
+        println!("│                                                                  │");
+        println!("└──────────────────────────────────────────────────────────────────┘");
+    } else {
+        println!("┌──────────────────────────────────────────────────────────────────┐");
+        println!("│ 데스크탑에서 한 줄 입력:                                         │");
+        println!("│                                                                  │");
+        println!("│   xgram link '{pairing_ip}'");
+        println!("│                                                                  │");
+        println!("└──────────────────────────────────────────────────────────────────┘");
+        println!();
+        println!("(Tailscale MagicDNS 비활성 — IP 직접 사용. MagicDNS 켜면 hostname URL 도 발급)");
+    }
     println!();
     println!("주의:");
     println!("  - 이 URL 은 keystore 비밀번호와 동급 — 외부 노출 금지");
@@ -95,4 +114,25 @@ pub fn run_pair_desktop(data_dir: &Path) -> Result<()> {
     println!("      $ xgram daemon-install --bind {ts_ip}:{GUI_PORT}  # 영구");
     println!();
     Ok(())
+}
+
+/// `tailscale status --json` 의 `Self.DNSName` 추출 — MagicDNS 활성 시 hostname 반환.
+/// 실패 / 비활성 / JSON 파싱 에러는 모두 None 으로 묻고 silent fallback 금지를 위반하지 않는다
+/// (옵션 정보이므로 — 미발견 시 IP URL 만 출력하면 됨).
+fn tailnet_dns_name() -> Option<String> {
+    let out = Command::new("tailscale")
+        .args(["status", "--json"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    let raw = json.get("Self")?.get("DNSName")?.as_str()?;
+    let trimmed = raw.trim_end_matches('.');
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
