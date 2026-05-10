@@ -76,21 +76,26 @@ if ($running) {
     Start-Sleep -Milliseconds 800
 }
 
-# 4b. PS 5.1 의 Expand-Archive -Force 는 기존 .exe 를 덮어쓰지 못하는 버그 있음.
-#     알려진 파일들을 명시 삭제 후 압축 해제. 잠금/권한 문제면 명시 raise.
-foreach ($name in @('xgram.exe', 'xgram-desktop.exe', 'SHA256SUMS')) {
-    $p = Join-Path $INSTALL $name
-    if (Test-Path $p) {
+# 4b. install dir 의 기존 파일들 모두 명시 삭제 (잠금이면 raise).
+#     PS 5.1 Expand-Archive -Force 는 기존 .exe 를 덮어쓰지 못하는 버그가 있어 사전 정리 필요.
+$existingFiles = Get-ChildItem -Path $INSTALL -File -Force -ErrorAction SilentlyContinue
+if ($existingFiles) {
+    Write-Host "    → 기존 파일 정리 ($($existingFiles.Count)개)"
+    foreach ($f in $existingFiles) {
         try {
-            Remove-Item -Path $p -Force -ErrorAction Stop
+            Remove-Item -Path $f.FullName -Force -ErrorAction Stop
+            Write-Host "      - 삭제: $($f.Name)"
         } catch {
-            Write-Error "$name 삭제 실패 (잠금 또는 권한 문제): $($_.Exception.Message)"
+            Write-Error "$($f.Name) 삭제 실패 (잠금/권한): $($_.Exception.Message)"
             exit 1
         }
     }
 }
 
-Expand-Archive -Path $tmpZip -DestinationPath $INSTALL -Force
+# 4c. PS 5.1 Expand-Archive 우회 — .NET 의 ZipFile.ExtractToDirectory 사용.
+#     overwriteFiles=$true 인자로 신뢰성 있게 덮어쓰기 (Force 버그 회피).
+Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+[System.IO.Compression.ZipFile]::ExtractToDirectory($tmpZip, $INSTALL, $true)
 
 # 4c. 갱신 검증 — 압축 해제 후 xgram.exe 가 실제 갱신됐는지 확인 (silent-skip 차단).
 $xgramExe = Join-Path $INSTALL 'xgram.exe'
