@@ -179,9 +179,9 @@ jobs:
             files=$(ls -1) && \
             if command -v sha256sum >/dev/null; then sha256sum $files > SHA256SUMS;
             else shasum -a 256 $files > SHA256SUMS; fi )
-          # 패키징.
+          # 패키징. windows-latest runner 는 zip 명령 없음 — 사전 설치된 7z 사용.
           case "$MATRIX_TARGET" in
-            *windows*) ( cd "$stage" && zip -q "$OLDPWD/dist/$asset" * ) ;;
+            *windows*) ( cd "$stage" && 7z a -tzip "$OLDPWD/dist/$asset" * > /dev/null ) ;;
             *)         tar -C "$stage" -czf "dist/$asset" . ;;
           esac
           ( cd dist && \
