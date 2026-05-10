@@ -126,6 +126,16 @@ impl<'a, E: Embedder + ?Sized> MessageStore<'a, E> {
         )
     }
 
+    /// 최근 N개 메시지 (timestamp 내림차순) — 전체 세션 합쳐서.
+    /// GUI Messenger 의 "활동 흐름" 모니터링용.
+    pub fn list_recent(&mut self, limit: usize) -> Result<Vec<Message>> {
+        self.query_messages(
+            "SELECT id, session_id, sender, body, signature, timestamp, conversation_id
+             FROM messages ORDER BY timestamp DESC LIMIT ?1",
+            rusqlite::params![limit as i64],
+        )
+    }
+
     fn query_messages(
         &mut self,
         sql: &str,

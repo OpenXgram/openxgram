@@ -426,3 +426,42 @@ pub async fn payment_set_daily_limit(
         Ok(())
     })
 }
+
+// ── messages_recent — Messenger 활동 흐름 모니터링 ──────────────────────────
+
+#[derive(Serialize, Clone)]
+pub struct MessageDto {
+    pub id: String,
+    pub session_id: String,
+    pub sender: String,
+    pub body: String,
+    pub timestamp: String,
+    pub conversation_id: String,
+}
+
+#[tauri::command]
+pub fn messages_recent(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+) -> Result<Vec<MessageDto>, String> {
+    let lim = limit.unwrap_or(50).min(500);
+    let out: Option<Vec<MessageDto>> = with_db_optional(&state, |db| {
+        let embedder = default_embedder().map_err(|e| format!("embedder init: {e}"))?;
+        let mut store = MessageStore::new(db, embedder.as_ref());
+        let msgs = store
+            .list_recent(lim)
+            .map_err(|e| format!("list_recent: {e}"))?;
+        Ok(msgs
+            .into_iter()
+            .map(|m| MessageDto {
+                id: m.id,
+                session_id: m.session_id,
+                sender: m.sender,
+                body: m.body,
+                timestamp: m.timestamp.to_rfc3339(),
+                conversation_id: m.conversation_id,
+            })
+            .collect())
+    })?;
+    Ok(out.unwrap_or_default())
+}

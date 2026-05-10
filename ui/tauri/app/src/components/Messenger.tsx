@@ -1,11 +1,39 @@
-import { createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { createMemo, createResource, createSignal, For, Show, onCleanup } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { useI18n } from "../i18n";
 
-// v0.1 — 통합 메신저 허브 첫 컷.
+// v0.2-α — 활동 흐름 모니터링 컷.
 //   좌측: 친구 목록 = OpenXgram peer + Discord/Telegram 연결 상태 통합
-//   중앙: 선택된 대화 (현재는 placeholder, v0.2에서 L0 messages 스레드 + 송신 라우팅 연결)
+//   중앙: 최근 L0 messages 스레드 — 친구 선택 시 해당 sender 로 필터, 미선택 시 전체.
+//          3초 간격 자동 새로고침. 송신은 v0.2-β (현재 disabled + CLI 안내).
 //   친구 추가 = `xgram peer add` / `setup discord` / `setup telegram`. 메신저에서 "친구 추가" 버튼이 그 흐름을 연다.
+
+interface MessageDto {
+  id: string;
+  session_id: string;
+  sender: string;
+  body: string;
+  timestamp: string;
+  conversation_id: string;
+}
+
+async function fetchMessages(): Promise<MessageDto[]> {
+  try {
+    return await invoke<MessageDto[]>("messages_recent", { limit: 100 });
+  } catch {
+    return [];
+  }
+}
+
+function fmtTime(iso: string): string {
+  // ISO 8601 → 'MM-dd HH:mm' (KST). 실패 시 원문.
+  try {
+    const d = new Date(iso);
+    return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  } catch {
+    return iso;
+  }
+}
 
 interface PeerDto {
   alias: string;
@@ -62,6 +90,13 @@ export function Messenger() {
   const [peers] = createResource(fetchPeers);
   const [notifyStatus] = createResource(fetchNotifyStatus);
   const [selected, setSelected] = createSignal<string | null>(null);
+  const [messages, { refetch: refetchMessages }] = createResource(fetchMessages);
+
+  // 3초 간격 메시지 폴링 — 활동 흐름 모니터링.
+  const pollTimer = setInterval(() => {
+    void refetchMessages();
+  }, 3000);
+  onCleanup(() => clearInterval(pollTimer));
 
   // peer + Discord/Telegram 상태를 한 친구 목록으로 합침.
   const friends = createMemo<Friend[]>(() => {
@@ -167,33 +202,66 @@ export function Messenger() {
             </div>
           }
         >
-          {(f) => (
-            <>
-              <header class="messenger-thread-head">
-                <h2>{f().display}</h2>
-                <small>{f().subtitle}</small>
-              </header>
-              <section class="messenger-thread-body">
-                <div class="messenger-placeholder">
-                  {t("messenger.thread-placeholder") ||
-                    `${f().display} 와의 대화 — v0.2에서 L0 messages 스레드를 시간순 노출.`}
-                </div>
-              </section>
-              <footer class="messenger-thread-input">
-                <textarea
-                  rows={2}
-                  placeholder={
-                    t("messenger.input-placeholder") ||
-                    "메시지를 입력 (v0.2에서 transport 자동 라우팅)"
-                  }
-                  disabled
-                />
-                <button type="button" disabled>
-                  {t("messenger.send") || "보내기"}
-                </button>
-              </footer>
-            </>
-          )}
+          {(f) => {
+            // peer 친구는 sender 로 필터, 채널(Discord/Telegram)은 일단 전체 보여줌.
+            const filtered = createMemo<MessageDto[]>(() => {
+              const all = messages() ?? [];
+              if (f().kind !== "peer") return all;
+              const alias = f().display;
+              const addr = f().meta?.address?.toLowerCase();
+              return all.filter((m) => {
+                const s = m.sender.toLowerCase();
+                return s === alias.toLowerCase() || (addr ? s === addr : false);
+              });
+            });
+
+            return (
+              <>
+                <header class="messenger-thread-head">
+                  <h2>{f().display}</h2>
+                  <small>{f().subtitle}</small>
+                </header>
+                <section class="messenger-thread-body">
+                  <Show
+                    when={(filtered() ?? []).length > 0}
+                    fallback={
+                      <div class="messenger-placeholder">
+                        {t("messenger.thread-empty") ||
+                          `${f().display} 의 메시지 없음 — daemon 가동 + 메시지 도착 시 3초 내 표시됩니다.`}
+                      </div>
+                    }
+                  >
+                    <ul class="messenger-thread-list">
+                      <For each={filtered().slice().reverse()}>
+                        {(m) => (
+                          <li class="messenger-thread-item">
+                            <div class="messenger-thread-meta">
+                              <span class="messenger-thread-sender">{m.sender}</span>
+                              <span class="messenger-thread-time">{fmtTime(m.timestamp)}</span>
+                            </div>
+                            <div class="messenger-thread-body-text">{m.body}</div>
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                  </Show>
+                </section>
+                <footer class="messenger-thread-input">
+                  <textarea
+                    rows={2}
+                    placeholder={
+                      t("messenger.input-placeholder") ||
+                      "메시지 송신은 v0.2-β — 현재는 CLI 사용: xgram peer send <alias> <body>"
+                    }
+                    disabled
+                  />
+                  <button type="button" disabled>
+                    {t("messenger.send") || "보내기"}
+                  </button>
+                </footer>
+              </>
+            );
+          }}
         </Show>
       </main>
     </div>

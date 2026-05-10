@@ -4831,7 +4831,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-adapter"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.15"
 dependencies = [
  "chrono",
  "futures-util",
@@ -4848,7 +4848,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-channel"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.15"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4868,7 +4868,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-cli"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.15"
 dependencies = [
  "age",
  "anyhow",
@@ -4882,6 +4882,7 @@ dependencies = [
  "getrandom 0.3.4",
  "hex",
  "k256",
+ "libc",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
@@ -4890,6 +4891,8 @@ dependencies = [
  "openxgram-core",
  "openxgram-db",
  "openxgram-did",
+ "openxgram-eas",
+ "openxgram-indexer-sdk",
  "openxgram-keystore",
  "openxgram-manifest",
  "openxgram-mcp",
@@ -4901,6 +4904,7 @@ dependencies = [
  "openxgram-scheduler",
  "openxgram-transport",
  "openxgram-vault",
+ "qrcode",
  "ratatui",
  "reqwest 0.13.1",
  "rpassword",
@@ -4912,6 +4916,7 @@ dependencies = [
  "tar",
  "tokio",
  "tokio-cron-scheduler",
+ "toml 0.8.2",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
@@ -4920,7 +4925,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-core"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.15"
 dependencies = [
  "chrono",
  "thiserror 1.0.69",
@@ -4928,7 +4933,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-db"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.15"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4968,7 +4973,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-did"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.15"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4984,8 +4989,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "openxgram-eas"
+version = "0.2.0-rc.15"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "hex",
+ "openxgram-core",
+ "openxgram-db",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha3",
+ "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
+name = "openxgram-indexer-sdk"
+version = "0.2.0-rc.15"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "chrono",
+ "openxgram-core",
+ "openxgram-db",
+ "openxgram-eas",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "openxgram-keystore"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.15"
 dependencies = [
  "anyhow",
  "argon2",
@@ -5005,7 +5045,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-manifest"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.15"
 dependencies = [
  "chrono",
  "hex",
@@ -5018,7 +5058,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-mcp"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.15"
 dependencies = [
  "serde",
  "serde_json",
@@ -5028,7 +5068,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-memory"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.15"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5045,7 +5085,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-nostr"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.15"
 dependencies = [
  "chrono",
  "hex",
@@ -5064,7 +5104,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-orchestration"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.15"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5084,7 +5124,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-payment"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.15"
 dependencies = [
  "alloy",
  "chrono",
@@ -5104,7 +5144,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-peer"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.15"
 dependencies = [
  "chrono",
  "openxgram-core",
@@ -5119,7 +5159,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-scheduler"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.15"
 dependencies = [
  "anyhow",
  "openxgram-db",
@@ -5132,7 +5172,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-transport"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.15"
 dependencies = [
  "anyhow",
  "axum",
@@ -5147,7 +5187,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-vault"
-version = "0.2.0-rc.3"
+version = "0.2.0-rc.15"
 dependencies = [
  "chrono",
  "hex",
@@ -5721,6 +5761,15 @@ name = "pxfm"
 version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e0c5ccf5294c6ccd63a74f1565028353830a9c2f5eb0c682c355c471726a6e3f"
+
+[[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+dependencies = [
+ "image",
+]
 
 [[package]]
 name = "quick-error"
