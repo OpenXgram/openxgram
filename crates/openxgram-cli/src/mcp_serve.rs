@@ -129,12 +129,13 @@ impl ToolDispatcher for OpenxgramDispatcher {
             },
             ToolSpec {
                 name: "connect_discord".into(),
-                description: "Discord webhook 연결 — webhook_url 인자 또는 vault 의 기존 notify.discord.webhook_url 사용. 테스트 ping 보내고 vault 에 등록. 사용자가 '디스코드 연결해' 라고 하면 호출.".into(),
+                description: "Discord 봇 연결 — bot_token 인자 또는 vault 의 기존 값 사용. Discord API /users/@me 로 봇 검증 → vault 저장 → invite URL 반환. 양방향 통신 (사용자가 Discord 에 글 쓰면 LLM 이 받음) 의 baseline. webhook_url 은 outbound-only fallback (선택).".into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "webhook_url": {"type": "string", "description": "비워두면 vault 의 기존 값 사용"},
-                        "test_message": {"type": "string", "description": "테스트 메시지 내용 (선택)"}
+                        "bot_token": {"type": "string", "description": "Discord bot token (양방향). 비워두면 vault 의 기존 값"},
+                        "guild_id": {"type": "string", "description": "Discord 서버 ID (서버에 카테고리 생성 시 필요, 선택)"},
+                        "webhook_url": {"type": "string", "description": "outbound-only fallback (선택)"}
                     }
                 }),
             },
@@ -436,77 +437,83 @@ impl ToolDispatcher for OpenxgramDispatcher {
             }
             "connect_discord" => {
                 let pw = self.require_vault()?.to_string();
-                let webhook_arg = args
-                    .get("webhook_url")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string);
-                let test_msg = args
-                    .get("test_message")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("✓ OpenXgram → Discord 연결 테스트")
-                    .to_string();
+                let token_arg = args.get("bot_token").and_then(|v| v.as_str()).map(str::to_string);
+                let guild_arg = args.get("guild_id").and_then(|v| v.as_str()).map(str::to_string);
+                let webhook_arg = args.get("webhook_url").and_then(|v| v.as_str()).map(str::to_string);
 
-                // 1. webhook 결정 — 인자 우선, 없으면 vault.
-                let webhook_url = if let Some(w) = webhook_arg.as_ref() {
-                    w.clone()
+                // 1. bot_token 결정 — 인자 우선, 없으면 vault.
+                let bot_token = if let Some(t) = token_arg.as_ref() {
+                    t.clone()
                 } else {
-                    match VaultStore::new(&mut self.db)
-                        .get("notify.discord.webhook_url", &pw)
-                    {
-                        Ok(bytes) => String::from_utf8(bytes)
-                            .map_err(|e| internal(format!("vault utf8: {e}")))?,
-                        Err(_) => {
-                            return Err(invalid(
-                                "Discord webhook 미설정 — webhook_url 인자로 전달하거나 \
-                                 vault 의 notify.discord.webhook_url 키에 미리 저장",
-                            ));
-                        }
-                    }
+                    let bytes = VaultStore::new(&mut self.db)
+                        .get("notify.discord.bot_token", &pw)
+                        .map_err(|_| invalid(
+                            "Discord bot token 미설정 — bot_token 인자로 전달. \
+                             webhook 만 쓸 거면 vault 에 notify.discord.webhook_url 직접 set"
+                        ))?;
+                    String::from_utf8(bytes).map_err(|e| internal(format!("token utf8: {e}")))?
                 };
 
-                // 2. 테스트 ping — 별 OS thread 로 격리해 async runtime 충돌 회피.
-                let body_str = serde_json::to_string(&json!({ "content": test_msg })).unwrap();
-                let url_clone = webhook_url.clone();
-                let (status_code, err_body): (u16, String) = std::thread::spawn(move || -> Result<(u16, String), String> {
+                // 2. Discord API /users/@me 로 봇 검증.
+                let token_clone = bot_token.clone();
+                let bot_info: Value = std::thread::spawn(move || -> Result<Value, String> {
                     let resp = reqwest::blocking::Client::new()
-                        .post(&url_clone)
-                        .header("content-type", "application/json")
-                        .body(body_str)
+                        .get("https://discord.com/api/v10/users/@me")
+                        .header("Authorization", format!("Bot {}", token_clone))
                         .send()
-                        .map_err(|e| format!("Discord POST: {e}"))?;
-                    let status = resp.status().as_u16();
-                    let text = if (200..300).contains(&status) {
-                        String::new()
-                    } else {
-                        resp.text().unwrap_or_else(|_| "(body 읽기 실패)".into())
-                    };
-                    Ok((status, text))
+                        .map_err(|e| format!("Discord API GET /users/@me: {e}"))?;
+                    if !resp.status().is_success() {
+                        return Err(format!(
+                            "bot token 검증 실패: HTTP {} — {}",
+                            resp.status(), resp.text().unwrap_or_default()
+                        ));
+                    }
+                    resp.json().map_err(|e| format!("json: {e}"))
                 }).join().map_err(|_| internal("HTTP thread panic"))?
                   .map_err(internal)?;
-                if !(200..300).contains(&status_code) {
-                    return Err(invalid(&format!(
-                        "Discord webhook 응답 비정상: HTTP {} — {}",
-                        status_code, err_body
-                    )));
+
+                let bot_id = bot_info.get("id").and_then(|v| v.as_str()).unwrap_or("?").to_string();
+                let bot_username = bot_info.get("username").and_then(|v| v.as_str()).unwrap_or("?").to_string();
+
+                // 3. vault 저장.
+                if token_arg.is_some() {
+                    VaultStore::new(&mut self.db)
+                        .set("notify.discord.bot_token", bot_token.as_bytes(), &pw, &[])
+                        .map_err(|e| internal(format!("vault set bot_token: {e}")))?;
+                }
+                if let Some(g) = guild_arg.as_ref() {
+                    VaultStore::new(&mut self.db)
+                        .set("notify.discord.guild_id", g.as_bytes(), &pw, &[])
+                        .map_err(|e| internal(format!("vault set guild_id: {e}")))?;
+                }
+                if let Some(w) = webhook_arg.as_ref() {
+                    VaultStore::new(&mut self.db)
+                        .set("notify.discord.webhook_url", w.as_bytes(), &pw, &[])
+                        .map_err(|e| internal(format!("vault set webhook_url: {e}")))?;
                 }
 
-                // 3. webhook 인자로 새로 받은 경우 vault 저장 (없으면 이미 vault 에 있던 거 사용).
-                if webhook_arg.is_some() {
-                    VaultStore::new(&mut self.db)
-                        .set(
-                            "notify.discord.webhook_url",
-                            webhook_url.as_bytes(),
-                            &pw,
-                            &[],
-                        )
-                        .map_err(|e| internal(format!("vault set: {e}")))?;
-                }
+                // 4. invite URL — 봇이 서버에 들어가야 양방향 가능.
+                //    permissions=536895680 ≈ Send/Read/Manage Channels/Webhooks (개략).
+                let invite_url = format!(
+                    "https://discord.com/api/oauth2/authorize?client_id={}&scope=bot&permissions=536895680",
+                    bot_id
+                );
 
                 Ok(json!({
                     "ok": true,
-                    "webhook_saved_in_vault": true,
-                    "test_status": status_code,
-                    "next": "xgram agent --discord-webhook-url $(xgram vault get notify.discord.webhook_url) & 로 outbound forward 가동"
+                    "bot_id": bot_id,
+                    "bot_username": bot_username,
+                    "invite_url": invite_url,
+                    "vault_saved": {
+                        "bot_token": token_arg.is_some(),
+                        "guild_id": guild_arg.is_some(),
+                        "webhook_url": webhook_arg.is_some()
+                    },
+                    "next": if guild_arg.is_none() {
+                        json!("[1] 위 invite_url 로 봇을 마스터의 Discord 서버에 초대  [2] 그 서버 ID 를 guild_id 로 다시 connect_discord 호출  [3] create_project_category 호출로 카테고리+채널+webhook 자동 생성")
+                    } else {
+                        json!("create_project_category(name?) 호출로 카테고리 + 채널 + webhook 자동 생성 가능")
+                    }
                 }))
             }
             "connect_telegram" => {
