@@ -150,6 +150,39 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     }
                 }),
             },
+            ToolSpec {
+                name: "create_project_category".into(),
+                description: "Discord 서버에 이 프로젝트용 카테고리 + 채널 자동 생성 (메인 + sub-agents). 봇 토큰 + 길드 ID 필요 (vault). 결과 채널들의 webhook URL 도 자동 발급해서 vault 에 저장.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "카테고리 이름 (생략 시 프로젝트 alias)"},
+                        "subagents": {"type": "array", "items": {"type": "string"}, "description": "함께 만들 sub-agent 채널 이름들 (선택)"}
+                    }
+                }),
+            },
+            ToolSpec {
+                name: "install_hooks".into(),
+                description: "Claude Code SessionStart hook 설치 — ~/.claude/settings.json 에 자동 등록. 새 세션 시작 시 openxgram identity context 자동 주입 + recv_messages 자동 호출.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "scope": {"type": "string", "enum": ["user", "project"], "default": "user", "description": "user(~/.claude/settings.json) 또는 project(.claude/settings.json)"}
+                    }
+                }),
+            },
+            ToolSpec {
+                name: "register_subagent".into(),
+                description: "이 세션을 OpenXgram peer 로 자동 등록 — alias = role + 짧은 fingerprint. master 머신의 봇 registry 에 새 봇 추가 + auto-link. 기존 동일 alias 있으면 link 만.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "role": {"type": "string", "description": "역할 / 봇 alias (예: claude-code, codex, my-agent)"},
+                        "machine": {"type": "string", "description": "머신 별 prefix (선택, 자동으로 hostname)"}
+                    },
+                    "required": ["role"]
+                }),
+            },
         ];
 
         // peer_send — keystore 패스워드 필요 (서명용). vault 패스워드와 동일 가정.
@@ -539,6 +572,245 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     "test_status": status_code,
                     "next": "xgram agent --discord-bot-token / --discord-channel-id 와 함께 가동"
                 }))
+            }
+            "register_subagent" => {
+                let pw = self.require_vault()?.to_string();
+                let role = args
+                    .get("role")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'role'"))?;
+                if !role.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                    return Err(invalid("role 은 영숫자/-/_ 만"));
+                }
+
+                // 이미 등록된 봇이면 skip + 정보 반환.
+                let root = crate::bot::xgram_root().map_err(internal)?;
+                let reg = crate::bot::BotRegistry::load(&root).map_err(internal)?;
+                if let Some(existing) = reg.get(role) {
+                    return Ok(json!({
+                        "already_registered": true,
+                        "name": existing.name,
+                        "alias": existing.alias,
+                        "data_dir": existing.data_dir.display().to_string(),
+                        "transport_port": existing.transport_port,
+                    }));
+                }
+
+                // subprocess 로 분리 — bot_register 의 init [1/6] println 이 stdio JSON-RPC 와
+                // 섞이는 걸 방지. stdout/stderr 모두 폐기.
+                let xgram_bin = std::env::current_exe()
+                    .map_err(|e| internal(format!("xgram bin path: {e}")))?;
+                let output = std::process::Command::new(&xgram_bin)
+                    .args(["bot", "register", role])
+                    .env("XGRAM_KEYSTORE_PASSWORD", &pw)
+                    .env("XGRAM_SKIP_PORT_PRECHECK", "1")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .stdin(std::process::Stdio::null())
+                    .status()
+                    .map_err(|e| internal(format!("xgram bot register spawn: {e}")))?;
+                if !output.success() {
+                    return Err(internal(format!(
+                        "xgram bot register {role} 실패 (exit {:?})",
+                        output.code()
+                    )));
+                }
+
+                let reg2 = crate::bot::BotRegistry::load(&root).map_err(internal)?;
+                let entry = reg2
+                    .get(role)
+                    .ok_or_else(|| internal("등록 직후 조회 실패"))?;
+                Ok(json!({
+                    "registered": true,
+                    "name": entry.name,
+                    "alias": entry.alias,
+                    "data_dir": entry.data_dir.display().to_string(),
+                    "transport_port": entry.transport_port,
+                    "mcp_port": entry.transport_port + 2,
+                }))
+            }
+            "install_hooks" => {
+                let scope = args
+                    .get("scope")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("user");
+                let settings_path = match scope {
+                    "user" => {
+                        let home = std::env::var("HOME")
+                            .or_else(|_| std::env::var("USERPROFILE"))
+                            .map_err(|_| internal("HOME/USERPROFILE 미설정"))?;
+                        std::path::PathBuf::from(home).join(".claude/settings.json")
+                    }
+                    "project" => std::env::current_dir().map_err(|e| internal(e))?
+                        .join(".claude/settings.json"),
+                    _ => return Err(invalid("scope 는 user 또는 project")),
+                };
+
+                if let Some(parent) = settings_path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| internal(e))?;
+                }
+
+                let mut settings: Value = if settings_path.exists() {
+                    let raw = std::fs::read_to_string(&settings_path).map_err(|e| internal(e))?;
+                    serde_json::from_str(&raw)
+                        .map_err(|e| internal(format!("settings.json 파싱 실패: {e}")))?
+                } else {
+                    json!({})
+                };
+
+                let hooks = settings
+                    .as_object_mut()
+                    .ok_or_else(|| internal("settings.json root 가 object 아님"))?
+                    .entry("hooks".to_string())
+                    .or_insert_with(|| json!({}));
+                let session_start = hooks
+                    .as_object_mut()
+                    .ok_or_else(|| internal("hooks 가 object 아님"))?
+                    .entry("SessionStart".to_string())
+                    .or_insert_with(|| json!([]));
+                let arr = session_start
+                    .as_array_mut()
+                    .ok_or_else(|| internal("SessionStart 가 array 아님"))?;
+
+                // 기존 openxgram 훅 있으면 skip.
+                let already = arr.iter().any(|h| {
+                    h.get("hooks").and_then(|v| v.as_array()).map(|hs| {
+                        hs.iter().any(|sub| {
+                            sub.get("command")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.contains("xgram") && s.contains("identity"))
+                                .unwrap_or(false)
+                        })
+                    }).unwrap_or(false)
+                });
+
+                if !already {
+                    arr.push(json!({
+                        "matcher": "*",
+                        "hooks": [{
+                            "type": "command",
+                            "command": "xgram identity-inject --target CLAUDE.md 2>/dev/null || true"
+                        }]
+                    }));
+                }
+
+                let new_content = serde_json::to_string_pretty(&settings).map_err(|e| internal(e))?;
+                std::fs::write(&settings_path, new_content).map_err(|e| internal(e))?;
+
+                Ok(json!({
+                    "installed": !already,
+                    "already": already,
+                    "settings_path": settings_path.display().to_string(),
+                    "scope": scope,
+                    "next": "다음 Claude Code 세션 시작 시 xgram identity-inject 자동 호출 — CLAUDE.md 항상 최신"
+                }))
+            }
+            "create_project_category" => {
+                let pw = self.require_vault()?.to_string();
+                let name_arg = args.get("name").and_then(|v| v.as_str()).map(str::to_string);
+                let subagents: Vec<String> = args
+                    .get("subagents")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default();
+
+                // bot_token + guild_id 는 vault 에서.
+                let bot_token = VaultStore::new(&mut self.db)
+                    .get("notify.discord.bot_token", &pw)
+                    .map_err(|_| invalid("notify.discord.bot_token vault 에 없음 — 먼저 connect_discord 또는 xgram setup discord"))?;
+                let bot_token = String::from_utf8(bot_token).map_err(|e| internal(format!("token utf8: {e}")))?;
+                let guild_id = VaultStore::new(&mut self.db)
+                    .get("notify.discord.guild_id", &pw)
+                    .map_err(|_| invalid("notify.discord.guild_id vault 에 없음 — vault_set 으로 추가 (Discord 서버 ID)"))?;
+                let guild_id = String::from_utf8(guild_id).map_err(|e| internal(format!("guild_id utf8: {e}")))?;
+
+                // 프로젝트 alias 가져오기 (manifest).
+                let project_alias = {
+                    use openxgram_manifest::InstallManifest;
+                    InstallManifest::read(&openxgram_core::paths::manifest_path(&self.data_dir))
+                        .map(|m| m.machine.alias.clone())
+                        .unwrap_or_else(|_| "openxgram".into())
+                };
+                let category_name = name_arg.unwrap_or(project_alias);
+
+                let token_clone = bot_token.clone();
+                let guild_clone = guild_id.clone();
+                let cat_name = category_name.clone();
+                let subs = subagents.clone();
+                let result = std::thread::spawn(move || -> Result<Value, String> {
+                    let client = reqwest::blocking::Client::new();
+                    let auth = format!("Bot {}", token_clone);
+
+                    // 1. 카테고리 생성 (type=4).
+                    let cat_resp = client
+                        .post(format!("https://discord.com/api/v10/guilds/{}/channels", guild_clone))
+                        .header("Authorization", &auth)
+                        .header("content-type", "application/json")
+                        .body(serde_json::to_string(&json!({"name": cat_name, "type": 4})).unwrap())
+                        .send()
+                        .map_err(|e| format!("category POST: {e}"))?;
+                    if !cat_resp.status().is_success() {
+                        return Err(format!(
+                            "Discord 카테고리 생성 실패: HTTP {} — {}",
+                            cat_resp.status(),
+                            cat_resp.text().unwrap_or_default()
+                        ));
+                    }
+                    let cat_obj: Value = cat_resp.json().map_err(|e| format!("category json: {e}"))?;
+                    let cat_id = cat_obj.get("id").and_then(|v| v.as_str()).ok_or("카테고리 id 누락")?.to_string();
+
+                    // 2. 채널들 생성 — main + sub-agents.
+                    let mut channels: Vec<Value> = Vec::new();
+                    let names: Vec<String> = std::iter::once("main".to_string()).chain(subs.into_iter()).collect();
+                    for ch_name in &names {
+                        let ch_resp = client
+                            .post(format!("https://discord.com/api/v10/guilds/{}/channels", guild_clone))
+                            .header("Authorization", &auth)
+                            .header("content-type", "application/json")
+                            .body(serde_json::to_string(&json!({
+                                "name": ch_name,
+                                "type": 0,
+                                "parent_id": cat_id,
+                            })).unwrap())
+                            .send()
+                            .map_err(|e| format!("channel {ch_name} POST: {e}"))?;
+                        if !ch_resp.status().is_success() {
+                            return Err(format!("채널 {ch_name} 생성 실패: HTTP {}", ch_resp.status()));
+                        }
+                        let ch_obj: Value = ch_resp.json().map_err(|e| format!("channel json: {e}"))?;
+                        let ch_id = ch_obj.get("id").and_then(|v| v.as_str()).ok_or("채널 id 누락")?.to_string();
+
+                        // 3. webhook 발급.
+                        let wh_resp = client
+                            .post(format!("https://discord.com/api/v10/channels/{}/webhooks", ch_id))
+                            .header("Authorization", &auth)
+                            .header("content-type", "application/json")
+                            .body(serde_json::to_string(&json!({"name": format!("openxgram-{ch_name}")})).unwrap())
+                            .send()
+                            .map_err(|e| format!("webhook {ch_name} POST: {e}"))?;
+                        if !wh_resp.status().is_success() {
+                            return Err(format!("채널 {ch_name} webhook 발급 실패: HTTP {}", wh_resp.status()));
+                        }
+                        let wh_obj: Value = wh_resp.json().map_err(|e| format!("webhook json: {e}"))?;
+                        let wh_url = wh_obj.get("url").and_then(|v| v.as_str()).ok_or("webhook url 누락")?.to_string();
+
+                        channels.push(json!({"name": ch_name, "channel_id": ch_id, "webhook_url": wh_url}));
+                    }
+
+                    Ok(json!({"category_id": cat_id, "channels": channels}))
+                }).join().map_err(|_| internal("HTTP thread panic"))?
+                  .map_err(internal)?;
+
+                // vault 에 main 채널의 webhook 저장 (기본 forward 채널).
+                if let Some(main_ch) = result.get("channels").and_then(|v| v.as_array()).and_then(|a| a.first()) {
+                    if let Some(url) = main_ch.get("webhook_url").and_then(|v| v.as_str()) {
+                        VaultStore::new(&mut self.db)
+                            .set("notify.discord.webhook_url", url.as_bytes(), &pw, &[])
+                            .map_err(|e| internal(format!("vault set: {e}")))?;
+                    }
+                }
+
+                Ok(result)
             }
             "vault_list" => {
                 self.require_vault()?;
