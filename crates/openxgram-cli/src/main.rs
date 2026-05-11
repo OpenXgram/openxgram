@@ -474,6 +474,38 @@ enum Commands {
         cmd: BotCli,
     },
 
+    /// MCP 서버 자기 자신을 Claude Code (.claude.json) 또는 프로젝트 (.mcp.json) 에 등록
+    McpInstall {
+        /// user(~/.claude.json) / project(./.mcp.json) / 임의 경로
+        #[arg(long, value_enum, default_value_t = McpInstallScope::Project)]
+        scope: McpInstallScope,
+        /// scope=custom 일 때 사용할 경로
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// data_dir 경로 (생략 시 ~/.openxgram)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        /// XGRAM_KEYSTORE_PASSWORD 를 config 에 평문 포함 (편리 / 보안 trade-off)
+        #[arg(long)]
+        with_password: bool,
+    },
+
+    /// 프로젝트 CLAUDE.md 에 OpenXgram identity context 블록 주입/갱신 (idempotent)
+    IdentityInject {
+        /// 주입 대상 파일 (기본: ./CLAUDE.md)
+        #[arg(long, default_value = "CLAUDE.md")]
+        target: PathBuf,
+        /// data_dir 경로 (생략 시 ~/.openxgram)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+
+    /// CLAUDE.md 에서 OpenXgram identity 블록 제거 (uninstall)
+    IdentityUninject {
+        #[arg(long, default_value = "CLAUDE.md")]
+        target: PathBuf,
+    },
+
     /// 친구 초대 URL + QR 출력 (oxg-friend://)
     Invite {
         /// 데이터 디렉토리 (기본 ~/.openxgram)
@@ -669,6 +701,16 @@ enum FriendCli {
     },
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum McpInstallScope {
+    /// ~/.claude.json — 모든 프로젝트
+    User,
+    /// ./.mcp.json — 이 프로젝트만
+    Project,
+    /// 임의 경로 (--config 필요)
+    Custom,
+}
+
 #[derive(Subcommand, Debug)]
 enum BotCli {
     /// 새 봇 등록 (data_dir 자동 생성, 포트 자동 할당, 레지스트리 갱신)
@@ -694,6 +736,14 @@ enum BotCli {
     Stop { name: String },
     /// 두 봇을 양방향 peer 로 등록 (같은 머신 내)
     Link { a: String, b: String },
+    /// 한 번에 add + init + auto-link + start (interactive prompt 없음, XGRAM_KEYSTORE_PASSWORD env 필요)
+    Register {
+        /// 봇 이름 (영숫자/-/_)
+        name: String,
+        /// 봇 alias (생략 시 name 그대로)
+        #[arg(long)]
+        alias: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -2430,7 +2480,36 @@ async fn main() -> anyhow::Result<()> {
             BotCli::Link { a, b } => {
                 openxgram_cli::bot::bot_link(&a, &b)?;
             }
+            BotCli::Register { name, alias } => {
+                openxgram_cli::bot::bot_register(&name, alias.as_deref())?;
+            }
         },
+
+        Commands::McpInstall {
+            scope,
+            config,
+            data_dir,
+            with_password,
+        } => {
+            let resolved_scope = match scope {
+                McpInstallScope::User => openxgram_cli::mcp_install::McpScope::User,
+                McpInstallScope::Project => openxgram_cli::mcp_install::McpScope::Project,
+                McpInstallScope::Custom => openxgram_cli::mcp_install::McpScope::Custom(
+                    config.ok_or_else(|| anyhow::anyhow!("scope=custom 일 때 --config 필수"))?,
+                ),
+            };
+            let dir = resolve_data_dir(data_dir)?;
+            openxgram_cli::mcp_install::run_install(resolved_scope, &dir, with_password)?;
+        }
+
+        Commands::IdentityInject { target, data_dir } => {
+            let dir = resolve_data_dir(data_dir)?;
+            openxgram_cli::mcp_install::run_inject(&target, &dir)?;
+        }
+
+        Commands::IdentityUninject { target } => {
+            openxgram_cli::mcp_install::run_uninject(&target)?;
+        }
 
         Commands::Invite { data_dir, alias, address } => {
             let dir = resolve_data_dir(data_dir)?;

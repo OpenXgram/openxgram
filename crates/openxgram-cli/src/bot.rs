@@ -127,6 +127,66 @@ pub fn bot_add(name: &str, alias: Option<&str>) -> Result<BotEntry> {
     Ok(entry)
 }
 
+/// 한 번에 끝 — add + init + auto-link + start.
+///
+/// XGRAM_KEYSTORE_PASSWORD env 필수 (모든 봇 동일 패스워드 가정 — 같은 머신 안에서만 의미 있는
+/// 자동 link 가능). interactive prompt 없음, 시드 백업 Y/N 도 비-TTY 자동 통과.
+///
+/// 새로 추가된 봇은 레지스트리의 기존 모든 봇과 자동 양방향 link.
+pub fn bot_register(name: &str, alias: Option<&str>) -> Result<()> {
+    use crate::init::{run_init, InitOpts};
+    use openxgram_manifest::MachineRole;
+
+    let pw = std::env::var("XGRAM_KEYSTORE_PASSWORD")
+        .context("XGRAM_KEYSTORE_PASSWORD env 필요 — 같은 머신 봇들은 동일 패스워드 가정")?;
+    if pw.len() < 12 {
+        bail!("XGRAM_KEYSTORE_PASSWORD 최소 12자");
+    }
+
+    // 1. add — 레지스트리 + data_dir 생성
+    let entry = bot_add(name, alias)?;
+
+    // 2. init — 시드 새로 생성, keystore 저장. XGRAM_INIT_SKIP_SEED_BACKUP_CONFIRM
+    //    효과 없음 (이미 비-TTY 면 자동 통과). XGRAM_SKIP_PORT_PRECHECK 필요할 수도.
+    let init_opts = InitOpts {
+        alias: entry.alias.clone(),
+        role: MachineRole::Primary,
+        data_dir: entry.data_dir.clone(),
+        force: false,
+        dry_run: false,
+        import: false,
+    };
+    run_init(&init_opts).context("bot init 실패")?;
+
+    // 3. 기존 모든 봇과 양방향 link.
+    let root = xgram_root()?;
+    let reg = BotRegistry::load(&root)?;
+    let other_names: Vec<String> = reg
+        .bots
+        .iter()
+        .filter(|b| b.name != name)
+        .map(|b| b.name.clone())
+        .collect();
+    for other in &other_names {
+        if let Err(e) = bot_link(name, other) {
+            eprintln!("[bot] auto-link {name} ↔ {other} 실패 (skip): {e}");
+        }
+    }
+
+    // 4. start — daemon + mcp-serve 백그라운드 spawn
+    bot_start(name).context("bot start 실패")?;
+
+    eprintln!();
+    eprintln!("✓ bot 등록 + 가동 완료: {name}");
+    eprintln!("  alias        : {}", entry.alias);
+    eprintln!("  data_dir     : {}", entry.data_dir.display());
+    eprintln!("  transport    : http://127.0.0.1:{}", entry.transport_port);
+    eprintln!("  gui          : http://127.0.0.1:{}", entry.gui_port);
+    eprintln!("  mcp          : http://127.0.0.1:{}", entry.transport_port + 2);
+    eprintln!("  linked peers : {}", other_names.len());
+    Ok(())
+}
+
 /// 포트 자동 할당 — 47300 부터 4 단위 (transport+1=gui, transport+2=mcp 영역까지 reserve).
 fn allocate_ports(reg: &BotRegistry) -> Result<(u16, u16)> {
     let used: std::collections::HashSet<u16> = reg

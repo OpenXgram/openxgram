@@ -110,6 +110,23 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 description: "이 머신에 등록된 OpenXgram 봇 목록 (xgram bot list)".into(),
                 input_schema: json!({"type": "object", "properties": {}}),
             },
+            ToolSpec {
+                name: "whoami".into(),
+                description: "이 프로젝트의 OpenXgram identity — alias / eth address / public key / linked peers 수. LLM 이 어떤 신원으로 메시지를 보낼지 알기 위한 첫 호출.".into(),
+                input_schema: json!({"type": "object", "properties": {}}),
+            },
+            ToolSpec {
+                name: "recv_messages".into(),
+                description: "최근 inbox 메시지 (시간 내림차순). 세션 시작 시 자동 호출 권장 — 다른 에이전트가 보낸 게 있는지 확인.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 20},
+                        "since_rfc3339": {"type": "string", "description": "이 timestamp 이후만 (선택)"},
+                        "sender": {"type": "string", "description": "특정 sender 만 (선택)"}
+                    }
+                }),
+            },
         ];
 
         // peer_send — keystore 패스워드 필요 (서명용). vault 패스워드와 동일 가정.
@@ -288,6 +305,78 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     ))
                     .map_err(|e| internal(e))?;
                 Ok(json!({"sent": true, "alias": alias}))
+            }
+            "whoami" => {
+                use openxgram_manifest::InstallManifest;
+                use openxgram_peer::PeerStore;
+                let manifest_path = openxgram_core::paths::manifest_path(&self.data_dir);
+                let manifest = InstallManifest::read(&manifest_path).map_err(internal)?;
+                let peer_count = PeerStore::new(&mut self.db)
+                    .list()
+                    .map(|p| p.len())
+                    .unwrap_or(0);
+                let master = manifest
+                    .registered_keys
+                    .iter()
+                    .find(|k| k.alias == "master")
+                    .ok_or_else(|| internal("manifest 에 master key 없음"))?;
+                Ok(json!({
+                    "alias": manifest.machine.alias,
+                    "role": format!("{:?}", manifest.machine.role).to_lowercase(),
+                    "hostname": manifest.machine.hostname,
+                    "address": master.address,
+                    "derivation_path": master.derivation_path,
+                    "data_dir": self.data_dir.display().to_string(),
+                    "linked_peers_count": peer_count,
+                }))
+            }
+            "recv_messages" => {
+                use openxgram_memory::default_embedder;
+                let limit = args
+                    .get("limit")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(20)
+                    .min(200) as usize;
+                let since = args
+                    .get("since_rfc3339")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let sender_filter = args
+                    .get("sender")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_lowercase());
+                let embedder = default_embedder().map_err(internal)?;
+                let messages = MessageStore::new(&mut self.db, embedder.as_ref())
+                    .list_recent(limit * 4)  // filter 적용 후도 충분히 남도록 4배 fetch
+                    .map_err(internal)?;
+                let items: Vec<Value> = messages
+                    .into_iter()
+                    .filter(|m| {
+                        if let Some(ref s) = since {
+                            if m.timestamp.to_rfc3339().as_str() <= s.as_str() {
+                                return false;
+                            }
+                        }
+                        if let Some(ref sf) = sender_filter {
+                            if m.sender.to_lowercase() != *sf {
+                                return false;
+                            }
+                        }
+                        true
+                    })
+                    .take(limit)
+                    .map(|m| {
+                        json!({
+                            "id": m.id,
+                            "session_id": m.session_id,
+                            "sender": m.sender,
+                            "body": m.body,
+                            "timestamp": m.timestamp.to_rfc3339(),
+                            "conversation_id": m.conversation_id,
+                        })
+                    })
+                    .collect();
+                Ok(json!({"messages": items, "count": items.len()}))
             }
             "vault_list" => {
                 self.require_vault()?;
