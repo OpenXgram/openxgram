@@ -488,6 +488,33 @@ enum Commands {
         /// XGRAM_KEYSTORE_PASSWORD 를 config 에 평문 포함 (편리 / 보안 trade-off)
         #[arg(long)]
         with_password: bool,
+        /// 한 번에 끝: mcp 등록 + CLAUDE.md identity-inject + SessionStart hook 설치
+        ///         + 글로벌 token 자동 import. 사용자 명령 1줄 → 완전 셋업.
+        #[arg(long)]
+        full: bool,
+        /// .claude.json 의 command 를 absolute path 대신 PATH lookup 의 'xgram' 으로 단순화
+        /// (다중 머신 / 다중 사용자 호환). 기본 false (absolute).
+        #[arg(long)]
+        use_path_lookup: bool,
+    },
+
+    /// inbox 최근 메시지 출력 (SessionStart hook 에서 호출용 — LLM 이 자동으로 보게)
+    Recv {
+        /// data_dir
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        /// 출력할 메시지 수
+        #[arg(long, default_value_t = 5)]
+        limit: usize,
+        /// 마지막 N분 이후만
+        #[arg(long, default_value_t = 60)]
+        since_min: u64,
+    },
+
+    /// 실행 중인 agent 종료 후 vault 의 현재 token 으로 재가동 (connect_discord 후 효력 적용용)
+    AgentRestart {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
     },
 
     /// 프로젝트 CLAUDE.md 에 OpenXgram identity context 블록 주입/갱신 (idempotent)
@@ -2490,6 +2517,8 @@ async fn main() -> anyhow::Result<()> {
             config,
             data_dir,
             with_password,
+            full,
+            use_path_lookup,
         } => {
             let resolved_scope = match scope {
                 McpInstallScope::User => openxgram_cli::mcp_install::McpScope::User,
@@ -2499,7 +2528,25 @@ async fn main() -> anyhow::Result<()> {
                 ),
             };
             let dir = resolve_data_dir(data_dir)?;
-            openxgram_cli::mcp_install::run_install(resolved_scope, &dir, with_password)?;
+            openxgram_cli::mcp_install::run_install(
+                resolved_scope,
+                &dir,
+                with_password,
+                use_path_lookup,
+            )?;
+            if full {
+                println!();
+                println!("→ --full: identity-inject + install_hooks 추가 실행");
+                let claude_md = std::path::PathBuf::from("CLAUDE.md");
+                openxgram_cli::mcp_install::run_inject(&claude_md, &dir)?;
+                let hook_scope = match scope {
+                    McpInstallScope::User => "user",
+                    _ => "project",
+                };
+                openxgram_cli::mcp_install::run_install_hooks(&dir, hook_scope)?;
+                println!();
+                println!("✓ Full setup 완료 — Claude Code 재시작 후 'openxgram.*' 도구 사용 가능");
+            }
         }
 
         Commands::IdentityInject { target, data_dir } => {
@@ -2509,6 +2556,20 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::IdentityUninject { target } => {
             openxgram_cli::mcp_install::run_uninject(&target)?;
+        }
+
+        Commands::Recv {
+            data_dir,
+            limit,
+            since_min,
+        } => {
+            let dir = resolve_data_dir(data_dir)?;
+            openxgram_cli::mcp_install::run_recv_print(&dir, limit, since_min)?;
+        }
+
+        Commands::AgentRestart { data_dir } => {
+            let dir = resolve_data_dir(data_dir)?;
+            openxgram_cli::mcp_install::run_agent_restart(&dir)?;
         }
 
         Commands::Invite { data_dir, alias, address } => {

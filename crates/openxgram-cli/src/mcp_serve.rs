@@ -523,6 +523,24 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     bot_id
                 );
 
+                // 5. vault 갱신됐으면 agent 재시작 — 새 토큰 즉시 효력. 비-blocking.
+                let mut agent_restarted = false;
+                if token_arg.is_some() || webhook_arg.is_some() {
+                    let xgram_bin = std::env::current_exe().ok();
+                    if let Some(bin) = xgram_bin {
+                        let _ = std::process::Command::new(bin)
+                            .arg("agent-restart")
+                            .arg("--data-dir")
+                            .arg(&self.data_dir)
+                            .env("XGRAM_KEYSTORE_PASSWORD", &pw)
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .stdin(std::process::Stdio::null())
+                            .status();
+                        agent_restarted = true;
+                    }
+                }
+
                 Ok(json!({
                     "ok": true,
                     "bot_id": bot_id,
@@ -533,6 +551,7 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         "guild_id": guild_arg.is_some(),
                         "webhook_url": webhook_arg.is_some()
                     },
+                    "agent_restarted": agent_restarted,
                     "next": if guild_arg.is_none() {
                         json!("[1] 위 invite_url 로 봇을 마스터의 Discord 서버에 초대  [2] 그 서버 ID 를 guild_id 로 다시 connect_discord 호출  [3] create_project_category 호출로 카테고리+채널+webhook 자동 생성")
                     } else {

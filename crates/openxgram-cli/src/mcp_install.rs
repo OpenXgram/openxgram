@@ -35,10 +35,19 @@ pub enum McpScope {
 ///
 /// `include_password` 가 true 면 현재 XGRAM_KEYSTORE_PASSWORD env 를 config 에
 /// 평문 저장 (편리). false 면 env 만 reference — 사용자가 별도 설정 필요.
-pub fn run_install(scope: McpScope, data_dir: &Path, include_password: bool) -> Result<()> {
+/// `use_path_lookup` 이 true 면 absolute path 대신 PATH lookup 의 `xgram` 사용 (portable).
+pub fn run_install(
+    scope: McpScope,
+    data_dir: &Path,
+    include_password: bool,
+    use_path_lookup: bool,
+) -> Result<()> {
     let config_path = resolve_config_path(scope)?;
-    let xgram_bin = std::env::current_exe()
-        .context("현재 xgram 바이너리 경로 추출 실패")?;
+    let xgram_bin = if use_path_lookup {
+        PathBuf::from("xgram")
+    } else {
+        std::env::current_exe().context("현재 xgram 바이너리 경로 추출 실패")?
+    };
 
     // 기존 config 읽기 (없으면 빈 객체).
     let mut config: Value = if config_path.exists() {
@@ -339,6 +348,154 @@ fn extract_quoted(text: &str, key: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// install_hooks — Claude Code SessionStart hook 설치 (CLI 진입점).
+/// hook 명령은 `xgram identity-inject + xgram recv` 둘 다 호출 — 매 세션 시작 시 CLAUDE.md 갱신 + inbox 표시.
+pub fn run_install_hooks(_data_dir: &Path, scope: &str) -> Result<()> {
+    use serde_json::Value;
+    let settings_path = match scope {
+        "user" => {
+            let home = std::env::var("HOME")
+                .or_else(|_| std::env::var("USERPROFILE"))
+                .context("HOME/USERPROFILE 미설정")?;
+            PathBuf::from(home).join(".claude/settings.json")
+        }
+        "project" => std::env::current_dir()?.join(".claude/settings.json"),
+        _ => bail!("scope 는 user 또는 project"),
+    };
+    if let Some(parent) = settings_path.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    let mut settings: Value = if settings_path.exists() {
+        serde_json::from_str(&fs::read_to_string(&settings_path)?)
+            .context("settings.json 파싱")?
+    } else {
+        serde_json::json!({})
+    };
+    let hook_cmd = "xgram identity-inject --target CLAUDE.md 2>/dev/null && xgram recv 2>/dev/null || true";
+    let session_start = settings
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("root object 아님"))?
+        .entry("hooks".to_string())
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("hooks not object"))?
+        .entry("SessionStart".to_string())
+        .or_insert_with(|| serde_json::json!([]));
+    let arr = session_start.as_array_mut().ok_or_else(|| anyhow!("SessionStart not array"))?;
+    let already = arr.iter().any(|h| {
+        h.get("hooks").and_then(|v| v.as_array()).map(|hs| {
+            hs.iter().any(|sub| {
+                sub.get("command").and_then(|v| v.as_str())
+                    .map(|s| s.contains("xgram") && s.contains("identity"))
+                    .unwrap_or(false)
+            })
+        }).unwrap_or(false)
+    });
+    if !already {
+        arr.push(serde_json::json!({
+            "matcher": "*",
+            "hooks": [{"type": "command", "command": hook_cmd}]
+        }));
+    }
+    fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
+    println!("✓ Claude Code SessionStart hook {} ({})",
+             if already { "이미 등록됨" } else { "등록 완료" },
+             settings_path.display());
+    Ok(())
+}
+
+/// `xgram recv` — 최근 inbox 출력 (hook 또는 사용자 수동 호출).
+pub fn run_recv_print(data_dir: &Path, limit: usize, since_min: u64) -> Result<()> {
+    use openxgram_db::{Db, DbConfig};
+    use openxgram_memory::{default_embedder, MessageStore};
+    use chrono::{Duration, Utc, FixedOffset};
+
+    let path = openxgram_core::paths::db_path(data_dir);
+    if !path.exists() {
+        // 미초기화 — silent
+        return Ok(());
+    }
+    let mut db = Db::open(DbConfig { path, ..Default::default() })?;
+    db.migrate()?;
+    let embedder = default_embedder().context("embedder")?;
+    let messages = MessageStore::new(&mut db, embedder.as_ref())
+        .list_recent(limit.max(1).min(100))
+        .context("list_recent")?;
+
+    let cutoff = Utc::now() - Duration::minutes(since_min as i64);
+    let cutoff_kst = cutoff.with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
+
+    let recent: Vec<_> = messages.into_iter().filter(|m| m.timestamp > cutoff_kst).collect();
+    if recent.is_empty() {
+        return Ok(()); // silent — hook 출력 깔끔히
+    }
+
+    println!();
+    println!("📬 OpenXgram inbox — 최근 {} 분 내 {}개 메시지:", since_min, recent.len());
+    for m in recent.iter().rev() {
+        let when = m.timestamp.format("%m-%d %H:%M");
+        println!("  [{}] {} → {}", when, m.sender, m.body.lines().next().unwrap_or(""));
+    }
+    Ok(())
+}
+
+/// `xgram agent-restart` — 기존 agent 종료 + vault 토큰 읽어 새로 spawn.
+pub fn run_agent_restart(data_dir: &Path) -> Result<()> {
+    use openxgram_vault::VaultStore;
+    use openxgram_db::{Db, DbConfig};
+
+    let pw = std::env::var("XGRAM_KEYSTORE_PASSWORD")
+        .context("XGRAM_KEYSTORE_PASSWORD env 필요")?;
+
+    // 1. 기존 xgram agent 종료 (전체 — data_dir 별 구분 없음, 한 머신 한 agent 가정).
+    //    패턴 'xgram agent ' (trailing space) — 'agent-restart' 같은 prefix 매치 회피.
+    let _ = std::process::Command::new("pkill")
+        .args(["-f", "xgram agent "])
+        .status();
+    // 인자 없이 정확히 'xgram agent' 만 떠있는 경우도 처리 — 단 -f 매치 시 명령 끝에 \0 따라옴.
+    // 위 패턴이 'xgram agent\n' 케이스 못 잡으므로 추가:
+    let _ = std::process::Command::new("pkill")
+        .args(["-fx", "(.*/)?xgram agent"])
+        .status();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // 2. vault 에서 token 들 추출.
+    let path = openxgram_core::paths::db_path(data_dir);
+    let mut db = Db::open(DbConfig { path, ..Default::default() })?;
+    db.migrate()?;
+    let mut store = VaultStore::new(&mut db);
+    let fetch = |store: &mut VaultStore, key: &str| -> Option<String> {
+        store.get(key, &pw).ok().and_then(|b| String::from_utf8(b).ok())
+    };
+    let webhook = fetch(&mut store, "notify.discord.webhook_url");
+    let bot_token = fetch(&mut store, "notify.discord.bot_token");
+    let channel_id = fetch(&mut store, "notify.discord.channel_id");
+
+    // 3. xgram agent 새로 spawn.
+    let xgram_bin = std::env::current_exe()?;
+    let log_path = data_dir.join("agent.log");
+    let log = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)?;
+    let log_err = log.try_clone()?;
+    let mut cmd = std::process::Command::new(&xgram_bin);
+    cmd.arg("agent").arg("--data-dir").arg(data_dir);
+    if let Some(w) = webhook { cmd.arg("--discord-webhook-url").arg(w); }
+    if let Some(t) = bot_token { cmd.arg("--discord-bot-token").arg(t); }
+    if let Some(c) = channel_id { cmd.arg("--discord-channel-id").arg(c); }
+    cmd.env("XGRAM_KEYSTORE_PASSWORD", &pw)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::from(log))
+        .stderr(std::process::Stdio::from(log_err));
+    let child = cmd.spawn().context("agent spawn")?;
+    let pid = child.id();
+    drop(child);
+
+    println!("✓ agent 재가동 (PID {pid}, log: {})", log_path.display());
+    Ok(())
 }
 
 /// CLAUDE.md 의 OpenXgram 블록 제거 (uninstall 시).
