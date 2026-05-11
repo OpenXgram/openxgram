@@ -127,6 +127,29 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     }
                 }),
             },
+            ToolSpec {
+                name: "connect_discord".into(),
+                description: "Discord webhook 연결 — webhook_url 인자 또는 vault 의 기존 notify.discord.webhook_url 사용. 테스트 ping 보내고 vault 에 등록. 사용자가 '디스코드 연결해' 라고 하면 호출.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "webhook_url": {"type": "string", "description": "비워두면 vault 의 기존 값 사용"},
+                        "test_message": {"type": "string", "description": "테스트 메시지 내용 (선택)"}
+                    }
+                }),
+            },
+            ToolSpec {
+                name: "connect_telegram".into(),
+                description: "Telegram bot 연결 — bot_token + chat_id 또는 vault 의 기존 값 사용. 테스트 메시지 발송 + vault 저장.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "bot_token": {"type": "string", "description": "비워두면 vault 의 기존 값 사용"},
+                        "chat_id": {"type": "string", "description": "비워두면 vault 의 기존 값 사용"},
+                        "test_message": {"type": "string", "description": "테스트 메시지 내용 (선택)"}
+                    }
+                }),
+            },
         ];
 
         // peer_send — keystore 패스워드 필요 (서명용). vault 패스워드와 동일 가정.
@@ -377,6 +400,145 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     })
                     .collect();
                 Ok(json!({"messages": items, "count": items.len()}))
+            }
+            "connect_discord" => {
+                let pw = self.require_vault()?.to_string();
+                let webhook_arg = args
+                    .get("webhook_url")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let test_msg = args
+                    .get("test_message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("✓ OpenXgram → Discord 연결 테스트")
+                    .to_string();
+
+                // 1. webhook 결정 — 인자 우선, 없으면 vault.
+                let webhook_url = if let Some(w) = webhook_arg.as_ref() {
+                    w.clone()
+                } else {
+                    match VaultStore::new(&mut self.db)
+                        .get("notify.discord.webhook_url", &pw)
+                    {
+                        Ok(bytes) => String::from_utf8(bytes)
+                            .map_err(|e| internal(format!("vault utf8: {e}")))?,
+                        Err(_) => {
+                            return Err(invalid(
+                                "Discord webhook 미설정 — webhook_url 인자로 전달하거나 \
+                                 vault 의 notify.discord.webhook_url 키에 미리 저장",
+                            ));
+                        }
+                    }
+                };
+
+                // 2. 테스트 ping — 별 OS thread 로 격리해 async runtime 충돌 회피.
+                let body_str = serde_json::to_string(&json!({ "content": test_msg })).unwrap();
+                let url_clone = webhook_url.clone();
+                let (status_code, err_body): (u16, String) = std::thread::spawn(move || -> Result<(u16, String), String> {
+                    let resp = reqwest::blocking::Client::new()
+                        .post(&url_clone)
+                        .header("content-type", "application/json")
+                        .body(body_str)
+                        .send()
+                        .map_err(|e| format!("Discord POST: {e}"))?;
+                    let status = resp.status().as_u16();
+                    let text = if (200..300).contains(&status) {
+                        String::new()
+                    } else {
+                        resp.text().unwrap_or_else(|_| "(body 읽기 실패)".into())
+                    };
+                    Ok((status, text))
+                }).join().map_err(|_| internal("HTTP thread panic"))?
+                  .map_err(internal)?;
+                if !(200..300).contains(&status_code) {
+                    return Err(invalid(&format!(
+                        "Discord webhook 응답 비정상: HTTP {} — {}",
+                        status_code, err_body
+                    )));
+                }
+
+                // 3. webhook 인자로 새로 받은 경우 vault 저장 (없으면 이미 vault 에 있던 거 사용).
+                if webhook_arg.is_some() {
+                    VaultStore::new(&mut self.db)
+                        .set(
+                            "notify.discord.webhook_url",
+                            webhook_url.as_bytes(),
+                            &pw,
+                            &[],
+                        )
+                        .map_err(|e| internal(format!("vault set: {e}")))?;
+                }
+
+                Ok(json!({
+                    "ok": true,
+                    "webhook_saved_in_vault": true,
+                    "test_status": status_code,
+                    "next": "xgram agent --discord-webhook-url $(xgram vault get notify.discord.webhook_url) & 로 outbound forward 가동"
+                }))
+            }
+            "connect_telegram" => {
+                let pw = self.require_vault()?.to_string();
+                let token_arg = args.get("bot_token").and_then(|v| v.as_str()).map(str::to_string);
+                let chat_arg = args.get("chat_id").and_then(|v| v.as_str()).map(str::to_string);
+                let test_msg = args
+                    .get("test_message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("✓ OpenXgram → Telegram 연결 테스트")
+                    .to_string();
+
+                let read_vault_or_arg = |arg: &Option<String>, key: &str, db: &mut Db| -> Result<String, JsonRpcError> {
+                    if let Some(v) = arg { return Ok(v.clone()); }
+                    let bytes = VaultStore::new(db)
+                        .get(key, &pw)
+                        .map_err(|_| invalid(&format!("{} 미설정 — 인자로 전달하거나 vault 에 미리 저장", key)))?;
+                    String::from_utf8(bytes).map_err(|e| internal(format!("vault utf8: {e}")))
+                };
+
+                let token = read_vault_or_arg(&token_arg, "notify.telegram.bot_token", &mut self.db)?;
+                let chat_id = read_vault_or_arg(&chat_arg, "notify.telegram.chat_id", &mut self.db)?;
+
+                let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+                let body_str = serde_json::to_string(&json!({"chat_id": chat_id, "text": test_msg})).unwrap();
+                let (status_code, err_body): (u16, String) = std::thread::spawn(move || -> Result<(u16, String), String> {
+                    let resp = reqwest::blocking::Client::new()
+                        .post(&url)
+                        .header("content-type", "application/json")
+                        .body(body_str)
+                        .send()
+                        .map_err(|e| format!("Telegram POST: {e}"))?;
+                    let status = resp.status().as_u16();
+                    let text = if (200..300).contains(&status) {
+                        String::new()
+                    } else {
+                        resp.text().unwrap_or_else(|_| "(body 읽기 실패)".into())
+                    };
+                    Ok((status, text))
+                }).join().map_err(|_| internal("HTTP thread panic"))?
+                  .map_err(internal)?;
+                if !(200..300).contains(&status_code) {
+                    return Err(invalid(&format!(
+                        "Telegram API 응답 비정상: HTTP {} — {}",
+                        status_code, err_body
+                    )));
+                }
+
+                // 새 값 받은 경우만 vault 저장.
+                if token_arg.is_some() {
+                    VaultStore::new(&mut self.db)
+                        .set("notify.telegram.bot_token", token.as_bytes(), &pw, &[])
+                        .map_err(|e| internal(format!("vault set: {e}")))?;
+                }
+                if chat_arg.is_some() {
+                    VaultStore::new(&mut self.db)
+                        .set("notify.telegram.chat_id", chat_id.as_bytes(), &pw, &[])
+                        .map_err(|e| internal(format!("vault set: {e}")))?;
+                }
+
+                Ok(json!({
+                    "ok": true,
+                    "test_status": status_code,
+                    "next": "xgram agent --discord-bot-token / --discord-channel-id 와 함께 가동"
+                }))
             }
             "vault_list" => {
                 self.require_vault()?;
