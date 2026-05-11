@@ -124,6 +124,76 @@ Write-Host ''
 Write-Host '==> 설치 완료' -ForegroundColor Green
 & "$INSTALL\xgram.exe" --version
 
+# 7. (선택) 기존 install-manifest 있고 패스워드 env 도 설정돼 있으면 daemon/agent 자동 가동.
+#    quickstart.ps1 마법사를 거친 사용자의 재설치 시 한 줄로 복원되도록.
+$dataDir = Join-Path $env:USERPROFILE '.openxgram'
+$manifestPath = Join-Path $dataDir 'install-manifest.json'
+if ((Test-Path $manifestPath) -and $env:XGRAM_KEYSTORE_PASSWORD) {
+    Write-Host ''
+    Write-Host '==> 기존 설치 발견 — daemon 자동 가동' -ForegroundColor Cyan
+
+    # 기존 xgram daemon / agent 종료 (있으면)
+    Get-Process -Name xgram -ErrorAction SilentlyContinue | ForEach-Object {
+        $cmdline = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).CommandLine
+        if ($cmdline -match 'daemon|agent') {
+            Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Start-Sleep -Milliseconds 500
+
+    # daemon
+    $daemonLog = Join-Path $dataDir 'daemon.log'
+    $daemonProc = Start-Process -FilePath "$INSTALL\xgram.exe" `
+        -ArgumentList 'daemon' `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $daemonLog `
+        -RedirectStandardError "$daemonLog.err" `
+        -PassThru
+    Start-Sleep -Seconds 1
+    if ($daemonProc -and -not $daemonProc.HasExited) {
+        Write-Host "    ✓ daemon PID $($daemonProc.Id)  (log: $daemonLog)"
+    } else {
+        Write-Host "    ⚠ daemon 미가동 — 로그 확인 후 'xgram daemon' 수동 실행" -ForegroundColor Yellow
+    }
+
+    # agent (vault 의 Discord/Telegram 토큰을 vault_get 으로 추출 시도)
+    $agentArgs = @('agent')
+    try {
+        $discordWebhook = & "$INSTALL\xgram.exe" vault get notify.discord.webhook_url 2>$null
+        if ($LASTEXITCODE -eq 0 -and $discordWebhook) {
+            $agentArgs += @('--discord-webhook-url', $discordWebhook.Trim())
+        }
+    } catch {}
+    try {
+        $discordBotToken = & "$INSTALL\xgram.exe" vault get notify.discord.bot_token 2>$null
+        if ($LASTEXITCODE -eq 0 -and $discordBotToken) {
+            $agentArgs += @('--discord-bot-token', $discordBotToken.Trim())
+        }
+    } catch {}
+    try {
+        $discordChannelId = & "$INSTALL\xgram.exe" vault get notify.discord.channel_id 2>$null
+        if ($LASTEXITCODE -eq 0 -and $discordChannelId) {
+            $agentArgs += @('--discord-channel-id', $discordChannelId.Trim())
+        }
+    } catch {}
+
+    if ($agentArgs.Count -gt 1) {
+        $agentLog = Join-Path $dataDir 'agent.log'
+        $agentProc = Start-Process -FilePath "$INSTALL\xgram.exe" `
+            -ArgumentList $agentArgs `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $agentLog `
+            -RedirectStandardError "$agentLog.err" `
+            -PassThru
+        Start-Sleep -Seconds 1
+        if ($agentProc -and -not $agentProc.HasExited) {
+            Write-Host "    ✓ agent PID $($agentProc.Id)  (Discord/Telegram forward 활성)"
+        }
+    } else {
+        Write-Host "    (agent 미가동 — Discord/Telegram 토큰 없음. 필요시 'xgram setup discord' 후 재시작)"
+    }
+}
+
 Write-Host ''
 Write-Host '다음 단계:' -ForegroundColor Cyan
 Write-Host ''
