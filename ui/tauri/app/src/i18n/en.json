@@ -1,5 +1,6 @@
 {
   "tab.onboarding": "Get Started",
+  "tab.messenger": "Messenger",
   "tab.memory": "Memory",
   "tab.vault": "Vault",
   "tab.peers": "Peers",
@@ -12,6 +13,19 @@
   "tab.search": "Search",
   "tab.vault_reveal": "Vault Reveal",
   "tab.payment_limits": "Payment Limits",
+
+  "messenger.friends": "Friends",
+  "messenger.add-bot": "Add bot token →",
+  "messenger.add-friend-hint": "Click + to add a friend",
+  "messenger.add-friend-tip": "Peer on another machine, or Discord/Telegram bot",
+  "messenger.connected": "connected",
+  "messenger.input-placeholder": "Type a message (Enter to send, Shift+Enter for newline)",
+  "messenger.no-friends": "No friends yet — use + to add",
+  "messenger.select-friend": "Select a friend on the left",
+  "messenger.send": "Send",
+  "messenger.send-peer-only": "Sending only available to peer friends (channels use different flow)",
+  "messenger.sending": "Sending…",
+  "messenger.thread-empty": "No messages — start daemon and they will appear within 3 seconds of arrival",
 
   "onboarding.title": "Welcome to OpenXgram",
   "onboarding.subtitle": "Memory and credentials, the same on every device.",

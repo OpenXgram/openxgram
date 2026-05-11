@@ -1,5 +1,6 @@
 {
   "tab.onboarding": "시작하기",
+  "tab.messenger": "메신저",
   "tab.memory": "기억",
   "tab.vault": "Vault",
   "tab.peers": "피어",
@@ -12,6 +13,19 @@
   "tab.search": "검색",
   "tab.vault_reveal": "Vault 공개",
   "tab.payment_limits": "결제 한도",
+
+  "messenger.friends": "친구",
+  "messenger.add-bot": "봇 토큰 추가 →",
+  "messenger.add-friend-hint": "+ 버튼으로 친구 추가",
+  "messenger.add-friend-tip": "다른 머신의 peer 또는 Discord/Telegram 봇",
+  "messenger.connected": "연결됨",
+  "messenger.input-placeholder": "메시지 입력 (Enter 보내기, Shift+Enter 줄바꿈)",
+  "messenger.no-friends": "친구 없음 — + 버튼으로 추가",
+  "messenger.select-friend": "왼쪽에서 친구를 선택하세요",
+  "messenger.send": "보내기",
+  "messenger.send-peer-only": "송신은 peer 친구에게만 가능 (채널 송신은 별도)",
+  "messenger.sending": "보내는 중…",
+  "messenger.thread-empty": "메시지 없음 — daemon 가동 + 메시지 도착 시 3초 내 표시",
 
   "onboarding.title": "OpenXgram 에 오신 것을 환영합니다",
   "onboarding.subtitle": "기억과 자격증명, 어디서나 같은 경험.",
