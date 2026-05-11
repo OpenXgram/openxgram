@@ -184,6 +184,30 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     "required": ["role"]
                 }),
             },
+            ToolSpec {
+                name: "send_to_discord".into(),
+                description: "Discord 채널로 메시지 push (LLM 의 자연어 응답을 Discord 로). vault 의 notify.discord.webhook_url 사용. 양방향 흐름의 outbound 절반.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string", "description": "보낼 내용"},
+                        "webhook_url": {"type": "string", "description": "특정 채널의 webhook (생략 시 vault 의 기본값)"}
+                    },
+                    "required": ["content"]
+                }),
+            },
+            ToolSpec {
+                name: "send_to_telegram".into(),
+                description: "Telegram 채팅으로 메시지 push. vault 의 notify.telegram.bot_token + chat_id 사용.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string", "description": "보낼 내용"},
+                        "chat_id": {"type": "string", "description": "특정 chat (생략 시 vault 의 기본값)"}
+                    },
+                    "required": ["content"]
+                }),
+            },
         ];
 
         // peer_send — keystore 패스워드 필요 (서명용). vault 패스워드와 동일 가정.
@@ -579,6 +603,88 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     "test_status": status_code,
                     "next": "xgram agent --discord-bot-token / --discord-channel-id 와 함께 가동"
                 }))
+            }
+            "send_to_discord" => {
+                let pw = self.require_vault()?.to_string();
+                let content = args
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'content'"))?
+                    .to_string();
+                let webhook = if let Some(w) = args.get("webhook_url").and_then(|v| v.as_str()) {
+                    w.to_string()
+                } else {
+                    let bytes = VaultStore::new(&mut self.db)
+                        .get("notify.discord.webhook_url", &pw)
+                        .map_err(|_| invalid("notify.discord.webhook_url vault 에 없음 — 먼저 connect_discord 또는 create_project_category"))?;
+                    String::from_utf8(bytes).map_err(|e| internal(format!("vault utf8: {e}")))?
+                };
+
+                let body_str = serde_json::to_string(&json!({"content": content})).unwrap();
+                let webhook_clone = webhook.clone();
+                let (status, err_body): (u16, String) = std::thread::spawn(move || -> Result<(u16, String), String> {
+                    let resp = reqwest::blocking::Client::new()
+                        .post(&webhook_clone)
+                        .header("content-type", "application/json")
+                        .body(body_str)
+                        .send()
+                        .map_err(|e| format!("Discord POST: {e}"))?;
+                    let s = resp.status().as_u16();
+                    let t = if (200..300).contains(&s) {
+                        String::new()
+                    } else {
+                        resp.text().unwrap_or_default()
+                    };
+                    Ok((s, t))
+                }).join().map_err(|_| internal("HTTP thread panic"))?
+                  .map_err(internal)?;
+                if !(200..300).contains(&status) {
+                    return Err(invalid(&format!("Discord webhook 응답 HTTP {status}: {err_body}")));
+                }
+                Ok(json!({"sent": true, "status": status, "content_len": content.len()}))
+            }
+            "send_to_telegram" => {
+                let pw = self.require_vault()?.to_string();
+                let content = args
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'content'"))?
+                    .to_string();
+                let token_bytes = VaultStore::new(&mut self.db)
+                    .get("notify.telegram.bot_token", &pw)
+                    .map_err(|_| invalid("notify.telegram.bot_token vault 에 없음 — 먼저 connect_telegram"))?;
+                let token = String::from_utf8(token_bytes).map_err(|e| internal(format!("vault utf8: {e}")))?;
+                let chat_id = if let Some(c) = args.get("chat_id").and_then(|v| v.as_str()) {
+                    c.to_string()
+                } else {
+                    let bytes = VaultStore::new(&mut self.db)
+                        .get("notify.telegram.chat_id", &pw)
+                        .map_err(|_| invalid("notify.telegram.chat_id vault 에 없음"))?;
+                    String::from_utf8(bytes).map_err(|e| internal(format!("vault utf8: {e}")))?
+                };
+
+                let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+                let body_str = serde_json::to_string(&json!({"chat_id": chat_id, "text": content})).unwrap();
+                let (status, err_body): (u16, String) = std::thread::spawn(move || -> Result<(u16, String), String> {
+                    let resp = reqwest::blocking::Client::new()
+                        .post(&url)
+                        .header("content-type", "application/json")
+                        .body(body_str)
+                        .send()
+                        .map_err(|e| format!("Telegram POST: {e}"))?;
+                    let s = resp.status().as_u16();
+                    let t = if (200..300).contains(&s) {
+                        String::new()
+                    } else {
+                        resp.text().unwrap_or_default()
+                    };
+                    Ok((s, t))
+                }).join().map_err(|_| internal("HTTP thread panic"))?
+                  .map_err(internal)?;
+                if !(200..300).contains(&status) {
+                    return Err(invalid(&format!("Telegram API 응답 HTTP {status}: {err_body}")));
+                }
+                Ok(json!({"sent": true, "status": status, "content_len": content.len()}))
             }
             "register_subagent" => {
                 let pw = self.require_vault()?.to_string();
