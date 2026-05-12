@@ -353,6 +353,15 @@ if [ "$PREBUILT_OK" = "1" ]; then
     echo "    (xgram 이미 초기화됨 — 건너뜀)"
   fi
 
+  # MCP / Claude Code 자동 등록 — 새 LLM 세션이 OpenXgram 도구 + identity + hook 를 즉시 인식.
+  # 멱등성 보장 (mcp_install.rs: insert overwrite / inject marker / hook 중복검사).
+  if command -v xgram >/dev/null 2>&1; then
+    echo ""
+    echo "==> Claude Code MCP + CLAUDE.md identity + SessionStart hook 자동 등록"
+    xgram mcp-install --scope user --full --use-path-lookup --data-dir "$DATA_DIR" 2>&1 | sed 's/^/    /' || \
+      echo "    (mcp-install 실패 — 수동: xgram mcp-install --scope user --full --use-path-lookup)"
+  fi
+
   # 6.2 — upgrade flow: 옛 daemon/agent 버전 감지 → SIGTERM → 재시작.
   # 메시지 손실 0: SIGTERM 시 daemon 의 graceful shutdown 핸들러가 in-flight envelope 를 commit 후 종료.
   # SQLite WAL 도 fsync 보장.
@@ -498,5 +507,6 @@ echo "✓ 설치 완료 (cargo fallback) → $INSTALL_DIR/xgram"
 echo ""
 echo "다음 단계:"
 echo "  xgram --version"
-echo "  xgram init"
+echo "  xgram init --alias <name>"
+echo "  xgram mcp-install --scope user --full --use-path-lookup    # Claude Code MCP + identity + hook"
 echo ""

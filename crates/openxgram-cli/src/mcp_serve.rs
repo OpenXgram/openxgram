@@ -617,10 +617,28 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         .map_err(|e| internal(format!("vault set: {e}")))?;
                 }
 
+                // vault 갱신됐으면 agent 재시작 — connect_discord 와 동일 패턴.
+                let mut agent_restarted = false;
+                if token_arg.is_some() || chat_arg.is_some() {
+                    if let Some(bin) = std::env::current_exe().ok() {
+                        let _ = std::process::Command::new(bin)
+                            .arg("agent-restart")
+                            .arg("--data-dir")
+                            .arg(&self.data_dir)
+                            .env("XGRAM_KEYSTORE_PASSWORD", &pw)
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .stdin(std::process::Stdio::null())
+                            .status();
+                        agent_restarted = true;
+                    }
+                }
+
                 Ok(json!({
                     "ok": true,
                     "test_status": status_code,
-                    "next": "xgram agent --discord-bot-token / --discord-channel-id 와 함께 가동"
+                    "agent_restarted": agent_restarted,
+                    "next": "이제 LLM 이 send_to_telegram 으로 메시지 송신 가능"
                 }))
             }
             "send_to_discord" => {
