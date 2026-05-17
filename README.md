@@ -5,6 +5,10 @@
 [![Version](https://img.shields.io/badge/version-0.2.0--rc.2-blue)](https://github.com/OpenXgram/openxgram/blob/main/version.json)
 [![Status](https://img.shields.io/badge/status-production%20candidate-green)](https://github.com/OpenXgram/openxgram/blob/main/CHANGELOG.md)
 
+> 📘 **정본 PRD**: 워크스페이스 루트의 [`docs/PRD-OpenXgram.md` v1.1](../docs/PRD-OpenXgram.md) 참조.
+> 본 README는 빌드·설치·기본 사용 가이드. 제품 결정·로드맵·아키텍처는 정본 PRD가 우선.
+> 이전 PRD·문서는 `docs/archive/` 참조 (모두 ARCHIVED, 정본 아님).
+
 **Repository**: https://github.com/OpenXgram/openxgram  
 **Homepage**: https://openxgram.org
 
