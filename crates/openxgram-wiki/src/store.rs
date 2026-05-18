@@ -5,7 +5,7 @@
 use rusqlite::{params, Connection};
 use thiserror::Error;
 
-use crate::page::{Page, PageId, PageType, Related};
+use crate::page::{Page, PageId, PageType};
 use crate::content_hash;
 use std::str::FromStr;
 
