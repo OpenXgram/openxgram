@@ -1,0 +1,37 @@
+[package]
+name = "openxgram-wiki"
+description = "L2 wiki pages (Karpathy pattern) — disk markdown + DB index sync for OpenXgram"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = []
+# notify-based filesystem watcher (Phase: enable in xgram daemon)
+watcher = ["dep:notify"]
+
+[dependencies]
+openxgram-core = { path = "../openxgram-core" }
+openxgram-db = { path = "../openxgram-db" }
+openxgram-memory = { path = "../openxgram-memory" }
+
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+
+sha2 = "0.10"
+gray_matter = "0.2"   # YAML frontmatter parser
+regex = "1"
+notify = { version = "6", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
