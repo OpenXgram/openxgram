@@ -38,7 +38,7 @@ use thiserror::Error;
 pub enum WikiError {
     /// DB 인덱스 에러.
     #[error("store error: {0}")]
-    Store(#[from] WikiStoreError),
+    Store(WikiStoreError),
 
     /// 파일 시스템 에러.
     #[error("fs error: {0}")]
