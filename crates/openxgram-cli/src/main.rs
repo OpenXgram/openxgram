@@ -384,9 +384,13 @@ enum Commands {
         data_dir: Option<PathBuf>,
     },
 
-    /// GUI(Tauri) 데스크톱 앱 실행 — 별 바이너리 `xgram-desktop` 호출
+    /// 웹 GUI(Tailscale Funnel) 진입점 — Funnel URL 출력 + 브라우저 자동 실행
+    ///
+    /// v0.2.0-rc.24 이후: Tauri 데스크톱 폐기 → 웹 GUI 전환.
+    /// `tailscale status --json` 으로 Funnel URL 추출 → `start`/`open`/`xdg-open` 으로 실행.
+    /// 인자는 `crate::gui::GuiOpts` (--port, --no-open) 로 파싱.
     Gui {
-        /// xgram-desktop 에 그대로 전달할 추가 인자
+        /// gui 서브명령 인자 (--port <PORT>, --no-open)
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },

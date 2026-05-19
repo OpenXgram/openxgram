@@ -73,7 +73,8 @@ if (-not (Test-Path $INSTALL)) {
 }
 
 # 4a. 잠긴 .exe 가 있으면 Expand-Archive 가 silent skip 함 → 실행 중 프로세스 먼저 종료.
-$running = Get-Process -Name xgram, xgram-desktop -ErrorAction SilentlyContinue
+# v0.2.0-rc.24~ : `xgram-desktop` 폐기됨(Tauri → 웹 GUI) — `xgram` 만 검사.
+$running = Get-Process -Name xgram -ErrorAction SilentlyContinue
 if ($running) {
     Write-Host "    → 실행 중인 OpenXgram 프로세스 종료 후 갱신 (재부팅 불필요)"
     foreach ($p in $running) {
@@ -92,7 +93,7 @@ if (Test-Path $INSTALL) {
         Remove-Item -Path $INSTALL -Recurse -Force -ErrorAction Stop
     } catch {
         Write-Error "install dir 삭제 실패 (잠금/권한): $($_.Exception.Message)"
-        Write-Error "다음 명령으로 수동 종료 후 재시도: Get-Process xgram, xgram-desktop | Stop-Process -Force"
+        Write-Error "다음 명령으로 수동 종료 후 재시도: Get-Process xgram | Stop-Process -Force"
         exit 1
     }
 }
@@ -217,9 +218,10 @@ Write-Host '    xgram mcp-install --scope user --full --use-path-lookup'
 Write-Host '    # ~/.claude.json (MCP) + ./CLAUDE.md (identity) + ~/.claude/settings.json (hook) 한 번에'
 Write-Host '    # → 새 Claude Code 세션이 자동으로 openxgram.* MCP 도구 인식'
 Write-Host ''
-Write-Host '[4] daemon + GUI:'
+Write-Host '[4] daemon + 웹 GUI (Tailscale Funnel):'
 Write-Host '    xgram daemon                   # foreground 또는 백그라운드'
-Write-Host '    xgram gui                      # Tauri 데스크탑 창'
+Write-Host '    sudo tailscale funnel --bg --https=443 http://localhost:47310'
+Write-Host '    xgram gui                      # → 브라우저에서 https://<machine>.tailXXXX.ts.net 자동 오픈'
 Write-Host ''
 Write-Host '한 번에 모든 셋업 (인터랙티브 wizard):'
 Write-Host '    irm https://openxgram.org/quickstart.ps1 | iex'

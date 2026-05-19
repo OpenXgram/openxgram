@@ -1,0 +1,438 @@
+/* OpenXgram Tauri app — minimal global styles
+ * Enforces button consistency, contrast, focus visibility.
+ */
+
+:root {
+  --fg: #1a1d24;
+  --fg-dim: #4a4f5a;
+  --bg: #ffffff;
+  --bg-soft: #f4f5f7;
+  --border: #d0d3d9;
+  --border-strong: #2a2d33;
+  --accent: #0a66c2;
+  --accent-fg: #ffffff;
+  --danger: #b00020;
+  --warn-bg: #fffbe6;
+  --warn-border: #c2a83a;
+  --radius: 6px;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  /* 한글 fallback: Pretendard → Apple SD Gothic Neo → Malgun Gothic → Noto Sans KR */
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system,
+    "Apple SD Gothic Neo", "Segoe UI", Roboto, "Malgun Gothic", "Noto Sans KR",
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+h1 { font-size: 20px; font-weight: 600; }
+h2 { font-size: 16px; font-weight: 600; }
+h3 { font-size: 14px; font-weight: 600; }
+
+button,
+input,
+select {
+  font-family: inherit;
+  font-size: 14px;
+}
+
+button {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+button:hover:not(:disabled) {
+  background: var(--bg-soft);
+  border-color: var(--border-strong);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+button.primary:hover:not(:disabled) {
+  background: #084d92;
+  border-color: #084d92;
+}
+
+button.danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+button.danger:hover:not(:disabled) {
+  background: #fdecef;
+}
+
+input[type="text"],
+input[type="number"],
+input:not([type]) {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+
+/* Improve muted-text contrast (was #666 on white = 5.7:1, now 7:1+) */
+.muted { color: var(--fg-dim); }
+
+/* ── App layout ──────────────────────────────────────────────────────────── */
+.app-shell {
+  padding: 16px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  gap: 8px;
+}
+.app-title { margin: 0; font-size: 18px; }
+
+/* ── Tab navigation ──────────────────────────────────────────────────────── */
+.tabnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.tabnav button {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.tabnav button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* ── Sub-navigation (within a top tab) ───────────────────────────────────── */
+.subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.subnav button {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--fg-dim);
+}
+.subnav button:hover:not(:disabled) {
+  background: var(--bg);
+  color: var(--fg);
+}
+.subnav button.active {
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
+}
+
+/* ── Cards & sections ────────────────────────────────────────────────────── */
+.card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  background: var(--bg);
+}
+.card-soft {
+  background: var(--bg-soft);
+}
+.card h2,
+.card h3 { margin-top: 0; }
+.section-title {
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+/* ── Forms ───────────────────────────────────────────────────────────────── */
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.form-row label {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.form-row input[type="text"],
+.form-row input[type="number"],
+.form-row input:not([type]),
+.form-row select,
+.form-row textarea {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 14px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.form-row textarea {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 13px;
+  min-height: 140px;
+  resize: vertical;
+}
+.form-row select:focus-visible,
+.form-row textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+
+.row-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+/* ── Badges & status pills ───────────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--fg-dim);
+}
+.badge.ok {
+  border-color: #2a8a3e;
+  background: #e8f5ec;
+  color: #1a5a2a;
+}
+.badge.warn {
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+  color: #5a4710;
+}
+.badge.err {
+  border-color: var(--danger);
+  background: #fdecef;
+  color: var(--danger);
+}
+
+/* ── Lists ───────────────────────────────────────────────────────────────── */
+.plain-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.plain-list > li {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+/* ── Inline error / hint ─────────────────────────────────────────────────── */
+.error-text {
+  color: var(--danger);
+  font-size: 13px;
+  margin: 4px 0 0;
+}
+.hint {
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
+/* ── Stats grid ──────────────────────────────────────────────────────────── */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.stat-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  text-align: center;
+  background: var(--bg-soft);
+}
+.stat-card .stat-value {
+  font-size: 22px;
+  font-weight: 600;
+  display: block;
+}
+.stat-card .stat-label {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+/* ── Responsive (small windows / tablets) ────────────────────────────────── */
+@media (max-width: 640px) {
+  .app-shell { padding: 10px; }
+  .tabnav button { font-size: 12px; padding: 5px 8px; }
+}
+
+/* ── Messenger (v0.1) — 통합 친구 목록 + 대화 스레드 ──────────────────────── */
+.messenger-shell {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 0;
+  height: calc(100vh - 140px);
+  min-height: 480px;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0f0f0f;
+}
+.messenger-sidebar {
+  border-right: 1px solid #2a2a2a;
+  background: #161616;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.messenger-sidebar-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  border-bottom: 1px solid #232323;
+  font-size: 14px;
+}
+.messenger-add-btn {
+  background: #2a3a2a;
+  color: #7df9c5;
+  border: 1px solid #3a5a3a;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.messenger-friend-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+.messenger-friend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #1c1c1c;
+  cursor: pointer;
+}
+.messenger-friend:hover { background: #1c1c1c; }
+.messenger-friend.selected { background: #232a23; border-left: 3px solid #7df9c5; }
+.messenger-friend-icon {
+  width: 32px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  font-weight: bold;
+  font-size: 14px;
+}
+.messenger-friend-icon.kind-peer { background: #2a3a55; color: #b6d4ff; }
+.messenger-friend-icon.kind-discord { background: #4f4789; color: #d8d6ff; }
+.messenger-friend-icon.kind-telegram { background: #2c5a7a; color: #b6e1ff; }
+.messenger-friend-text { display: flex; flex-direction: column; min-width: 0; }
+.messenger-friend-name { font-size: 14px; color: #e6e6e6; }
+.messenger-friend-sub {
+  font-size: 11px; color: #888;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px;
+}
+.messenger-empty { padding: 18px 14px; color: #777; font-size: 12px; }
+
+.messenger-thread {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.messenger-thread-empty {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center; flex-direction: column;
+  color: #888;
+  text-align: center;
+  padding: 24px;
+}
+.messenger-thread-hint { font-size: 12px; color: #666; margin-top: 6px; }
+.messenger-thread-head {
+  padding: 12px 16px;
+  border-bottom: 1px solid #232323;
+  background: #141414;
+}
+.messenger-thread-head h2 { margin: 0; font-size: 16px; color: #e6e6e6; }
+.messenger-thread-head small { color: #888; font-size: 11px; }
+.messenger-thread-body {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+}
+.messenger-placeholder {
+  padding: 16px;
+  background: #1a1a1a;
+  border: 1px dashed #333;
+  border-radius: 6px;
+  color: #999;
+  font-size: 13px;
+  text-align: center;
+}
+.messenger-thread-input {
+  border-top: 1px solid #232323;
+  padding: 10px;
+  display: flex;
+  gap: 8px;
+  background: #141414;
+}
+.messenger-thread-input textarea {
+  flex: 1;
+  background: #1a1a1a;
+  color: #e6e6e6;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  padding: 8px;
+  resize: none;
+  font-family: inherit;
+}
+.messenger-thread-input button {
+  background: #2a3a2a; color: #7df9c5; border: 1px solid #3a5a3a;
+  border-radius: 4px; padding: 0 16px; cursor: pointer;
+}
+.messenger-thread-input button:disabled { opacity: 0.5; cursor: not-allowed; }

@@ -4783,7 +4783,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-a2a"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4802,7 +4802,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-adapter"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "chrono",
  "futures-util",
@@ -4820,7 +4820,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-anp"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4842,7 +4842,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-channel"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4863,7 +4863,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-cli"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "age",
  "anyhow",
@@ -4927,7 +4927,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-core"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "chrono",
  "thiserror 1.0.69",
@@ -4935,7 +4935,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-db"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4952,7 +4952,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-did"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4969,7 +4969,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-eas"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4987,7 +4987,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-indexer-sdk"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5007,7 +5007,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-keystore"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "anyhow",
  "argon2",
@@ -5028,7 +5028,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-manifest"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "chrono",
  "hex",
@@ -5043,7 +5043,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-marketplace"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5061,7 +5061,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-mcp"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "serde",
  "serde_json",
@@ -5071,7 +5071,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-memory"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5090,7 +5090,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-mistakes"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5108,7 +5108,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-nostr"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "chrono",
  "hex",
@@ -5128,7 +5128,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-orchestration"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5149,7 +5149,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-patterns"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5167,7 +5167,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-payment"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "alloy",
  "anyhow",
@@ -5189,7 +5189,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-peer"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "chrono",
  "openxgram-core",
@@ -5205,7 +5205,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-scheduler"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "anyhow",
  "openxgram-db",
@@ -5219,7 +5219,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-transport"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "anyhow",
  "axum",
@@ -5234,7 +5234,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-vault"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "chrono",
  "hex",
@@ -5256,7 +5256,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-wiki"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.24"
 dependencies = [
  "anyhow",
  "chrono",

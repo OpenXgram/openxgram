@@ -2,6 +2,19 @@
 
 OpenXgram 의 변경 이력. 모든 시간은 KST(Asia/Seoul). [Semantic Versioning](https://semver.org/) + BUILD 자동 증가 (CI/CD 갱신, 수동 변경 금지).
 
+## [0.2.0-rc.24] — 2026-05-19 KST (Tauri 폐기 → 웹 GUI / Tailscale Funnel)
+
+**브레이킹**: Tauri 데스크톱 앱(`xgram-desktop`) 완전 폐기. 웹 GUI(Tailscale Funnel) 로 대체.
+
+- **`xgram gui` 동작 변경** — 별 바이너리(`xgram-desktop`) 호출 폐지. `tailscale status --json` 으로 Funnel URL 추출 → OS 기본 브라우저(`start`/`open`/`xdg-open`) 로 오픈. 옵션 `--port <PORT>` (default 47310, nginx GUI 서빙 포트), `--no-open` (URL stdout 만).
+- **release-binaries.yml 단순화** — Tauri 빌드 step·Node/Vite/libwebkit2gtk 설치 제거. 5 OS × 1 binary (xgram only). 빌드 시간 ~30분 → ~5~10분.
+- **install.ps1 / install.sh** — `xgram-desktop` 다운로드·검증·복원 로직 제거. install.sh 는 옛 `xgram-desktop` 바이너리 자동 정리. 다음 단계 안내에 Tailscale Funnel 한 줄 추가.
+- **`ui/tauri/DEPRECATED.md`** 신규 — 폐기 이유, 마이그레이션, `ui/web/` 가리킴. 코드는 보존(과거 release 사용자 참조용).
+- **README §빠른 시작** — 3단계 흐름(install → init → tailscale funnel + xgram gui) 추가. "Tauri GUI" 표면 항목은 취소선 + 웹 GUI 전환 명시.
+- **PRD-OpenXgram §4.8** — "Beta Tauri GUI" → "Beta 웹 GUI (Tailscale Funnel)". §9 결정 11 신설 (GUI 호스팅 = Tailscale Funnel default, Cloudflare 옵션). Phase v0.9 작업 명세 갱신. PRD 버전 v1.1 → v1.2.
+- **빌드 의존성**: `webbrowser` crate 추가 없음 — `std::process::Command` 로 `start`/`open`/`xdg-open` 직접 호출. 코어 dep tree 변화 0.
+- **Cargo.toml workspace version** rc.23 → rc.24. `exclude = ["ui/tauri"]` 유지.
+
 ## [0.2.0-rc.22] — 2026-05-11 KST (i18n + install 안내)
 
 - **i18n 13개 누락 키 채움** + install.ps1 next-step 안내 확장.

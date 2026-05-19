@@ -209,7 +209,7 @@ Write-Host '  다음 명령:'
 Write-Host '    xgram peer send --alias <대상> --body "메시지"   # 메시지 보내기'
 Write-Host '    xgram bot register <name>                            # 추가 봇 등록'
 Write-Host '    xgram pair-desktop                                   # 다른 머신 페어링 URL'
-Write-Host '    xgram gui                                            # 데스크탑 GUI'
+Write-Host '    xgram gui                                            # 웹 GUI (Tailscale Funnel URL 자동 오픈)'
 Write-Host ''
 Write-Host '  환경 복원 (새 PowerShell 창):'
 Write-Host "    . '$EnvFile'"

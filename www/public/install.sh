@@ -224,19 +224,17 @@ if [ "$PREBUILT_OK" = "1" ]; then
   $USE_SUDO mkdir -p "$INSTALL_DIR"
   $USE_SUDO mv xgram "$INSTALL_DIR/xgram"
 
-  # GUI 바이너리 — tarball 에 동봉된 경우만 설치 (linux-aarch64 / windows 는 미포함).
-  GUI_INSTALLED=0
-  if [ -f xgram-desktop ]; then
-    chmod +x xgram-desktop
-    $USE_SUDO mv xgram-desktop "$INSTALL_DIR/xgram-desktop"
-    GUI_INSTALLED=1
+  # v0.2.0-rc.24~ : Tauri 데스크톱(`xgram-desktop`) 폐기됨 — 웹 GUI 로 전환.
+  # release tarball 에도 동봉되지 않음. `xgram gui` 는 Tailscale Funnel URL 을
+  # 브라우저로 여는 짧은 launcher 로 동작 (crates/openxgram-cli/src/gui.rs).
+  # 옛 binary 가 남아 있을 경우 깨끗하게 제거 (사용자 혼동 방지).
+  if [ -f "$INSTALL_DIR/xgram-desktop" ]; then
+    $USE_SUDO rm -f "$INSTALL_DIR/xgram-desktop"
+    echo "  (옛 xgram-desktop 바이너리 제거 — v0.2.0-rc.24 부터 웹 GUI 로 대체됨)"
   fi
 
   echo ""
   echo "✓ 설치 완료 (pre-built, tag: $ASSET_TAG) → $INSTALL_DIR/xgram"
-  if [ "$GUI_INSTALLED" = "1" ]; then
-    echo "✓ GUI 도 함께 설치 → $INSTALL_DIR/xgram-desktop  (실행: xgram gui)"
-  fi
 
   # ──────────────────────────────────────────────────────────────────────────
   # Tailscale 안내 — OpenXgram 이 머신 간 mTLS 메시 전송에 Tailscale 사용.
@@ -455,9 +453,10 @@ if [ "$PREBUILT_OK" = "1" ]; then
   echo "✓ 서버측 설정 완료. 위 oxg://... URL 을 데스크탑에 그대로 가져가서:"
   echo "    curl -sSfL https://openxgram.org/install.sh | sh"
   echo "    xgram link '<oxg URL>'"
-  if [ "$GUI_INSTALLED" = "1" ]; then
-    echo "    xgram gui"
-  fi
+  echo ""
+  echo "  웹 GUI (Tailscale Funnel) 사용:"
+  echo "    sudo tailscale funnel --bg --https=443 http://localhost:47310"
+  echo "    xgram gui   # → 브라우저에서 https://<machine>.tailXXXX.ts.net 자동 오픈"
   echo ""
   exit 0
 fi
