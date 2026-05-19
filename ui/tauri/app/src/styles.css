@@ -21,7 +21,10 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
+  /* 한글 fallback: Pretendard → Apple SD Gothic Neo → Malgun Gothic → Noto Sans KR */
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system,
+    "Apple SD Gothic Neo", "Segoe UI", Roboto, "Malgun Gothic", "Noto Sans KR",
+    sans-serif;
   font-size: 14px;
   line-height: 1.5;
 }
@@ -133,6 +136,30 @@ input:focus-visible {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-fg);
+}
+
+/* ── Sub-navigation (within a top tab) ───────────────────────────────────── */
+.subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.subnav button {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--fg-dim);
+}
+.subnav button:hover:not(:disabled) {
+  background: var(--bg);
+  color: var(--fg);
+}
+.subnav button.active {
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
 }
 
 /* ── Cards & sections ────────────────────────────────────────────────────── */

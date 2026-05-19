@@ -2,27 +2,18 @@ import { createResource, createSignal, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { I18nProvider, useI18n } from "./i18n";
 import { Onboarding } from "./components/Onboarding";
-import { Messenger } from "./components/Messenger";
-import { SearchView } from "./components/SearchView";
-import { VaultView } from "./components/VaultView";
-import { PeersView } from "./components/PeersView";
-import { NotifySetup } from "./components/NotifySetup";
-import { ChannelDashboard } from "./components/ChannelDashboard";
-import { ScheduleView } from "./components/ScheduleView";
-import { ChainView } from "./components/ChainView";
-import { PaymentLimitsView } from "./components/PaymentLimitsView";
+import { ChatTab } from "./components/ChatTab";
+import { MemoryTab } from "./components/MemoryTab";
+import { NetworkTab } from "./components/NetworkTab";
+import { SettingsTab } from "./components/SettingsTab";
 
-type Tab =
-  | "onboarding"
-  | "messenger"
-  | "memory"
-  | "vault"
-  | "peers"
-  | "notify"
-  | "channel"
-  | "schedule"
-  | "chain"
-  | "settings";
+// 4탭 단순화 (PRD-OpenXgram §4.8 v0.9 Beta).
+//   - chat     : Messenger + 검색 (SearchView)
+//   - memory   : Vault(=Pending+Reveal) + Wiki·Mistakes·Patterns 진입 stub
+//   - network  : Peers + Notify(Telegram·Discord) + Channel 대시보드
+//   - settings : Schedule + Chain + PaymentLimits + Locale
+//   - onboarding 은 init 전에만 표시.
+type Tab = "onboarding" | "chat" | "memory" | "network" | "settings";
 
 async function checkInitialized(): Promise<boolean> {
   try {
@@ -37,26 +28,20 @@ function Inner() {
   const [initialized] = createResource(checkInitialized);
   const [tab, setTab] = createSignal<Tab>("onboarding");
 
-  // 초기화된 사용자 → 첫 화면을 Messenger 로 자동 전환 (한 번만).
+  // 초기화된 사용자 → 첫 화면을 Chat 으로 자동 전환 (한 번만).
   let autoSwitched = false;
   const maybeAutoSwitch = () => {
     if (!autoSwitched && initialized() === true && tab() === "onboarding") {
       autoSwitched = true;
-      setTab("messenger");
+      setTab("chat");
     }
   };
   queueMicrotask(maybeAutoSwitch);
 
-  const tabs: { id: Tab; label: () => string }[] = [
-    { id: "onboarding", label: () => t("tab.onboarding") },
-    { id: "messenger", label: () => t("tab.messenger") || "메신저" },
+  const tabs: { id: Exclude<Tab, "onboarding">; label: () => string }[] = [
+    { id: "chat", label: () => t("tab.chat") },
     { id: "memory", label: () => t("tab.memory") },
-    { id: "vault", label: () => t("tab.vault") },
-    { id: "peers", label: () => t("tab.peers") },
-    { id: "notify", label: () => t("tab.notify") },
-    { id: "channel", label: () => t("tab.channel") },
-    { id: "schedule", label: () => t("tab.schedule") },
-    { id: "chain", label: () => t("tab.chain") },
+    { id: "network", label: () => t("tab.network") },
     { id: "settings", label: () => t("tab.settings") },
   ];
 
@@ -68,53 +53,41 @@ function Inner() {
           <select
             value={locale()}
             onChange={(e) => setLocale(e.currentTarget.value as "ko" | "en")}
+            aria-label="Locale"
           >
             <option value="ko">한국어</option>
             <option value="en">English</option>
           </select>
         </div>
       </header>
-      <nav class="tabnav" aria-label="OpenXgram tabs">
-        {tabs.map((entry) => (
-          <button
-            type="button"
-            class={tab() === entry.id ? "active" : ""}
-            onClick={() => setTab(entry.id)}
-          >
-            {entry.label()}
-          </button>
-        ))}
-      </nav>
+      <Show when={tab() !== "onboarding"}>
+        <nav class="tabnav" aria-label="OpenXgram tabs">
+          {tabs.map((entry) => (
+            <button
+              type="button"
+              class={tab() === entry.id ? "active" : ""}
+              onClick={() => setTab(entry.id)}
+            >
+              {entry.label()}
+            </button>
+          ))}
+        </nav>
+      </Show>
       <main>
         <Show when={tab() === "onboarding"}>
-          <Onboarding onReady={() => setTab("messenger")} />
+          <Onboarding onReady={() => setTab("chat")} />
         </Show>
-        <Show when={tab() === "messenger"}>
-          <Messenger />
+        <Show when={tab() === "chat"}>
+          <ChatTab />
         </Show>
         <Show when={tab() === "memory"}>
-          <SearchView />
+          <MemoryTab />
         </Show>
-        <Show when={tab() === "vault"}>
-          <VaultView />
-        </Show>
-        <Show when={tab() === "peers"}>
-          <PeersView />
-        </Show>
-        <Show when={tab() === "notify"}>
-          <NotifySetup />
-        </Show>
-        <Show when={tab() === "channel"}>
-          <ChannelDashboard />
-        </Show>
-        <Show when={tab() === "schedule"}>
-          <ScheduleView />
-        </Show>
-        <Show when={tab() === "chain"}>
-          <ChainView />
+        <Show when={tab() === "network"}>
+          <NetworkTab />
         </Show>
         <Show when={tab() === "settings"}>
-          <PaymentLimitsView />
+          <SettingsTab />
         </Show>
       </main>
     </div>
