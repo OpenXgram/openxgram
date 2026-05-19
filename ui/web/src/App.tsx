@@ -1,6 +1,6 @@
 import { createResource, createSignal, Show } from "solid-js";
-import { getBearer, invoke } from "@/api/client";
-import { isAuthenticated, logout as apiLogout } from "@/api/auth";
+import { invoke } from "@/api/client";
+import { isUnlocked, lock } from "@/api/auth";
 import { I18nProvider, useI18n } from "./i18n";
 import { Onboarding } from "./components/Onboarding";
 import { ChatTab } from "./components/ChatTab";
@@ -8,17 +8,12 @@ import { MemoryTab } from "./components/MemoryTab";
 import { NetworkTab } from "./components/NetworkTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { LoginView } from "./components/LoginView";
-import { RegisterView } from "./components/RegisterView";
 
 // 4탭 단순화 (PRD-OpenXgram §4.8 v0.9 Beta).
-//   - chat     : Messenger + 검색 (SearchView)
-//   - memory   : Vault(=Pending+Reveal) + Wiki·Mistakes·Patterns 진입 stub
-//   - network  : Peers + Notify(Telegram·Discord) + Channel 대시보드
-//   - settings : Schedule + Chain + PaymentLimits + Locale
-//   - onboarding 은 init 전에만 표시.
-//   - 인증되지 않은 사용자 → LoginView / RegisterView (4탭 GUI 잠금).
+//   - chat / memory / network / settings + onboarding(init 전만)
+//   - PRD §1: 1 사람 = 1 메인 daemon + N 머신 attach. multi-user X.
+//   - 잠금 = 단일 keystore 비밀번호. RegisterView 폐기.
 type Tab = "onboarding" | "chat" | "memory" | "network" | "settings";
-type AuthScreen = "login" | "register";
 
 async function checkInitialized(): Promise<boolean> {
   try {
@@ -28,16 +23,13 @@ async function checkInitialized(): Promise<boolean> {
   }
 }
 
-async function checkAuth(): Promise<boolean> {
-  // Bearer 가 아예 없으면 즉시 false (네트워크 호출 생략).
-  if (!getBearer()) return false;
-  return await isAuthenticated();
+async function checkUnlocked(): Promise<boolean> {
+  return await isUnlocked();
 }
 
 function AppInner() {
   const { t, setLocale, locale } = useI18n();
-  const [authed, { refetch: refetchAuth }] = createResource(checkAuth);
-  const [authScreen, setAuthScreen] = createSignal<AuthScreen>("login");
+  const [authed, { refetch: refetchAuth }] = createResource(checkUnlocked);
   const [initialized] = createResource(
     () => authed() === true,
     async (ok) => (ok ? await checkInitialized() : false),
@@ -62,9 +54,8 @@ function AppInner() {
   ];
 
   const onLogout = async () => {
-    await apiLogout();
+    lock();
     refetchAuth();
-    setAuthScreen("login");
   };
 
   return (
@@ -96,18 +87,7 @@ function AppInner() {
       </Show>
       <Show when={!authed.loading && authed() !== true}>
         <main>
-          <Show when={authScreen() === "login"}>
-            <LoginView
-              onSuccess={() => refetchAuth()}
-              onSwitchToRegister={() => setAuthScreen("register")}
-            />
-          </Show>
-          <Show when={authScreen() === "register"}>
-            <RegisterView
-              onSuccess={() => refetchAuth()}
-              onSwitchToLogin={() => setAuthScreen("login")}
-            />
-          </Show>
+          <LoginView onUnlock={() => refetchAuth()} />
         </main>
       </Show>
 

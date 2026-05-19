@@ -114,11 +114,8 @@ const MIGRATIONS: &[Migration] = &[
         name: "action_patterns",
         sql: include_str!("../migrations/0020_action_patterns.sql"),
     },
-    Migration {
-        version: 22,
-        name: "users",
-        sql: include_str!("../migrations/0022_users.sql"),
-    },
+    // v22 users — 폐기 (PRD §1: 1 사람 = 1 daemon. multi-user X).
+    // 이미 적용된 DB는 그대로 두되 신규 설치에서는 생성하지 않음.
 ];
 
 pub struct MigrationRunner<'a> {

@@ -2,6 +2,24 @@
 
 OpenXgram 의 변경 이력. 모든 시간은 KST(Asia/Seoul). [Semantic Versioning](https://semver.org/) + BUILD 자동 증가 (CI/CD 갱신, 수동 변경 금지).
 
+## [0.2.0-rc.25] — 2026-05-19 KST (단일 사용자 잠금 — PRD §1 정렬)
+
+**컨셉 정정**: PRD §1 = **1 사람 = 1 메인 daemon + N 머신 attach**. 이전 rc.24 에서 잘못 추가한 multi-user/register/users 테이블/JWT 흐름을 폐기.
+
+- **auth 모델 단순화** — `register`/`login`/`me`/`logout` (JWT) → `unlock`/`check` (keystore 비밀번호 + session_token). `XGRAM_KEYSTORE_PASSWORD` 환경변수 1개와 SHA256 비교, 일치 시 프로세스-수명 토큰 발급.
+- **`crates/openxgram-cli/src/auth.rs`** 재작성 — `UnlockRequest`/`UnlockResponse`, `verify_password`, `session_token` (OnceLock), `verify_session_token`. argon2/jsonwebtoken 의존 호출 제거.
+- **`crates/openxgram-cli/src/daemon_gui.rs`** — 라우터 `/v1/auth/{register,login,me,logout}` 4개 → `/v1/auth/{unlock,check}` 2개. `require_auth` = session_token 우선 → mcp-token fallback.
+- **`crates/openxgram-db/src/migrate.rs`** — v22 `users` 마이그레이션 등록 해제 (적용된 DB는 그대로, 신규 설치는 생성 안 함).
+- **`ui/web/src/components/LoginView.tsx`** — 이메일 필드 제거, 비밀번호 단일 필드. `RegisterView.tsx` **삭제**.
+- **`ui/web/src/api/auth.ts`** — `unlock(password)` / `isUnlocked()` / `lock()`. localStorage `xgram_session_token`. register/login/logout API 호출 폐기.
+- **`ui/web/src/App.tsx`** — `authScreen` signal·`RegisterView` import 제거. `isAuthenticated` → `isUnlocked`. `apiLogout()` → `lock()`.
+- **검증** (e2e on `https://whitegun-win-1.tail0957ca.ts.net/`):
+  - `POST /api/auth/unlock` (wrong pw) → 401
+  - `POST /api/auth/unlock` (correct pw) → 200 + `session_token`
+  - `GET /api/auth/check` (no token) → 401
+  - `GET /api/auth/check` (Bearer) → 200
+- **PRD-OpenXgram v1.2 → v1.3** — §9 결정 12 신설(단일 사용자 잠금 + multi-machine attach). §4.8 v0.9 인증 흐름 갱신.
+
 ## [0.2.0-rc.24] — 2026-05-19 KST (Tauri 폐기 → 웹 GUI / Tailscale Funnel)
 
 **브레이킹**: Tauri 데스크톱 앱(`xgram-desktop`) 완전 폐기. 웹 GUI(Tailscale Funnel) 로 대체.

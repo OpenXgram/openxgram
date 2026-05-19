@@ -224,13 +224,10 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         )
         .route("/v1/gui/schedule/{id}/cancel", post(gui_schedule_cancel))
         .route("/v1/agent/inject", post(agent_inject))
-        // 사용자 인증 (Web GUI) — 이메일 + 비밀번호 + JWT.
-        // register/login 는 무인증 (가입·로그인 자체가 인증 발급).
-        // me/logout 은 JWT Bearer 필수.
-        .route("/v1/auth/register", post(auth_register))
-        .route("/v1/auth/login", post(auth_login))
-        .route("/v1/auth/me", get(auth_me))
-        .route("/v1/auth/logout", post(auth_logout))
+        // 단일 사용자 잠금 (PRD §1) — XGRAM_KEYSTORE_PASSWORD 와 비교, session_token 발급.
+        // register/users 테이블·JWT 모두 폐기 (multi-user X — 사이드카는 1 사람용).
+        .route("/v1/auth/unlock", post(auth_unlock))
+        .route("/v1/auth/check", get(auth_check))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr)
@@ -249,9 +246,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
     Ok(())
 }
 
-/// Bearer 토큰 검증 — JWT(웹 GUI 사용자) 또는 mcp-token(CLI/agent) 둘 다 수용.
-/// 매칭 시 식별자(user_id 또는 agent) 반환. 미설정·실패 시 None.
-/// XGRAM_GUI_REQUIRE_AUTH=0 으로 명시 끄면 통과 (dev 전용 — 운영 사용 금지).
+/// Bearer 토큰 검증 — session_token (웹 GUI) 또는 mcp-token (CLI/agent).
+/// PRD §1: 1 사람 = 1 메인 daemon. multi-user X.
+/// XGRAM_GUI_REQUIRE_AUTH=0 으로 명시 끄면 통과 (dev 전용).
 async fn require_auth(
     state: &GuiServerState,
     headers: &HeaderMap,
@@ -265,18 +262,12 @@ async fn require_auth(
         .and_then(|s| s.strip_prefix("Bearer "))
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let mut db = state.db.lock().await;
-    // 1) JWT 시도 (점 2개 형식이면 JWT 우선) — 서명·만료·revoked 검증.
-    if token.matches('.').count() == 2 {
-        match crate::auth::verify_jwt(&mut db, token) {
-            Ok(Some(user)) => return Ok(Some(user.id)),
-            Ok(None) => {
-                // 위조·만료 — mcp-token fallback 안전. 그대로 진행.
-            }
-            Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
-        }
+    // 1) session_token (웹 GUI unlock) — 길이 64자 hex.
+    if crate::auth::verify_session_token(token) {
+        return Ok(Some("self".to_string()));
     }
-    // 2) mcp-token (64자 hex) fallback — 기존 CLI/agent Bearer 호환.
+    // 2) mcp-token (CLI/agent Bearer) fallback.
+    let mut db = state.db.lock().await;
     match crate::mcp_tokens::verify_token(&mut db, token) {
         Ok(Some(agent)) => Ok(Some(agent)),
         Ok(None) => Err(StatusCode::UNAUTHORIZED),
@@ -814,130 +805,36 @@ pub struct AuthMeDto {
     pub machine_alias: Option<String>,
 }
 
-/// `POST /v1/auth/register` — 이메일 + 비밀번호 가입. 첫 사용자는 admin 자동.
-async fn auth_register(
-    State(state): State<GuiServerState>,
-    Json(body): Json<AuthRegisterBody>,
-) -> Result<Json<AuthIssuedDto>, (StatusCode, Json<ErrorDto>)> {
-    let mut db = state.db.lock().await;
-    let issued = crate::auth::register(
-        &mut db,
-        body.email.trim(),
-        &body.password,
-        body.alias.as_deref().filter(|s| !s.trim().is_empty()),
-    )
-    .map_err(|e| {
-        // 사용자가 보낸 입력 오류는 400, DB 오류는 500.
-        let msg = e.to_string();
-        let code = if msg.contains("이메일")
-            || msg.contains("비밀번호")
-            || msg.contains("이미 가입")
-        {
-            StatusCode::BAD_REQUEST
-        } else {
-            StatusCode::INTERNAL_SERVER_ERROR
-        };
-        (code, Json(ErrorDto { error: msg }))
-    })?;
-    Ok(Json(AuthIssuedDto {
-        user_id: issued.user.id,
-        email: issued.user.email,
-        alias: issued.user.alias,
-        role: issued.user.role,
-        jwt_token: issued.jwt,
-    }))
-}
-
-/// `POST /v1/auth/login` — 이메일 + 비밀번호 검증 후 JWT 발급. 실패 시 401.
-async fn auth_login(
-    State(state): State<GuiServerState>,
-    Json(body): Json<AuthLoginBody>,
-) -> Result<Json<AuthIssuedDto>, (StatusCode, Json<ErrorDto>)> {
-    let mut db = state.db.lock().await;
-    let issued = crate::auth::login(&mut db, body.email.trim(), &body.password).map_err(|e| {
-        (
+/// `POST /v1/auth/unlock` — keystore 비밀번호 검증 후 session_token 발급.
+/// PRD §1: 1 사람 = 1 메인 daemon. multi-user X, register X.
+async fn auth_unlock(
+    Json(body): Json<crate::auth::UnlockRequest>,
+) -> Result<Json<crate::auth::UnlockResponse>, (StatusCode, Json<ErrorDto>)> {
+    if !crate::auth::verify_password(&body.password) {
+        return Err((
             StatusCode::UNAUTHORIZED,
             Json(ErrorDto {
-                error: e.to_string(),
+                error: "비밀번호가 틀렸습니다".into(),
             }),
-        )
-    })?;
-    Ok(Json(AuthIssuedDto {
-        user_id: issued.user.id,
-        email: issued.user.email,
-        alias: issued.user.alias,
-        role: issued.user.role,
-        jwt_token: issued.jwt,
+        ));
+    }
+    Ok(Json(crate::auth::UnlockResponse {
+        session_token: crate::auth::session_token().to_string(),
     }))
 }
 
-/// `GET /v1/auth/me` — JWT Bearer 의 사용자 정보.
-async fn auth_me(
-    State(state): State<GuiServerState>,
-    headers: HeaderMap,
-) -> Result<Json<AuthMeDto>, (StatusCode, Json<ErrorDto>)> {
+/// `GET /v1/auth/check` — session_token 유효성 확인. Bearer 필수.
+async fn auth_check(headers: HeaderMap) -> Result<Json<serde_json::Value>, StatusCode> {
     let token = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
-        .ok_or_else(|| {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorDto {
-                    error: "Bearer 누락".into(),
-                }),
-            )
-        })?
-        .to_string();
-
-    let machine_alias = {
-        let mp = manifest_path(state.data_dir.as_ref());
-        InstallManifest::read(&mp).ok().map(|m| m.machine.alias)
-    };
-
-    let mut db = state.db.lock().await;
-    let user = match crate::auth::verify_jwt(&mut db, &token).map_err(|e| internal(&e.to_string()))?
-    {
-        Some(u) => u,
-        None => {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorDto {
-                    error: "JWT 무효 또는 만료".into(),
-                }),
-            ))
-        }
-    };
-    Ok(Json(AuthMeDto {
-        user_id: user.id,
-        email: user.email,
-        alias: user.alias,
-        role: user.role,
-        machine_alias,
-    }))
-}
-
-/// `POST /v1/auth/logout` — 지정 JWT revoke. 다른 디바이스 JWT 는 영향 X.
-async fn auth_logout(
-    State(state): State<GuiServerState>,
-    headers: HeaderMap,
-) -> Result<StatusCode, (StatusCode, Json<ErrorDto>)> {
-    let token = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
-        .ok_or_else(|| {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorDto {
-                    error: "Bearer 누락".into(),
-                }),
-            )
-        })?
-        .to_string();
-    let mut db = state.db.lock().await;
-    crate::auth::logout(&mut db, &token).map_err(|e| internal(&e.to_string()))?;
-    Ok(StatusCode::NO_CONTENT)
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    if crate::auth::verify_session_token(token) {
+        Ok(Json(serde_json::json!({"ok": true})))
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
 }
 
 #[derive(Debug, Deserialize)]

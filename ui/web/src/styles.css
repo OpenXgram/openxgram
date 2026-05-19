@@ -306,22 +306,227 @@ input:focus-visible {
   .tabnav button { font-size: 12px; padding: 5px 8px; }
 }
 
-/* ── Auth (Login / Register) ────────────────────────────────────────────── */
+/* ── Auth (Login / Register) — dark mode standalone ────────────────────── */
+/* OpenXgram zalman.openxgram.org 톤과 일관된 다크 카드 디자인.
+ * .auth-shell 안의 모든 색·여백은 자체 변수로 격리 — 메인 앱(라이트) 영향 없음. */
 .auth-shell {
+  --auth-bg:        #0d1117;
+  --auth-panel:     #161b22;
+  --auth-panel-2:   #1f262e;
+  --auth-border:    #30363d;
+  --auth-border-focus: #58a6ff;
+  --auth-fg:        #c9d1d9;
+  --auth-fg-muted:  #8b949e;
+  --auth-accent:    #58a6ff;
+  --auth-accent-hi: #79b8ff;
+  --auth-on-accent: #ffffff;
+  --auth-success:   #3fb950;
+  --auth-danger:    #f85149;
+
+  min-height: 100vh;
   display: flex;
   justify-content: center;
-  align-items: flex-start;
-  padding: 40px 16px;
+  align-items: center;
+  padding: 48px 16px;
+  background: var(--auth-bg);
+  color: var(--auth-fg);
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system,
+    "Apple SD Gothic Neo", "Segoe UI", Roboto, "Malgun Gothic", "Noto Sans KR",
+    sans-serif;
+  box-sizing: border-box;
 }
+
 .auth-card {
-  max-width: 420px;
   width: 100%;
+  max-width: 400px;
+  background: var(--auth-panel);
+  border: 1px solid var(--auth-border);
+  border-radius: 12px;
+  padding: 32px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-sizing: border-box;
 }
-.auth-card h2 { margin-top: 0; }
-.auth-card .form-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
-.auth-card label { font-size: 13px; }
-.auth-card input { padding: 8px 10px; font-size: 14px; }
-.auth-card a { color: var(--fg-accent, #5aa); cursor: pointer; }
+
+.auth-header {
+  text-align: center;
+  margin-bottom: 24px;
+}
+.auth-brand {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--auth-fg);
+  margin: 0 0 8px;
+}
+.auth-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--auth-fg);
+  margin: 0 0 6px;
+}
+.auth-subtitle {
+  font-size: 13px;
+  color: var(--auth-fg-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.auth-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--auth-fg);
+}
+.auth-label-hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--auth-fg-muted);
+  margin-left: 4px;
+}
+
+.auth-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 40px;
+  padding: 10px 14px;
+  background: var(--auth-bg);
+  border: 1px solid var(--auth-border);
+  border-radius: 8px;
+  color: var(--auth-fg);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.auth-input::placeholder {
+  color: var(--auth-fg-muted);
+  opacity: 0.7;
+}
+.auth-input:hover:not(:disabled) {
+  border-color: #484f58;
+}
+.auth-input:focus,
+.auth-input:focus-visible {
+  outline: none;
+  border-color: var(--auth-border-focus);
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.25);
+}
+.auth-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.auth-button-primary {
+  width: 100%;
+  min-height: 40px;
+  padding: 10px 14px;
+  background: var(--auth-accent);
+  border: 1px solid var(--auth-accent);
+  border-radius: 8px;
+  color: var(--auth-on-accent);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+.auth-button-primary:hover:not(:disabled) {
+  background: var(--auth-accent-hi);
+  border-color: var(--auth-accent-hi);
+}
+.auth-button-primary:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.45);
+}
+.auth-button-primary:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.auth-button-secondary {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--auth-accent);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+}
+.auth-button-secondary:hover:not(:disabled) {
+  color: var(--auth-accent-hi);
+  text-decoration: underline;
+}
+.auth-button-secondary:focus-visible {
+  outline: 2px solid var(--auth-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.auth-button-secondary:disabled {
+  color: var(--auth-fg-muted);
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+.auth-message {
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  border-left: 3px solid;
+}
+.auth-error {
+  border-left-color: var(--auth-danger);
+  background: rgba(248, 81, 73, 0.10);
+  color: #ffbab5;
+}
+.auth-success {
+  border-left-color: var(--auth-success);
+  background: rgba(63, 185, 80, 0.10);
+  color: #aef5bd;
+}
+
+.auth-divider {
+  height: 1px;
+  border: 0;
+  background: var(--auth-border);
+  margin: 24px 0 16px;
+}
+
+.auth-footer {
+  text-align: center;
+  font-size: 13px;
+  color: var(--auth-fg-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.auth-footer-line {
+  margin: 0;
+}
+.auth-footer-muted {
+  color: var(--auth-fg-muted);
+  font-size: 12px;
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Small screens — keep card breathing room */
+@media (max-width: 480px) {
+  .auth-shell { padding: 24px 12px; align-items: flex-start; }
+  .auth-card { padding: 24px 20px; border-radius: 10px; }
+}
 
 /* ── Messenger (v0.1) — 통합 친구 목록 + 대화 스레드 ──────────────────────── */
 .messenger-shell {
