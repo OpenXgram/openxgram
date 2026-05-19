@@ -99,6 +99,21 @@ const MIGRATIONS: &[Migration] = &[
         name: "conversation_id",
         sql: include_str!("../migrations/0017_conversation_id.sql"),
     },
+    Migration {
+        version: 18,
+        name: "wiki_pages",
+        sql: include_str!("../migrations/0018_wiki_pages.sql"),
+    },
+    Migration {
+        version: 19,
+        name: "mistakes",
+        sql: include_str!("../migrations/0019_mistakes.sql"),
+    },
+    Migration {
+        version: 20,
+        name: "action_patterns",
+        sql: include_str!("../migrations/0020_action_patterns.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

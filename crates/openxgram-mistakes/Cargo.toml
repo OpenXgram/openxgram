@@ -1,0 +1,26 @@
+[package]
+name = "openxgram-mistakes"
+description = "실수 레지스트리 (W의 규칙 1 — 회고형 기억) for OpenXgram"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+openxgram-core = { path = "../openxgram-core" }
+openxgram-db = { path = "../openxgram-db" }
+
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"

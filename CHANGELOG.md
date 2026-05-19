@@ -2,6 +2,56 @@
 
 OpenXgram 의 변경 이력. 모든 시간은 KST(Asia/Seoul). [Semantic Versioning](https://semver.org/) + BUILD 자동 증가 (CI/CD 갱신, 수동 변경 금지).
 
+## [0.2.0-rc.22] — 2026-05-11 KST (i18n + install 안내)
+
+- **i18n 13개 누락 키 채움** + install.ps1 next-step 안내 확장.
+- **fix(mcp/connect_discord)**: bot_token primary (양방향), webhook은 fallback only.
+
+## [0.2.0-rc.21] — 2026-05-11 KST (자율 채널 연결)
+
+- **bot register one-liner** + MCP self-install + identity inject + 글로벌 token auto-import.
+- **MCP 액션 도구 3개** — `create_project_category` + `install_hooks` + `register_subagent`.
+- **MCP `connect_discord` / `connect_telegram`** — LLM이 자연어로 채널 연결 실행.
+- **`send_to_discord` / `send_to_telegram`** — LLM 자연어 응답 outbound 절반.
+
+## [0.2.0-rc.16 ~ rc.20] — 2026-05-10 KST (Windows + GUI Messenger)
+
+- **rc.16**: `core/paths` Windows USERPROFILE fallback — `xgram init` HOME 미설정 에러 해결 (#177).
+- **rc.17**: GUI Messenger v0.2-α — L0 messages 활동 흐름 모니터링.
+- **rc.18**: GUI Messenger v0.2-β — peer 송신 활성화.
+- **rc.19**: tauri custom-protocol feature 활성화 — release에서 bundled frontend 로딩.
+- **rc.20**: `dirs_home` USERPROFILE fallback — Windows 초기화 인식.
+- **Windows install.ps1** — `irm | iex` 한 줄 설치 + ZipFile.ExtractToDirectory 호환 fix + 재설치 시 daemon+agent 자동 가동(idempotent) + 실행 중인 .exe 자동 종료.
+- **Cloudflare _headers** — `install.ps1/install.sh` charset=utf-8 (nginx origin 환경에서 revert).
+
+## [0.2.0-rc.13 ~ rc.15] — 2026-05-09 KST (Phase 1 Agent + EAS + Indexer + Identity Directory)
+
+- **rc.13**: Telegram 양방향 (Phase 1 1.6) (#171).
+- **rc.14**: chat REPL + bot mgmt + invite QR + HITL + EAS + indexer + import-app + multi-channel + identity directory (#172).
+- **rc.15**: `xgram chat` 제거 반영 (#173) — 채팅 인터페이스는 외부 LLM/MCP로.
+
+## [0.2.0-rc.8 ~ rc.12] — 2026-05-08~09 KST (Phase 1 Agent 본격 가동)
+
+- **rc.8**: `xgram agent` — inbox 폴링 + Discord forward + install.sh 자동 가동 (Phase 1 v1) (#166).
+- **rc.9**: Discord 양방향 통합 + `/v1/agent/inject` 엔드포인트 (Phase 1 1.5) (#167).
+- **rc.10**: echo 응답 + outbox 메모리 (Phase 1 1.7 v0) (#168).
+- **rc.11**: Anthropic LLM 응답 (Phase 1 1.7.3) (#169).
+- **rc.12**: 서브에이전트 라우팅 v0 — single-LLM 멀티 페르소나 (Phase 1 1.8) (#170).
+
+## [0.2.0-rc.4 ~ rc.7] — 2026-05-08 KST (Daemon GUI HTTP + Phase 2c)
+
+- **rc.4**: daemon `/v1/gui/*` HTTP API + Tauri 원격 클라이언트 (#154).
+- **rc.5**: `pair-desktop` / `link` 한 줄 페어링 (#156) — `oxg://alias@host:port#token=xxx` URL.
+- **rc.6**: Phase 2c (schedule + chain + mutations) (#162).
+- **rc.7**: axum 0.8 path syntax (`:id → {id}`) fix (#164).
+
+## [0.2.0-rc.3] — 2026-05-08 KST (CI 그린화 + 신규 crate 3종)
+
+- CI track `ui/tauri/app/package-lock.json` — release-binaries.yml 그린화 (#146).
+- 신규 crate 추가: **openxgram-eas** (Ethereum Attestation Service).
+- 신규 crate 추가: **openxgram-indexer-sdk** (이벤트 인덱서 베이스).
+- 신규 crate 추가: **openxgram-wiki** — L2 Karpathy 위키 페이지 (PRD §4.1).
+
 ## [0.2.0-rc.2] — 2026-05-07 KST (UX 개선)
 
 자체 dogfood에서 발견된 마찰점 1차 정리 — "심플·편리·단순" 원칙. 깊은 리팩터(포트 자동 폴백, `--data-dir` 글로벌화)는 rc.3로 분할.

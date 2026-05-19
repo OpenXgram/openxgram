@@ -26,6 +26,7 @@ pub mod search;
 pub mod store;
 pub mod sync;
 
+pub use fs::WikiFs;
 pub use page::{Page, PageId, PageType, Related};
 pub use search::{SearchHit, search_wiki};
 pub use store::{WikiStore, WikiStoreError};

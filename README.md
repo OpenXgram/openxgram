@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/OpenXgram/openxgram/blob/main/LICENSE)
 ![CI](https://github.com/OpenXgram/openxgram/actions/workflows/ci.yml/badge.svg)
-[![Version](https://img.shields.io/badge/version-0.2.0--rc.2-blue)](https://github.com/OpenXgram/openxgram/blob/main/version.json)
+[![Version](https://img.shields.io/badge/version-0.2.0--rc.22-blue)](https://github.com/OpenXgram/openxgram/blob/main/version.json)
 [![Status](https://img.shields.io/badge/status-production%20candidate-green)](https://github.com/OpenXgram/openxgram/blob/main/CHANGELOG.md)
 
 > 📘 **정본 PRD**: 워크스페이스 루트의 [`docs/PRD-OpenXgram.md` v1.1](../docs/PRD-OpenXgram.md) 참조.
@@ -223,11 +223,11 @@ xgram wizard   # 9단계: Welcome → Alias → Role → DataDir → SeedMode �
 - `backup-push` — Discord/Telegram 으로 session 통계 push
 - `wizard` (9단계) / `tui` — 인터랙티브 화면
 
-## 현재 출하 표면 (v0.2.0-rc.2)
+## 현재 출하 표면 (v0.2.0-rc.22)
 
-> Phase 1 GA(v0.1.0) + Phase 2 GA(v0.2.0) 누적. 세부 변경은 [CHANGELOG.md](CHANGELOG.md) 참조.
+> Phase 1 GA(v0.1.0) + Phase 2 GA(v0.2.0) + Phase 2c (스케줄·체인·뮤테이션) + Phase 1 v1 (Agent inbox + Discord/Telegram 양방향 + Anthropic LLM 응답) + Wiki crate(L2 Karpathy) + 한 줄 onboarding wizard 누적. 세부 변경은 [CHANGELOG.md](CHANGELOG.md) 참조.
 
-- ✅ 17 crate 워크스페이스 (core / keystore / db / manifest / memory / transport / adapter / scheduler / mcp / vault / cli / peer / payment / nostr / orchestration / channel / did)
+- ✅ **20 crate** 워크스페이스 (Phase 1 GA 17개 + Phase 2 신규: **eas**, **indexer-sdk**, **wiki**)
 - ✅ MVP 코어 명령 6/6 (init / uninstall / doctor / status / reset / migrate)
 - ✅ 5층 메모리 CLI 표면: L0 messages / L1 episodes / L2 memories / L3 patterns / L4 traits
 - ✅ L3 ROUTINE → L4 traits 자동 도출 (nightly reflection 통합 + 수동 트리거 `xgram traits derive`)
