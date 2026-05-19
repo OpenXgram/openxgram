@@ -46,8 +46,43 @@ $xgramVersion = & xgram --version 2>&1 | Select-Object -First 1
 Write-Host "  xgram : $xgramVersion"
 Write-Host ''
 
-# 2. init — manifest 없으면 alias + 패스워드 prompt 후 init
+# 2. init — manifest 없으면 사용자에게 [1] 새 노드 / [2] 기존 노드 추가 선택
 if (-not (Test-Path $Manifest)) {
+    Write-Host '── 이 머신을 어떻게 사용하시겠어요? ──'
+    Write-Host '  [1] 새 노드로 시작 (시드 신규 발급, 독립 신원·메모리)'
+    Write-Host '  [2] 기존 노드에 머신 추가 (다른 머신에서 발급한 페어링 URL 사용)'
+    Write-Host ''
+    $mode = Read-Host '선택 [1/2] (Enter = 1)'
+    if ([string]::IsNullOrWhiteSpace($mode)) { $mode = '1' }
+
+    if ($mode -eq '2') {
+        # ── 기존 노드 페어링 ──
+        Write-Host ''
+        Write-Host '기존 노드에서 다음 명령으로 페어링 URL 생성:'
+        Write-Host '  xgram pair-desktop'
+        Write-Host '→ oxg://alias@host:port#token=xxx 형태 URL 출력'
+        Write-Host ''
+        $oxgUrl = Read-Host '페어링 URL 입력 (oxg://...)'
+        if (-not ($oxgUrl -match '^oxg://')) {
+            Write-Error '잘못된 URL — oxg:// 로 시작해야 합니다'
+            return
+        }
+        Write-Host ''
+        Write-Host "→ xgram link $oxgUrl"
+        & xgram link $oxgUrl
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "xgram link 실패 (exit $LASTEXITCODE) — 네트워크/토큰 확인"
+            return
+        }
+        Write-Host ''
+        Write-Host '✓ 기존 노드 연결됨 — 이 머신의 xgram CLI/GUI가 원격 daemon 사용' -ForegroundColor Green
+        Write-Host '  (이 머신에는 daemon 띄우지 않음, 모든 명령은 원격에서 처리)'
+        Write-Host ''
+        Write-Host '추가 설정 (Discord/Telegram 등)은 원격 노드에서 진행하세요.'
+        return
+    }
+
+    # ── [1] 새 노드 (default) ──
     $defaultAlias = $env:COMPUTERNAME
     $alias = Read-Host "이 머신 alias (default: $defaultAlias)"
     if ([string]::IsNullOrWhiteSpace($alias)) { $alias = $defaultAlias }
