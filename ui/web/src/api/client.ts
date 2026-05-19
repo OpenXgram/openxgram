@@ -191,7 +191,13 @@ export async function invoke<T>(
   }
 
   if (res.status === 401) {
-    throw new Error("미인증 — Settings 탭에서 mcp-token 입력 필요");
+    // 세션 만료/위조 — 로컬 Bearer 삭제 후 throw. App.tsx 가 LoginView 로 복귀.
+    try {
+      localStorage.removeItem(TOKEN_KEY);
+    } catch {
+      // ignored
+    }
+    throw new Error("미인증 — 다시 로그인하세요");
   }
   if (!res.ok) {
     const text = await res.text().catch(() => "");

@@ -1,11 +1,14 @@
 import { createResource, createSignal, Show } from "solid-js";
-import { invoke } from "@/api/client";
+import { getBearer, invoke } from "@/api/client";
+import { isAuthenticated, logout as apiLogout } from "@/api/auth";
 import { I18nProvider, useI18n } from "./i18n";
 import { Onboarding } from "./components/Onboarding";
 import { ChatTab } from "./components/ChatTab";
 import { MemoryTab } from "./components/MemoryTab";
 import { NetworkTab } from "./components/NetworkTab";
 import { SettingsTab } from "./components/SettingsTab";
+import { LoginView } from "./components/LoginView";
+import { RegisterView } from "./components/RegisterView";
 
 // 4탭 단순화 (PRD-OpenXgram §4.8 v0.9 Beta).
 //   - chat     : Messenger + 검색 (SearchView)
@@ -13,7 +16,9 @@ import { SettingsTab } from "./components/SettingsTab";
 //   - network  : Peers + Notify(Telegram·Discord) + Channel 대시보드
 //   - settings : Schedule + Chain + PaymentLimits + Locale
 //   - onboarding 은 init 전에만 표시.
+//   - 인증되지 않은 사용자 → LoginView / RegisterView (4탭 GUI 잠금).
 type Tab = "onboarding" | "chat" | "memory" | "network" | "settings";
+type AuthScreen = "login" | "register";
 
 async function checkInitialized(): Promise<boolean> {
   try {
@@ -23,9 +28,20 @@ async function checkInitialized(): Promise<boolean> {
   }
 }
 
-function Inner() {
+async function checkAuth(): Promise<boolean> {
+  // Bearer 가 아예 없으면 즉시 false (네트워크 호출 생략).
+  if (!getBearer()) return false;
+  return await isAuthenticated();
+}
+
+function AppInner() {
   const { t, setLocale, locale } = useI18n();
-  const [initialized] = createResource(checkInitialized);
+  const [authed, { refetch: refetchAuth }] = createResource(checkAuth);
+  const [authScreen, setAuthScreen] = createSignal<AuthScreen>("login");
+  const [initialized] = createResource(
+    () => authed() === true,
+    async (ok) => (ok ? await checkInitialized() : false),
+  );
   const [tab, setTab] = createSignal<Tab>("onboarding");
 
   // 초기화된 사용자 → 첫 화면을 Chat 으로 자동 전환 (한 번만).
@@ -45,11 +61,17 @@ function Inner() {
     { id: "settings", label: () => t("tab.settings") },
   ];
 
+  const onLogout = async () => {
+    await apiLogout();
+    refetchAuth();
+    setAuthScreen("login");
+  };
+
   return (
     <div class="app-shell">
       <header class="app-header">
         <h1 class="app-title">OpenXgram</h1>
-        <div>
+        <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
           <select
             value={locale()}
             onChange={(e) => setLocale(e.currentTarget.value as "ko" | "en")}
@@ -58,38 +80,70 @@ function Inner() {
             <option value="ko">한국어</option>
             <option value="en">English</option>
           </select>
+          <Show when={authed() === true}>
+            <button type="button" onClick={onLogout}>
+              {t("auth.logout")}
+            </button>
+          </Show>
         </div>
       </header>
-      <Show when={tab() !== "onboarding"}>
-        <nav class="tabnav" aria-label="OpenXgram tabs">
-          {tabs.map((entry) => (
-            <button
-              type="button"
-              class={tab() === entry.id ? "active" : ""}
-              onClick={() => setTab(entry.id)}
-            >
-              {entry.label()}
-            </button>
-          ))}
-        </nav>
+
+      {/* 인증 화면 — Bearer 없음/만료 */}
+      <Show when={authed.loading}>
+        <main>
+          <p class="hint">{t("common.loading")}</p>
+        </main>
       </Show>
-      <main>
-        <Show when={tab() === "onboarding"}>
-          <Onboarding onReady={() => setTab("chat")} />
+      <Show when={!authed.loading && authed() !== true}>
+        <main>
+          <Show when={authScreen() === "login"}>
+            <LoginView
+              onSuccess={() => refetchAuth()}
+              onSwitchToRegister={() => setAuthScreen("register")}
+            />
+          </Show>
+          <Show when={authScreen() === "register"}>
+            <RegisterView
+              onSuccess={() => refetchAuth()}
+              onSwitchToLogin={() => setAuthScreen("login")}
+            />
+          </Show>
+        </main>
+      </Show>
+
+      {/* 메인 GUI — 인증된 사용자만 */}
+      <Show when={authed() === true}>
+        <Show when={tab() !== "onboarding"}>
+          <nav class="tabnav" aria-label="OpenXgram tabs">
+            {tabs.map((entry) => (
+              <button
+                type="button"
+                class={tab() === entry.id ? "active" : ""}
+                onClick={() => setTab(entry.id)}
+              >
+                {entry.label()}
+              </button>
+            ))}
+          </nav>
         </Show>
-        <Show when={tab() === "chat"}>
-          <ChatTab />
-        </Show>
-        <Show when={tab() === "memory"}>
-          <MemoryTab />
-        </Show>
-        <Show when={tab() === "network"}>
-          <NetworkTab />
-        </Show>
-        <Show when={tab() === "settings"}>
-          <SettingsTab />
-        </Show>
-      </main>
+        <main>
+          <Show when={tab() === "onboarding"}>
+            <Onboarding onReady={() => setTab("chat")} />
+          </Show>
+          <Show when={tab() === "chat"}>
+            <ChatTab />
+          </Show>
+          <Show when={tab() === "memory"}>
+            <MemoryTab />
+          </Show>
+          <Show when={tab() === "network"}>
+            <NetworkTab />
+          </Show>
+          <Show when={tab() === "settings"}>
+            <SettingsTab />
+          </Show>
+        </main>
+      </Show>
     </div>
   );
 }
@@ -97,7 +151,7 @@ function Inner() {
 export function App() {
   return (
     <I18nProvider>
-      <Inner />
+      <AppInner />
     </I18nProvider>
   );
 }

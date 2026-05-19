@@ -169,5 +169,27 @@
   "common.save": "Save",
   "common.refresh": "Refresh",
   "common.loading": "Loading…",
-  "common.error": "Error"
+  "common.error": "Error",
+
+  "auth.email": "Email",
+  "auth.password": "Password",
+  "auth.password.confirm": "Confirm password",
+  "auth.password.min": "min {n} chars",
+  "auth.alias": "Display name (optional)",
+  "auth.alias.placeholder": "e.g. alpha",
+  "auth.logout": "Sign out",
+  "auth.login.title": "Sign in",
+  "auth.login.subtitle": "Sign in to access the OpenXgram web GUI.",
+  "auth.login.submit": "Sign in",
+  "auth.login.link": "Sign in",
+  "auth.login.no_account": "Don't have an account?",
+  "auth.register.title": "Create account",
+  "auth.register.subtitle": "Create a new account with your email. The first user is automatically granted admin role.",
+  "auth.register.submit": "Sign up",
+  "auth.register.link": "Sign up",
+  "auth.register.have_account": "Already have an account?",
+  "auth.forgot.disabled_hint": "Password reset is disabled in Beta — email (SMTP) not configured.",
+  "auth.error.fields_required": "Enter email and password",
+  "auth.error.password_too_short": "Password must be at least {n} characters",
+  "auth.error.password_mismatch": "Password confirmation does not match"
 }

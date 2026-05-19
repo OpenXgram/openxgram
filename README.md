@@ -58,19 +58,32 @@ xgram --version                             # openxgram 0.2.0
 
 `install.sh` 가 OS·arch 를 자동 감지하여 [GitHub Releases](https://github.com/OpenXgram/openxgram/releases/latest) 에서 받습니다. Windows 는 `.zip` 직접 다운로드 또는 WSL2 권장.
 
-### 3단계 빠른 시작 (한 줄씩)
+### 4단계 빠른 시작 (한 줄씩)
 
 ```bash
-# 1) install
-curl -sSfL https://openxgram.org/install.sh | sh         # Linux/macOS
-# Windows:  irm https://openxgram.org/install.ps1 | iex
+# 1) install + quickstart (대화형 마법사 — 이메일+비밀번호+머신연결 선택)
+curl -sSfL https://openxgram.org/quickstart.sh | bash    # Linux/macOS
+# Windows:  irm https://openxgram.org/quickstart.ps1 | iex
+#
+#  - 머신 연결: [1] 새 노드(시드 신규) / [2] 기존 노드 추가(원격 daemon 로그인)
+#  - 이메일 + 비밀번호 (12자+) — 웹 GUI 로그인 자격
+#  - [1] 모드: xgram init + 사용자 등록(첫 사용자=admin) + daemon 가동
+#  - [2] 모드: 원격 daemon /v1/auth/login 으로 JWT 받아 페어링
 
+# (수동 절차 — 위 quickstart 와 동등) ────────────────────────
 # 2) init
 xgram init --alias my-pc
 
-# 3) 웹 GUI (Tailscale Funnel — Cloudflare 의존 0, 도메인 자동)
+# 3) 웹 GUI 사용자 등록 (daemon 가동 후 1회)
+curl -X POST http://localhost:47302/v1/auth/register \
+    -H "Content-Type: application/json" \
+    -d '{"email":"me@example.com","password":"strong-password-1234","alias":"my-pc"}'
+#  응답: { "user_id":"user:...", "jwt_token":"...", "role":"admin" }
+
+# 4) 웹 GUI (Tailscale Funnel — Cloudflare 의존 0, 도메인 자동)
 sudo tailscale funnel --bg --https=443 http://localhost:47310
 xgram gui   # → 브라우저에서 https://<machine>.tailXXXX.ts.net 자동 오픈
+#  → 첫 화면 = 로그인. 위에서 만든 이메일/비밀번호 입력.
 ```
 
 > v0.2.0-rc.24 부터 Tauri 데스크톱 앱(`xgram-desktop`)은 **폐기**되고 **웹 GUI(Tailscale Funnel)** 로 대체됐습니다.

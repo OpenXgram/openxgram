@@ -61,6 +61,9 @@ axum = { workspace = true }
 uuid = { workspace = true }
 rusqlite = { workspace = true }
 getrandom = "0.3"
+argon2 = { workspace = true }
+hmac = "0.12"
+base64 = "0.22"
 tokio-cron-scheduler = { workspace = true }
 age = { workspace = true }
 opentelemetry = { workspace = true }

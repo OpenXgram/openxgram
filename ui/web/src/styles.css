@@ -306,6 +306,23 @@ input:focus-visible {
   .tabnav button { font-size: 12px; padding: 5px 8px; }
 }
 
+/* ── Auth (Login / Register) ────────────────────────────────────────────── */
+.auth-shell {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 40px 16px;
+}
+.auth-card {
+  max-width: 420px;
+  width: 100%;
+}
+.auth-card h2 { margin-top: 0; }
+.auth-card .form-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.auth-card label { font-size: 13px; }
+.auth-card input { padding: 8px 10px; font-size: 14px; }
+.auth-card a { color: var(--fg-accent, #5aa); cursor: pointer; }
+
 /* ── Messenger (v0.1) — 통합 친구 목록 + 대화 스레드 ──────────────────────── */
 .messenger-shell {
   display: grid;

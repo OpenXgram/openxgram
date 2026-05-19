@@ -169,5 +169,27 @@
   "common.save": "저장",
   "common.refresh": "새로고침",
   "common.loading": "불러오는 중…",
-  "common.error": "오류"
+  "common.error": "오류",
+
+  "auth.email": "이메일",
+  "auth.password": "비밀번호",
+  "auth.password.confirm": "비밀번호 확인",
+  "auth.password.min": "최소 {n}자",
+  "auth.alias": "닉네임 (선택)",
+  "auth.alias.placeholder": "예: alpha",
+  "auth.logout": "로그아웃",
+  "auth.login.title": "로그인",
+  "auth.login.subtitle": "OpenXgram 웹 GUI 에 접속하려면 로그인하세요.",
+  "auth.login.submit": "로그인",
+  "auth.login.link": "로그인",
+  "auth.login.no_account": "계정이 없으신가요?",
+  "auth.register.title": "계정 생성",
+  "auth.register.subtitle": "이메일로 신규 계정을 만듭니다. 첫 사용자는 admin 권한이 자동 부여됩니다.",
+  "auth.register.submit": "회원가입",
+  "auth.register.link": "회원가입",
+  "auth.register.have_account": "이미 계정이 있으신가요?",
+  "auth.forgot.disabled_hint": "비밀번호 찾기는 Beta 단계에서는 비활성화 — 이메일 발송(SMTP) 미설정.",
+  "auth.error.fields_required": "이메일과 비밀번호를 입력하세요",
+  "auth.error.password_too_short": "비밀번호는 최소 {n}자 이상이어야 합니다",
+  "auth.error.password_mismatch": "비밀번호 확인이 일치하지 않습니다"
 }
