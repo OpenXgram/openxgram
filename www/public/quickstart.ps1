@@ -1,15 +1,15 @@
-# OpenXgram quickstart — 한 줄 마법사 (Windows PowerShell).
+# OpenXgram quickstart - one-line wizard (Windows PowerShell).
 #
-# 사용:
+# Usage:
 #   irm https://openxgram.org/quickstart.ps1 | iex
 #
-# 흐름:
-#   1. xgram 미설치면 install.ps1 자동 실행
-#   2. alias / keystore 패스워드 입력 (기존 init 있으면 skip)
-#   3. Discord webhook / Telegram bot / Anthropic API 키 입력 (Enter 로 skip)
-#   4. %USERPROFILE%\.openxgram\.env 에 비밀 저장
-#   5. daemon + agent 백그라운드 가동 (Start-Process Hidden, 부모 종료 후 생존)
-#   6. 상태 확인 + 다음 명령 안내
+# Flow:
+#   1. install.ps1 auto-run if xgram missing
+#   2. choose [1] new node (seed) or [2] add to existing node (oxg:// URL)
+#   3. alias / keystore password / optional Discord-Telegram tokens
+#   4. save secrets to %USERPROFILE%\.openxgram\.env.ps1
+#   5. start daemon + agent (Start-Process Hidden, survives parent exit)
+#   6. show status + next commands
 
 $ErrorActionPreference = 'Stop'
 

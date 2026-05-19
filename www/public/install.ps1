@@ -1,11 +1,10 @@
-# OpenXgram installer — Windows PowerShell.
+# OpenXgram installer - Windows PowerShell.
 #
 # Usage (PowerShell):
 #   irm https://openxgram.org/install.ps1 | iex
 #   $env:OPENXGRAM_VERSION="v0.2.0-rc.15"; irm https://openxgram.org/install.ps1 | iex
 #
-# Privacy: GitHub Releases asset 만 download + SHA256 검증 후 install.
-#   텔레메트리 / 통계 / 외부 보고 0.
+# Privacy: GitHub Releases asset download + SHA256 verify, no telemetry.
 
 $ErrorActionPreference = 'Stop'
 
