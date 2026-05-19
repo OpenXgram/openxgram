@@ -1,4 +1,4 @@
-# OpenXgram quickstart — 한 줄 마법사 (Windows PowerShell).
+﻿# OpenXgram quickstart — 한 줄 마법사 (Windows PowerShell).
 #
 # 사용:
 #   irm https://openxgram.org/quickstart.ps1 | iex

@@ -1,4 +1,4 @@
-# OpenXgram installer — Windows PowerShell.
+﻿# OpenXgram installer — Windows PowerShell.
 #
 # Usage (PowerShell):
 #   irm https://openxgram.org/install.ps1 | iex
