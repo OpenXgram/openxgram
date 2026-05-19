@@ -18,7 +18,10 @@ use openxgram_mcp::{
     ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND,
 };
 use openxgram_memory::{default_embedder, MemoryKind, MemoryStore, MessageStore, SessionStore};
+use openxgram_mistakes::{mcp::MistakeTools, NewMistake};
+use openxgram_patterns::{mcp::PatternTools, pattern::ActionStep};
 use openxgram_vault::VaultStore;
+use openxgram_wiki::{mcp::WikiTools, WikiFs};
 use serde_json::{json, Value};
 
 pub struct OpenxgramDispatcher {
@@ -206,6 +209,182 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         "chat_id": {"type": "string", "description": "특정 chat (생략 시 vault 의 기본값)"}
                     },
                     "required": ["content"]
+                }),
+            },
+            // ─── L2 위키 (5) — PRD-OpenXgram §4.1 ───
+            ToolSpec {
+                name: "read_wiki_page".into(),
+                description: "L2 위키 페이지 읽기 — frontmatter + body. topic 은 `entity/alice` 같은 `<type>/<slug>` 형식.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "topic": {"type": "string", "description": "<type>/<slug> (예: entity/alice)"}
+                    },
+                    "required": ["topic"]
+                }),
+            },
+            ToolSpec {
+                name: "write_wiki_page".into(),
+                description: "L2 위키 페이지 생성/업데이트. content 는 markdown 본문. page_type 미지정 시 topic 의 prefix 사용.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "topic": {"type": "string"},
+                        "content": {"type": "string"},
+                        "page_type": {"type": "string", "enum": ["entity", "concept", "comparison", "other"]},
+                        "expected_hash": {"type": "string", "description": "낙관 잠금용 기존 content_hash (선택)"}
+                    },
+                    "required": ["topic", "content"]
+                }),
+            },
+            ToolSpec {
+                name: "link_concepts".into(),
+                description: "두 위키 페이지 간 cross-link 추가. from→to.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "from": {"type": "string"},
+                        "to": {"type": "string"},
+                        "reason": {"type": "string"}
+                    },
+                    "required": ["from", "to"]
+                }),
+            },
+            ToolSpec {
+                name: "search_wiki".into(),
+                description: "L2 위키 LIKE 검색 (k 기본 5). 벡터 검색은 후속.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "k": {"type": "integer", "minimum": 1, "default": 5}
+                    },
+                    "required": ["query"]
+                }),
+            },
+            ToolSpec {
+                name: "list_wiki".into(),
+                description: "L2 위키 페이지 목록. page_type 으로 필터링 가능.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "page_type": {"type": "string", "enum": ["entity", "concept", "comparison", "other"]}
+                    }
+                }),
+            },
+            // ─── 실수 레지스트리 (4) — PRD-OpenXgram §4.2 ───
+            ToolSpec {
+                name: "check_for_mistakes".into(),
+                description: "planned_action 으로 유사 과거 실수 top-K 조회 + 경고문 생성. 행동 시작 전 호출 권장 (W 규칙 1).".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "planned_action": {"type": "string"},
+                        "k": {"type": "integer", "minimum": 1, "default": 5}
+                    },
+                    "required": ["planned_action"]
+                }),
+            },
+            ToolSpec {
+                name: "log_mistake".into(),
+                description: "실수 등록 — intended/outcome/reason/lesson + severity(1~10) + related_wiki.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "intended_action": {"type": "string"},
+                        "actual_outcome": {"type": "string"},
+                        "failure_reason": {"type": "string"},
+                        "lesson": {"type": "string"},
+                        "severity": {"type": "integer", "minimum": 1, "maximum": 10},
+                        "related_wiki": {"type": "string"}
+                    },
+                    "required": ["session_id", "intended_action", "actual_outcome", "failure_reason", "lesson"]
+                }),
+            },
+            ToolSpec {
+                name: "find_similar_failures".into(),
+                description: "situation 으로 유사 과거 실수 검색 (k 기본 5).".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "situation": {"type": "string"},
+                        "k": {"type": "integer", "minimum": 1, "default": 5}
+                    },
+                    "required": ["situation"]
+                }),
+            },
+            ToolSpec {
+                name: "resolve_mistake".into(),
+                description: "실수 해결 완료 표시 — mistake_id + 적용한 해결책.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "mistake_id": {"type": "string"},
+                        "resolution": {"type": "string"}
+                    },
+                    "required": ["mistake_id", "resolution"]
+                }),
+            },
+            // ─── 패턴 매칭 엔진 (4) — PRD-OpenXgram §4.3 ───
+            ToolSpec {
+                name: "match_action_pattern".into(),
+                description: "유사 행동 패턴 top-K (현재 LIKE; 임베딩 KNN 은 후속). W 규칙 2 — 새 행동 시작 전 호출.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "new_action": {"type": "string"},
+                        "k": {"type": "integer", "minimum": 1, "default": 5},
+                        "min_similarity": {"type": "number", "default": 0.0}
+                    },
+                    "required": ["new_action"]
+                }),
+            },
+            ToolSpec {
+                name: "suggest_next_steps".into(),
+                description: "current_state 와 매칭되는 패턴의 다음 단계 추천.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "current_state": {"type": "string"}
+                    },
+                    "required": ["current_state"]
+                }),
+            },
+            ToolSpec {
+                name: "confirm_pattern_execution".into(),
+                description: "패턴 실행 확정 — modifications 가 있으면 plan 치환. 실행 자체는 외부 도구.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "pattern_id": {"type": "string"},
+                        "modifications": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "step": {"type": "string"},
+                                    "tool": {"type": "string"},
+                                    "args": {}
+                                },
+                                "required": ["step"]
+                            }
+                        }
+                    },
+                    "required": ["pattern_id"]
+                }),
+            },
+            ToolSpec {
+                name: "record_pattern_outcome".into(),
+                description: "패턴 실행 결과 기록 — success + duration_ms (선택). 성공률 누적 평균 갱신.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "pattern_id": {"type": "string"},
+                        "success": {"type": "boolean"},
+                        "duration_ms": {"type": "integer", "minimum": 0}
+                    },
+                    "required": ["pattern_id", "success"]
                 }),
             },
         ];
@@ -1027,6 +1206,224 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     .set_as_authed(&key, value.as_bytes(), &pw, &tags, &agent, mfa.as_deref())
                     .map_err(internal)?;
                 Ok(json!({"id": entry.id, "key": entry.key, "tags": entry.tags}))
+            }
+            // ─── L2 위키 (5) ───
+            "read_wiki_page" => {
+                let topic = args
+                    .get("topic")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'topic'"))?
+                    .to_string();
+                let wiki_root = self.data_dir.join("wiki");
+                let fs = WikiFs::new(&wiki_root);
+                let conn: &rusqlite::Connection = self.db.conn();
+                let tools = WikiTools::new(&fs, conn);
+                let handle = tokio::runtime::Handle::current();
+                let r = handle.block_on(tools.read(&topic)).map_err(internal)?;
+                Ok(serde_json::to_value(r).map_err(internal)?)
+            }
+            "write_wiki_page" => {
+                let topic = args
+                    .get("topic")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'topic'"))?
+                    .to_string();
+                let content = args
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'content'"))?
+                    .to_string();
+                let page_type = args.get("page_type").and_then(|v| v.as_str()).map(str::to_string);
+                let expected_hash = args
+                    .get("expected_hash")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let wiki_root = self.data_dir.join("wiki");
+                let fs = WikiFs::new(&wiki_root);
+                let handle = tokio::runtime::Handle::current();
+                handle.block_on(fs.ensure_dirs()).map_err(internal)?;
+                let conn: &rusqlite::Connection = self.db.conn();
+                let tools = WikiTools::new(&fs, conn);
+                let r = handle
+                    .block_on(tools.write(
+                        &topic,
+                        &content,
+                        page_type.as_deref(),
+                        expected_hash.as_deref(),
+                    ))
+                    .map_err(internal)?;
+                Ok(serde_json::to_value(r).map_err(internal)?)
+            }
+            "link_concepts" => {
+                let from = args
+                    .get("from")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'from'"))?
+                    .to_string();
+                let to = args
+                    .get("to")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'to'"))?
+                    .to_string();
+                let reason = args.get("reason").and_then(|v| v.as_str()).map(str::to_string);
+                let wiki_root = self.data_dir.join("wiki");
+                let fs = WikiFs::new(&wiki_root);
+                let conn: &rusqlite::Connection = self.db.conn();
+                let tools = WikiTools::new(&fs, conn);
+                let handle = tokio::runtime::Handle::current();
+                let r = handle
+                    .block_on(tools.link(&from, &to, reason.as_deref()))
+                    .map_err(internal)?;
+                Ok(serde_json::to_value(r).map_err(internal)?)
+            }
+            "search_wiki" => {
+                let query = args
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'query'"))?
+                    .to_string();
+                let k = args.get("k").and_then(|v| v.as_u64()).map(|n| n as usize);
+                let wiki_root = self.data_dir.join("wiki");
+                let fs = WikiFs::new(&wiki_root);
+                let conn: &rusqlite::Connection = self.db.conn();
+                let tools = WikiTools::new(&fs, conn);
+                let hits = tools.search(&query, k).map_err(internal)?;
+                let items: Vec<Value> = hits
+                    .iter()
+                    .map(|h| json!({
+                        "id": h.id.to_string(),
+                        "title": h.title,
+                        "score": h.score,
+                    }))
+                    .collect();
+                Ok(json!({"hits": items, "count": items.len()}))
+            }
+            "list_wiki" => {
+                let page_type = args
+                    .get("page_type")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let wiki_root = self.data_dir.join("wiki");
+                let fs = WikiFs::new(&wiki_root);
+                let conn: &rusqlite::Connection = self.db.conn();
+                let tools = WikiTools::new(&fs, conn);
+                let entries = tools.list(page_type.as_deref()).map_err(internal)?;
+                Ok(json!({"entries": serde_json::to_value(&entries).map_err(internal)?, "count": entries.len()}))
+            }
+            // ─── 실수 레지스트리 (4) ───
+            "check_for_mistakes" => {
+                let planned_action = args
+                    .get("planned_action")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'planned_action'"))?
+                    .to_string();
+                let k = args.get("k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+                let conn: &rusqlite::Connection = self.db.conn();
+                let tools = MistakeTools::new(conn);
+                let r = tools.check(&planned_action, k).map_err(internal)?;
+                Ok(serde_json::to_value(r).map_err(internal)?)
+            }
+            "log_mistake" => {
+                let input: NewMistake = serde_json::from_value(args.clone())
+                    .map_err(|e| invalid(&format!("invalid log_mistake args: {e}")))?;
+                let conn: &rusqlite::Connection = self.db.conn();
+                let tools = MistakeTools::new(conn);
+                let r = tools.log(input).map_err(internal)?;
+                Ok(serde_json::to_value(r).map_err(internal)?)
+            }
+            "find_similar_failures" => {
+                let situation = args
+                    .get("situation")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'situation'"))?
+                    .to_string();
+                let k = args.get("k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+                let conn: &rusqlite::Connection = self.db.conn();
+                let tools = MistakeTools::new(conn);
+                let hits = tools.find_similar(&situation, k).map_err(internal)?;
+                Ok(json!({"hits": serde_json::to_value(&hits).map_err(internal)?, "count": hits.len()}))
+            }
+            "resolve_mistake" => {
+                let mistake_id = args
+                    .get("mistake_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'mistake_id'"))?
+                    .to_string();
+                let resolution = args
+                    .get("resolution")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'resolution'"))?
+                    .to_string();
+                let conn: &rusqlite::Connection = self.db.conn();
+                let tools = MistakeTools::new(conn);
+                tools.resolve(&mistake_id, &resolution).map_err(internal)?;
+                Ok(json!({"resolved": true, "mistake_id": mistake_id}))
+            }
+            // ─── 패턴 매칭 엔진 (4) ───
+            "match_action_pattern" => {
+                let new_action = args
+                    .get("new_action")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'new_action'"))?
+                    .to_string();
+                let k = args.get("k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+                let min_similarity = args
+                    .get("min_similarity")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                let conn: &rusqlite::Connection = self.db.conn();
+                let tools = PatternTools::new(conn);
+                let r = tools
+                    .match_pattern(&new_action, k, min_similarity)
+                    .map_err(internal)?;
+                Ok(serde_json::to_value(r).map_err(internal)?)
+            }
+            "suggest_next_steps" => {
+                let current_state = args
+                    .get("current_state")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'current_state'"))?
+                    .to_string();
+                let conn: &rusqlite::Connection = self.db.conn();
+                let tools = PatternTools::new(conn);
+                let suggestions = tools.suggest_next(&current_state).map_err(internal)?;
+                Ok(json!({"suggestions": serde_json::to_value(&suggestions).map_err(internal)?, "count": suggestions.len()}))
+            }
+            "confirm_pattern_execution" => {
+                let pattern_id = args
+                    .get("pattern_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'pattern_id'"))?
+                    .to_string();
+                let modifications: Option<Vec<ActionStep>> = match args.get("modifications") {
+                    Some(v) if !v.is_null() => Some(
+                        serde_json::from_value(v.clone())
+                            .map_err(|e| invalid(&format!("invalid 'modifications': {e}")))?,
+                    ),
+                    _ => None,
+                };
+                let conn: &rusqlite::Connection = self.db.conn();
+                let tools = PatternTools::new(conn);
+                let r = tools.confirm(&pattern_id, modifications).map_err(internal)?;
+                Ok(serde_json::to_value(r).map_err(internal)?)
+            }
+            "record_pattern_outcome" => {
+                let pattern_id = args
+                    .get("pattern_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'pattern_id'"))?
+                    .to_string();
+                let success = args
+                    .get("success")
+                    .and_then(|v| v.as_bool())
+                    .ok_or_else(|| invalid("missing 'success'"))?;
+                let duration_ms = args.get("duration_ms").and_then(|v| v.as_i64());
+                let conn: &rusqlite::Connection = self.db.conn();
+                let tools = PatternTools::new(conn);
+                tools
+                    .record(&pattern_id, success, duration_ms)
+                    .map_err(internal)?;
+                Ok(json!({"recorded": true, "pattern_id": pattern_id, "success": success}))
             }
             other => Err(JsonRpcError {
                 code: ERR_METHOD_NOT_FOUND,

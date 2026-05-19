@@ -16,9 +16,11 @@ use openxgram_cli::init::{self, InitOpts};
 use openxgram_cli::mcp_serve;
 use openxgram_cli::memory::{self, MemoryAction};
 use openxgram_cli::migrate::{self, MigrateOpts};
+use openxgram_cli::mistake::{self, MistakeAction};
 use openxgram_cli::notify::{self, ChannelMode, NotifyAction};
 use openxgram_cli::notify_setup::{self, SetupOpts, SetupTarget};
 use openxgram_cli::orchestration::{self, ChainAction, ScheduleAction};
+use openxgram_cli::pattern_cmd::{self, PatternAction};
 use openxgram_cli::patterns::{self, PatternsAction};
 use openxgram_cli::payment::{self, PaymentAction};
 use openxgram_cli::peer::{self, PeerAction};
@@ -31,6 +33,7 @@ use openxgram_cli::traits::{self, TraitsAction};
 use openxgram_cli::tui::{self, TuiOpts};
 use openxgram_cli::uninstall::{self, UninstallOpts};
 use openxgram_cli::vault::{self, VaultAction};
+use openxgram_cli::wiki::{self, WikiAction};
 use openxgram_cli::wizard;
 use openxgram_keystore::{FsKeystore, Keystore};
 use openxgram_manifest::MachineRole;
@@ -322,6 +325,30 @@ enum Commands {
         data_dir: Option<PathBuf>,
         #[command(subcommand)]
         action: PatternsCli,
+    },
+
+    /// L2 위키 페이지 관리 (PRD-OpenXgram §4.1) — read/write/link/search/list
+    Wiki {
+        #[arg(long, global = true)]
+        data_dir: Option<PathBuf>,
+        #[command(subcommand)]
+        action: WikiCli,
+    },
+
+    /// 실수 레지스트리 (PRD-OpenXgram §4.2, W 규칙 1) — check/log/find/resolve
+    Mistake {
+        #[arg(long, global = true)]
+        data_dir: Option<PathBuf>,
+        #[command(subcommand)]
+        action: MistakeCli,
+    },
+
+    /// 패턴 매칭 엔진 (PRD-OpenXgram §4.3, W 규칙 2) — match/suggest/confirm/record
+    Pattern {
+        #[arg(long, global = true)]
+        data_dir: Option<PathBuf>,
+        #[command(subcommand)]
+        action: PatternCli,
     },
 
     /// 인터랙티브 init 마법사 (state machine — Welcome/MachineId/Confirm/Done)
@@ -1645,6 +1672,122 @@ enum PatternsCli {
 }
 
 #[derive(Subcommand, Debug)]
+enum WikiCli {
+    /// 위키 페이지 읽기
+    Read {
+        /// `<type>/<slug>` (예: entity/alice)
+        topic: String,
+    },
+    /// 위키 페이지 생성/업데이트
+    Write {
+        /// `<type>/<slug>`
+        topic: String,
+        /// markdown 본문
+        #[arg(long)]
+        content: String,
+        /// entity / concept / comparison / other (미지정 시 topic prefix)
+        #[arg(long)]
+        page_type: Option<String>,
+    },
+    /// 두 페이지 간 cross-link
+    Link {
+        from: String,
+        to: String,
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// LIKE 검색 (k 기본 5)
+    Search {
+        #[arg(long)]
+        query: String,
+        #[arg(long)]
+        k: Option<usize>,
+    },
+    /// 위키 페이지 목록 (page_type 으로 필터링)
+    List {
+        #[arg(long)]
+        page_type: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum MistakeCli {
+    /// planned_action 으로 유사 과거 실수 top-K 조회 + 경고
+    Check {
+        #[arg(long)]
+        planned: String,
+        #[arg(long)]
+        k: Option<usize>,
+    },
+    /// 실수 등록
+    Log {
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        intended: String,
+        #[arg(long)]
+        outcome: String,
+        #[arg(long)]
+        reason: String,
+        #[arg(long)]
+        lesson: String,
+        #[arg(long)]
+        severity: Option<u8>,
+        #[arg(long)]
+        related_wiki: Option<String>,
+    },
+    /// 유사 실수 검색
+    Find {
+        #[arg(long)]
+        situation: String,
+        #[arg(long)]
+        k: Option<usize>,
+    },
+    /// 실수 해결 완료 표시
+    Resolve {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        resolution: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum PatternCli {
+    /// 유사 행동 패턴 top-K
+    Match {
+        #[arg(long)]
+        action: String,
+        #[arg(long)]
+        k: Option<usize>,
+        #[arg(long)]
+        min_similarity: Option<f64>,
+    },
+    /// current_state 와 매칭되는 패턴의 다음 단계 추천
+    Suggest {
+        #[arg(long)]
+        state: String,
+    },
+    /// 패턴 실행 확정 (modifications JSON 옵션)
+    Confirm {
+        #[arg(long)]
+        id: String,
+        /// JSON array of {step, tool?, args?} — 미지정 시 원본 시퀀스
+        #[arg(long)]
+        modifications: Option<String>,
+    },
+    /// 패턴 실행 결과 기록
+    Record {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        success: bool,
+        #[arg(long)]
+        duration_ms: Option<i64>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 enum AuditCli {
     /// chain 무결성 + 체크포인트 서명 검증
     Verify,
@@ -1679,6 +1822,94 @@ impl From<PatternsCli> for PatternsAction {
                 classification: classification.into(),
             },
         }
+    }
+}
+
+impl From<WikiCli> for WikiAction {
+    fn from(c: WikiCli) -> Self {
+        match c {
+            WikiCli::Read { topic } => WikiAction::Read { topic },
+            WikiCli::Write {
+                topic,
+                content,
+                page_type,
+            } => WikiAction::Write {
+                topic,
+                content,
+                page_type,
+            },
+            WikiCli::Link { from, to, reason } => WikiAction::Link { from, to, reason },
+            WikiCli::Search { query, k } => WikiAction::Search { query, k },
+            WikiCli::List { page_type } => WikiAction::List { page_type },
+        }
+    }
+}
+
+impl From<MistakeCli> for MistakeAction {
+    fn from(c: MistakeCli) -> Self {
+        match c {
+            MistakeCli::Check { planned, k } => MistakeAction::Check { planned, k },
+            MistakeCli::Log {
+                session_id,
+                intended,
+                outcome,
+                reason,
+                lesson,
+                severity,
+                related_wiki,
+            } => MistakeAction::Log {
+                session_id,
+                intended,
+                outcome,
+                reason,
+                lesson,
+                severity,
+                related_wiki,
+            },
+            MistakeCli::Find { situation, k } => MistakeAction::Find { situation, k },
+            MistakeCli::Resolve { id, resolution } => MistakeAction::Resolve { id, resolution },
+        }
+    }
+}
+
+impl TryFrom<PatternCli> for PatternAction {
+    type Error = anyhow::Error;
+    fn try_from(c: PatternCli) -> anyhow::Result<Self> {
+        Ok(match c {
+            PatternCli::Match {
+                action,
+                k,
+                min_similarity,
+            } => PatternAction::Match {
+                new_action: action,
+                k,
+                min_similarity,
+            },
+            PatternCli::Suggest { state } => PatternAction::Suggest {
+                current_state: state,
+            },
+            PatternCli::Confirm { id, modifications } => {
+                let parsed = match modifications {
+                    Some(s) => Some(serde_json::from_str(&s).map_err(|e| {
+                        anyhow::anyhow!("--modifications JSON 파싱 실패: {e}")
+                    })?),
+                    None => None,
+                };
+                PatternAction::Confirm {
+                    pattern_id: id,
+                    modifications: parsed,
+                }
+            }
+            PatternCli::Record {
+                id,
+                success,
+                duration_ms,
+            } => PatternAction::Record {
+                pattern_id: id,
+                success,
+                duration_ms,
+            },
+        })
     }
 }
 
@@ -2243,6 +2474,24 @@ async fn main() -> anyhow::Result<()> {
         Commands::Patterns { data_dir, action } => {
             let dir = resolve_data_dir(data_dir)?;
             patterns::run_patterns(&dir, action.into())?;
+        }
+
+        Commands::Wiki { data_dir, action } => {
+            let dir = resolve_data_dir(data_dir)?;
+            let act: WikiAction = action.into();
+            wiki::run_wiki(&dir, act).await?;
+        }
+
+        Commands::Mistake { data_dir, action } => {
+            let dir = resolve_data_dir(data_dir)?;
+            let act: MistakeAction = action.into();
+            mistake::run_mistake(&dir, act)?;
+        }
+
+        Commands::Pattern { data_dir, action } => {
+            let dir = resolve_data_dir(data_dir)?;
+            let act: PatternAction = action.try_into()?;
+            pattern_cmd::run_pattern(&dir, act)?;
         }
 
         Commands::Audit { data_dir, cmd } => {

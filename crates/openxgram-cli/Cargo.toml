@@ -38,6 +38,9 @@ openxgram-transport = { path = "../openxgram-transport" }
 openxgram-vault = { path = "../openxgram-vault" }
 openxgram-eas = { path = "../openxgram-eas" }
 openxgram-indexer-sdk = { path = "../openxgram-indexer-sdk" }
+openxgram-wiki = { path = "../openxgram-wiki" }
+openxgram-mistakes = { path = "../openxgram-mistakes" }
+openxgram-patterns = { path = "../openxgram-patterns" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
