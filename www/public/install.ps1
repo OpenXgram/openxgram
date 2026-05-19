@@ -9,6 +9,15 @@
 
 $ErrorActionPreference = 'Stop'
 
+# UTF-8 출력 강제 — Windows PowerShell 5.1의 기본 인코딩(CP949 등 OEM)에서
+# 한글이 깨지는 문제 해결. PowerShell 7은 기본 UTF-8이라 무영향.
+try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+} catch {
+    # 인코딩 변경 실패해도 install 자체는 진행 (메시지만 깨짐).
+}
+
 $REPO     = 'OpenXgram/openxgram'
 $VERSION  = if ($env:OPENXGRAM_VERSION) { $env:OPENXGRAM_VERSION } else { 'latest' }
 $INSTALL  = if ($env:OPENXGRAM_INSTALL_DIR) { $env:OPENXGRAM_INSTALL_DIR } else { Join-Path $env:USERPROFILE 'xgram' }
