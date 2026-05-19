@@ -1,4 +1,4 @@
-import { createResource, createSignal, Show } from "solid-js";
+import { createResource, createSignal, For, Show } from "solid-js";
 import { invoke } from "@/api/client";
 import { useI18n } from "../i18n";
 
@@ -6,6 +6,13 @@ interface NotifyStatus {
   telegram_configured: boolean;
   discord_configured: boolean;
   discord_webhook_configured: boolean;
+}
+
+interface DiscordGuild {
+  id: string;
+  name: string;
+  icon?: string | null;
+  owner?: boolean;
 }
 
 async function fetchStatus(): Promise<NotifyStatus> {
@@ -41,10 +48,10 @@ function TelegramWizard(props: { onSaved: () => void }) {
     setError(null);
     setBusy(true);
     try {
-      const id = await invoke<string | null>("notify_telegram_detect_chat", {
+      const id = await invoke<number | null>("notify_telegram_detect_chat", {
         token: token(),
       });
-      if (id) setChatId(id);
+      if (id !== null && id !== undefined) setChatId(String(id));
       else setError("아직 메시지가 도착하지 않았습니다 — 봇에게 /start 보낸 뒤 다시 시도");
     } catch (e) {
       setError(String(e));
@@ -57,12 +64,12 @@ function TelegramWizard(props: { onSaved: () => void }) {
     setError(null);
     setBusy(true);
     try {
-      const path = await invoke<string>("notify_telegram_save", {
+      const res = await invoke<{ saved_at: string }>("notify_telegram_save", {
         token: token(),
-        chatId: chatId(),
-        testText: "OpenXgram GUI 연결 성공 ✓",
+        chat_id: chatId(),
+        test_text: "OpenXgram GUI 연결 성공 ✓",
       });
-      setSavedAt(path);
+      setSavedAt(res.saved_at);
       props.onSaved();
     } catch (e) {
       setError(String(e));
@@ -137,9 +144,11 @@ function TelegramWizard(props: { onSaved: () => void }) {
 function DiscordWizard(props: { onSaved: () => void }) {
   const { t } = useI18n();
   const [token, setToken] = createSignal("");
+  const [guildId, setGuildId] = createSignal("");
   const [channelId, setChannelId] = createSignal("");
   const [webhookUrl, setWebhookUrl] = createSignal("");
   const [botLabel, setBotLabel] = createSignal<string | null>(null);
+  const [guilds, setGuilds] = createSignal<DiscordGuild[] | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
   const [savedAt, setSavedAt] = createSignal<string | null>(null);
@@ -153,6 +162,17 @@ function DiscordWizard(props: { onSaved: () => void }) {
         { token: token() },
       );
       setBotLabel(res.bot_label);
+      // 검증되면 곧바로 가입 서버 자동 조회 — guild_id 수동 입력 부담 제거.
+      try {
+        const gs = await invoke<DiscordGuild[]>("notify_discord_guilds", {
+          token: token(),
+        });
+        setGuilds(gs);
+        if (gs.length === 1) setGuildId(gs[0].id);
+      } catch (ge) {
+        setGuilds([]);
+        console.warn("guilds fetch failed", ge);
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -164,13 +184,14 @@ function DiscordWizard(props: { onSaved: () => void }) {
     setError(null);
     setBusy(true);
     try {
-      const path = await invoke<string>("notify_discord_save", {
+      const res = await invoke<{ saved_at: string }>("notify_discord_save", {
         token: token(),
-        channelId: channelId() || null,
-        webhookUrl: webhookUrl() || null,
-        testText: webhookUrl() ? "OpenXgram GUI 연결 성공 ✓" : null,
+        guild_id: guildId() || null,
+        channel_id: channelId() || null,
+        webhook_url: webhookUrl() || null,
+        test_text: webhookUrl() ? "OpenXgram GUI 연결 성공 ✓" : null,
       });
-      setSavedAt(path);
+      setSavedAt(res.saved_at);
       props.onSaved();
     } catch (e) {
       setError(String(e));
@@ -182,6 +203,17 @@ function DiscordWizard(props: { onSaved: () => void }) {
   return (
     <div class="card">
       <h3>{t("notify.section.discord")}</h3>
+
+      <p class="hint">
+        <a
+          href="https://discord.com/developers/applications"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Discord Developer Portal
+        </a>
+        {" → New Application → Bot 탭 → Reset Token → 토큰 복사"}
+      </p>
 
       <div class="form-row">
         <label>{t("notify.token.label")}</label>
@@ -203,11 +235,41 @@ function DiscordWizard(props: { onSaved: () => void }) {
 
       <Show when={botLabel()}>
         <div class="form-row" style="margin-top: 10px;">
+          <label>{t("notify.guild.label")}</label>
+          <Show
+            when={guilds() !== null && (guilds() ?? []).length > 0}
+            fallback={
+              <Show
+                when={guilds() !== null}
+                fallback={<p class="hint">{t("notify.guild.fetching")}</p>}
+              >
+                <p class="hint">{t("notify.guild.empty")}</p>
+              </Show>
+            }
+          >
+            <select
+              value={guildId()}
+              onChange={(e) => setGuildId(e.currentTarget.value)}
+            >
+              <option value="">{t("notify.guild.placeholder")}</option>
+              <For each={guilds() ?? []}>
+                {(g) => (
+                  <option value={g.id}>
+                    {g.name} ({g.id})
+                  </option>
+                )}
+              </For>
+            </select>
+          </Show>
+        </div>
+
+        <div class="form-row">
           <label>{t("notify.channel_id.label")}</label>
           <input
             type="text"
             value={channelId()}
             onInput={(e) => setChannelId(e.currentTarget.value)}
+            placeholder="(생략 가능 — 개발자 모드 → 채널 우클릭 → ID 복사)"
           />
         </div>
         <div class="form-row">
@@ -216,6 +278,7 @@ function DiscordWizard(props: { onSaved: () => void }) {
             type="text"
             value={webhookUrl()}
             onInput={(e) => setWebhookUrl(e.currentTarget.value)}
+            placeholder="(생략 가능 — 채널 설정 → 연동 → 웹훅 만들기)"
           />
         </div>
         <div class="row-actions">

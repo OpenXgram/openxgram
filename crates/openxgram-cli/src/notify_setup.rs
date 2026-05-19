@@ -178,15 +178,31 @@ async fn run_discord_setup(opts: SetupOpts) -> Result<()> {
         wait_for_enter("서버에 초대했으면 Enter ↵ ")?;
     }
 
-    println!("\n3단계 ─ 채널 ID (옵션, 개발자 모드 → 채널 우클릭 → ID 복사)");
+    println!("\n3단계 ─ 봇이 가입한 서버 자동 조회");
+    let guilds = discord_list_guilds(&api_base, &token).await.ok();
+    if let Some(gs) = &guilds {
+        if gs.is_empty() {
+            println!("  (봇이 아직 어떤 서버에도 초대되지 않았습니다 — 2단계 OAuth URL 재확인)");
+        } else {
+            println!("  ✓ {} 개 서버 발견:", gs.len());
+            for (i, g) in gs.iter().enumerate() {
+                println!("    [{}] {}  (id: {})", i + 1, g.name, g.id);
+            }
+            println!("  (guild_id 자동 저장은 v0.3+ — 현재는 참조용)");
+        }
+    } else {
+        println!("  (guild 조회 실패 — 토큰 권한 확인 필요. 마법사 계속.)");
+    }
+
+    println!("\n4단계 ─ 채널 ID (옵션, 개발자 모드 → 채널 우클릭 → ID 복사)");
     let channel_id = read_optional_or_env("채널 ID (생략 가능, Enter 만): ", SETUP_CHANNEL_ENV)?;
 
-    println!("\n4단계 ─ Webhook URL (옵션, 송신용)");
+    println!("\n5단계 ─ Webhook URL (옵션, 송신용)");
     println!("  채널 설정 → 연동 → 웹훅 만들기 → URL 복사");
     let webhook_url =
         read_optional_or_env("webhook URL (생략 가능, Enter 만): ", SETUP_WEBHOOK_ENV)?;
 
-    println!("\n5단계 ─ 저장 + 테스트");
+    println!("\n6단계 ─ 저장 + 테스트");
     let mut config = NotifyConfig::load(opts.data_dir.as_deref())?;
     config.discord = Some(DiscordConfig {
         bot_token: token.clone(),
@@ -383,6 +399,39 @@ pub async fn discord_get_me(api_base: &str, token: &str) -> Result<DiscordUserRe
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
         bail!("Discord /users/@me HTTP {} : {}", status.as_u16(), body);
+    }
+    Ok(resp.json().await?)
+}
+
+#[derive(Debug, Deserialize, serde::Serialize, Clone)]
+pub struct DiscordGuild {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub owner: bool,
+}
+
+/// `GET /users/@me/guilds` — 봇이 가입한 서버 목록.
+/// 봇이 아직 어떤 서버에도 초대되지 않았다면 빈 배열.
+pub async fn discord_list_guilds(api_base: &str, token: &str) -> Result<Vec<DiscordGuild>> {
+    let url = format!("{}/users/@me/guilds", api_base.trim_end_matches('/'));
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .header("Authorization", format!("Bot {token}"))
+        .header("User-Agent", "OpenXgram-Setup/0.2")
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        bail!(
+            "Discord /users/@me/guilds HTTP {} : {}",
+            status.as_u16(),
+            body
+        );
     }
     Ok(resp.json().await?)
 }

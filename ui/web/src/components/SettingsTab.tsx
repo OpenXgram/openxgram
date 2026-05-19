@@ -3,6 +3,7 @@ import { useI18n } from "../i18n";
 import { ScheduleView } from "./ScheduleView";
 import { ChainView } from "./ChainView";
 import { PaymentLimitsView } from "./PaymentLimitsView";
+import { NotifySetup } from "./NotifySetup";
 import {
   getBearer,
   getDaemonUrl,
@@ -17,7 +18,7 @@ import {
 //   - Chain    (메시지 체인 YAML)
 //   - Payment  (일일 결제 한도 + MFA)
 //   - Locale   (한국어/English 토글)
-type Section = "daemon" | "schedule" | "chain" | "payment" | "locale";
+type Section = "daemon" | "notify" | "schedule" | "chain" | "payment" | "locale";
 
 function DaemonSection() {
   const { t } = useI18n();
@@ -110,6 +111,7 @@ export function SettingsTab() {
 
   const sections: { id: Section; label: string }[] = [
     { id: "daemon", label: t("settings.section.daemon") },
+    { id: "notify", label: t("settings.section.notify") },
     { id: "schedule", label: t("settings.section.schedule") },
     { id: "chain", label: t("settings.section.chain") },
     { id: "payment", label: t("settings.section.payment") },
@@ -131,6 +133,9 @@ export function SettingsTab() {
       </nav>
       <Show when={section() === "daemon"}>
         <DaemonSection />
+      </Show>
+      <Show when={section() === "notify"}>
+        <NotifySetup />
       </Show>
       <Show when={section() === "schedule"}>
         <ScheduleView />

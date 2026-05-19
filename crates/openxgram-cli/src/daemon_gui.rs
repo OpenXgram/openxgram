@@ -212,6 +212,29 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
             get(gui_payment_get_limit).put(gui_payment_set_limit),
         )
         .route("/v1/gui/notify/status", get(gui_notify_status))
+        // Discord 마법사 — token 검증 → 봇이 가입한 guild 목록 → 저장+테스트.
+        .route(
+            "/v1/gui/notify/discord/validate",
+            post(gui_notify_discord_validate),
+        )
+        .route(
+            "/v1/gui/notify/discord/guilds",
+            post(gui_notify_discord_guilds),
+        )
+        .route("/v1/gui/notify/discord/save", post(gui_notify_discord_save))
+        // Telegram 마법사 — token 검증 → chat_id 자동 감지 → 저장+테스트.
+        .route(
+            "/v1/gui/notify/telegram/validate",
+            post(gui_notify_telegram_validate),
+        )
+        .route(
+            "/v1/gui/notify/telegram/detect_chat",
+            post(gui_notify_telegram_detect_chat),
+        )
+        .route(
+            "/v1/gui/notify/telegram/save",
+            post(gui_notify_telegram_save),
+        )
         .route(
             "/v1/gui/schedule",
             get(gui_schedule_list).post(gui_schedule_create),
@@ -553,6 +576,174 @@ async fn gui_notify_status(
             .and_then(|d| d.webhook_url.as_deref())
             .map(|s| !s.is_empty())
             .unwrap_or(false),
+    }))
+}
+
+// ── Notify wizard (Discord/Telegram) HTTP endpoints ─────────────────────
+// 동작: token 검증 / guild 자동조회 / 저장+테스트.
+// Vault 저장은 notify.toml 만 갱신 (xgram setup discord CLI 와 동일 경로).
+
+#[derive(Debug, Deserialize)]
+struct NotifyTokenBody {
+    token: String,
+}
+
+#[derive(Debug, Serialize)]
+struct DiscordValidateResp {
+    bot_label: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DiscordSaveBody {
+    token: String,
+    #[serde(default)]
+    guild_id: Option<String>,
+    #[serde(default)]
+    channel_id: Option<String>,
+    #[serde(default)]
+    webhook_url: Option<String>,
+    #[serde(default)]
+    test_text: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct SavedAtResp {
+    saved_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct TelegramValidateResp {
+    bot_username: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TelegramSaveBody {
+    token: String,
+    chat_id: String,
+    #[serde(default)]
+    test_text: Option<String>,
+}
+
+async fn gui_notify_discord_validate(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<NotifyTokenBody>,
+) -> Result<Json<DiscordValidateResp>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let api_base = crate::notify_setup::discord_api_base();
+    let bot = crate::notify_setup::discord_get_me(&api_base, &body.token)
+        .await
+        .map_err(|e| internal(&format!("discord validate: {e}")))?;
+    let label = match (&bot.username, &bot.discriminator) {
+        (Some(u), Some(d)) if d != "0" => format!("{u}#{d}"),
+        (Some(u), _) => u.clone(),
+        _ => "(unknown)".into(),
+    };
+    Ok(Json(DiscordValidateResp { bot_label: label }))
+}
+
+async fn gui_notify_discord_guilds(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<NotifyTokenBody>,
+) -> Result<Json<Vec<crate::notify_setup::DiscordGuild>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let api_base = crate::notify_setup::discord_api_base();
+    let guilds = crate::notify_setup::discord_list_guilds(&api_base, &body.token)
+        .await
+        .map_err(|e| internal(&format!("discord guilds: {e}")))?;
+    Ok(Json(guilds))
+}
+
+async fn gui_notify_discord_save(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<DiscordSaveBody>,
+) -> Result<Json<SavedAtResp>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut config = crate::notify_setup::NotifyConfig::load(Some(state.data_dir.as_ref()))
+        .map_err(|e| internal(&format!("notify cfg load: {e}")))?;
+    // guild_id 는 channel_id 가 비어 있을 때 fallback 식별자로 함께 저장 (참조용).
+    let effective_channel = body
+        .channel_id
+        .clone()
+        .or_else(|| body.guild_id.clone())
+        .unwrap_or_default();
+    config.discord = Some(crate::notify_setup::DiscordConfig {
+        bot_token: body.token.clone(),
+        channel_id: if effective_channel.is_empty() {
+            None
+        } else {
+            Some(effective_channel)
+        },
+        webhook_url: body.webhook_url.clone(),
+    });
+    let saved_path = config
+        .save(Some(state.data_dir.as_ref()))
+        .map_err(|e| internal(&format!("notify cfg save: {e}")))?;
+
+    if let (Some(url), Some(text)) = (&body.webhook_url, &body.test_text) {
+        crate::notify_setup::discord_send_webhook(url, text)
+            .await
+            .map_err(|e| internal(&format!("discord webhook test: {e}")))?;
+    }
+    Ok(Json(SavedAtResp {
+        saved_at: saved_path.display().to_string(),
+    }))
+}
+
+async fn gui_notify_telegram_validate(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<NotifyTokenBody>,
+) -> Result<Json<TelegramValidateResp>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let api_base = crate::notify_setup::telegram_api_base();
+    let bot = crate::notify_setup::telegram_get_me(&api_base, &body.token)
+        .await
+        .map_err(|e| internal(&format!("telegram validate: {e}")))?;
+    Ok(Json(TelegramValidateResp {
+        bot_username: bot.username.unwrap_or_else(|| "(unknown)".into()),
+    }))
+}
+
+async fn gui_notify_telegram_detect_chat(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<NotifyTokenBody>,
+) -> Result<Json<Option<i64>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let api_base = crate::notify_setup::telegram_api_base();
+    let chat = crate::notify_setup::telegram_detect_chat_id(&api_base, &body.token, 1)
+        .await
+        .map_err(|e| internal(&format!("telegram detect_chat: {e}")))?;
+    Ok(Json(chat))
+}
+
+async fn gui_notify_telegram_save(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<TelegramSaveBody>,
+) -> Result<Json<SavedAtResp>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut config = crate::notify_setup::NotifyConfig::load(Some(state.data_dir.as_ref()))
+        .map_err(|e| internal(&format!("notify cfg load: {e}")))?;
+    config.telegram = Some(crate::notify_setup::TelegramConfig {
+        bot_token: body.token.clone(),
+        chat_id: body.chat_id.clone(),
+    });
+    let saved_path = config
+        .save(Some(state.data_dir.as_ref()))
+        .map_err(|e| internal(&format!("notify cfg save: {e}")))?;
+
+    if let Some(text) = &body.test_text {
+        let api_base = crate::notify_setup::telegram_api_base();
+        crate::notify_setup::telegram_send(&api_base, &body.token, &body.chat_id, text)
+            .await
+            .map_err(|e| internal(&format!("telegram test: {e}")))?;
+    }
+    Ok(Json(SavedAtResp {
+        saved_at: saved_path.display().to_string(),
     }))
 }
 

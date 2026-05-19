@@ -106,6 +106,36 @@ const ROUTES: Record<string, Route> = {
 
   // Notify
   notify_status: { method: "GET", path: "/notify/status" },
+  notify_discord_validate: {
+    method: "POST",
+    path: "/notify/discord/validate",
+    body: true,
+  },
+  notify_discord_guilds: {
+    method: "POST",
+    path: "/notify/discord/guilds",
+    body: true,
+  },
+  notify_discord_save: {
+    method: "POST",
+    path: "/notify/discord/save",
+    body: true,
+  },
+  notify_telegram_validate: {
+    method: "POST",
+    path: "/notify/telegram/validate",
+    body: true,
+  },
+  notify_telegram_detect_chat: {
+    method: "POST",
+    path: "/notify/telegram/detect_chat",
+    body: true,
+  },
+  notify_telegram_save: {
+    method: "POST",
+    path: "/notify/telegram/save",
+    body: true,
+  },
 
   // Schedule
   schedule_list: { method: "GET", path: "/schedule", emptyAs: [] },
