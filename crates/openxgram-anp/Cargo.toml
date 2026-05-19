@@ -1,0 +1,34 @@
+[package]
+name = "openxgram-anp"
+description = "ANP (Agent Network Protocol) 호환 어댑터 + did:wba resolver/client (Phase v0.8)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# 이 crate 는 PRD 작업 룰상 워크스페이스 멤버에 추가하지 않은 채로 생성된다.
+# 워크스페이스에 편입시키려면 별도 PR 에서 ../../Cargo.toml 의
+# [workspace.members] 에 "crates/openxgram-anp" 추가 (현재는 NOT 멤버).
+# 따라서 path 의존성은 그대로 두되 버전·workspace 상속은 사용하지 않는다.
+[dependencies]
+openxgram-core = { path = "../openxgram-core" }
+openxgram-did = { path = "../openxgram-did" }
+openxgram-keystore = { path = "../openxgram-keystore" }
+
+reqwest = { workspace = true, features = ["json"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+url = "2"
+sha2 = "0.10"
+hex = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+mockito = "1"

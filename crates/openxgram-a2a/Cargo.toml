@@ -1,0 +1,33 @@
+[package]
+name = "openxgram-a2a"
+description = "A2A (Agent-to-Agent) compatible client adapter for OpenXgram (PRD §4.5)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+openxgram-core = { path = "../openxgram-core" }
+
+reqwest = { workspace = true, features = ["json", "stream"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+url = "2"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+mockito = "1"
+
+# NOTE: This crate is NOT yet listed in the workspace `members` array.
+# Per task rules, the parent workspace `Cargo.toml` must NOT be modified by this work item;
+# the integration step (adding `crates/openxgram-a2a` to the workspace) is left to the
+# orchestrating commit. Until then, `cargo test -p openxgram-a2a` from the workspace root
+# will fail to resolve the package. Run tests after adding the crate to workspace members.

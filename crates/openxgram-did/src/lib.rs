@@ -316,3 +316,6 @@ mod tests {
         assert!(verify_vc(&tampered, &pk).is_err());
     }
 }
+
+/// did:wba — Web-Based Agent DID method (PRD §4.6 + A10)
+pub mod wba;

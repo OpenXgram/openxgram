@@ -1,0 +1,32 @@
+[package]
+name = "openxgram-marketplace"
+description = "OpenAgentX 마켓플레이스 클라이언트 (PRD-OpenXgram §4.4) — 사용자 LLM이 마켓 에이전트를 도구처럼 호출"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# 메인 통합 시 워크스페이스 루트 Cargo.toml의 workspace.members에 추가될 예정.
+# 그동안 standalone build를 위해 자체 [workspace] 선언.
+# (워크스페이스 통합 시 이 두 줄 + 아래 inline dep version 만 워크스페이스 상속으로 교체)
+[dependencies]
+# 의존성 최소화: vault/payment는 PaymentGateway trait의 production 구현체 (mcp_serve.rs)
+# 에서만 import하고, 본 crate에서는 trait만 노출 (dependency inversion).
+# (openxgram-core·vault·payment 자체가 workspace.dependencies에 묶여 있어, standalone
+# 빌드 시 path 의존을 추가하면 워크스페이스 상속 충돌 발생.)
+
+reqwest = { version = "0.13", features = ["json", "rustls", "webpki-roots"], default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+thiserror = "1"
+tracing = "0.1"
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+async-trait = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+mockito = "1"

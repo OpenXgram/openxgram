@@ -23,6 +23,9 @@ members = [
     "crates/openxgram-wiki",
     "crates/openxgram-mistakes",
     "crates/openxgram-patterns",
+    "crates/openxgram-marketplace",
+    "crates/openxgram-a2a",
+    "crates/openxgram-anp",
 ]
 # ui/tauri 는 platform 의존(webkit2gtk 등) 이라 워크스페이스 외부.
 # `cd ui/tauri && cargo tauri dev` 로 별도 빌드.
