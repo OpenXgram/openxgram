@@ -49,33 +49,15 @@ export function MemoryCard(props: { onBack: () => void }) {
       </Show>
 
       <Show when={tab() === "pattern"}>
-        <section class="card-section">
-          <h3>📈 패턴 보드 — 사양 §6 (M-5)</h3>
-          <p class="placeholder-note">
-            🤖 AI 발견 패턴 (confidence 점수) + 👤 사용자 추가 패턴 (검증 X — V-5).
-            예: "사용자는 오전 9시에 업무 시작", "OpenAgentX 결제는 항상 사용자 승인 받음".
-            백엔드 L3 Pattern 테이블 신설 필요.
-          </p>
-        </section>
+        <PatternSection />
       </Show>
 
       <Show when={tab() === "mistake"}>
-        <section class="card-section">
-          <h3>⚠️ AI 실수 기록 — 사양 §7 (M-13 V-9)</h3>
-          <p class="placeholder-note">
-            발견 방식 3가지: 👤 사용자 편집 diff / 🤖 LLM 충돌 감지 / 👤 사용자 명시 등록.
-            AI 객관화·자기 성장 추적. 백엔드 Mistake 테이블 + API 신설 필요.
-          </p>
-        </section>
+        <MistakeSection />
       </Show>
 
       <Show when={tab() === "trash"}>
-        <section class="card-section">
-          <h3>🗑️ 휴지통 — 사양 §9 (M-12 V-4)</h3>
-          <p class="placeholder-note">
-            30일 후 자동 영구 삭제 (1일 전 알림). 복원 / 지금 영구 삭제 액션.
-          </p>
-        </section>
+        <TrashSection />
       </Show>
     </div>
   );
@@ -136,6 +118,100 @@ function WikiSection() {
         <MemoryTab />
       </section>
     </>
+  );
+}
+
+function PatternSection() {
+  const [list, { refetch }] = createResource<any[]>(async () => { try { return await invoke<any[]>("memory_patterns_list"); } catch { return []; } });
+  const [desc, setDesc] = createSignal("");
+  const [type, setType] = createSignal("behavior");
+  async function add() {
+    if (!desc()) return;
+    try { await invoke("memory_pattern_add", { pattern_type: type(), description: desc(), source: "user", confidence: 1.0 }); setDesc(""); await refetch(); } catch {}
+  }
+  return (
+    <section class="card-section">
+      <h3>📈 패턴 보드 — 사양 §6 (M-5 V-5)</h3>
+      <div style="display:flex; gap:4px; margin-bottom:6px;">
+        <select value={type()} onChange={(e) => setType(e.currentTarget.value)}
+          style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;">
+          <option value="behavior">behavior</option>
+          <option value="utterance">utterance</option>
+          <option value="preference">preference</option>
+        </select>
+        <input value={desc()} onInput={(e) => setDesc(e.currentTarget.value)} placeholder="예: 사용자는 오전 9시에 업무 시작"
+          style="flex:1; padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+        <button class="link-btn" onClick={add}>+ 추가</button>
+      </div>
+      <For each={list() ?? []}>{(p: any) => (
+        <div style="font-size:12px; padding:4px 0; border-bottom:1px solid var(--border);">
+          <strong>[{p.pattern_type}]</strong> {p.description}
+          <span style="color:var(--text-3); margin-left:6px;">{p.source} · conf {p.confidence.toFixed(2)}</span>
+        </div>
+      )}</For>
+    </section>
+  );
+}
+
+function MistakeSection() {
+  const [list, { refetch }] = createResource<any[]>(async () => { try { return await invoke<any[]>("memory_mistakes_list"); } catch { return []; } });
+  const [title, setTitle] = createSignal("");
+  const [body, setBody] = createSignal("");
+  const [method, setMethod] = createSignal("user_explicit");
+  async function add() {
+    if (!title()) return;
+    try { await invoke("memory_mistake_add", { title: title(), description: body(), discovery_method: method() }); setTitle(""); setBody(""); await refetch(); } catch {}
+  }
+  return (
+    <section class="card-section">
+      <h3>⚠️ AI 실수 기록 — 사양 §7 (M-13 V-9)</h3>
+      <div style="display:flex; flex-direction:column; gap:4px; margin-bottom:6px;">
+        <input value={title()} onInput={(e) => setTitle(e.currentTarget.value)} placeholder="실수 제목"
+          style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+        <textarea value={body()} onInput={(e) => setBody(e.currentTarget.value)} placeholder="설명" rows={2}
+          style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+        <div style="display:flex; gap:4px;">
+          <select value={method()} onChange={(e) => setMethod(e.currentTarget.value)}
+            style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;">
+            <option value="user_edit_diff">user_edit_diff</option>
+            <option value="llm_conflict">llm_conflict</option>
+            <option value="user_explicit">user_explicit</option>
+          </select>
+          <button class="link-btn" onClick={add}>+ 추가</button>
+        </div>
+      </div>
+      <For each={list() ?? []}>{(m: any) => (
+        <div style="font-size:12px; padding:6px 0; border-bottom:1px solid var(--border);">
+          <strong>{m.title}</strong> {m.resolved ? "✓" : ""}
+          <div style="color:var(--text-3); font-size:11px;">[{m.discovery_method}] {m.created_at}</div>
+          <div>{m.description}</div>
+        </div>
+      )}</For>
+    </section>
+  );
+}
+
+function TrashSection() {
+  const [list, { refetch }] = createResource<any[]>(async () => { try { return await invoke<any[]>("wiki_trash_list"); } catch { return []; } });
+  async function restore(id: string) {
+    try { await invoke("wiki_trash_restore", { id }); await refetch(); } catch {}
+  }
+  return (
+    <section class="card-section">
+      <h3>🗑️ 휴지통 — 사양 §9 (M-12 V-4 — 30일 후 자동 영구 삭제)</h3>
+      <Show when={(list() ?? []).length === 0}>
+        <div style="font-size:12px; color:var(--text-3);">휴지통 비어 있음.</div>
+      </Show>
+      <For each={list() ?? []}>{(t: any) => (
+        <div style="display:flex; justify-content:space-between; font-size:12px; padding:6px 0; border-bottom:1px solid var(--border);">
+          <div>
+            <strong>{t.title}</strong>
+            <div style="color:var(--text-3); font-size:11px;">{t.page_type} · 삭제 {t.deleted_at} · 영구 삭제 {t.purge_at}</div>
+          </div>
+          <button class="link-btn" onClick={() => restore(t.id)}>↩ 복원</button>
+        </div>
+      )}</For>
+    </section>
   );
 }
 

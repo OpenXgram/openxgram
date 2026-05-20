@@ -1,9 +1,15 @@
 // UI-OPS-SPEC v1.0 — ⚙️ 운영·생존 (PRD §0 #7).
-// 사양 문서 작성 예정. UI-CARDS-IDENTITY v1.1 §2.7 책임 기반 placeholder.
 
+import { createResource, Show } from "solid-js";
+import { invoke } from "@/api/client";
 import { Breadcrumb } from "./Breadcrumb";
 
+async function fetchHealth(): Promise<any> { try { return await invoke("ops_health"); } catch { return null; } }
+async function fetchQ(): Promise<any> { try { return await invoke("cross_machine_queue"); } catch { return null; } }
+
 export function OpsCard(props: { onBack: () => void }) {
+  const [health] = createResource(fetchHealth);
+  const [q] = createResource(fetchQ);
   return (
     <div class="card-page">
       <Breadcrumb cardName="⚙️ 운영·생존" onReturn={props.onBack} />
@@ -18,8 +24,30 @@ export function OpsCard(props: { onBack: () => void }) {
       </div>
 
       <section class="card-section">
-        <h3>🖥️ Daemon 상태</h3>
-        <p class="placeholder-note">버전 · pid · uptime · 메모리 · 마지막 재시작 사유.</p>
+        <h3>🖥️ Daemon 상태 (ops/health)</h3>
+        <Show when={health()}>
+          <div class="card-section-row"><span class="label">release</span><span class="value">{health()?.version?.release}</span></div>
+          <div class="card-section-row"><span class="label">daemon</span><span class="value">{health()?.version?.daemon}</span></div>
+          <div class="card-section-row"><span class="label">사양</span><span class="value">{health()?.version?.spec_doc}</span></div>
+          <div class="card-section-row"><span class="label">PRD</span><span class="value">{health()?.version?.prd_doc}</span></div>
+          <div class="card-section-row"><span class="label">머신 alias</span><span class="value">{health()?.machine?.alias}</span></div>
+          <div class="card-section-row"><span class="label">Tailscale IP</span><span class="value mono">{health()?.machine?.tailscale_ip}</span></div>
+          <div class="card-section-row"><span class="label">GUI 호스팅</span><span class="value">{health()?.gui_hosting}</span></div>
+          <div class="card-section-row"><span class="label">백업 last</span><span class="value">{health()?.backup?.last_at || "—"}</span></div>
+          <div class="card-section-row"><span class="label">자동 업데이트</span><span class="value">{health()?.auto_update_channel}</span></div>
+          <div class="card-section-row"><span class="label">DB OK</span><span class="value">{health()?.self_check?.db_ok ? "✓" : "✗"}</span></div>
+        </Show>
+      </section>
+      <section class="card-section">
+        <h3>🌐 Cross-machine 큐 (S8 + V6)</h3>
+        <Show when={q()}>
+          <div class="card-section-row"><span class="label">backend</span><span class="value">{q()?.backend}</span></div>
+          <div class="card-section-row"><span class="label">queue path</span><span class="value mono">{q()?.queue_path}</span></div>
+          <div class="card-section-row"><span class="label">보관</span><span class="value">{q()?.max_retention_days} 일</span></div>
+          <div class="card-section-row"><span class="label">backoff</span><span class="value">{q()?.retry_backoff}</span></div>
+          <div class="card-section-row"><span class="label">dedup</span><span class="value">{q()?.dedup_strategy}</span></div>
+          <div class="card-section-row"><span class="label">pending</span><span class="value">{q()?.pending}</span></div>
+        </Show>
       </section>
 
       <section class="card-section">

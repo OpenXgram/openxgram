@@ -71,13 +71,7 @@ export function ChannelCard(props: { onBack: () => void }) {
       </Show>
 
       <Show when={tab() === "person"}>
-        <section class="card-section">
-          <h3>👤 사람 — 사양 §3.2 (M-6)</h3>
-          <p class="placeholder-note">
-            한 사람과의 대화 흐름 (어느 에이전트가 답했든). PersonId 식별 — 디스코드·텔레그램·슬랙 같은 사람 통합.
-            백엔드 `Person` 테이블 + `GET /v1/gui/channel/people` 신설 필요.
-          </p>
-        </section>
+        <PersonSection />
       </Show>
 
       <Show when={tab() === "register"}>
@@ -91,23 +85,51 @@ export function ChannelCard(props: { onBack: () => void }) {
       </Show>
 
       <Show when={tab() === "routing"}>
-        <section class="card-section">
-          <h3>🔀 라우팅 (인간 → 에이전트) — 사양 §3.4 (M-7 V-4)</h3>
-          <p class="placeholder-note">
-            멘션·키워드·채널별 규칙. "@researcher → ZAL-001", "디스코드 #ops → GCP-001" 등.
-            에이전트↔에이전트 라우팅은 💬 메신저 (다른 마스터). 백엔드 신설 필요.
-          </p>
-        </section>
+        <RoutingSection />
       </Show>
 
       <Show when={tab() === "moderation"}>
         <section class="card-section">
           <h3>🛡️ 모더레이션 — 사양 §3.5 (M-10 V-3)</h3>
           <p class="placeholder-note">
-            차단 · 신고 · 악성 패턴 감지 · 사람별 일일 메시지 한도. Phase 2.
+            차단 · 신고 · 악성 패턴 감지 · 사람별 일일 메시지 한도. Phase 2 — daemon worker 추가 필요.
           </p>
         </section>
       </Show>
     </div>
+  );
+}
+
+function PersonSection() {
+  const [people] = createResource<any[]>(async () => { try { return await invoke<any[]>("channel_people"); } catch { return []; } });
+  return (
+    <section class="card-section">
+      <h3>👤 사람 — 사양 §3.2 (M-6)</h3>
+      <p style="font-size:12px; color:var(--text-3);">PersonId 통합 (Discord·Telegram·Slack 같은 사람).</p>
+      <Show when={(people() ?? []).length === 0}>
+        <div style="font-size:12px; padding:4px 0;">아직 사람 메시지 없음 (봇이 메시지 받으면 표시).</div>
+      </Show>
+      <For each={people() ?? []}>{(p) => (
+        <div style="font-size:12px; padding:6px 0; border-bottom:1px solid var(--border);">
+          <strong>{p.person_id}</strong>
+          <span style="color:var(--text-3); margin-left:8px;">{p.msg_count} 메시지 · 마지막 {p.last_at}</span>
+        </div>
+      )}</For>
+    </section>
+  );
+}
+
+function RoutingSection() {
+  const [r] = createResource(async () => { try { return await invoke<any>("channel_routing"); } catch { return null; } });
+  return (
+    <section class="card-section">
+      <h3>🔀 라우팅 (인간 ↔ 에이전트) — 사양 §3.4 (M-7 V-4)</h3>
+      <Show when={r()}>
+        <div class="card-section-row"><span class="label">scope</span><span class="value">{r()?.scope}</span></div>
+        <div class="card-section-row"><span class="label">기본 멘션 트리거</span><span class="value mono">{r()?.default_mention_trigger}</span></div>
+        <div class="card-section-row"><span class="label">기본 권한</span><span class="value">{r()?.default_permission}</span></div>
+      </Show>
+      <p class="placeholder-note">에이전트↔에이전트 라우팅은 💬 메신저 V11 (다른 마스터). 사용자 규칙 추가 UI = Phase 2.</p>
+    </section>
   );
 }

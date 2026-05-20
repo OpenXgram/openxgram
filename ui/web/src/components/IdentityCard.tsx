@@ -1,4 +1,4 @@
-import { createResource, For, Show } from "solid-js";
+import { createResource, createSignal, For, Show } from "solid-js";
 import { invoke } from "@/api/client";
 import { Breadcrumb } from "./Breadcrumb";
 
@@ -20,9 +20,20 @@ interface StatusDto {
 async function fetchStatus(): Promise<StatusDto | null> {
   try { return await invoke<StatusDto>("status"); } catch { return null; }
 }
+async function fetchInfo(): Promise<any> { try { return await invoke("identity_info"); } catch { return null; } }
+async function fetchAudit(): Promise<any[]> { try { return await invoke("identity_audit"); } catch { return []; } }
+async function fetchAllowlist(): Promise<any> { try { return await invoke("identity_allowlist"); } catch { return null; } }
 
 export function IdentityCard(props: { onBack: () => void }) {
   const [s] = createResource(fetchStatus);
+  const [info] = createResource(fetchInfo);
+  const [audit] = createResource(fetchAudit);
+  const [allowlist, { refetch: refetchAllow }] = createResource(fetchAllowlist);
+  const [newDid, setNewDid] = createSignal("");
+  async function addAllow() {
+    if (!newDid()) return;
+    try { await invoke("identity_allowlist_add", { external_did: newDid(), note: "" }); setNewDid(""); await refetchAllow(); } catch {}
+  }
 
   function lockNow() {
     try {
@@ -104,25 +115,49 @@ export function IdentityCard(props: { onBack: () => void }) {
         <h3>🛡️ 외부 호출 허용 목록 (M-4 V-7)</h3>
         <div class="card-section-row">
           <span class="label">기본 정책</span>
-          <span class="value">default-deny (안티패턴 #6 준수)</span>
+          <span class="value">{allowlist()?.policy ?? "default-deny (N9)"}</span>
         </div>
-        <p class="placeholder-note">
-          M-4 3-가지 추가 경로 (마켓 게이트웨이 자동 / 개별 DID 추가 / 요청 큐) · V-7 즉시 적용 — Phase 2.
-          백엔드 `GET·POST /v1/gui/identity/allowlist` 필요.
-        </p>
+        <div class="card-section-row">
+          <span class="label">마켓 게이트웨이 자동 신뢰</span>
+          <span class="value">{allowlist()?.marketplace_gateway_auto_trusted ? "✓" : "✗"}</span>
+        </div>
+        <div class="card-section-row">
+          <span class="label">세션 override (V9)</span>
+          <span class="value">{allowlist()?.session_override ? "허용" : "불가 (마스터 1개)"}</span>
+        </div>
+        <Show when={(allowlist()?.entries ?? []).length === 0} fallback={null}>
+          <p style="font-size:12px; color:var(--text-3);">등록된 외부 DID 없음.</p>
+        </Show>
+        <For each={allowlist()?.entries ?? []}>{(e: any) => (
+          <div class="card-section-row"><span class="label">{e.external_did}</span><span class="value">{e.note}</span></div>
+        )}</For>
+        <div style="display:flex; gap:6px; margin-top:8px;">
+          <input value={newDid()} onInput={(e) => setNewDid(e.currentTarget.value)} placeholder="did:openxgram:0x..."
+            style="flex:1; padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+          <button class="link-btn" onClick={addAllow}>+ 추가</button>
+        </div>
       </section>
 
       <section class="card-section">
-        <h3>⚙️ 고급 메뉴</h3>
-        <button class="link-btn">🔐 BIP39 백업 단어 보기 (M-3)</button>
-        <button class="link-btn">🔄 비밀번호 변경</button>
-        <button class="link-btn">🆔 키 교체 / 새 DID 발급 (M-15)</button>
-        <button class="link-btn">📋 인증 감사 로그 (M-7)</button>
-        <button class="link-btn">🖥️ 머신 등록 (M-14)</button>
-        <button class="link-btn">📥 키스토어 복구</button>
-        <p class="placeholder-note">
-          각 기능은 Phase 2. 사양 = UI-IDENTITY-SPEC v1.0 §4~§8.
-        </p>
+        <h3>📋 인증 감사 로그 (M-7 영구)</h3>
+        <Show when={(audit() ?? []).length === 0}>
+          <p style="font-size:12px; color:var(--text-3);">감사 로그 없음.</p>
+        </Show>
+        <For each={(audit() ?? []).slice(0, 20)}>{(e: any) => (
+          <div style="font-size:11px; padding:4px 0; border-bottom:1px solid var(--border);">
+            <span style="color:var(--text-3);">{e.created_at}</span> · <strong>{e.event_type}</strong>
+          </div>
+        )}</For>
+      </section>
+
+      <section class="card-section">
+        <h3>⚙️ 기술 파라미터 (info endpoint)</h3>
+        <Show when={info()}>
+          <div class="card-section-row"><span class="label">Argon2id</span><span class="value">m={info()?.argon2?.m} · t={info()?.argon2?.t} · p={info()?.argon2?.p}</span></div>
+          <div class="card-section-row"><span class="label">auto_lock</span><span class="value">{info()?.auto_lock_minutes} 분 (M-2)</span></div>
+          <div class="card-section-row"><span class="label">session TTL</span><span class="value">{info()?.session_token_ttl_minutes} 분 (V-4)</span></div>
+          <div class="card-section-row"><span class="label">HD path</span><span class="value mono">{info()?.hd_path}</span></div>
+        </Show>
       </section>
     </div>
   );

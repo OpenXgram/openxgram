@@ -1,9 +1,13 @@
 // UI-EXTERNAL-AGENT-SPEC v1.0 — 🌐 외부 에이전트·결제 (PRD §0 #3).
-// 사양 작성 예정. UI-CARDS-IDENTITY v1.1 §2.3 책임 기반 placeholder.
 
+import { createResource, For, Show } from "solid-js";
+import { invoke } from "@/api/client";
 import { Breadcrumb } from "./Breadcrumb";
 
+async function fetchDirectory(): Promise<any> { try { return await invoke("external_directory"); } catch { return null; } }
+
 export function ExternalAgentCard(props: { onBack: () => void }) {
+  const [dir] = createResource(fetchDirectory);
   return (
     <div class="card-page">
       <Breadcrumb cardName="🌐 외부 에이전트" onReturn={props.onBack} />
@@ -18,8 +22,13 @@ export function ExternalAgentCard(props: { onBack: () => void }) {
       </div>
 
       <section class="card-section">
-        <h3>📚 외부 디렉토리</h3>
-        <p class="placeholder-note">OpenAgentX 마켓 · ANP discovery · A2A registry 통합. 시멘틱·평점·가격으로 외부 에이전트 찾기.</p>
+        <h3>📚 외부 디렉토리 (directory endpoint)</h3>
+        <Show when={dir()}>
+          <div class="card-section-row"><span class="label">프로토콜</span><span class="value">{(dir()?.protocols ?? []).join(" · ")}</span></div>
+          <div class="card-section-row"><span class="label">등록 에이전트</span><span class="value">{(dir()?.external_agents ?? []).length}</span></div>
+          <div class="card-section-row"><span class="label">아웃바운드 호출 이력</span><span class="value">{(dir()?.outbound_calls ?? []).length}</span></div>
+          <div class="card-section-row"><span class="label">인바운드 승인 대기</span><span class="value">{(dir()?.inbound_pending ?? []).length}</span></div>
+        </Show>
       </section>
 
       <section class="card-section">

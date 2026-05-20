@@ -1,7 +1,8 @@
-import { createSignal, Show } from "solid-js";
+import { createResource, createSignal, For, Show } from "solid-js";
 import { ScheduleView } from "./ScheduleView";
 import { ChainView } from "./ChainView";
 import { Breadcrumb } from "./Breadcrumb";
+import { invoke } from "@/api/client";
 
 // UI-AUTONOMY-SPEC v1.0 §3 — ⏰ 자율 행동 카드 (PRD §0 #6).
 // 4 섹션: Cron / SelfTrigger / Role 정책 (auto_respond 마스터) / 이력.
@@ -71,30 +72,72 @@ export function AutonomyCard(props: { onBack: () => void }) {
       </Show>
 
       <Show when={tab() === "history"}>
-        <section class="card-section">
-          <h3>📜 실행 이력 — 사양 §3.4 (M-10)</h3>
-          <p class="placeholder-note">
-            90일 보존. cron · SelfTrigger · reflection · 통합 timeline.
-            성공률 · 평균 토큰 · 평균 비용 · 실패 사유.
-          </p>
-        </section>
+        <HistorySection />
       </Show>
 
       <Show when={tab() === "limit"}>
-        <section class="card-section">
-          <h3>🚦 자율 한도 — 사양 §3.5 (M-7 V-9)</h3>
-          <p class="placeholder-note">
-            일·월·세션별 자율 행동 한도. 도달 시 휴면 또는 사용자 승인 요청.
-            메신저 탭 7 의 일·월 한도와 별도 (이쪽은 자율 trigger 횟수, 메신저는 결제 비용).
-          </p>
-        </section>
-        <section class="card-section">
-          <h3>🏖️ 휴가 모드 — 사양 §4.4 (M-12 V-10)</h3>
-          <p class="placeholder-note">
-            기간 지정 → 모든 자율 행동 일시정지. 채널 인박스만 받기 (사람 메시지). 종료 시 자동 재개.
-          </p>
-        </section>
+        <LimitsSection />
+        <VacationSection />
       </Show>
     </div>
+  );
+}
+
+function HistorySection() {
+  const [items] = createResource<any[]>(async () => { try { return await invoke<any[]>("autonomy_history"); } catch { return []; } });
+  return (
+    <section class="card-section">
+      <h3>📜 실행 이력 — 사양 §3.4 (M-10 agent_lifecycle_log)</h3>
+      <Show when={(items() ?? []).length === 0}>
+        <div style="font-size:12px; color:var(--text-3);">이력 없음.</div>
+      </Show>
+      <For each={(items() ?? []).slice(0, 30)}>{(e) => (
+        <div style="font-size:11px; padding:4px 0; border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-3);">{e.at}</span> · <strong>{e.action}</strong> · <code>{e.agent_id}</code>
+          {e.reason && <span style="color:var(--text-3); margin-left:6px;">({e.reason})</span>}
+        </div>
+      )}</For>
+    </section>
+  );
+}
+
+function LimitsSection() {
+  const [l] = createResource(async () => { try { return await invoke<any>("autonomy_limits"); } catch { return null; } });
+  return (
+    <section class="card-section">
+      <h3>🚦 자율 한도 — 사양 §3.5 (M-7 V-9)</h3>
+      <Show when={l()}>
+        <div class="card-section-row"><span class="label">일 한도</span><span class="value">{l()?.today_used} / {l()?.daily_trigger_limit} trigger</span></div>
+        <div class="card-section-row"><span class="label">월 한도</span><span class="value">{l()?.month_used} / {l()?.monthly_trigger_limit} trigger</span></div>
+        <p style="font-size:11px; color:var(--text-3);">{l()?.note}</p>
+      </Show>
+    </section>
+  );
+}
+
+function VacationSection() {
+  const [v, { refetch }] = createResource(async () => { try { return await invoke<any>("autonomy_vacation"); } catch { return null; } });
+  const [from, setFrom] = createSignal("");
+  const [to, setTo] = createSignal("");
+  async function setV() {
+    if (!from() || !to()) return;
+    try { await invoke("autonomy_vacation_set", { starts_at: from(), ends_at: to() }); await refetch(); } catch {}
+  }
+  return (
+    <section class="card-section">
+      <h3>🏖️ 휴가 모드 — 사양 §4.4 (M-12 V-10)</h3>
+      <Show when={v()}>
+        <div class="card-section-row"><span class="label">활성</span><span class="value">{v()?.active ? "✓" : "—"}</span></div>
+        <div class="card-section-row"><span class="label">시작</span><span class="value">{v()?.starts_at || "미설정"}</span></div>
+        <div class="card-section-row"><span class="label">종료</span><span class="value">{v()?.ends_at || "미설정"}</span></div>
+      </Show>
+      <div style="display:flex; gap:6px; margin-top:8px;">
+        <input type="datetime-local" value={from()} onInput={(e) => setFrom(e.currentTarget.value)}
+          style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+        <input type="datetime-local" value={to()} onInput={(e) => setTo(e.currentTarget.value)}
+          style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+        <button class="link-btn" onClick={setV}>설정</button>
+      </div>
+    </section>
   );
 }
