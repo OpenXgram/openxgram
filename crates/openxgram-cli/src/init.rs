@@ -102,6 +102,33 @@ pub fn run_init(opts: &InitOpts) -> Result<()> {
     println!("  address  : {}", signed.registered_keys[0].address);
     println!("  data_dir : {}", opts.data_dir.display());
     println!("  manifest : {}", target.display());
+
+    // ── 자동 연결 (PRD §1: install = MCP + hook 까지 한 번에) ──
+    // 모든 claude 세션이 어디서 켜져도 OpenXgram 자동 로드.
+    // XGRAM_INIT_SKIP_AUTO_WIRE=1 로 비활성 가능.
+    if std::env::var("XGRAM_INIT_SKIP_AUTO_WIRE").is_err() {
+        println!();
+        println!("자동 연결 (Claude Code 통합)");
+        // 1) MCP user scope 등록 — ~/.claude.json
+        match crate::mcp_install::run_install(
+            crate::mcp_install::McpScope::User,
+            &opts.data_dir,
+            false, // 비밀번호 평문 저장 안 함 (env 만 reference)
+            true,  // PATH lookup 사용 (portable)
+        ) {
+            Ok(()) => println!("  ✓ MCP 등록  : ~/.claude.json (user scope)"),
+            Err(e) => eprintln!("  ⚠ MCP 등록 실패 (수동: `xgram mcp-install --scope user`): {e}"),
+        }
+        // 2) SessionStart hook 설치 — ~/.claude/settings.json
+        match crate::mcp_install::run_install_hooks(&opts.data_dir, "user") {
+            Ok(()) => println!("  ✓ Hook 설치 : ~/.claude/settings.json"),
+            Err(e) => eprintln!("  ⚠ Hook 설치 실패 (수동: `xgram` 안에서 install_hooks 도구): {e}"),
+        }
+        println!();
+        println!("이제 어떤 폴더에서든 `claude` 시작 시 OpenXgram MCP 자동 로드.");
+        println!("(이 프로젝트만 등록하려면: `xgram mcp-install --scope project`)");
+    }
+
     Ok(())
 }
 
