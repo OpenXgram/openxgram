@@ -2,6 +2,7 @@ import { createMemo, createResource, createSignal, For, Show, onCleanup } from "
 import { invoke } from "@/api/client";
 import { useI18n } from "../i18n";
 import { AgentSidePanel } from "./AgentSidePanel";
+import { SessionScreen } from "./SessionScreen";
 
 // v1.3 Tier 1 — 좌측 머신×세션 트리 (UI-MESSENGER-SPEC §3.2, S4).
 //   - peer 목록 = 본인의 다른 머신/세션 — machine 별 그룹화
@@ -579,6 +580,16 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
           }
         >
           {(f) => {
+            // 세션 친구 (tmux/claude_project/xgram_session) → SessionScreen (xterm.js, S5).
+            const sessionKinds = new Set(["tmux", "claude_project", "xgram_session"]);
+            if (sessionKinds.has(f().kind) && f().sessionMeta) {
+              return (
+                <SessionScreen
+                  identifier={f().sessionMeta!.identifier}
+                  display={f().display}
+                />
+              );
+            }
             // peer 친구는 sender 로 필터, 채널(Discord/Telegram)은 일단 전체 보여줌.
             const filtered = createMemo<MessageDto[]>(() => {
               const all = messages() ?? [];

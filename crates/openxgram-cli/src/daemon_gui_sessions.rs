@@ -232,3 +232,155 @@ pub fn collect_sessions() -> SessionsDto {
     sessions.extend(detect_claude_projects());
     SessionsDto { machine, sessions }
 }
+
+/// UI-MESSENGER-SPEC v1.3 §4.3 — 세션 클릭 시 중앙 패널 라이브 터미널 (S5 xterm.js).
+/// identifier 예: "tmux:starian" / "claude:-home-llm-projects-wgolf"
+#[derive(Debug, Serialize)]
+pub struct SessionScreenDto {
+    pub identifier: String,
+    pub kind: SessionKind,
+    pub display: String,
+    pub content: String,   // ANSI escape 포함 (xterm.js writeUtf8)
+    pub lines: u32,
+    pub source_note: String, // "tmux capture-pane -e" 또는 "Claude Code .jsonl tail" 등
+    pub fetched_at: String,
+}
+
+/// `tmux capture-pane -t <session> -p -e -E -` (escape 포함, 전체 history 까지).
+fn capture_tmux(session_name: &str) -> Result<String, String> {
+    let out = Command::new("tmux")
+        .args([
+            "capture-pane",
+            "-t",
+            session_name,
+            "-p",
+            "-e",
+            "-S",
+            "-200", // 마지막 200 줄
+        ])
+        .output()
+        .map_err(|e| format!("tmux capture-pane 실패: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).into_owned();
+        return Err(format!("tmux: {}", err.trim()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Claude Code 프로젝트 디렉토리의 가장 최근 .jsonl 의 마지막 N 줄 (50줄).
+/// 각 줄 = 한 메시지 (system/user/assistant + content).
+fn tail_claude_jsonl(project_dir_name: &str) -> Result<String, String> {
+    let home = std::env::var_os("HOME").ok_or("HOME unset")?;
+    let dir: PathBuf = [home, ".claude/projects".into(), project_dir_name.into()]
+        .iter()
+        .collect();
+    let read = std::fs::read_dir(&dir).map_err(|e| format!("read_dir {dir:?}: {e}"))?;
+    // 가장 최근 .jsonl 선택
+    let mut latest: Option<(std::time::SystemTime, PathBuf)> = None;
+    for f in read.flatten() {
+        if f.path().extension().and_then(|s| s.to_str()) != Some("jsonl") {
+            continue;
+        }
+        if let Ok(meta) = f.metadata() {
+            if let Ok(m) = meta.modified() {
+                let p = f.path();
+                latest = Some(match latest {
+                    Some((t, _)) if t > m => (t, latest.unwrap().1),
+                    _ => (m, p),
+                });
+            }
+        }
+    }
+    let Some((_, path)) = latest else {
+        return Ok("(빈 프로젝트)".into());
+    };
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
+    let lines: Vec<&str> = content.lines().collect();
+    let tail = &lines[lines.len().saturating_sub(50)..];
+    // 각 줄 = JSON. type/role/content 만 추출해서 사람 친화 포맷.
+    let mut out = String::new();
+    for line in tail {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let ts = v
+            .get("timestamp")
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+        let kind = v
+            .get("type")
+            .and_then(|t| t.as_str())
+            .unwrap_or("?");
+        let role = v
+            .get("message")
+            .and_then(|m| m.get("role"))
+            .and_then(|r| r.as_str())
+            .unwrap_or(kind);
+        let body = v
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .map(|c| match c {
+                serde_json::Value::String(s) => s.clone(),
+                _ => c.to_string(),
+            })
+            .unwrap_or_default();
+        // 256줄 cap per message
+        let trimmed: String = body.chars().take(2000).collect();
+        out.push_str(&format!(
+            "\x1b[36m[{ts}]\x1b[0m \x1b[1m{role}\x1b[0m\n{trimmed}\n\n"
+        ));
+    }
+    if out.is_empty() {
+        out = format!("(파싱 가능한 메시지 없음 — {} bytes)", content.len());
+    }
+    Ok(out)
+}
+
+/// `GET /v1/gui/sessions/{identifier}/screen` 의 핵심 로직.
+pub fn capture_session(identifier: &str) -> SessionScreenDto {
+    let (kind, content, source_note) = if let Some(name) = identifier.strip_prefix("tmux:") {
+        match capture_tmux(name) {
+            Ok(s) => (
+                SessionKind::Tmux,
+                s,
+                format!("tmux capture-pane -t {name} -e -S -200"),
+            ),
+            Err(e) => (
+                SessionKind::Tmux,
+                format!("\x1b[31m캡처 실패: {e}\x1b[0m"),
+                "error".into(),
+            ),
+        }
+    } else if let Some(proj) = identifier.strip_prefix("claude:") {
+        match tail_claude_jsonl(proj) {
+            Ok(s) => (
+                SessionKind::ClaudeProject,
+                s,
+                format!("~/.claude/projects/{proj}/*.jsonl tail 50"),
+            ),
+            Err(e) => (
+                SessionKind::ClaudeProject,
+                format!("\x1b[31m읽기 실패: {e}\x1b[0m"),
+                "error".into(),
+            ),
+        }
+    } else {
+        (
+            SessionKind::XgramSession,
+            format!("\x1b[33m(unsupported identifier: {identifier})\x1b[0m"),
+            "unsupported".into(),
+        )
+    };
+    let lines = content.lines().count() as u32;
+    SessionScreenDto {
+        identifier: identifier.to_string(),
+        kind,
+        display: identifier.split(':').nth(1).unwrap_or(identifier).into(),
+        content,
+        lines,
+        source_note,
+        fetched_at: chrono::Utc::now().to_rfc3339(),
+    }
+}
+

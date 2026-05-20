@@ -204,6 +204,7 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/peers", get(gui_peers).post(gui_peer_add))
         // 메신저 v1.3 §3.2 — 머신×세션 통합 detector (M-1).
         .route("/v1/gui/sessions", get(gui_sessions))
+        .route("/v1/gui/sessions/{identifier}/screen", get(gui_session_screen))
         .route("/v1/gui/machine", get(gui_machine_info))
         // 메신저 카드 v1.3 Step 0 — 메시지 송수신.
         .route("/v1/gui/messages", get(gui_messages_recent))
@@ -400,6 +401,17 @@ async fn gui_sessions(
 ) -> Result<Json<crate::daemon_gui_sessions::SessionsDto>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     Ok(Json(crate::daemon_gui_sessions::collect_sessions()))
+}
+
+/// `GET /v1/gui/sessions/{identifier}/screen` — 세션 라이브 출력 (UI-MESSENGER-SPEC §4.3 S5).
+/// tmux: capture-pane -e (ANSI). claude_project: .jsonl tail (포맷됨).
+async fn gui_session_screen(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(identifier): Path<String>,
+) -> Result<Json<crate::daemon_gui_sessions::SessionScreenDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    Ok(Json(crate::daemon_gui_sessions::capture_session(&identifier)))
 }
 
 /// `GET /v1/gui/machine` — 이 머신의 4-tuple machine part (UI-MESSENGER-SPEC L2).

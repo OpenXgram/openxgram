@@ -95,6 +95,8 @@ const ROUTES: Record<string, Route> = {
   // Messenger v1.3 §3.2 — 머신×세션 통합 detector (M-1)
   sessions: { method: "GET", path: "/sessions" },
   machine_info: { method: "GET", path: "/machine" },
+  // Messenger v1.3 §4.3 (S5) — 세션 라이브 터미널 출력
+  session_screen: { method: "GET", path: "/sessions/{identifier}/screen" },
 
   // Channel
   channel_status: { method: "GET", path: "/channel/status" },
