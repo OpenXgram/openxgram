@@ -103,6 +103,9 @@ const ROUTES: Record<string, Route> = {
   wallets_list: { method: "GET", path: "/wallets" },
   wallet_create: { method: "POST", path: "/wallets", body: true },
   wallet_topup: { method: "POST", path: "/wallets/topup", body: true },
+  // Messenger v1.3 L3·V1 / M-5·N1·N3·V4 — Role 정책 + 화이트리스트
+  role_policies: { method: "GET", path: "/role-policies" },
+  whitelist: { method: "GET", path: "/whitelist" },
 
   // Channel
   channel_status: { method: "GET", path: "/channel/status" },

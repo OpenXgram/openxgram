@@ -152,22 +152,47 @@ function Overview(props: { peer: PeerMeta }) {
   );
 }
 
-// ── 탭 2: 역할 (L3 auto_respond 뷰) ─────────────────────────────
+// ── 탭 2: 역할 (L3 + V1 auto_respond 마스터 정책 view) ─────────
+interface RolePolicyItem {
+  role: string;
+  auto_respond_default: boolean;
+  max_concurrent: number;
+}
+interface RolePolicyDto {
+  master_card: string;
+  roles: RolePolicyItem[];
+}
+async function fetchRolePolicies(): Promise<RolePolicyDto | null> {
+  try {
+    return await invoke<RolePolicyDto>("role_policies");
+  } catch {
+    return null;
+  }
+}
 function RoleTab(props: { peer: PeerMeta; onJumpToSettings: () => void }) {
+  const [policies] = createResource(fetchRolePolicies);
   return (
     <div>
-      <Row label="역할" value="researcher (기본)" />
+      <Row label="현재 역할" value="researcher (기본)" />
       <Row label="오케스트레이션" value="워커" />
       <hr style="margin:10px 0; opacity:0.2;" />
-      <strong style="font-size:12px;">L3 auto_respond</strong>
-      <Row label="정책" value="자율 행동 카드 기본값 따름" />
-      <Row label="역할 default" value="true (researcher)" />
-      <button class="link-btn" type="button" onClick={props.onJumpToSettings}>
-        🔗 자율 행동 카드 (예정)
-      </button>
+      <strong style="font-size:12px;">L3 + V1 — 역할별 auto_respond 마스터 정책</strong>
       <p class="messenger-sidepanel-hint">
-        역할 프리셋 변경·시스템 프롬프트 편집·호출 가능 대상은 Tier 4+.
+        마스터 = {policies()?.master_card ?? "⏰ 자율 행동 카드"}. 본 탭은 view.
       </p>
+      <For each={policies()?.roles ?? []}>
+        {(r) => (
+          <div style="display:flex; justify-content:space-between; padding:3px 0; font-size:12px; border-bottom:1px dashed var(--border);">
+            <span>{r.role}</span>
+            <span style={r.auto_respond_default ? "color:#5fa;" : "color:var(--text-3);"}>
+              {r.auto_respond_default ? "✓ auto" : "× manual"} · max {r.max_concurrent}
+            </span>
+          </div>
+        )}
+      </For>
+      <button class="link-btn" type="button" onClick={props.onJumpToSettings} style="margin-top:10px;">
+        🔗 자율 행동 카드 (마스터 편집)
+      </button>
     </div>
   );
 }

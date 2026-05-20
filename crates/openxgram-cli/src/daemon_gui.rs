@@ -211,6 +211,12 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // UI-MESSENGER-SPEC v1.3 §2.4 + M-3 + L4 — 마스터+서브 지갑 (HD 영구 점유).
         .route("/v1/gui/wallets", get(gui_wallets_list).post(gui_wallet_create))
         .route("/v1/gui/wallets/topup", post(gui_wallet_topup))
+        // UI-MESSENGER-SPEC v1.3 L3 + V1 — 역할별 auto_respond 마스터 정책.
+        .route("/v1/gui/role-policies", get(gui_role_policies))
+        // UI-MESSENGER-SPEC v1.3 §3.6 M-5 + N1 + N3 + V4 — 화이트리스트 패턴 + 우선순위.
+        .route("/v1/gui/whitelist", get(gui_whitelist))
+        // UI-MESSENGER-SPEC v1.3 S8 + V6 — cross-machine 큐 status (Tailscale P2P).
+        .route("/v1/gui/cross-machine-queue", get(gui_cross_machine_queue))
         // 메신저 카드 v1.3 Step 0 — 메시지 송수신.
         .route("/v1/gui/messages", get(gui_messages_recent))
         .route("/v1/gui/peers/{alias}/send", post(gui_peer_send))
@@ -464,6 +470,33 @@ async fn gui_approvals(
         items,
         policy: crate::daemon_gui_sessions::default_approval_policy(),
     }))
+}
+
+/// `GET /v1/gui/role-policies` — 역할별 auto_respond 기본 정책 (L3 + V1).
+async fn gui_role_policies(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<crate::daemon_gui_sessions::RolePolicyDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    Ok(Json(crate::daemon_gui_sessions::default_role_policies()))
+}
+
+/// `GET /v1/gui/whitelist` — 화이트리스트 패턴 + 우선순위 (M-5 + N1 + N3 + V4).
+async fn gui_whitelist(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<crate::daemon_gui_sessions::WhitelistDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    Ok(Json(crate::daemon_gui_sessions::default_whitelist()))
+}
+
+/// `GET /v1/gui/cross-machine-queue` — Tailscale P2P 큐 status (S8 + V6).
+async fn gui_cross_machine_queue(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<crate::daemon_gui_sessions::CrossMachineQueueDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    Ok(Json(crate::daemon_gui_sessions::default_cross_machine_queue()))
 }
 
 /// `GET /v1/gui/wallets` — 마스터 + 서브 지갑 (UI-MESSENGER-SPEC §2.4 + M-3 + L4).

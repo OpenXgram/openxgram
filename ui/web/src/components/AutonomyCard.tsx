@@ -1,6 +1,7 @@
 import { createSignal, Show } from "solid-js";
 import { ScheduleView } from "./ScheduleView";
 import { ChainView } from "./ChainView";
+import { Breadcrumb } from "./Breadcrumb";
 
 // UI-AUTONOMY-SPEC v1.0 §3 — ⏰ 자율 행동 카드 (PRD §0 #6).
 // 4 섹션: Cron / SelfTrigger / Role 정책 (auto_respond 마스터) / 이력.
@@ -13,6 +14,7 @@ export function AutonomyCard(props: { onBack: () => void }) {
 
   return (
     <div class="card-page">
+      <Breadcrumb cardName="⏰ 자율 행동" onReturn={props.onBack} />
       <button class="card-page-back" onClick={props.onBack}>← 홈</button>
       <div class="card-page-head">
         <span class="icon">⏰</span>

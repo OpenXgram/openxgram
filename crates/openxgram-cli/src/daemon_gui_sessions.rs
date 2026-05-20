@@ -225,11 +225,65 @@ pub fn detect_machine() -> MachineInfo {
     }
 }
 
+/// UI-MESSENGER-SPEC v1.3 M-1 §3.5 — ps -ef 로 LLM 관련 프로세스 감지.
+/// claude / codex / ollama / xgram agent / mcp-serve 등.
+/// N6: user-mode. 다른 user 의 environ 접근 불가 시 skip.
+fn detect_processes() -> Vec<DetectedSession> {
+    let out = Command::new("ps")
+        .args(["-eo", "pid,user,etime,cmd", "--sort=-etime"])
+        .output();
+    let Ok(out) = out else { return vec![] };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let me = std::env::var("USER").unwrap_or_default();
+    let mut sessions = Vec::new();
+    for line in stdout.lines().skip(1) {
+        // Parse: <pid> <user> <etime> <cmd...>
+        let mut parts = line.splitn(4, |c: char| c == ' ' || c == '\t').filter(|s| !s.is_empty());
+        let pid_str = parts.next().unwrap_or("");
+        let user = parts.next().unwrap_or("");
+        let etime = parts.next().unwrap_or("");
+        let cmd = parts.next().unwrap_or("");
+        // 자기 user 만 (N6).
+        if !me.is_empty() && user != me {
+            continue;
+        }
+        // 관심 패턴
+        let kind_label = if cmd.starts_with("claude") || cmd.contains("/claude ") {
+            Some("claude")
+        } else if cmd.starts_with("codex") || cmd.contains("/codex ") {
+            Some("codex")
+        } else if cmd.starts_with("ollama") || cmd.contains("ollama serve") {
+            Some("ollama")
+        } else if cmd.contains("xgram agent") || cmd.contains("xgram mcp-serve") {
+            Some("xgram-proc")
+        } else if cmd.contains("aider") {
+            Some("aider")
+        } else {
+            None
+        };
+        let Some(label) = kind_label else { continue };
+        let Ok(pid) = pid_str.parse::<u32>() else { continue };
+        sessions.push(DetectedSession {
+            kind: SessionKind::XgramSession, // 통합 표시 (proc는 별 enum 추가 가능)
+            identifier: format!("proc:{label}:{pid}"),
+            display: format!("{label} (pid {pid})"),
+            status: SessionStatus::Active,
+            windows: None,
+            attached: None,
+            created_at: None,
+            last_active_at: Some(format!("etime {etime}")),
+            agent_id: None,
+        });
+    }
+    sessions
+}
+
 /// 통합: 머신 + 세션들. xgram session 은 후속 (DB query needed).
 pub fn collect_sessions() -> SessionsDto {
     let machine = detect_machine();
     let mut sessions = detect_tmux();
     sessions.extend(detect_claude_projects());
+    sessions.extend(detect_processes());
     SessionsDto { machine, sessions }
 }
 
@@ -392,6 +446,113 @@ pub struct ApprovalPolicy {
     pub channel_moderation_ttl_hours: u32,
     pub auto_approve_on_whitelist_match: bool, // V4
     pub never_auto_approve: Vec<String>,       // ["payment", "risky_action"] — V4
+}
+
+/// UI-MESSENGER-SPEC v1.3 L3 + V1 — 역할별 auto_respond 기본 정책.
+/// 마스터 = ⏰ 자율 행동 카드. 메신저 탭 2 는 view·override.
+/// V1: 향후 RolePolicy struct 형태 (max_concurrent 등 추가 예정).
+#[derive(Debug, Serialize)]
+pub struct RolePolicyItem {
+    pub role: String,
+    pub auto_respond_default: bool,
+    pub max_concurrent: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RolePolicyDto {
+    pub master_card: String,
+    pub roles: Vec<RolePolicyItem>,
+}
+
+/// UI-MESSENGER-SPEC v1.3 §3.6 M-5 + N1 + N3 — 화이트리스트 패턴.
+#[derive(Debug, Serialize)]
+pub struct WhitelistPatternItem {
+    pub priority: u32,
+    pub pattern_type: String, // "command" | "tmux" | "cwd"
+    pub pattern: String,
+    pub default_role: String,
+    pub auto_register: bool,
+    pub auto_approve_pending: bool, // N3 + V4
+}
+
+#[derive(Debug, Serialize)]
+pub struct WhitelistDto {
+    pub patterns: Vec<WhitelistPatternItem>,
+    pub priority_order: Vec<String>, // N1
+    pub never_auto_approve: Vec<String>, // V4
+}
+
+/// UI-MESSENGER-SPEC v1.3 S8 + V6 — cross-machine 큐 영구화 status.
+#[derive(Debug, Serialize)]
+pub struct CrossMachineQueueDto {
+    pub backend: String,        // "Tailscale P2P"
+    pub queue_path: String,     // "~/.openxgram/outbound_queue.db"
+    pub max_retention_days: u32, // 30 (V6)
+    pub retry_backoff: String,  // "1s -> 2s -> 4s ... max 5min"
+    pub dedup_strategy: String, // "message ULID"
+    pub pending: u32,           // 향후 실시간; 현재 0
+    pub last_sent_at: Option<String>,
+}
+
+pub fn default_cross_machine_queue() -> CrossMachineQueueDto {
+    CrossMachineQueueDto {
+        backend: "Tailscale P2P".into(),
+        queue_path: "~/.openxgram/outbound_queue.db".into(),
+        max_retention_days: 30,
+        retry_backoff: "exponential 1s -> 5min".into(),
+        dedup_strategy: "message ULID".into(),
+        pending: 0,
+        last_sent_at: None,
+    }
+}
+
+pub fn default_whitelist() -> WhitelistDto {
+    WhitelistDto {
+        patterns: vec![
+            WhitelistPatternItem {
+                priority: 1,
+                pattern_type: "command".into(),
+                pattern: "claude *".into(),
+                default_role: "llm-attached".into(),
+                auto_register: true,
+                auto_approve_pending: true,
+            },
+            WhitelistPatternItem {
+                priority: 2,
+                pattern_type: "tmux".into(),
+                pattern: "xgram-*".into(),
+                default_role: "researcher".into(),
+                auto_register: true,
+                auto_approve_pending: false,
+            },
+            WhitelistPatternItem {
+                priority: 3,
+                pattern_type: "cwd".into(),
+                pattern: "~/projects/*/".into(),
+                default_role: "coder".into(),
+                auto_register: false, // confirm
+                auto_approve_pending: false,
+            },
+        ],
+        priority_order: vec!["command".into(), "tmux".into(), "cwd".into()],
+        never_auto_approve: vec!["payment".into(), "risky_action".into()],
+    }
+}
+
+pub fn default_role_policies() -> RolePolicyDto {
+    RolePolicyDto {
+        master_card: "⏰ 자율 행동".into(),
+        roles: vec![
+            RolePolicyItem { role: "researcher".into(), auto_respond_default: true, max_concurrent: 3 },
+            RolePolicyItem { role: "reviewer".into(), auto_respond_default: false, max_concurrent: 2 },
+            RolePolicyItem { role: "coder".into(), auto_respond_default: true, max_concurrent: 2 },
+            RolePolicyItem { role: "orchestrator".into(), auto_respond_default: true, max_concurrent: 5 },
+            RolePolicyItem { role: "scribe".into(), auto_respond_default: true, max_concurrent: 1 },
+            RolePolicyItem { role: "analyst".into(), auto_respond_default: true, max_concurrent: 2 },
+            RolePolicyItem { role: "tester".into(), auto_respond_default: false, max_concurrent: 2 },
+            RolePolicyItem { role: "ops".into(), auto_respond_default: false, max_concurrent: 1 },
+        ],
+    }
 }
 
 pub fn default_approval_policy() -> ApprovalPolicy {
