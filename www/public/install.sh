@@ -459,14 +459,18 @@ if [ "$PREBUILT_OK" = "1" ]; then
   #   (1) tailscale status --json 의 Self.DNSName (trailing dot 제거)
   #   (2) 페어링 URL 안의 hostname (pair-desktop 출력 reuse)
   #   (3) tailscale status 텍스트 첫 줄의 short hostname + MagicDNS suffix
+  # python3/jq 의존 X — grep/sed 만 사용.
   TS_NAME=""
   if command -v tailscale >/dev/null 2>&1; then
+    # tailscale status --json 의 첫 "DNSName":"<host>." 추출. trailing dot 제거.
     TS_NAME="$(tailscale status --json 2>/dev/null \
-      | python3 -c "import sys,json; d=json.load(sys.stdin); print((d.get('\''Self'\'',{}).get('\''DNSName'\'') or '\'\'').rstrip('\''.'\''))" \
-      2>/dev/null)"
+      | grep -o '"DNSName":[[:space:]]*"[^"]*"' \
+      | head -1 \
+      | sed 's/.*"\([^"]*\)"$/\1/; s/\.$//')"
   fi
+  # fallback — PAIRING_OUTPUT (xgram pair-desktop) 안의 oxg:// URL 에서 hostname 추출.
   if [ -z "$TS_NAME" ]; then
-    TS_NAME="$(echo "$PAIRING_OUTPUT" | grep -oE '[a-zA-Z0-9-]+\.tail[a-z0-9]+\.ts\.net' | head -1)"
+    TS_NAME="$(printf '%s' "$PAIRING_OUTPUT" | grep -oE '[a-zA-Z0-9-]+\.tail[a-z0-9]+\.ts\.net' | head -1)"
   fi
 
   if [ -n "$TS_NAME" ]; then
