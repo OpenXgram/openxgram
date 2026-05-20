@@ -156,6 +156,33 @@ const ROUTES: Record<string, Route> = {
   session_binding_add: { method: "POST", path: "/sessions/{agent_id}/channel-bindings", body: true },
   session_binding_delete: { method: "POST", path: "/sessions/{agent_id}/channel-bindings/{binding_id}" },
   notify_discord_channels: { method: "POST", path: "/notify/discord/channels", body: true },
+  // Identity 깊은
+  identity_bip39: { method: "POST", path: "/identity/bip39", body: true },
+  identity_sub_dids: { method: "GET", path: "/identity/sub-dids" },
+  identity_sub_did_new: { method: "POST", path: "/identity/sub-dids", body: true },
+  identity_sub_did_revoke: { method: "POST", path: "/identity/sub-dids/{id}/revoke" },
+  identity_lockout_status: { method: "GET", path: "/identity/lockout-status" },
+  // Vault MCP
+  vault_mcp_servers_list: { method: "GET", path: "/vault/mcp-servers" },
+  vault_mcp_server_add: { method: "POST", path: "/vault/mcp-servers", body: true },
+  vault_tool_catalog: { method: "GET", path: "/vault/tool-catalog" },
+  vault_tool_acl_set: { method: "POST", path: "/vault/tool-catalog", body: true },
+  // Channel 모더레이션
+  channel_blocks_list: { method: "GET", path: "/channel/moderation/blocks" },
+  channel_block_add: { method: "POST", path: "/channel/moderation/blocks", body: true },
+  channel_limits_list: { method: "GET", path: "/channel/moderation/limits" },
+  channel_limit_set: { method: "POST", path: "/channel/moderation/limits", body: true },
+  // Autonomy SelfTrigger + Reflection
+  self_triggers_list: { method: "GET", path: "/autonomy/self-triggers" },
+  self_trigger_add: { method: "POST", path: "/autonomy/self-triggers", body: true },
+  reflection_runs_list: { method: "GET", path: "/autonomy/reflection-runs" },
+  reflection_now: { method: "POST", path: "/autonomy/reflection-runs" },
+  // Memory M-2 merge + M-10 edit lock
+  wiki_merge_candidates: { method: "GET", path: "/wiki/merge-candidates" },
+  wiki_edit_lock_get: { method: "GET", path: "/wiki/pages/{id}/edit-lock" },
+  wiki_edit_lock_acquire: { method: "POST", path: "/wiki/pages/{id}/edit-lock" },
+  // Peer keypair generate
+  peer_keypair_generate: { method: "POST", path: "/peers/generate-keypair", body: true },
 
   // Channel
   channel_status: { method: "GET", path: "/channel/status" },

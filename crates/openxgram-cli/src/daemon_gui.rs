@@ -244,6 +244,25 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/memory/patterns", get(gui_memory_patterns_list).post(gui_memory_pattern_add)) // M-5
         .route("/v1/gui/memory/mistakes", get(gui_memory_mistakes_list).post(gui_memory_mistake_add)) // M-13
         .route("/v1/gui/wiki/new-alerts", get(gui_wiki_new_alerts))          // M-6
+        // UI-IDENTITY-SPEC 깊은 endpoint
+        .route("/v1/gui/identity/bip39", post(gui_identity_bip39_show))
+        .route("/v1/gui/identity/sub-dids", get(gui_sub_dids_list).post(gui_sub_did_new))
+        .route("/v1/gui/identity/sub-dids/{id}/revoke", post(gui_sub_did_revoke))
+        .route("/v1/gui/identity/lockout-status", get(gui_lockout_status))
+        // UI-VAULT-MCP-SPEC 깊은 endpoint
+        .route("/v1/gui/vault/mcp-servers", get(gui_mcp_servers_list).post(gui_mcp_server_add))
+        .route("/v1/gui/vault/tool-catalog", get(gui_tool_catalog_list).post(gui_tool_acl_set))
+        // UI-CHANNEL-SPEC 모더레이션
+        .route("/v1/gui/channel/moderation/blocks", get(gui_channel_blocks_list).post(gui_channel_block_add))
+        .route("/v1/gui/channel/moderation/limits", get(gui_channel_limits_list).post(gui_channel_limit_set))
+        // UI-AUTONOMY-SPEC 깊은
+        .route("/v1/gui/autonomy/self-triggers", get(gui_self_triggers_list).post(gui_self_trigger_add))
+        .route("/v1/gui/autonomy/reflection-runs", get(gui_reflection_runs_list).post(gui_reflection_now))
+        // UI-MEMORY-SPEC 깊은 (M-2 merge, M-10 conflict)
+        .route("/v1/gui/wiki/merge-candidates", get(gui_merge_candidates_list))
+        .route("/v1/gui/wiki/pages/{id}/edit-lock", get(gui_wiki_edit_lock_get).post(gui_wiki_edit_lock_acquire))
+        // Peer keypair 자동 생성
+        .route("/v1/gui/peers/generate-keypair", post(gui_peer_keypair_generate))
         // UI-MESSENGER-SPEC v1.3 §5 탭 3 — 세션별 채널 바인딩 (Discord/Telegram channel_id 등)
         .route("/v1/gui/sessions/{agent_id}/channel-bindings",
                get(gui_session_bindings_list).post(gui_session_binding_add))
@@ -1330,6 +1349,412 @@ async fn gui_notify_discord_channels(
         }))
         .collect();
     Ok(Json(filtered))
+}
+
+// ── Identity 깊은 ────────────────────────────────────────
+
+async fn gui_identity_bip39_show(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let _ = body;
+    // V-3: 스크린샷 금지 경고 + 30초 자동 hide 는 프론트. 백엔드는 BIP39 12 단어 반환.
+    // 실 BIP39 는 keystore master seed 에서 derive 필요 — 현재는 placeholder mnemonic.
+    Ok(Json(serde_json::json!({
+        "warning": "스크린샷 금지 · 30초 후 자동 hide · 적었음 확인 체크 필수 (V-3)",
+        "words": ["abandon","ability","able","about","above","absent","absorb","abstract","absurd","abuse","access","accident"],
+        "note": "Phase 2: 실 keystore master seed 에서 BIP39 12 단어 derive (M-3 + M-13)",
+    })))
+}
+
+async fn gui_sub_dids_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, machine, derived_address, status, created_at, revoked_at FROM sub_dids ORDER BY created_at DESC",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map([], |r| Ok(serde_json::json!({
+        "id": r.get::<_, String>(0)?, "machine": r.get::<_, String>(1)?,
+        "derived_address": r.get::<_, String>(2)?, "status": r.get::<_, String>(3)?,
+        "created_at": r.get::<_, String>(4)?, "revoked_at": r.get::<_, Option<String>>(5)?,
+    }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SubDidBody { pub machine: String }
+async fn gui_sub_did_new(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<SubDidBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use sha2::{Digest, Sha256};
+    let now = chrono::Utc::now().to_rfc3339();
+    let addr_hex = format!("{:x}", Sha256::digest(format!("{}-{}", body.machine, now).as_bytes()))[..40].to_string();
+    let did = format!("did:openxgram:{}", addr_hex);
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO sub_dids (id, machine, derived_address, status, created_at) VALUES (?1, ?2, ?3, 'Active', ?4)",
+        rusqlite::params![did, body.machine, addr_hex, now],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("insert: {e}")})))?;
+    Ok(Json(serde_json::json!({"id": did, "machine": body.machine, "derived_address": addr_hex})))
+}
+
+async fn gui_sub_did_revoke(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "UPDATE sub_dids SET status = 'Revoked', revoked_at = ?1 WHERE id = ?2",
+        rusqlite::params![now, id],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("revoke: {e}")})))?;
+    Ok(Json(serde_json::json!({"revoked": id, "at": now, "permanent": true})))
+}
+
+async fn gui_lockout_status(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let count: i64 = db.conn().query_row(
+        "SELECT COUNT(*) FROM auth_failures WHERE attempted_at > datetime('now', '-1 hour')",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+    Ok(Json(serde_json::json!({
+        "recent_failures_1h": count, "lockout_threshold": 5, "backoff_strategy": "exponential",
+        "policy": "5회 실패 → 1분 lockout (M-8). 추가 실패 시 지수 backoff."
+    })))
+}
+
+// ── Vault MCP ───────────────────────────────────────────
+
+async fn gui_mcp_servers_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, name, transport, command, url, scope, health_status, active FROM mcp_servers ORDER BY name",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map([], |r| Ok(serde_json::json!({
+        "id": r.get::<_, String>(0)?, "name": r.get::<_, String>(1)?,
+        "transport": r.get::<_, String>(2)?, "command": r.get::<_, Option<String>>(3)?,
+        "url": r.get::<_, Option<String>>(4)?, "scope": r.get::<_, String>(5)?,
+        "health_status": r.get::<_, Option<String>>(6)?, "active": r.get::<_, i64>(7)? != 0,
+    }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct McpServerBody {
+    pub name: String, pub transport: String,
+    #[serde(default)] pub command: Option<String>,
+    #[serde(default)] pub url: Option<String>,
+    #[serde(default)] pub scope: Option<String>,
+}
+async fn gui_mcp_server_add(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<McpServerBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use sha2::{Digest, Sha256};
+    let now = chrono::Utc::now().to_rfc3339();
+    let id = format!("{:x}", Sha256::digest(format!("{}{}", body.name, now).as_bytes()))[..20].to_string();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO mcp_servers (id, name, transport, command, url, scope, created_at, active) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
+        rusqlite::params![id, body.name, body.transport, body.command, body.url,
+            body.scope.unwrap_or_else(|| "user".into()), now],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("insert: {e}")})))?;
+    Ok(Json(serde_json::json!({"id": id, "name": body.name})))
+}
+
+async fn gui_tool_catalog_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    // default-deny + 카탈로그 (기존 + 사용자 추가)
+    let defaults = vec![
+        ("filesystem", "confirm", "파일 읽기·쓰기 (cwd 하위만)"),
+        ("shell", "confirm", "셸 명령 실행"),
+        ("net", "confirm", "네트워크 (allowlist)"),
+        ("payment", "mfa", "결제 (서브 지갑 한도 내, MFA 필수)"),
+        ("llm-call", "auto", "외부 LLM 호출"),
+        ("system-config", "block", "시스템 설정 변경 (block)"),
+    ];
+    let mut out: Vec<serde_json::Value> = defaults.iter().map(|(n, p, d)| serde_json::json!({
+        "tool_name": n, "default_policy": p, "description": d, "source": "default",
+    })).collect();
+    let mut stmt = db.conn().prepare("SELECT tool_name, default_policy, description FROM tool_acl");
+    if let Ok(ref mut s) = stmt {
+        let rows = s.query_map([], |r| Ok(serde_json::json!({
+            "tool_name": r.get::<_, String>(0)?, "default_policy": r.get::<_, String>(1)?,
+            "description": r.get::<_, Option<String>>(2)?, "source": "user",
+        }))).ok();
+        if let Some(it) = rows { out.extend(it.filter_map(|r| r.ok())); }
+    }
+    Ok(Json(out))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ToolAclBody { pub tool_name: String, pub default_policy: String, pub description: Option<String> }
+async fn gui_tool_acl_set(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<ToolAclBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO tool_acl (tool_name, default_policy, description, updated_at) VALUES (?1, ?2, ?3, ?4) \
+         ON CONFLICT(tool_name) DO UPDATE SET default_policy = ?2, description = ?3, updated_at = ?4",
+        rusqlite::params![body.tool_name, body.default_policy, body.description, now],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("upsert: {e}")})))?;
+    Ok(Json(serde_json::json!({"ok": true})))
+}
+
+// ── Channel 모더레이션 ────────────────────────────────
+
+async fn gui_channel_blocks_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare("SELECT person_id, reason, blocked_at FROM channel_blocks ORDER BY blocked_at DESC")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map([], |r| Ok(serde_json::json!({
+        "person_id": r.get::<_, String>(0)?, "reason": r.get::<_, Option<String>>(1)?,
+        "blocked_at": r.get::<_, String>(2)?,
+    }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BlockBody { pub person_id: String, pub reason: Option<String> }
+async fn gui_channel_block_add(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<BlockBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT OR REPLACE INTO channel_blocks (person_id, reason, blocked_at) VALUES (?1, ?2, ?3)",
+        rusqlite::params![body.person_id, body.reason, now],
+    ).ok();
+    Ok(Json(serde_json::json!({"blocked": body.person_id, "at": now})))
+}
+
+async fn gui_channel_limits_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare("SELECT person_id, daily_limit, today_used, reset_date FROM channel_person_limits")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map([], |r| Ok(serde_json::json!({
+        "person_id": r.get::<_, String>(0)?, "daily_limit": r.get::<_, i64>(1)?,
+        "today_used": r.get::<_, i64>(2)?, "reset_date": r.get::<_, Option<String>>(3)?,
+    }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LimitBody { pub person_id: String, pub daily_limit: i64 }
+async fn gui_channel_limit_set(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<LimitBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT OR REPLACE INTO channel_person_limits (person_id, daily_limit, today_used, reset_date) VALUES (?1, ?2, 0, ?3)",
+        rusqlite::params![body.person_id, body.daily_limit, today],
+    ).ok();
+    Ok(Json(serde_json::json!({"ok": true, "person_id": body.person_id, "daily_limit": body.daily_limit})))
+}
+
+// ── Autonomy SelfTrigger + Reflection ─────────────────
+
+async fn gui_self_triggers_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, event_pattern, target_agent, action, active, fire_count, last_fired_at FROM self_trigger_rules ORDER BY created_at DESC",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map([], |r| Ok(serde_json::json!({
+        "id": r.get::<_, String>(0)?, "event_pattern": r.get::<_, String>(1)?,
+        "target_agent": r.get::<_, String>(2)?, "action": r.get::<_, String>(3)?,
+        "active": r.get::<_, i64>(4)? != 0, "fire_count": r.get::<_, i64>(5)?,
+        "last_fired_at": r.get::<_, Option<String>>(6)?,
+    }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SelfTriggerBody { pub event_pattern: String, pub target_agent: String, pub action: String }
+async fn gui_self_trigger_add(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<SelfTriggerBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use sha2::{Digest, Sha256};
+    let now = chrono::Utc::now().to_rfc3339();
+    let id = format!("{:x}", Sha256::digest(format!("{}{}{}", body.event_pattern, body.target_agent, now).as_bytes()))[..20].to_string();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO self_trigger_rules (id, event_pattern, target_agent, action, active, created_at) VALUES (?1, ?2, ?3, ?4, 1, ?5)",
+        rusqlite::params![id, body.event_pattern, body.target_agent, body.action, now],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("insert: {e}")})))?;
+    Ok(Json(serde_json::json!({"id": id})))
+}
+
+async fn gui_reflection_runs_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, started_at, finished_at, success, summary, new_pages, patterns_found FROM reflection_runs ORDER BY started_at DESC LIMIT 50",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map([], |r| Ok(serde_json::json!({
+        "id": r.get::<_, i64>(0)?, "started_at": r.get::<_, String>(1)?,
+        "finished_at": r.get::<_, Option<String>>(2)?, "success": r.get::<_, Option<i64>>(3)?.map(|v| v != 0),
+        "summary": r.get::<_, Option<String>>(4)?, "new_pages": r.get::<_, i64>(5)?,
+        "patterns_found": r.get::<_, i64>(6)?,
+    }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+async fn gui_reflection_now(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO reflection_runs (started_at, finished_at, success, summary, new_pages, patterns_found) \
+         VALUES (?1, ?1, 1, ?2, 0, 0)",
+        rusqlite::params![now, "수동 reflection 실행 (M-14 nightly placeholder)"],
+    ).ok();
+    Ok(Json(serde_json::json!({"started_at": now, "note": "M-14 reflection worker 는 Phase 2"})))
+}
+
+// ── Memory M-2 merge + M-10 edit lock ─────────────────
+
+async fn gui_merge_candidates_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, page_a_id, page_b_id, similarity, detected_at, status FROM wiki_merge_candidates WHERE status='pending'",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map([], |r| Ok(serde_json::json!({
+        "id": r.get::<_, i64>(0)?, "page_a_id": r.get::<_, String>(1)?,
+        "page_b_id": r.get::<_, String>(2)?, "similarity": r.get::<_, Option<f64>>(3)?,
+        "detected_at": r.get::<_, String>(4)?, "status": r.get::<_, String>(5)?,
+    }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+async fn gui_wiki_edit_lock_get(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let row = db.conn().query_row(
+        "SELECT holder, acquired_at, expires_at FROM wiki_edit_locks WHERE page_id = ?1",
+        rusqlite::params![id],
+        |r| Ok(serde_json::json!({
+            "holder": r.get::<_, String>(0)?, "acquired_at": r.get::<_, String>(1)?,
+            "expires_at": r.get::<_, String>(2)?,
+        })),
+    );
+    Ok(Json(row.unwrap_or(serde_json::json!({"holder": null}))))
+}
+
+async fn gui_wiki_edit_lock_acquire(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let now = chrono::Utc::now();
+    let expires = now + chrono::Duration::minutes(5);
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT OR REPLACE INTO wiki_edit_locks (page_id, holder, acquired_at, expires_at) VALUES (?1, 'user', ?2, ?3)",
+        rusqlite::params![id, now.to_rfc3339(), expires.to_rfc3339()],
+    ).ok();
+    Ok(Json(serde_json::json!({"acquired": true, "expires_at": expires.to_rfc3339(), "note": "M-10 — 5분 동안 AI 갱신 차단"})))
+}
+
+// ── Peer keypair 자동 생성 (peer-to-peer e2e 가능하게) ──
+
+async fn gui_peer_keypair_generate(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use k256::ecdsa::SigningKey;
+    use k256::elliptic_curve::sec1::ToEncodedPoint;
+    let alias = body.get("alias").and_then(|v| v.as_str()).unwrap_or("test-peer");
+    let sk = SigningKey::random(&mut k256::elliptic_curve::rand_core::OsRng);
+    let vk = sk.verifying_key();
+    let pub_bytes = vk.to_encoded_point(false);
+    let pub_hex = hex::encode(pub_bytes.as_bytes());
+    use sha2::{Digest, Sha256};
+    let addr = format!("0x{}", &hex::encode(&Sha256::digest(pub_bytes.as_bytes())[..20]));
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT OR REPLACE INTO peer_keypairs (alias, public_key_hex, address, created_at, note) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![alias, pub_hex, addr, now, "test keypair for peer e2e"],
+    ).ok();
+    Ok(Json(serde_json::json!({
+        "alias": alias, "public_key_hex": pub_hex, "address": addr,
+        "note": "생성 즉시 POST /v1/gui/peers 로 등록 가능"
+    })))
 }
 
 async fn gui_wiki_new_alerts(

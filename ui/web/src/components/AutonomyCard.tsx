@@ -50,13 +50,8 @@ export function AutonomyCard(props: { onBack: () => void }) {
       </Show>
 
       <Show when={tab() === "trigger"}>
-        <section class="card-section">
-          <h3>⚡ SelfTrigger — 사양 §3.2 (M-5 V-7)</h3>
-          <p class="placeholder-note">
-            이벤트 → 작업 규칙. 예: "Discord 새 메시지 도착 → ZAL-001 깨움 + recv_messages 호출".
-            백엔드 SelfTriggerRule 테이블 + 이벤트 버스 신설 필요.
-          </p>
-        </section>
+        <SelfTriggerSection />
+        <ReflectionSection />
       </Show>
 
       <Show when={tab() === "role"}>
@@ -80,6 +75,52 @@ export function AutonomyCard(props: { onBack: () => void }) {
         <VacationSection />
       </Show>
     </div>
+  );
+}
+
+function SelfTriggerSection() {
+  const [list, { refetch }] = createResource<any[]>(async () => { try { return await invoke<any[]>("self_triggers_list"); } catch { return []; } });
+  const [event, setEvent] = createSignal("");
+  const [target, setTarget] = createSignal("");
+  const [action, setAction] = createSignal("");
+  async function add() {
+    if (!event() || !target() || !action()) return;
+    try { await invoke("self_trigger_add", { event_pattern: event(), target_agent: target(), action: action() }); setEvent(""); setTarget(""); setAction(""); await refetch(); } catch (e) { alert(String(e)); }
+  }
+  return (
+    <section class="card-section">
+      <h3>⚡ SelfTrigger — 사양 §3.2 (M-5 V-7)</h3>
+      <div style="display:flex; flex-direction:column; gap:4px; margin-bottom:6px;">
+        <input value={event()} onInput={(e) => setEvent(e.currentTarget.value)} placeholder="event_pattern (discord:new_message)" style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+        <input value={target()} onInput={(e) => setTarget(e.currentTarget.value)} placeholder="target_agent (ZAL-001)" style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+        <input value={action()} onInput={(e) => setAction(e.currentTarget.value)} placeholder="action (wake_and_recv_messages)" style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+        <button class="link-btn" onClick={add}>+ 규칙 추가</button>
+      </div>
+      <For each={list() ?? []}>{(r) => (
+        <div style="font-size:12px; padding:4px 0; border-bottom:1px solid var(--border);">
+          <strong>{r.event_pattern}</strong> → <code>{r.target_agent}</code> · {r.action}
+          <span style="color:var(--text-3); margin-left:6px;">fired {r.fire_count}회 · {r.active ? "active" : "off"}</span>
+        </div>
+      )}</For>
+    </section>
+  );
+}
+
+function ReflectionSection() {
+  const [list, { refetch }] = createResource<any[]>(async () => { try { return await invoke<any[]>("reflection_runs_list"); } catch { return []; } });
+  async function runNow() {
+    try { await invoke("reflection_now", {}); await refetch(); } catch (e) { alert(String(e)); }
+  }
+  return (
+    <section class="card-section">
+      <h3>🪞 Reflection (nightly) — 사양 §3.3</h3>
+      <button class="link-btn" onClick={runNow}>⏯ 지금 reflection 실행</button>
+      <For each={list() ?? []}>{(r) => (
+        <div style="font-size:11px; padding:4px 0; border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-3);">{r.started_at}</span> · {r.success ? "✓" : "—"} · 페이지 {r.new_pages} · 패턴 {r.patterns_found}
+        </div>
+      )}</For>
+    </section>
   );
 }
 

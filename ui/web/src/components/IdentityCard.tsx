@@ -23,13 +23,30 @@ async function fetchStatus(): Promise<StatusDto | null> {
 async function fetchInfo(): Promise<any> { try { return await invoke("identity_info"); } catch { return null; } }
 async function fetchAudit(): Promise<any[]> { try { return await invoke("identity_audit"); } catch { return []; } }
 async function fetchAllowlist(): Promise<any> { try { return await invoke("identity_allowlist"); } catch { return null; } }
+async function fetchSubDids(): Promise<any[]> { try { return await invoke("identity_sub_dids"); } catch { return []; } }
+async function fetchLockout(): Promise<any> { try { return await invoke("identity_lockout_status"); } catch { return null; } }
 
 export function IdentityCard(props: { onBack: () => void }) {
   const [s] = createResource(fetchStatus);
   const [info] = createResource(fetchInfo);
   const [audit] = createResource(fetchAudit);
   const [allowlist, { refetch: refetchAllow }] = createResource(fetchAllowlist);
+  const [subDids, { refetch: refetchSub }] = createResource(fetchSubDids);
+  const [lockout] = createResource(fetchLockout);
+  const [bip39, setBip39] = createSignal<string[] | null>(null);
   const [newDid, setNewDid] = createSignal("");
+  const [newMachine, setNewMachine] = createSignal("");
+  async function showBip39() {
+    try { const r: any = await invoke("identity_bip39", {}); setBip39(r.words); setTimeout(() => setBip39(null), 30000); } catch (e) { alert(String(e)); }
+  }
+  async function addSubDid() {
+    if (!newMachine()) return;
+    try { await invoke("identity_sub_did_new", { machine: newMachine() }); setNewMachine(""); await refetchSub(); } catch (e) { alert(String(e)); }
+  }
+  async function revokeSub(id: string) {
+    if (!confirm(`${id} revoke? 영구 (M-15)`)) return;
+    try { await invoke("identity_sub_did_revoke", { id }); await refetchSub(); } catch (e) { alert(String(e)); }
+  }
   async function addAllow() {
     if (!newDid()) return;
     try { await invoke("identity_allowlist_add", { external_did: newDid(), note: "" }); setNewDid(""); await refetchAllow(); } catch {}
@@ -148,6 +165,47 @@ export function IdentityCard(props: { onBack: () => void }) {
             <span style="color:var(--text-3);">{e.created_at}</span> · <strong>{e.event_type}</strong>
           </div>
         )}</For>
+      </section>
+
+      <section class="card-section">
+        <h3>🔐 BIP39 백업 단어 (M-3 V-3)</h3>
+        <button class="link-btn" onClick={showBip39}>📖 보기 (30초 후 자동 숨김 — 스크린샷 금지)</button>
+        <Show when={bip39()}>
+          <div style="background:var(--surface-2); padding:10px; border-radius:4px; margin-top:8px; font-family:monospace;">
+            {bip39()!.join(" ")}
+          </div>
+          <p style="color:#f88; font-size:11px;">⚠ 적었음 확인 후 닫으세요. 30초 후 자동 숨김.</p>
+        </Show>
+      </section>
+
+      <section class="card-section">
+        <h3>🖥️ 머신 sub-DID (M-9 V-12)</h3>
+        <div style="display:flex; gap:6px; margin-bottom:8px;">
+          <input value={newMachine()} onInput={(e) => setNewMachine(e.currentTarget.value)} placeholder="머신 alias (zalman / macmini / gcp)"
+            style="flex:1; padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+          <button class="link-btn" onClick={addSubDid}>+ sub-DID 발급</button>
+        </div>
+        <For each={subDids() ?? []}>{(s: any) => (
+          <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border); font-size:11px;">
+            <div>
+              <strong>{s.machine}</strong>
+              <div class="mono" style="color:var(--text-3);">{s.id}</div>
+            </div>
+            <Show when={s.status === "Active"} fallback={<span style="color:var(--text-3);">revoked</span>}>
+              <button class="link-btn" onClick={() => revokeSub(s.id)}>🚫 revoke</button>
+            </Show>
+          </div>
+        )}</For>
+      </section>
+
+      <section class="card-section">
+        <h3>🔒 비밀번호 실패 lockout (M-8)</h3>
+        <Show when={lockout()}>
+          <Row label="최근 1시간 실패" value={String(lockout()?.recent_failures_1h ?? 0)} />
+          <Row label="lockout 임계" value={`${lockout()?.lockout_threshold}회`} />
+          <Row label="backoff 전략" value={lockout()?.backoff_strategy} />
+          <p style="font-size:11px; color:var(--text-3);">{lockout()?.policy}</p>
+        </Show>
       </section>
 
       <section class="card-section">

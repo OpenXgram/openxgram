@@ -89,12 +89,7 @@ export function ChannelCard(props: { onBack: () => void }) {
       </Show>
 
       <Show when={tab() === "moderation"}>
-        <section class="card-section">
-          <h3>🛡️ 모더레이션 — 사양 §3.5 (M-10 V-3)</h3>
-          <p class="placeholder-note">
-            차단 · 신고 · 악성 패턴 감지 · 사람별 일일 메시지 한도. Phase 2 — daemon worker 추가 필요.
-          </p>
-        </section>
+        <ModerationSection />
       </Show>
     </div>
   );
@@ -116,6 +111,49 @@ function PersonSection() {
         </div>
       )}</For>
     </section>
+  );
+}
+
+function ModerationSection() {
+  const [blocks, { refetch: refetchB }] = createResource<any[]>(async () => { try { return await invoke<any[]>("channel_blocks_list"); } catch { return []; } });
+  const [limits, { refetch: refetchL }] = createResource<any[]>(async () => { try { return await invoke<any[]>("channel_limits_list"); } catch { return []; } });
+  const [blockPid, setBlockPid] = createSignal("");
+  const [reason, setReason] = createSignal("");
+  const [limPid, setLimPid] = createSignal("");
+  const [daily, setDaily] = createSignal(100);
+  async function block() {
+    if (!blockPid()) return;
+    try { await invoke("channel_block_add", { person_id: blockPid(), reason: reason() }); setBlockPid(""); setReason(""); await refetchB(); } catch (e) { alert(String(e)); }
+  }
+  async function setLimit() {
+    if (!limPid()) return;
+    try { await invoke("channel_limit_set", { person_id: limPid(), daily_limit: daily() }); setLimPid(""); await refetchL(); } catch (e) { alert(String(e)); }
+  }
+  return (
+    <>
+      <section class="card-section">
+        <h3>🛡️ 차단 — 사양 §3.5 (M-10)</h3>
+        <div style="display:flex; gap:4px; margin-bottom:6px;">
+          <input value={blockPid()} onInput={(e) => setBlockPid(e.currentTarget.value)} placeholder="person_id (discord:user123)" style="flex:1; padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+          <input value={reason()} onInput={(e) => setReason(e.currentTarget.value)} placeholder="사유" style="flex:1; padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+          <button class="link-btn" onClick={block}>🚫 차단</button>
+        </div>
+        <For each={blocks() ?? []}>{(b) => (
+          <div style="font-size:12px; padding:4px 0; border-bottom:1px solid var(--border);"><code>{b.person_id}</code> · {b.reason} · {b.blocked_at}</div>
+        )}</For>
+      </section>
+      <section class="card-section">
+        <h3>📊 사람별 일 한도 — 사양 §3.5</h3>
+        <div style="display:flex; gap:4px; margin-bottom:6px;">
+          <input value={limPid()} onInput={(e) => setLimPid(e.currentTarget.value)} placeholder="person_id" style="flex:1; padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+          <input type="number" value={daily()} onInput={(e) => setDaily(parseInt(e.currentTarget.value) || 100)} placeholder="일 한도" style="width:100px; padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+          <button class="link-btn" onClick={setLimit}>설정</button>
+        </div>
+        <For each={limits() ?? []}>{(l) => (
+          <div style="font-size:12px; padding:4px 0; border-bottom:1px solid var(--border);"><code>{l.person_id}</code> · {l.today_used}/{l.daily_limit}</div>
+        )}</For>
+      </section>
+    </>
   );
 }
 

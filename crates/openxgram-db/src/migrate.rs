@@ -141,6 +141,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "session_channel_bindings",
         sql: include_str!("../migrations/0025_session_channel_bindings.sql"),
     },
+    Migration {
+        version: 27,
+        name: "full_specs",
+        sql: include_str!("../migrations/0026_full_specs.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

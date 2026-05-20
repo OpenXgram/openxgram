@@ -1,6 +1,10 @@
-import { createSignal, Show } from "solid-js";
+import { createResource, createSignal, For, Show } from "solid-js";
 import { VaultView } from "./VaultView";
 import { Breadcrumb } from "./Breadcrumb";
+import { invoke } from "@/api/client";
+
+async function fetchMcpServers(): Promise<any[]> { try { return await invoke("vault_mcp_servers_list"); } catch { return []; } }
+async function fetchToolCatalog(): Promise<any[]> { try { return await invoke("vault_tool_catalog"); } catch { return []; } }
 
 // UI-VAULT-MCP-SPEC v1.0 §3 — 🗝️ 도구·Vault·MCP 카드 (PRD §0 #8).
 // 4 탭: 시크릿 · MCP 서버 · 도구 카탈로그 · 감사 로그.
@@ -41,44 +45,87 @@ export function VaultMcpCard(props: { onBack: () => void }) {
       </Show>
 
       <Show when={tab() === "mcp"}>
-        <section class="card-section">
-          <h3>🔌 MCP 서버 — 사양 §3.2</h3>
-          <p class="placeholder-note">
-            등록된 MCP 서버 (filesystem·github·postgres·custom) · 헬스체크 · 재연결.
-            백엔드: `xgram mcp-install --scope user` 로 `~/.claude.json` 에 추가 → daemon 측 API 신설 필요.
-          </p>
-          <div class="card-section-row">
-            <span class="label">openxgram (자체)</span>
-            <span class="value">/usr/local/bin/xgram mcp-serve · stdio · ✓ user scope</span>
-          </div>
-          <button class="link-btn">+ MCP 서버 등록</button>
-          <button class="link-btn">전체 헬스체크</button>
-        </section>
+        <McpSection />
       </Show>
 
       <Show when={tab() === "tool"}>
-        <section class="card-section">
-          <h3>🛠️ 도구 카탈로그 — 사양 §3.3</h3>
-          <div class="card-section-row">
-            <span class="label">기본 정책</span>
-            <span class="value">default-deny (안티패턴 #3 준수)</span>
-          </div>
-          <p class="placeholder-note">
-            filesystem · shell · net · payment · llm-call 등. 각 도구의 ACL · auto/confirm/mfa 정책.
-            세션별 grant 는 💬 메신저 탭 12에서 참조만.
-          </p>
-        </section>
+        <ToolCatalogSection />
       </Show>
 
       <Show when={tab() === "audit"}>
         <section class="card-section">
           <h3>📋 Vault 감사 로그 — 사양 §3.4</h3>
           <p class="placeholder-note">
-            시크릿 접근·등록·로테이션 영구 기록 (M-11). 신원 카드의 인증 감사와 별도.
-            백엔드 `GET /v1/gui/vault/audit` 신설 필요.
+            시크릿 접근·등록·로테이션 영구 기록 (M-11). 신원 카드의 인증 감사와 별도. audit_chain endpoint 활용.
           </p>
         </section>
       </Show>
     </div>
+  );
+}
+
+function McpSection() {
+  const [list, { refetch }] = createResource(fetchMcpServers);
+  const [name, setName] = createSignal("");
+  const [transport, setTransport] = createSignal("stdio");
+  const [command, setCommand] = createSignal("");
+  const [url, setUrl] = createSignal("");
+  async function add() {
+    if (!name()) return;
+    try { await invoke("vault_mcp_server_add", { name: name(), transport: transport(), command: command(), url: url(), scope: "user" }); setName(""); setCommand(""); setUrl(""); await refetch(); } catch (e) { alert(String(e)); }
+  }
+  return (
+    <section class="card-section">
+      <h3>🔌 MCP 서버 — 사양 §3.2</h3>
+      <div style="display:flex; gap:4px; margin-bottom:6px;">
+        <input value={name()} onInput={(e) => setName(e.currentTarget.value)} placeholder="이름 (filesystem)" style="flex:1; padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+        <select value={transport()} onChange={(e) => setTransport(e.currentTarget.value)} style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;">
+          <option value="stdio">stdio</option>
+          <option value="http">http</option>
+        </select>
+      </div>
+      <Show when={transport() === "stdio"}>
+        <input value={command()} onInput={(e) => setCommand(e.currentTarget.value)} placeholder="command (npx @x/mcp-fs)" style="width:100%; padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px; margin-bottom:4px;" />
+      </Show>
+      <Show when={transport() === "http"}>
+        <input value={url()} onInput={(e) => setUrl(e.currentTarget.value)} placeholder="URL (http://localhost:9000)" style="width:100%; padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px; margin-bottom:4px;" />
+      </Show>
+      <button class="link-btn" onClick={add}>+ 등록</button>
+      <h4 style="margin:8px 0 4px; font-size:12px;">등록된 서버 ({(list() ?? []).length})</h4>
+      <For each={list() ?? []}>{(s: any) => (
+        <div style="font-size:12px; padding:4px 0; border-bottom:1px solid var(--border);">
+          <strong>{s.name}</strong> · {s.transport} · scope:{s.scope} · {s.health_status || "unknown"}
+          <div style="color:var(--text-3); font-size:11px;">{s.command || s.url || "—"}</div>
+        </div>
+      )}</For>
+    </section>
+  );
+}
+
+function ToolCatalogSection() {
+  const [list, { refetch }] = createResource(fetchToolCatalog);
+  async function setPolicy(tool: string, policy: string) {
+    try { await invoke("vault_tool_acl_set", { tool_name: tool, default_policy: policy, description: null }); await refetch(); } catch (e) { alert(String(e)); }
+  }
+  return (
+    <section class="card-section">
+      <h3>🛠️ 도구 카탈로그 — 사양 §3.3 (default-deny)</h3>
+      <For each={list() ?? []}>{(t: any) => (
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border);">
+          <div style="flex:1;">
+            <strong style="font-size:13px;">{t.tool_name}</strong>
+            <span style="color:var(--text-3); font-size:11px; margin-left:6px;">{t.description}</span>
+            <span style="color:var(--text-3); font-size:10px; margin-left:6px;">[{t.source}]</span>
+          </div>
+          <select value={t.default_policy} onChange={(e) => setPolicy(t.tool_name, e.currentTarget.value)}
+            style="padding:3px 6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px; font-size:11px;">
+            <option value="auto">auto</option>
+            <option value="confirm">confirm</option>
+            <option value="mfa">mfa</option>
+            <option value="block">block</option>
+          </select>
+        </div>
+      )}</For>
+    </section>
   );
 }
