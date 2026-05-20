@@ -103,12 +103,33 @@ function WikiSection() {
         />
       </section>
       <section class="card-section">
+        <h3>📬 새 페이지 알림 (M-6)</h3>
+        <NewAlertsView />
+      </section>
+      <section class="card-section">
         <h3>최근 페이지 ({pages()?.length ?? 0})</h3>
         <For each={pages() ?? []}>
           {(p) => (
-            <div style="font-size:12px; padding:4px 0; border-bottom:1px solid var(--border);">
-              <strong>{p.title}</strong>
-              <span style="color:var(--text-3); margin-left:8px;">{p.page_type} · {new Date(p.updated_at * 1000).toLocaleString()}</span>
+            <div style="display:flex; justify-content:space-between; font-size:12px; padding:6px 0; border-bottom:1px solid var(--border); gap:6px;">
+              <div style="flex:1;">
+                <strong>{p.title}</strong>
+                <span style="color:var(--text-3); margin-left:8px;">{p.page_type} · {new Date(p.updated_at * 1000).toLocaleString()}</span>
+              </div>
+              <div style="display:flex; gap:4px;">
+                <button class="link-btn" title="이력 (M-11)" onClick={async () => {
+                  try { const h = await invoke<any[]>("wiki_history", { id: p.id }); alert(`이력 ${h.length}건: ${h.slice(0,5).map(e=>e.event_type+'@'+e.at).join('\n')}`); } catch (e) { alert(String(e)); }
+                }}>📜</button>
+                <button class="link-btn" title="잠금 (M-7)" onClick={async () => {
+                  try { await invoke("wiki_lock", { id: p.id, locked_by: "user", reason: "사용자 표시" }); alert("🔒 잠금 완료"); } catch (e) { alert(String(e)); }
+                }}>🔒</button>
+                <button class="link-btn" title="공유 (M-4)" onClick={async () => {
+                  try { const s = await invoke<any>("wiki_share", { id: p.id, mode: "secret", noindex: true }); alert(`공유 URL: ${s.url} (noindex=${s.noindex})`); } catch (e) { alert(String(e)); }
+                }}>🔗</button>
+                <button class="link-btn" title="휴지통 (M-12)" onClick={async () => {
+                  if (!confirm(`"${p.title}" 휴지통으로?`)) return;
+                  try { await invoke("wiki_delete", { id: p.id }); await refetch(); } catch (e) { alert(String(e)); }
+                }}>🗑️</button>
+              </div>
             </div>
           )}
         </For>
@@ -117,6 +138,23 @@ function WikiSection() {
         <h3>기존 MemoryTab (L2 통합 view)</h3>
         <MemoryTab />
       </section>
+    </>
+  );
+}
+
+function NewAlertsView() {
+  const [list] = createResource<any[]>(async () => { try { return await invoke<any[]>("wiki_new_alerts"); } catch { return []; } });
+  return (
+    <>
+      <Show when={(list() ?? []).length === 0}>
+        <div style="font-size:12px; color:var(--text-3);">새 페이지 알림 없음.</div>
+      </Show>
+      <For each={list() ?? []}>{(a) => (
+        <div style="font-size:12px; padding:4px 0; border-bottom:1px solid var(--border);">
+          <strong>{a.title}</strong>
+          <span style="color:var(--text-3); margin-left:6px;">{a.created_at}</span>
+        </div>
+      )}</For>
     </>
   );
 }

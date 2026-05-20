@@ -1308,7 +1308,8 @@ async fn gui_notify_discord_channels(
     Json(body): Json<DiscordChannelsBody>,
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    let url = format!("https://discord.com/api/v10/guilds/{}/channels", body.guild_id);
+    let api_base = std::env::var("DISCORD_API_BASE").unwrap_or_else(|_| "https://discord.com/api/v10".into());
+    let url = format!("{api_base}/guilds/{}/channels", body.guild_id);
     let client = reqwest::Client::new();
     let resp = client.get(&url)
         .header("Authorization", format!("Bot {}", body.token))

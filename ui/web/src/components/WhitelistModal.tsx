@@ -17,6 +17,9 @@ export function WhitelistModal(props: { onClose: () => void }) {
   const [list, { refetch }] = createResource(async () => {
     try { return await invoke<Pattern[]>("whitelist_patterns_list"); } catch { return []; }
   });
+  const [policy] = createResource(async () => {
+    try { return await invoke<any>("whitelist"); } catch { return null; }
+  });
   const [priority, setPriority] = createSignal(1);
   const [type, setType] = createSignal("command");
   const [pat, setPat] = createSignal("");
@@ -43,6 +46,12 @@ export function WhitelistModal(props: { onClose: () => void }) {
         style="background:var(--surface-1); color:var(--text-1); border:1px solid var(--border); border-radius:8px; padding:18px; min-width:560px; max-width:90vw; max-height:80vh; overflow:auto;">
         <h3 style="margin:0 0 12px;">🛡️ 화이트리스트 패턴 — M-5 + N1 + N3 + V4</h3>
         <p style="font-size:11px; color:var(--text-3);">우선순위: command &gt; tmux &gt; cwd (N1). auto_register 매칭 시 자동 등록. auto_approve_pending 매칭 시 만료 큐도 자동 승인 (단 결제·위험은 절대 자동 X — V4).</p>
+        <Show when={policy()}>
+          <div style="background:var(--surface-2); padding:8px; border-radius:4px; margin-bottom:8px; font-size:12px;">
+            <strong>정책 (V4)</strong>: 우선순위 = {(policy()?.priority_order ?? []).join(" &gt; ")}.
+            절대 자동 승인 X = {(policy()?.never_auto_approve ?? []).join(", ")}.
+          </div>
+        </Show>
         <div style="display:flex; gap:6px; margin:10px 0; flex-wrap:wrap;">
           <input type="number" value={priority()} onInput={(e) => setPriority(parseInt(e.currentTarget.value) || 1)}
             style="width:60px; padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" placeholder="prio" />
