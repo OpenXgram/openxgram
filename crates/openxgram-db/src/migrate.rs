@@ -116,6 +116,11 @@ const MIGRATIONS: &[Migration] = &[
     },
     // v22 users — 폐기 (PRD §1: 1 사람 = 1 daemon. multi-user X).
     // 이미 적용된 DB는 그대로 두되 신규 설치에서는 생성하지 않음.
+    Migration {
+        version: 21,
+        name: "sub_wallets",
+        sql: include_str!("../migrations/0021_sub_wallets.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

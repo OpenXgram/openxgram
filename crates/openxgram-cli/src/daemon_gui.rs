@@ -208,6 +208,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/machine", get(gui_machine_info))
         // UI-MESSENGER-SPEC v1.3 §7.1·§7.3 — 헤더 🔔 통합 승인 큐 (L6 차등 만료 + V4).
         .route("/v1/gui/approvals", get(gui_approvals))
+        // UI-MESSENGER-SPEC v1.3 §2.4 + M-3 + L4 — 마스터+서브 지갑 (HD 영구 점유).
+        .route("/v1/gui/wallets", get(gui_wallets_list).post(gui_wallet_create))
+        .route("/v1/gui/wallets/topup", post(gui_wallet_topup))
         // 메신저 카드 v1.3 Step 0 — 메시지 송수신.
         .route("/v1/gui/messages", get(gui_messages_recent))
         .route("/v1/gui/peers/{alias}/send", post(gui_peer_send))
@@ -461,6 +464,55 @@ async fn gui_approvals(
         items,
         policy: crate::daemon_gui_sessions::default_approval_policy(),
     }))
+}
+
+/// `GET /v1/gui/wallets` — 마스터 + 서브 지갑 (UI-MESSENGER-SPEC §2.4 + M-3 + L4).
+async fn gui_wallets_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<crate::daemon_gui_wallets::WalletsDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    crate::daemon_gui_wallets::list_wallets(&mut db).map(Json).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorDto { error: format!("wallets list: {e}") }),
+        )
+    })
+}
+
+/// `POST /v1/gui/wallets` — 서브 지갑 생성 (L4: derivation_index 영구 점유).
+async fn gui_wallet_create(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<crate::daemon_gui_wallets::CreateSubWalletBody>,
+) -> Result<Json<crate::daemon_gui_wallets::SubWalletDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    crate::daemon_gui_wallets::create_sub_wallet(&mut db, body)
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorDto { error: format!("wallet create: {e}") }),
+            )
+        })
+}
+
+/// `POST /v1/gui/wallets/topup` — 마스터 → 서브 즉시 이체 (V8).
+async fn gui_wallet_topup(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<crate::daemon_gui_wallets::TopupBody>,
+) -> Result<Json<crate::daemon_gui_wallets::SubWalletDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    crate::daemon_gui_wallets::topup(&mut db, body).map(Json).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorDto { error: format!("wallet topup: {e}") }),
+        )
+    })
 }
 
 /// `GET /v1/gui/machine` — 이 머신의 4-tuple machine part (UI-MESSENGER-SPEC L2).

@@ -205,17 +205,118 @@ function StatusTab(props: { peer: PeerMeta }) {
   );
 }
 
-// ── 탭 5: 지갑·결제 ─────────────────────────────────────────────
+// ── 탭 5: 지갑·결제 (M-3 + M-6 + L4 + S6 + V8) ─────────────────
+interface SubWalletDto {
+  agent_id: string;
+  derivation_index: number;
+  derived_address: string;
+  allocated_micro: number;
+  spent_micro: number;
+  earned_micro: number;
+  balance_micro: number;
+  daily_limit_micro: number;
+  monthly_limit_micro: number;
+  auto_topup_enabled: boolean;
+  auto_topup_threshold_micro: number;
+  auto_topup_amount_micro: number;
+  status: string;
+}
+interface WalletsDto {
+  master: { address: string | null; free_micro: number; last_synced_at: string };
+  sub_wallets: SubWalletDto[];
+  next_hd_index: number;
+}
+async function fetchWallets(): Promise<WalletsDto | null> {
+  try {
+    return await invoke<WalletsDto>("wallets_list");
+  } catch {
+    return null;
+  }
+}
+function fmtUsd(micro: number): string {
+  return `$${(micro / 1_000_000).toFixed(2)}`;
+}
 function WalletTab(props: { peer: PeerMeta }) {
+  const [w, { refetch }] = createResource(fetchWallets);
+  const [busy, setBusy] = createSignal(false);
+  const [err, setErr] = createSignal<string | null>(null);
+  const ownWallet = () =>
+    w()?.sub_wallets.find((s) => s.agent_id === props.peer.alias) || null;
+  async function createWallet() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await invoke("wallet_create", { agent_id: props.peer.alias });
+      await refetch();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function topup(amountUsd: number) {
+    setBusy(true);
+    setErr(null);
+    try {
+      await invoke("wallet_topup", {
+        agent_id: props.peer.alias,
+        amount_micro: Math.round(amountUsd * 1_000_000),
+      });
+      await refetch();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <div>
-      <Row label="주소" value={props.peer.address.slice(0, 22) + "…"} mono />
+      <strong style="font-size:12px;">마스터 지갑 (🔑 신원)</strong>
+      <Row label="주소" value={w()?.master.address || "(미설정)"} mono />
+      <Row label="free 잔액" value={w() ? fmtUsd(w()!.master.free_micro) : "—"} />
+      <hr style="margin:10px 0; opacity:0.2;" />
+      <strong style="font-size:12px;">서브 지갑 (m/44'/.../N)</strong>
+      <Show
+        when={ownWallet()}
+        fallback={
+          <div>
+            <p class="messenger-sidepanel-hint">이 에이전트의 서브 지갑이 없습니다. L4 next index = {w()?.next_hd_index ?? "—"} (영구 점유).</p>
+            <button class="link-btn" type="button" onClick={createWallet} disabled={busy()}>
+              + 서브 지갑 생성 (HD 자동 할당)
+            </button>
+          </div>
+        }
+      >
+        {(s) => (
+          <>
+            <Row label="HD index" value={`m/44'/.../${s().derivation_index} (L4 영구)`} />
+            <Row label="주소" value={s().derived_address.slice(0, 22) + "…"} mono />
+            <Row label="allocated" value={fmtUsd(s().allocated_micro)} />
+            <Row label="spent (S6 합산)" value={fmtUsd(s().spent_micro)} />
+            <Row label="earned" value={fmtUsd(s().earned_micro)} />
+            <Row label="balance" value={fmtUsd(s().balance_micro)} />
+            <hr style="margin:8px 0; opacity:0.2;" />
+            <Row label="일 한도 (S6)" value={fmtUsd(s().daily_limit_micro)} />
+            <Row label="월 한도" value={fmtUsd(s().monthly_limit_micro)} />
+            <Row
+              label="M-6 자동 충전"
+              value={s().auto_topup_enabled ? "✓ 활성" : "비활성"}
+            />
+            <hr style="margin:8px 0; opacity:0.2;" />
+            <strong style="font-size:12px;">V8 — 마스터 → 서브 이체</strong>
+            <div style="display:flex; gap:6px; margin-top:6px;">
+              <button class="link-btn" type="button" onClick={() => topup(1)} disabled={busy()}>↑ $1</button>
+              <button class="link-btn" type="button" onClick={() => topup(5)} disabled={busy()}>↑ $5</button>
+              <button class="link-btn" type="button" onClick={() => topup(10)} disabled={busy()}>↑ $10</button>
+            </div>
+          </>
+        )}
+      </Show>
+      <Show when={err()}>
+        <p style="color:#f88; font-size:11px; margin-top:8px;">⚠ {err()}</p>
+      </Show>
       <p class="messenger-sidepanel-hint">
-        서브 지갑 (HD 파생) · 잔액 · 한도 정책 · M-6 자동 충전 은 Tier 4+ (서브 지갑 백엔드 +
-        마스터 ↔ 서브 이체 API 신설 필요).
-      </p>
-      <p style="font-size:12px; margin-top:8px;">
-        <strong>마스터 지갑</strong> = 🔑 신원 카드 (예정).
+        L4: derivation_index 영구 점유 (Decommissioned 도 재사용 X). 마스터 지갑 고급 = 🔑 신원 카드.
       </p>
     </div>
   );

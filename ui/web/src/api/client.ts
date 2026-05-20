@@ -99,6 +99,10 @@ const ROUTES: Record<string, Route> = {
   session_screen: { method: "GET", path: "/sessions/{identifier}/screen" },
   // Messenger v1.3 §7.1·§7.3 — 헤더 🔔 통합 승인 큐 (L6 + V4)
   approvals: { method: "GET", path: "/approvals" },
+  // Messenger v1.3 §2.4 + M-3 + L4 — 마스터+서브 지갑 (HD 영구 점유)
+  wallets_list: { method: "GET", path: "/wallets" },
+  wallet_create: { method: "POST", path: "/wallets", body: true },
+  wallet_topup: { method: "POST", path: "/wallets/topup", body: true },
 
   // Channel
   channel_status: { method: "GET", path: "/channel/status" },
