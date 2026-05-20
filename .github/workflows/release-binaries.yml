@@ -66,6 +66,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Web GUI 자산을 xgram 바이너리에 내장 (rc.26+, include_dir 매크로).
+      # cargo build 전에 vite build 가 ui/web/dist/ 채워야 진짜 GUI 가 embedded.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: build web GUI (vite)
+        shell: bash
+        working-directory: ui/web
+        run: npm ci && npm run build
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
