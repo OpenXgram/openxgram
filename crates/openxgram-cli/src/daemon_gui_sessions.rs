@@ -337,6 +337,75 @@ fn tail_claude_jsonl(project_dir_name: &str) -> Result<String, String> {
     Ok(out)
 }
 
+/// UI-MESSENGER-SPEC v1.3 §7.1 + §7.3 — 헤더 🔔 통합 승인 큐 (L6 차등 만료 + V4).
+///
+/// 큐 유형: payment / pending_session / risky_action / external_call / channel_moderation.
+/// 만료: payment 24h / pending_session 7d / risky_action 1h / external_call 24h / channel_moderation 7d.
+/// 만료 시 자동 거절. 화이트리스트 매칭 시 만료 전 자동 승인 (V4).
+///
+/// MVP: 기존 단일 큐 (`gui_vault_pending`) 를 통합 형태로 노출. 다른 큐 종류는 placeholder.
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalKind {
+    Payment,
+    PendingSession,
+    RiskyAction,
+    ExternalCall,
+    ChannelModeration,
+}
+
+impl ApprovalKind {
+    pub fn ttl_hours(&self) -> u32 {
+        match self {
+            ApprovalKind::Payment => 24,
+            ApprovalKind::PendingSession => 24 * 7,
+            ApprovalKind::RiskyAction => 1,
+            ApprovalKind::ExternalCall => 24,
+            ApprovalKind::ChannelModeration => 24 * 7,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ApprovalItem {
+    pub id: String,
+    pub kind: ApprovalKind,
+    pub title: String,
+    pub detail: String,
+    pub created_at: String,
+    pub expires_at: String,
+    pub source_card: String, // "vault" / "messenger" / "external" 등 cross-link 용
+}
+
+#[derive(Debug, Serialize)]
+pub struct ApprovalQueueDto {
+    pub items: Vec<ApprovalItem>,
+    pub policy: ApprovalPolicy,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ApprovalPolicy {
+    pub payment_ttl_hours: u32,
+    pub pending_session_ttl_hours: u32,
+    pub risky_action_ttl_hours: u32,
+    pub external_call_ttl_hours: u32,
+    pub channel_moderation_ttl_hours: u32,
+    pub auto_approve_on_whitelist_match: bool, // V4
+    pub never_auto_approve: Vec<String>,       // ["payment", "risky_action"] — V4
+}
+
+pub fn default_approval_policy() -> ApprovalPolicy {
+    ApprovalPolicy {
+        payment_ttl_hours: ApprovalKind::Payment.ttl_hours(),
+        pending_session_ttl_hours: ApprovalKind::PendingSession.ttl_hours(),
+        risky_action_ttl_hours: ApprovalKind::RiskyAction.ttl_hours(),
+        external_call_ttl_hours: ApprovalKind::ExternalCall.ttl_hours(),
+        channel_moderation_ttl_hours: ApprovalKind::ChannelModeration.ttl_hours(),
+        auto_approve_on_whitelist_match: true,
+        never_auto_approve: vec!["payment".into(), "risky_action".into()],
+    }
+}
+
 /// `GET /v1/gui/sessions/{identifier}/screen` 의 핵심 로직.
 pub fn capture_session(identifier: &str) -> SessionScreenDto {
     let (kind, content, source_note) = if let Some(name) = identifier.strip_prefix("tmux:") {

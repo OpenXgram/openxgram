@@ -206,6 +206,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/sessions", get(gui_sessions))
         .route("/v1/gui/sessions/{identifier}/screen", get(gui_session_screen))
         .route("/v1/gui/machine", get(gui_machine_info))
+        // UI-MESSENGER-SPEC v1.3 §7.1·§7.3 — 헤더 🔔 통합 승인 큐 (L6 차등 만료 + V4).
+        .route("/v1/gui/approvals", get(gui_approvals))
         // 메신저 카드 v1.3 Step 0 — 메시지 송수신.
         .route("/v1/gui/messages", get(gui_messages_recent))
         .route("/v1/gui/peers/{alias}/send", post(gui_peer_send))
@@ -412,6 +414,53 @@ async fn gui_session_screen(
 ) -> Result<Json<crate::daemon_gui_sessions::SessionScreenDto>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     Ok(Json(crate::daemon_gui_sessions::capture_session(&identifier)))
+}
+
+/// `GET /v1/gui/approvals` — 통합 승인 큐 (UI-MESSENGER-SPEC v1.3 §7.1, §7.3, V4).
+/// 현재 데이터 출처: vault_pending. 다른 종류는 향후 확장.
+async fn gui_approvals(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<
+    Json<crate::daemon_gui_sessions::ApprovalQueueDto>,
+    (StatusCode, Json<ErrorDto>),
+> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use chrono::{Duration, Utc};
+    let mut items = Vec::new();
+    // Vault pending → ApprovalKind::Payment (가장 가까운 시각 분류; 실제 분류는 향후)
+    {
+        let mut db = state.db.lock().await;
+        let mut store = VaultStore::new(&mut db);
+        if let Ok(pending) = store.list_pending() {
+            for p in pending {
+                let created = p.requested_at;
+                let expires = created + Duration::hours(
+                    crate::daemon_gui_sessions::ApprovalKind::Payment.ttl_hours() as i64,
+                );
+                items.push(crate::daemon_gui_sessions::ApprovalItem {
+                    id: p.id,
+                    kind: crate::daemon_gui_sessions::ApprovalKind::Payment,
+                    title: format!("Vault 자격증명 요청: {}", p.key),
+                    detail: format!("{} · {:?}", p.agent, p.action),
+                    created_at: created.to_rfc3339(),
+                    expires_at: expires.to_rfc3339(),
+                    source_card: "vault".into(),
+                });
+            }
+        }
+    }
+    // 만료된 항목 자동 제외 (UI 표시 측면).
+    let now = Utc::now();
+    items.retain(|i| {
+        chrono::DateTime::parse_from_rfc3339(&i.expires_at)
+            .map(|e| e.with_timezone(&Utc) > now)
+            .unwrap_or(true)
+    });
+    Ok(Json(crate::daemon_gui_sessions::ApprovalQueueDto {
+        items,
+        policy: crate::daemon_gui_sessions::default_approval_policy(),
+    }))
 }
 
 /// `GET /v1/gui/machine` — 이 머신의 4-tuple machine part (UI-MESSENGER-SPEC L2).
