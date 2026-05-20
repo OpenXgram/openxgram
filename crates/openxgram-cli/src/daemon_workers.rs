@@ -62,7 +62,16 @@ pub fn spawn_all(db: Arc<Mutex<Db>>) {
             }
         }
     });
-    tracing::info!("daemon workers spawned (M-4, M-6, L6, V6)");
+    let db_m5 = db.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            if let Err(e) = m5_auto_register_tick(&db_m5).await {
+                tracing::warn!("M-5 auto-register tick error: {e}");
+            }
+        }
+    });
+    tracing::info!("daemon workers spawned (M-4, M-5, M-6, L6, V6)");
 }
 
 async fn m4_idle_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
@@ -195,6 +204,81 @@ async fn l6_expiry_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
             rusqlite::params![now.to_rfc3339(), cutoff],
         )?;
         tracing::info!("L6 expiry: {} vault pending expired", expired);
+    }
+    Ok(())
+}
+
+/// M-5 자동 등록 worker (60s tick).
+/// 화이트리스트 패턴 매칭되는 미연결 세션 발견 시 agent_identities 에 자동 INSERT.
+async fn m5_auto_register_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
+    use crate::daemon_gui_sessions::{collect_sessions, default_whitelist, WhitelistPatternItem};
+    let dto = collect_sessions();
+    // 화이트리스트 (default + user)
+    let default_patterns = default_whitelist().patterns;
+    let mut db = db.lock().await;
+    let mut user_stmt = db.conn().prepare(
+        "SELECT priority, pattern_type, pattern, default_role, auto_register, auto_approve_pending \
+         FROM whitelist_patterns WHERE active = 1 ORDER BY priority ASC",
+    )?;
+    let user_patterns: Vec<WhitelistPatternItem> = user_stmt.query_map([], |r| {
+        Ok(WhitelistPatternItem {
+            priority: r.get::<_, i64>(0)? as u32,
+            pattern_type: r.get(1)?,
+            pattern: r.get(2)?,
+            default_role: r.get(3)?,
+            auto_register: r.get::<_, i64>(4)? != 0,
+            auto_approve_pending: r.get::<_, i64>(5)? != 0,
+        })
+    })?.filter_map(|r| r.ok()).collect();
+    drop(user_stmt);
+    let mut patterns = default_patterns;
+    patterns.extend(user_patterns);
+    // N1: command > tmux > cwd 우선순위
+    patterns.sort_by_key(|p| p.priority);
+    let now = chrono::Utc::now().to_rfc3339();
+    for s in &dto.sessions {
+        // 이미 agent_identities 에 등록되어 있으면 skip.
+        let exists: i64 = db.conn().query_row(
+            "SELECT COUNT(*) FROM agent_identities WHERE handle_id = ?1",
+            rusqlite::params![s.identifier],
+            |r| r.get(0),
+        ).unwrap_or(0);
+        if exists > 0 { continue }
+        // 패턴 매칭 — display + identifier 둘 다 검사
+        for p in &patterns {
+            if !p.auto_register { continue }
+            let target = &s.display;
+            let matched = if p.pattern.ends_with('*') {
+                let prefix = p.pattern.trim_end_matches('*');
+                target.starts_with(prefix)
+            } else {
+                target.contains(&p.pattern)
+            };
+            if matched {
+                // N4 + 안티패턴 10: 직접 SQL — agent_identities 는 메신저 마스터.
+                let id = {
+                    use sha2::{Digest, Sha256};
+                    let mut h = Sha256::new();
+                    h.update(s.identifier.as_bytes());
+                    h.update(now.as_bytes());
+                    format!("{:x}", h.finalize())[..26].to_string()
+                };
+                let _ = db.conn().execute(
+                    "INSERT OR IGNORE INTO agent_identities \
+                        (id, display_name, machine, role, status, llm_mode, handle_id, started_at, last_seen_at) \
+                     VALUES (?1, ?2, ?3, ?4, 'Active', 'Working', ?5, ?6, ?6)",
+                    rusqlite::params![id, s.display, dto.machine.alias, p.default_role, s.identifier, now],
+                );
+                // M-5 audit
+                let _ = db.conn().execute(
+                    "INSERT INTO whitelist_match_log (agent_id, matched_pattern_id, action, at) \
+                     VALUES (?1, NULL, 'auto_register', ?2)",
+                    rusqlite::params![id, now],
+                );
+                tracing::info!("M-5 auto-register: {} (pattern: {})", s.display, p.pattern);
+                break; // 우선순위 가장 높은 매칭 1개만
+            }
+        }
     }
     Ok(())
 }
