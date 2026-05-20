@@ -1,4 +1,4 @@
-import { createResource, createSignal, Show } from "solid-js";
+import { createEffect, createResource, createSignal, Show } from "solid-js";
 import { invoke } from "@/api/client";
 import { isUnlocked, lock } from "@/api/auth";
 import { I18nProvider, useI18n } from "./i18n";
@@ -10,7 +10,7 @@ import { SettingsTab } from "./components/SettingsTab";
 import { LoginView } from "./components/LoginView";
 
 // 4탭 단순화 (PRD-OpenXgram §4.8 v0.9 Beta).
-//   - chat / memory / network / settings + onboarding(init 전만)
+//   - chat / memory / network / settings + onboarding(daemon 미초기화 시만)
 //   - PRD §1: 1 사람 = 1 메인 daemon + N 머신 attach. multi-user X.
 //   - 잠금 = 단일 keystore 비밀번호. RegisterView 폐기.
 type Tab = "onboarding" | "chat" | "memory" | "network" | "settings";
@@ -34,17 +34,16 @@ function AppInner() {
     () => authed() === true,
     async (ok) => (ok ? await checkInitialized() : false),
   );
-  const [tab, setTab] = createSignal<Tab>("onboarding");
+  // 기본 탭 = chat. Onboarding 은 daemon 이 명시적으로 false 반환할 때만 진입.
+  // (initialized 가 loading/undefined 일 때는 chat 그대로 — UI 갇히는 버그 방지.)
+  const [tab, setTab] = createSignal<Tab>("chat");
 
-  // 초기화된 사용자 → 첫 화면을 Chat 으로 자동 전환 (한 번만).
-  let autoSwitched = false;
-  const maybeAutoSwitch = () => {
-    if (!autoSwitched && initialized() === true && tab() === "onboarding") {
-      autoSwitched = true;
-      setTab("chat");
-    }
-  };
-  queueMicrotask(maybeAutoSwitch);
+  // initialized 가 false 로 확정되면 onboarding 강제. true 면 chat 으로 복귀.
+  createEffect(() => {
+    const init = initialized();
+    if (init === false && tab() !== "onboarding") setTab("onboarding");
+    if (init === true && tab() === "onboarding") setTab("chat");
+  });
 
   const tabs: { id: Exclude<Tab, "onboarding">; label: () => string }[] = [
     { id: "chat", label: () => t("tab.chat") },

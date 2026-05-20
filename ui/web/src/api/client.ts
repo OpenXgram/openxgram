@@ -39,8 +39,14 @@ export function setDaemonUrl(url: string): void {
 }
 
 export function getBearer(): string | null {
+  // 우선순위: session_token (웹 GUI unlock) > mcp_token (CLI 발급).
+  // 두 키가 분리된 이유: unlock 토큰은 daemon 프로세스 수명, mcp-token 은 영구.
+  // require_auth 핸들러는 둘 다 받음.
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    return (
+      localStorage.getItem("xgram_session_token") ||
+      localStorage.getItem(TOKEN_KEY)
+    );
   } catch {
     return null;
   }

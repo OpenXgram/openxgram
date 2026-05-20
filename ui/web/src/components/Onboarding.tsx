@@ -53,8 +53,8 @@ export function Onboarding(props: { onReady?: () => void }) {
           <button
             class="primary"
             type="button"
-            onClick={() => {
-              refetch();
+            onClick={async () => {
+              await refetch();
               if (initialized() === true) props.onReady?.();
             }}
           >
