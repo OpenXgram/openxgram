@@ -658,3 +658,210 @@ input:focus-visible {
   border-radius: 4px; padding: 0 16px; cursor: pointer;
 }
 .messenger-thread-input button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ─────────────────────────────────────────────────────────────────────
+   v1.3 Tier 1~4 — 통합 테마 변수 + 다크 모드 자동 전환.
+   기존 :root (라이트) 위에 prefers-color-scheme 으로 다크 override.
+   messenger-* 클래스는 var() 사용 권장 (이전 hardcode 잔존).
+   ───────────────────────────────────────────────────────────────────── */
+
+:root {
+  --surface-1: #ffffff;          /* 카드/패널 기본 */
+  --surface-2: #f4f5f7;          /* 한 단계 어두운 표면 */
+  --surface-3: #e8eaee;          /* 헤더 표시 */
+  --surface-active: rgba(96, 165, 250, 0.18);
+  --text-1: #1a1d24;
+  --text-2: #4a4f5a;
+  --text-3: #6b7280;
+  --accent: #4f7df9;
+  --accent-soft: #2a3a55;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e6e6e6;
+    --fg-dim: #9aa0a6;
+    --bg: #0f1115;
+    --bg-soft: #1a1d24;
+    --border: #2a2d33;
+    --border-strong: #3a3d43;
+    --surface-1: #15181f;
+    --surface-2: #1c1f26;
+    --surface-3: #22262e;
+    --surface-active: rgba(96, 165, 250, 0.22);
+    --text-1: #e6e6e6;
+    --text-2: #b0b5bd;
+    --text-3: #8a8f99;
+    --accent: #60a5fa;
+    --accent-soft: #1e3a5f;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+  }
+}
+
+/* messenger v1.3 — Tier 1~4 일관성 */
+.messenger-sidebar-mode { background: var(--surface-2); }
+.messenger-sidebar-mode button {
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid transparent;
+  padding: 6px 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.messenger-sidebar-mode button.active {
+  background: var(--surface-active);
+  color: var(--text-1);
+  font-weight: 600;
+}
+.messenger-sidebar-ctrl select {
+  background: var(--surface-1);
+  color: var(--text-1);
+  border: 1px solid var(--border);
+  padding: 4px 6px;
+  font-size: 12px;
+}
+.messenger-machine-group .messenger-machine-header {
+  background: var(--surface-2);
+  color: var(--text-1);
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 13px;
+  padding: 6px 10px;
+}
+
+/* 우측 12 탭 사이드 패널 (Tier 3) */
+.messenger-sidepanel {
+  background: var(--surface-1);
+  color: var(--text-1);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: row;
+}
+.messenger-sidepanel-nav {
+  display: flex;
+  flex-direction: column;
+  width: 48px;
+  padding: 6px 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.messenger-sidepanel-nav button {
+  padding: 10px 0;
+  font-size: 18px;
+  background: transparent;
+  color: var(--text-2);
+  border: none;
+  cursor: pointer;
+}
+.messenger-sidepanel-nav button.active {
+  background: var(--surface-active);
+  color: var(--text-1);
+}
+.messenger-sidepanel-content {
+  flex: 1;
+  padding: 14px;
+  overflow-y: auto;
+  font-size: 13px;
+  color: var(--text-1);
+}
+.messenger-sidepanel-content h3 { margin: 0 0 10px 0; font-size: 14px; color: var(--text-1); }
+.messenger-sidepanel-row { display: flex; gap: 8px; padding: 3px 0; font-size: 12px; }
+.messenger-sidepanel-row .label { color: var(--text-3); min-width: 90px; }
+.messenger-sidepanel-row .value { color: var(--text-1); flex: 1; }
+.messenger-sidepanel-row .value.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; }
+.messenger-sidepanel-hint { font-size: 12px; color: var(--text-3); margin-top: 10px; line-height: 1.5; }
+.messenger-sidepanel button.link-btn {
+  background: var(--accent-soft);
+  color: var(--text-1);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-top: 8px;
+}
+
+/* 사용자 개입 토글 (Tier 4) — PeerInput */
+.messenger-input-mode {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-2);
+  padding: 4px 8px 0;
+}
+.messenger-input-mode label { cursor: pointer; }
+.messenger-thread-input {
+  flex-direction: column;
+  gap: 4px;
+}
+.messenger-thread-input-row {
+  display: flex;
+  gap: 8px;
+}
+.messenger-thread-input-row textarea { flex: 1; min-width: 0; }
+.messenger-thread-input-row button { white-space: nowrap; padding: 0 14px; }
+
+/* Hand-off 모달 (Tier 4 L5) */
+.handoff-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.handoff-modal {
+  background: var(--surface-1);
+  color: var(--text-1);
+  padding: 20px;
+  border-radius: 8px;
+  min-width: 440px;
+  max-width: 600px;
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+.handoff-modal h3 { margin: 0 0 12px 0; color: var(--text-1); }
+.handoff-modal .source-preview {
+  font-size: 12px;
+  margin-bottom: 12px;
+  padding: 8px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  color: var(--text-2);
+}
+.handoff-modal label { font-size: 12px; color: var(--text-2); display: block; margin-bottom: 4px; }
+.handoff-modal select,
+.handoff-modal textarea {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--surface-2);
+  color: var(--text-1);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: inherit;
+}
+.handoff-modal .radio-row { font-size: 13px; padding: 3px 0; }
+.handoff-modal .actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+.handoff-modal .actions button {
+  padding: 6px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-1);
+  cursor: pointer;
+}
+.handoff-modal .actions button.primary {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+.handoff-modal .actions button:disabled { opacity: 0.5; cursor: not-allowed; }

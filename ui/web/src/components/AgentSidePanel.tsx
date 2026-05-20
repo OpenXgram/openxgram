@@ -3,7 +3,7 @@ import { invoke } from "@/api/client";
 
 // UI-MESSENGER-SPEC v1.3 §5 — 우측 12 탭 (S3 세로 사이드).
 // Tier 3 MVP = 5 탭: 개요 · 역할 · 채널 바인딩 · 상태·리소스 · 지갑·결제.
-// 나머지 7 탭 (히스토리·내보내기·토큰·Cron·파일·알림·권한) 은 Tier 4+.
+// 색은 styles.css 의 --surface-* / --text-* 변수 사용 (다크/라이트 자동).
 
 interface PeerMeta {
   alias: string;
@@ -18,12 +18,7 @@ interface NotifyStatus {
   telegram_configured: boolean;
 }
 
-type TabId =
-  | "overview"
-  | "role"
-  | "channel"
-  | "status"
-  | "wallet";
+type TabId = "overview" | "role" | "channel" | "status" | "wallet";
 
 const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: "overview", label: "개요", icon: "📋" },
@@ -54,29 +49,24 @@ export function AgentSidePanel(props: {
   const [notify] = createResource(fetchNotify);
 
   return (
-    <aside
-      class="messenger-sidepanel"
-      style="display:flex; flex-direction:row; border-left:1px solid rgba(255,255,255,0.08); background:rgba(0,0,0,0.15);"
-    >
-      {/* 세로 사이드 탭 (S3) */}
-      <nav style="display:flex; flex-direction:column; width:48px; padding:6px 0; border-right:1px solid rgba(255,255,255,0.06);">
+    <aside class="messenger-sidepanel">
+      <nav class="messenger-sidepanel-nav">
         <For each={TABS}>
-          {(t) => (
+          {(tt) => (
             <button
               type="button"
-              onClick={() => setTab(t.id)}
-              title={t.label}
-              style={`padding:8px 0; font-size:1.1em; background:${tab() === t.id ? "rgba(96,165,250,0.18)" : "transparent"}; border:none; cursor:pointer;`}
+              class={tab() === tt.id ? "active" : ""}
+              onClick={() => setTab(tt.id)}
+              title={tt.label}
             >
-              {t.icon}
+              {tt.icon}
             </button>
           )}
         </For>
       </nav>
 
-      {/* 탭 콘텐츠 */}
-      <div style="flex:1; padding:12px; overflow-y:auto; font-size:0.9em;">
-        <h3 style="margin:0 0 8px 0; font-size:1em;">
+      <div class="messenger-sidepanel-content">
+        <h3>
           {TABS.find((t) => t.id === tab())?.icon}{" "}
           {TABS.find((t) => t.id === tab())?.label}
         </h3>
@@ -105,10 +95,7 @@ function Overview(props: { peer: PeerMeta }) {
   return (
     <div>
       <Row label="alias" value={props.peer.alias} />
-      <Row
-        label="display_name"
-        value={props.peer.alias /* 현재 별도 display_name X — alias 사용 */}
-      />
+      <Row label="display_name" value={props.peer.alias} />
       <Row label="machine" value={props.peer.machine || "(unknown)"} />
       <Row
         label="address"
@@ -116,13 +103,9 @@ function Overview(props: { peer: PeerMeta }) {
         mono
       />
       <Row label="public_key" value={fingerprint(props.peer.public_key_hex)} mono />
-      <Row
-        label="last_seen"
-        value={props.peer.last_seen || "한 번도 본 적 없음"}
-      />
-      <hr style="margin:12px 0; opacity:0.2;" />
-      <p style="font-size:0.85em; opacity:0.7;">
-        ULID Agent ID·display_name 편집·세션 마이그레이션 등은 Tier 4 에서.
+      <Row label="last_seen" value={props.peer.last_seen || "한 번도 본 적 없음"} />
+      <p class="messenger-sidepanel-hint">
+        ULID Agent ID·display_name 편집·세션 마이그레이션 등은 Tier 4+.
       </p>
     </div>
   );
@@ -134,21 +117,14 @@ function RoleTab(props: { peer: PeerMeta; onJumpToSettings: () => void }) {
     <div>
       <Row label="역할" value="researcher (기본)" />
       <Row label="오케스트레이션" value="워커" />
-      <hr style="margin:12px 0; opacity:0.2;" />
-      <p style="font-size:0.85em; margin-bottom:6px;">
-        <strong>L3 auto_respond</strong>
-      </p>
+      <hr style="margin:10px 0; opacity:0.2;" />
+      <strong style="font-size:12px;">L3 auto_respond</strong>
       <Row label="정책" value="자율 행동 카드 기본값 따름" />
       <Row label="역할 default" value="true (researcher)" />
-      <button
-        type="button"
-        onClick={props.onJumpToSettings}
-        style="margin-top:8px; padding:6px 10px; font-size:0.85em;"
-      >
+      <button class="link-btn" type="button" onClick={props.onJumpToSettings}>
         🔗 자율 행동 카드 (예정)
       </button>
-      <hr style="margin:12px 0; opacity:0.2;" />
-      <p style="font-size:0.85em; opacity:0.7;">
+      <p class="messenger-sidepanel-hint">
         역할 프리셋 변경·시스템 프롬프트 편집·호출 가능 대상은 Tier 4+.
       </p>
     </div>
@@ -156,65 +132,48 @@ function RoleTab(props: { peer: PeerMeta; onJumpToSettings: () => void }) {
 }
 
 // ── 탭 3: 채널 바인딩 (안티패턴 1 — 토큰 입력 X) ────────────────
-function ChannelTab(props: {
-  notify: NotifyStatus | null;
-  onJumpToSettings: () => void;
-}) {
+function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () => void }) {
   return (
     <div>
-      <p style="font-size:0.85em; margin-bottom:8px;">
+      <p style="font-size:12px; margin-bottom:8px;">
         이 세션이 응답할 채널 — 📱 채널 카드 등록 후 여기서 바인딩 선택.
       </p>
-      <Row
-        label="디스코드"
-        value={props.notify?.discord_configured ? "✓ 연결됨" : "(미연결)"}
-      />
-      <Row
-        label="텔레그램"
-        value={props.notify?.telegram_configured ? "✓ 연결됨" : "(미연결)"}
-      />
-      <button
-        type="button"
-        onClick={props.onJumpToSettings}
-        style="margin-top:8px; padding:6px 10px; font-size:0.85em;"
-      >
+      <Row label="디스코드" value={props.notify?.discord_configured ? "✓ 연결됨" : "(미연결)"} />
+      <Row label="텔레그램" value={props.notify?.telegram_configured ? "✓ 연결됨" : "(미연결)"} />
+      <button class="link-btn" type="button" onClick={props.onJumpToSettings}>
         🔗 채널 카드 (Settings → 알림 채널)
       </button>
-      <hr style="margin:12px 0; opacity:0.2;" />
-      <p style="font-size:0.85em; opacity:0.7;">
-        세션별 멘션 트리거·권한 토글은 Tier 4+. <strong>봇 토큰 입력 X</strong>{" "}
-        (마스터 = 📱 채널 카드).
+      <p class="messenger-sidepanel-hint">
+        세션별 멘션 트리거·권한 토글은 Tier 4+. <strong>봇 토큰 입력 X</strong> (마스터 = 📱 채널 카드).
       </p>
     </div>
   );
 }
 
-// ── 탭 4: 상태·리소스 (Tier 4 에서 실시간 데이터 연결) ──────────
+// ── 탭 4: 상태·리소스 ──────────────────────────────────────────
 function StatusTab(props: { peer: PeerMeta }) {
   return (
     <div>
       <Row label="last_seen" value={props.peer.last_seen || "—"} />
       <Row label="alias" value={props.peer.alias} />
-      <hr style="margin:12px 0; opacity:0.2;" />
-      <p style="font-size:0.85em; opacity:0.7;">
-        실시간 리소스 (CPU·RAM·GPU·컨텍스트·서브에이전트 트리·heartbeat) 는
-        Tier 4+ (daemon 측 텔레메트리 API 신설 필요).
+      <p class="messenger-sidepanel-hint">
+        실시간 리소스 (CPU·RAM·GPU·컨텍스트·서브에이전트 트리·heartbeat) 는 Tier 4+
+        (daemon 측 텔레메트리 API 신설 필요).
       </p>
     </div>
   );
 }
 
-// ── 탭 5: 지갑·결제 (M-3 — 마스터=신원, 서브=메신저) ────────────
+// ── 탭 5: 지갑·결제 ─────────────────────────────────────────────
 function WalletTab(props: { peer: PeerMeta }) {
   return (
     <div>
       <Row label="주소" value={props.peer.address.slice(0, 22) + "…"} mono />
-      <p style="font-size:0.85em; opacity:0.7; margin-top:8px;">
-        서브 지갑 (HD 파생) · 잔액 · 한도 정책 · M-6 자동 충전 은 Tier 4+
-        (서브 지갑 백엔드 + 마스터 ↔ 서브 이체 API 신설 필요).
+      <p class="messenger-sidepanel-hint">
+        서브 지갑 (HD 파생) · 잔액 · 한도 정책 · M-6 자동 충전 은 Tier 4+ (서브 지갑 백엔드 +
+        마스터 ↔ 서브 이체 API 신설 필요).
       </p>
-      <hr style="margin:12px 0; opacity:0.2;" />
-      <p style="font-size:0.85em;">
+      <p style="font-size:12px; margin-top:8px;">
         <strong>마스터 지갑</strong> = 🔑 신원 카드 (예정).
       </p>
     </div>
@@ -224,13 +183,9 @@ function WalletTab(props: { peer: PeerMeta }) {
 // ── 공용 ──
 function Row(props: { label: string; value: string; mono?: boolean }) {
   return (
-    <div style="display:flex; gap:8px; padding:3px 0; font-size:0.85em;">
-      <span style="opacity:0.6; min-width:90px;">{props.label}</span>
-      <span
-        style={`flex:1; ${props.mono ? "font-family:monospace; font-size:0.85em;" : ""}`}
-      >
-        {props.value}
-      </span>
+    <div class="messenger-sidepanel-row">
+      <span class="label">{props.label}</span>
+      <span class={`value${props.mono ? " mono" : ""}`}>{props.value}</span>
     </div>
   );
 }

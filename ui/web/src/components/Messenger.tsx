@@ -275,12 +275,12 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
       {/* 좌: 머신×세션 트리 + 스레드 모드 (Tier 1 + L1) */}
       <aside class="messenger-sidebar">
         {/* L1 — 좌측 상단 2-모드 탭 */}
-        <div class="messenger-sidebar-mode" style="display:flex; gap:4px; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,0.08);">
+        <div class="messenger-sidebar-mode" style="display:flex; gap:4px; padding:6px 8px; border-bottom:1px solid var(--border);">
           <button
             type="button"
             class={leftMode() === "agent" ? "active" : ""}
             onClick={() => setLeftMode("agent")}
-            style={`flex:1; padding:6px; ${leftMode() === "agent" ? "background:rgba(96,165,250,0.18); font-weight:600;" : ""}`}
+            style="flex:1;"
           >
             🤖 에이전트
           </button>
@@ -288,7 +288,7 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
             type="button"
             class={leftMode() === "thread" ? "active" : ""}
             onClick={() => setLeftMode("thread")}
-            style={`flex:1; padding:6px; ${leftMode() === "thread" ? "background:rgba(96,165,250,0.18); font-weight:600;" : ""}`}
+            style="flex:1;"
           >
             🧵 스레드 ({threads().length})
           </button>
@@ -348,13 +348,13 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
                   <div
                     class="messenger-machine-header"
                     onClick={() => toggleCollapse(g.machine)}
-                    style="cursor:pointer; padding:6px 8px; background:rgba(255,255,255,0.04); font-weight:600; font-size:0.9em;"
+                    style="cursor:pointer;"
                   >
                     <span style="margin-right:4px;">
                       {isCollapsed() ? "▶" : "▼"}
                     </span>
-                    🟢 {g.machine}{" "}
-                    <span style="font-weight:400; opacity:0.7; font-size:0.85em;">
+                    🟢 {g.machine || "(unknown)"}{" "}
+                    <span style="font-weight:400; color:var(--text-3); font-size:12px;">
                       ({g.friends.length} · {g.connected} 연결)
                     </span>
                   </div>
@@ -656,27 +656,20 @@ function HandoffModal(props: {
   }
 
   return (
-    <div
-      onClick={props.onClose}
-      style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; display:flex; align-items:center; justify-content:center;"
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style="background:#1e293b; padding:20px; border-radius:8px; min-width:420px; max-width:560px; box-shadow:0 8px 32px rgba(0,0,0,0.4);"
-      >
-        <h3 style="margin:0 0 12px 0;">↗ Hand-off — 메시지 인계</h3>
-        <div style="font-size:0.85em; margin-bottom:12px; padding:8px; background:rgba(255,255,255,0.05); border-radius:4px;">
-          <div style="opacity:0.7;">출처: 🤖 {props.source.sender}</div>
-          <div style="margin-top:4px;">{props.source.body.slice(0, 120)}{props.source.body.length > 120 ? "…" : ""}</div>
+    <div class="handoff-overlay" onClick={props.onClose}>
+      <div class="handoff-modal" onClick={(e) => e.stopPropagation()}>
+        <h3>↗ Hand-off — 메시지 인계</h3>
+        <div class="source-preview">
+          <div>출처: 🤖 {props.source.sender}</div>
+          <div style="margin-top:4px;">
+            {props.source.body.slice(0, 120)}
+            {props.source.body.length > 120 ? "…" : ""}
+          </div>
         </div>
 
         <div style="margin-bottom:10px;">
-          <label style="display:block; font-size:0.85em; margin-bottom:4px;">대상 peer</label>
-          <select
-            value={target()}
-            onChange={(e) => setTarget(e.currentTarget.value)}
-            style="width:100%; padding:6px;"
-          >
+          <label>대상 peer</label>
+          <select value={target()} onChange={(e) => setTarget(e.currentTarget.value)}>
             <For each={props.peers}>
               {(p) => <option value={p.alias}>{p.alias} · {p.machine || "(unknown)"}</option>}
             </For>
@@ -687,41 +680,43 @@ function HandoffModal(props: {
         </div>
 
         <div style="margin-bottom:10px;">
-          <label style="display:block; font-size:0.85em; margin-bottom:4px;">자동 요약 (편집 가능)</label>
+          <label>자동 요약 (편집 가능)</label>
           <textarea
             rows={4}
             value={summary()}
             onInput={(e) => setSummary(e.currentTarget.value)}
-            style="width:100%; padding:6px; font-family:inherit;"
           />
         </div>
 
-        {/* L5 radio — 새/기존 스레드 둘 중 하나 */}
-        <div style="margin-bottom:14px; font-size:0.9em;">
-          <div style="margin-bottom:4px;">스레드 처리 (radio — 둘 중 하나)</div>
-          <label style="display:block; cursor:pointer; padding:2px 0;">
-            <input
-              type="radio"
-              checked={threadMode() === "new"}
-              onChange={() => setThreadMode("new")}
-            />
-            {" "}● 새 스레드 생성 (parent: 이 스레드)
-          </label>
-          <label style="display:block; cursor:pointer; padding:2px 0;">
-            <input
-              type="radio"
-              checked={threadMode() === "existing"}
-              onChange={() => setThreadMode("existing")}
-            />
-            {" "}○ 기존 스레드에 추가 (conv: {props.source.conversation_id.slice(0, 10)}…)
-          </label>
+        <div style="margin-bottom:14px;">
+          <label>스레드 처리 (radio — 둘 중 하나)</label>
+          <div class="radio-row">
+            <label style="cursor:pointer;">
+              <input
+                type="radio"
+                checked={threadMode() === "new"}
+                onChange={() => setThreadMode("new")}
+              />{" "}
+              새 스레드 생성 (parent: 이 스레드)
+            </label>
+          </div>
+          <div class="radio-row">
+            <label style="cursor:pointer;">
+              <input
+                type="radio"
+                checked={threadMode() === "existing"}
+                onChange={() => setThreadMode("existing")}
+              />{" "}
+              기존 스레드에 추가 (conv: {props.source.conversation_id.slice(0, 10)}…)
+            </label>
+          </div>
         </div>
 
         <Show when={error()}>
-          <div style="color:#f87171; font-size:0.85em; margin-bottom:8px;">{error()}</div>
+          <div style="color:#f87171; font-size:12px; margin-bottom:8px;">{error()}</div>
         </Show>
 
-        <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <div class="actions">
           <button type="button" onClick={props.onClose} disabled={sending()}>
             취소
           </button>
@@ -776,50 +771,56 @@ function PeerInput(props: { friend: Friend; onSent: () => void }) {
   return (
     <footer class="messenger-thread-input">
       {/* L5/§4.5 — 입력 모드 토글 */}
-      <div style="display:flex; gap:10px; padding:4px 8px; font-size:0.85em; opacity:0.85;">
-        <label style="cursor:pointer;">
+      <div class="messenger-input-mode">
+        <label>
           <input
             type="radio"
             checked={intervention()}
             onChange={() => setIntervention(true)}
           />{" "}
-          ● 개입 (system priority)
+          개입 (system priority)
         </label>
-        <label style="cursor:pointer;">
+        <label>
           <input
             type="radio"
             checked={!intervention()}
             onChange={() => setIntervention(false)}
           />{" "}
-          ○ 일반 참여
+          일반 참여
         </label>
       </div>
-      <textarea
-        rows={2}
-        value={text()}
-        onInput={(ev) => setText(ev.currentTarget.value)}
-        placeholder={
-          isPeer()
-            ? intervention()
-              ? "[개입] 메시지 — system priority 로 전송 (Enter 보내기, Shift+Enter 줄바꿈)"
-              : (t("messenger.input-placeholder") || "메시지 입력")
-            : (t("messenger.send-peer-only") || "Discord/Telegram 채널 송신은 별도")
-        }
-        disabled={!isPeer() || sending()}
-        onKeyDown={(ev) => {
-          if (ev.key === "Enter" && !ev.shiftKey) {
-            ev.preventDefault();
-            void send();
+      <div class="messenger-thread-input-row">
+        <textarea
+          rows={2}
+          value={text()}
+          onInput={(ev) => setText(ev.currentTarget.value)}
+          placeholder={
+            isPeer()
+              ? intervention()
+                ? "[개입] 메시지 — system priority 로 전송 (Enter, Shift+Enter 줄바꿈)"
+                : (t("messenger.input-placeholder") || "메시지 입력")
+              : (t("messenger.send-peer-only") || "Discord/Telegram 채널 송신은 별도")
           }
-        }}
-      />
-      <button type="button" disabled={!isPeer() || sending() || !text().trim()} onClick={() => void send()}>
-        {sending()
-          ? (t("messenger.sending") || "보내는 중…")
-          : intervention()
-            ? "[개입] 전송"
-            : (t("messenger.send") || "전송")}
-      </button>
+          disabled={!isPeer() || sending()}
+          onKeyDown={(ev) => {
+            if (ev.key === "Enter" && !ev.shiftKey) {
+              ev.preventDefault();
+              void send();
+            }
+          }}
+        />
+        <button
+          type="button"
+          disabled={!isPeer() || sending() || !text().trim()}
+          onClick={() => void send()}
+        >
+          {sending()
+            ? (t("messenger.sending") || "보내는 중…")
+            : intervention()
+              ? "[개입] 전송"
+              : (t("messenger.send") || "전송")}
+        </button>
+      </div>
       <Show when={error()}>
         <div class="messenger-thread-error" role="alert">{error()}</div>
       </Show>
