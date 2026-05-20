@@ -1,4 +1,4 @@
-import { createResource, Show } from "solid-js";
+import { createResource, onCleanup, onMount, Show } from "solid-js";
 import { invoke } from "@/api/client";
 
 interface Peer {
@@ -33,8 +33,29 @@ async function fetchNotify(): Promise<NotifyStatus | null> {
 // 서로 대화 + 그 대화가 Discord 채널에 미러링 + Discord 에서 사용자가
 // 끼어들기 (사용자가 "B로 하고 싶은데" 라고 명시한 5분 시나리오).
 export function PairingGuide(props: { onJumpToSettings: () => void }) {
-  const [peers] = createResource(fetchPeers);
-  const [notify] = createResource(fetchNotify);
+  const [peers, { refetch: refetchPeers }] = createResource(fetchPeers);
+  const [notify, { refetch: refetchNotify }] = createResource(fetchNotify);
+
+  // Settings 에서 Discord 저장 후 ChatTab 으로 돌아왔을 때 stale 한 "(아직)"
+  // 표시 방지: (1) 탭 가시화 시 (Page Visibility API) (2) 윈도우 focus
+  // (3) 30초 주기 fallback. 모두 cleanup 한다.
+  const refreshAll = () => {
+    refetchPeers();
+    refetchNotify();
+  };
+  const onVisibility = () => {
+    if (document.visibilityState === "visible") refreshAll();
+  };
+  onMount(() => {
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", refreshAll);
+    const id = window.setInterval(refreshAll, 30_000);
+    onCleanup(() => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", refreshAll);
+      window.clearInterval(id);
+    });
+  });
 
   const isEmpty = () => {
     const list = peers();
