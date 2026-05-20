@@ -418,8 +418,12 @@ async fn run_discord_listen(
 /// daemon 내부에서 spawn 하는 long-running Discord inbound listener.
 /// CLI 의 run_discord_listen 과 다르게 ctrl_c 안 잡음 + 항상 store 모드.
 /// daemon 의 ctrl_c 가 tokio runtime 종료 시 같이 정리됨.
-pub async fn run_discord_inbound_for_daemon(data_dir: PathBuf, bot_token: String) -> Result<()> {
-    let mut store = StoreCtx::open(&data_dir, "discord-inbox")?;
+pub async fn run_discord_inbound_for_daemon(
+    data_dir: PathBuf,
+    bot_token: String,
+    master_key: Keypair,
+) -> Result<()> {
+    let mut store = StoreCtx::open_with_key(&data_dir, "discord-inbox", master_key)?;
     let client = DiscordGatewayClient::new(bot_token);
     let mut stream: std::pin::Pin<
         Box<dyn futures_util::Stream<Item = DiscordIncomingMessage> + Send>,
@@ -469,6 +473,15 @@ struct StoreCtx {
 
 impl StoreCtx {
     fn open(data_dir: &Path, session_title: &str) -> Result<Self> {
+        let password = require_password()?;
+        let ks = FsKeystore::new(keystore_dir(data_dir));
+        let kp = ks
+            .load(MASTER_KEY_NAME, &password)
+            .context("master 키 로드 실패 — keystore 패스워드 확인")?;
+        Self::open_with_key(data_dir, session_title, kp)
+    }
+
+    fn open_with_key(data_dir: &Path, session_title: &str, signing_key: Keypair) -> Result<Self> {
         let path = db_path(data_dir);
         if !path.exists() {
             bail!(
@@ -481,18 +494,8 @@ impl StoreCtx {
             ..Default::default()
         })
         .with_context(|| format!("DB open 실패: {}", path.display()))?;
-
-        // session ensure_by_title — 없으면 생성. home_machine 은 hostname.
         let home_machine = std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".into());
         let session = SessionStore::new(&mut db).ensure_by_title(session_title, &home_machine)?;
-
-        // 마스터 키 로드 (서명용). XGRAM_KEYSTORE_PASSWORD 필수.
-        let password = require_password()?;
-        let ks = FsKeystore::new(keystore_dir(data_dir));
-        let kp = ks
-            .load(MASTER_KEY_NAME, &password)
-            .context("master 키 로드 실패 — keystore 패스워드 확인")?;
-
         println!(
             "✓ store-session 모드 — session={} ({}), 메시지를 L0 으로 저장합니다.",
             session.id, session_title
@@ -500,7 +503,7 @@ impl StoreCtx {
         Ok(Self {
             db,
             session_id: session.id,
-            signing_key: kp,
+            signing_key,
         })
     }
 
