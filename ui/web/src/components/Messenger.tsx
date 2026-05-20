@@ -660,14 +660,34 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
         </Show>
       </main>
 
-      {/* 우: 12 탭 사이드 패널 (Tier 3 — friend 선택 시만 표시) */}
-      <Show when={leftMode() === "agent" && selectedFriend()?.kind === "peer" && selectedFriend()?.meta}>
-        {() => (
-          <AgentSidePanel
-            peer={selectedFriend()!.meta!}
-            onJumpToSettings={() => props.onJumpToSettings?.()}
-          />
-        )}
+      {/* 우: 12 탭 사이드 패널 (사양 §5 — peer 또는 session friend 선택 시) */}
+      <Show
+        when={
+          leftMode() === "agent" &&
+          selectedFriend() &&
+          (selectedFriend()!.kind === "peer" ||
+            selectedFriend()!.kind === "tmux" ||
+            selectedFriend()!.kind === "claude_project" ||
+            selectedFriend()!.kind === "xgram_session")
+        }
+      >
+        {() => {
+          const f = selectedFriend()!;
+          // session friend → 합성 PeerMeta 로 변환 (탭 UI 재사용).
+          const synthPeer = f.meta ?? {
+            alias: f.display,
+            address: f.sessionMeta?.identifier ?? "",
+            public_key_hex: "",
+            machine: undefined,
+            last_seen: f.sessionMeta?.last_active_at ?? undefined,
+          };
+          return (
+            <AgentSidePanel
+              peer={synthPeer}
+              onJumpToSettings={() => props.onJumpToSettings?.()}
+            />
+          );
+        }}
       </Show>
 
       {/* L5 — Hand-off 모달 (메시지 옆 ↗ 버튼 클릭 시) */}
