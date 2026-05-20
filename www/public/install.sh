@@ -471,20 +471,41 @@ if [ "$PREBUILT_OK" = "1" ]; then
 
   if [ -n "$TS_NAME" ]; then
     echo "    감지된 hostname: ${TS_NAME}"
-    if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
-      # sudo NOPASSWD 가능 — 자동 활성화
-      FUNNEL_OUT="$(sudo tailscale funnel --bg --https=443 "http://localhost:${GUI_PORT}" 2>&1)"
-      if echo "$FUNNEL_OUT" | grep -qE "Available|on the internet|Funnel started"; then
-        echo "    ✓ Funnel 활성화 완료"
-      else
-        echo "    ⚠ Funnel 활성화 실패 — 수동 실행 필요:"
+    FUNNEL_DONE=0
+    if command -v sudo >/dev/null 2>&1; then
+      # 1단계 — NOPASSWD 가능하면 즉시 자동 활성화 (CI/스크립트 환경)
+      if sudo -n true 2>/dev/null; then
+        FUNNEL_OUT="$(sudo tailscale funnel --bg --https=443 "http://localhost:${GUI_PORT}" 2>&1)"
+        if echo "$FUNNEL_OUT" | grep -qE "Available|on the internet|Funnel started"; then
+          echo "    ✓ Funnel 활성화 완료 (sudo NOPASSWD)"
+          FUNNEL_DONE=1
+        fi
+      fi
+      # 2단계 — 사용자 터미널에서 비밀번호 한 번 prompt (curl|sh 환경에서도 /dev/tty 로 가능)
+      if [ "$FUNNEL_DONE" = "0" ] && [ -e /dev/tty ]; then
+        echo "    sudo 비밀번호 한 번 입력 (Funnel 활성화 — 한 번만)"
+        if sudo -p "  [sudo] password: " tailscale funnel --bg --https=443 "http://localhost:${GUI_PORT}" </dev/tty 2>&1 \
+            | tee /tmp/xgram-funnel.out \
+            | grep -qE "Available|on the internet|Funnel started"; then
+          echo "    ✓ Funnel 활성화 완료"
+          FUNNEL_DONE=1
+        elif grep -qE "Available|on the internet|Funnel started" /tmp/xgram-funnel.out 2>/dev/null; then
+          echo "    ✓ Funnel 활성화 완료"
+          FUNNEL_DONE=1
+        else
+          echo "    ⚠ Funnel 활성화 실패 — 수동 실행:"
+          echo "       sudo tailscale funnel --bg --https=443 http://localhost:${GUI_PORT}"
+        fi
+      fi
+      if [ "$FUNNEL_DONE" = "0" ]; then
+        echo "    (sudo 권한 또는 TTY 없음 — 다음 한 줄 직접 실행)"
         echo "       sudo tailscale funnel --bg --https=443 http://localhost:${GUI_PORT}"
       fi
     else
-      echo "    (sudo 권한 필요 — 다음 한 줄 직접 실행)"
-      echo "       sudo tailscale funnel --bg --https=443 http://localhost:${GUI_PORT}"
+      echo "    (sudo 없음 — 다음 한 줄 직접 실행)"
+      echo "       tailscale funnel --bg --https=443 http://localhost:${GUI_PORT}"
     fi
-    # 활성화 여부와 무관하게 GUI URL 안내 (사용자가 실행 후 바로 접속).
+    # 활성화 여부와 무관하게 GUI URL 안내.
     echo ""
     echo "  ┌─ Web GUI 접속 ─────────────────────────────────────────────┐"
     echo "  │  https://${TS_NAME}/gui/"
