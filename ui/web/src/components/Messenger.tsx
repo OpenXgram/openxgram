@@ -2,11 +2,13 @@ import { createMemo, createResource, createSignal, For, Show, onCleanup } from "
 import { invoke } from "@/api/client";
 import { useI18n } from "../i18n";
 
-// v0.2-α — 활동 흐름 모니터링 컷.
-//   좌측: 친구 목록 = OpenXgram peer + Discord/Telegram 연결 상태 통합
-//   중앙: 최근 L0 messages 스레드 — 친구 선택 시 해당 sender 로 필터, 미선택 시 전체.
-//          3초 간격 자동 새로고침. 송신은 v0.2-β (현재 disabled + CLI 안내).
-//   친구 추가 = `xgram peer add` / `setup discord` / `setup telegram`. 메신저에서 "친구 추가" 버튼이 그 흐름을 연다.
+// v1.3 Tier 1 — 좌측 머신×세션 트리 (UI-MESSENGER-SPEC §3.2, S4).
+//   - peer 목록 = 본인의 다른 머신/세션 — machine 별 그룹화
+//   - ▼/▶ collapse (S4) — 30+ 세션 한 화면 관리
+//   - 정렬 (이름·활동) + 필터 (전체·연결만·미연결만)
+//   - 4-tuple 부분표시: alias · machine · fingerprint (ULID 도입은 Tier 2 별 단계)
+//   - 채널(Discord/Telegram) 친구는 별 "채널" 그룹
+//   중앙: L0 messages — 친구 sender 필터, 3초 폴링, peer 송신 활성 (Step 0 완료)
 
 interface MessageDto {
   id: string;
@@ -85,6 +87,17 @@ function fingerprint(pubkeyHex: string): string {
   return `${trimmed.slice(0, 8)}…${trimmed.slice(-8)}`;
 }
 
+type SortMode = "name" | "activity";
+type ConnFilter = "all" | "connected" | "offline";
+
+interface MachineGroup {
+  machine: string;
+  friends: Friend[];
+  connected: number;
+}
+
+const UNKNOWN_MACHINE = "(unknown)";
+
 export function Messenger() {
   const { t } = useI18n();
   const [peers] = createResource(fetchPeers);
@@ -92,31 +105,80 @@ export function Messenger() {
   const [selected, setSelected] = createSignal<string | null>(null);
   const [messages, { refetch: refetchMessages }] = createResource(fetchMessages);
 
+  // 좌측 컨트롤
+  const [sortMode, setSortMode] = createSignal<SortMode>("activity");
+  const [connFilter, setConnFilter] = createSignal<ConnFilter>("all");
+  const [collapsed, setCollapsed] = createSignal<Record<string, boolean>>({});
+
   // 3초 간격 메시지 폴링 — 활동 흐름 모니터링.
   const pollTimer = setInterval(() => {
     void refetchMessages();
   }, 3000);
   onCleanup(() => clearInterval(pollTimer));
 
-  // peer + Discord/Telegram 상태를 한 친구 목록으로 합침.
-  const friends = createMemo<Friend[]>(() => {
-    const list: Friend[] = [];
+  function toggleCollapse(machine: string) {
+    setCollapsed((prev) => ({ ...prev, [machine]: !prev[machine] }));
+  }
+
+  function isConnected(p: PeerDto): boolean {
+    // last_seen 이 1시간 이내면 연결, 아니면 offline 으로 간주.
+    if (!p.last_seen) return false;
+    const ts = Date.parse(p.last_seen);
+    if (Number.isNaN(ts)) return false;
+    return Date.now() - ts < 60 * 60 * 1000;
+  }
+
+  // peer 만 머신 그룹화 + 채널은 별 "채널" 가짜 머신.
+  const groups = createMemo<MachineGroup[]>(() => {
+    const byMachine = new Map<string, Friend[]>();
 
     for (const p of peers() ?? []) {
-      list.push({
+      if (connFilter() === "connected" && !isConnected(p)) continue;
+      if (connFilter() === "offline" && isConnected(p)) continue;
+      const m = (p.machine?.trim() || UNKNOWN_MACHINE);
+      const friend: Friend = {
         kind: "peer",
         id: `peer:${p.alias}`,
         display: p.alias,
-        subtitle: p.last_seen
-          ? `${fingerprint(p.public_key_hex)} · ${p.last_seen}`
-          : fingerprint(p.public_key_hex),
+        // 4-tuple 부분표시: alias · machine · fingerprint
+        subtitle: `${fingerprint(p.public_key_hex)}${p.last_seen ? ` · ${p.last_seen}` : ""}`,
         meta: p,
+      };
+      if (!byMachine.has(m)) byMachine.set(m, []);
+      byMachine.get(m)!.push(friend);
+    }
+
+    // 정렬
+    const sorter = (a: Friend, b: Friend) => {
+      if (sortMode() === "name") return a.display.localeCompare(b.display);
+      // activity: meta.last_seen DESC (없으면 뒤로)
+      const ta = a.meta?.last_seen ? Date.parse(a.meta.last_seen) : 0;
+      const tb = b.meta?.last_seen ? Date.parse(b.meta.last_seen) : 0;
+      return tb - ta;
+    };
+    for (const arr of byMachine.values()) arr.sort(sorter);
+
+    const out: MachineGroup[] = [];
+    // 머신 정렬: 이름순. UNKNOWN_MACHINE 은 마지막.
+    const machines = Array.from(byMachine.keys()).sort((a, b) => {
+      if (a === UNKNOWN_MACHINE) return 1;
+      if (b === UNKNOWN_MACHINE) return -1;
+      return a.localeCompare(b);
+    });
+    for (const m of machines) {
+      const friends = byMachine.get(m)!;
+      out.push({
+        machine: m,
+        friends,
+        connected: friends.filter((f) => f.meta && isConnected(f.meta)).length,
       });
     }
 
+    // 채널 그룹
     const ns = notifyStatus();
     if (ns) {
-      list.push({
+      const channels: Friend[] = [];
+      channels.push({
         kind: "discord",
         id: "channel:discord",
         display: "Discord",
@@ -124,7 +186,7 @@ export function Messenger() {
           ? t("messenger.connected") || "connected"
           : t("messenger.add-bot") || "add bot →",
       });
-      list.push({
+      channels.push({
         kind: "telegram",
         id: "channel:telegram",
         display: "Telegram",
@@ -132,9 +194,22 @@ export function Messenger() {
           ? t("messenger.connected") || "connected"
           : t("messenger.add-bot") || "add bot →",
       });
+      if (channels.length > 0) {
+        out.push({
+          machine: "📱 채널",
+          friends: channels,
+          connected:
+            (ns.discord_configured ? 1 : 0) + (ns.telegram_configured ? 1 : 0),
+        });
+      }
     }
-    return list;
+
+    return out;
   });
+
+  const friends = createMemo<Friend[]>(() =>
+    groups().flatMap((g) => g.friends),
+  );
 
   const selectedFriend = createMemo(() => {
     const id = selected();
@@ -144,7 +219,7 @@ export function Messenger() {
 
   return (
     <div class="messenger-shell">
-      {/* 좌: 친구 목록 */}
+      {/* 좌: 머신×세션 트리 (Tier 1) */}
       <aside class="messenger-sidebar">
         <header class="messenger-sidebar-head">
           <strong>{t("messenger.friends") || "친구"}</strong>
@@ -153,39 +228,94 @@ export function Messenger() {
             class="messenger-add-btn"
             title={t("messenger.add-friend-tip") || "peer 등록 / 봇 연결"}
             onClick={() => {
-              // v0.2에서 모달로 분기 — 지금은 기존 탭으로 안내
               alert(
                 t("messenger.add-friend-hint") ||
-                  "v0.2: 친구 추가 모달\n현재는 Peers 탭에서 peer 등록, Notify 탭에서 Discord/Telegram 연결",
+                  "친구 추가: 연결 탭의 [+ Peer] 또는 설정 탭의 [Discord/Telegram 봇 추가]",
               );
             }}
           >
             +
           </button>
         </header>
-        <ul class="messenger-friend-list">
-          <For each={friends()}>
-            {(f) => (
-              <li
-                class={selected() === f.id ? "messenger-friend selected" : "messenger-friend"}
-                onClick={() => setSelected(f.id)}
-              >
-                <span class={`messenger-friend-icon kind-${f.kind}`}>
-                  {f.kind === "peer" ? "◆" : f.kind === "discord" ? "D" : "T"}
-                </span>
-                <span class="messenger-friend-text">
-                  <span class="messenger-friend-name">{f.display}</span>
-                  <span class="messenger-friend-sub">{f.subtitle}</span>
-                </span>
-              </li>
-            )}
+
+        {/* 정렬·필터 컨트롤 (S4) */}
+        <div class="messenger-sidebar-ctrl" style="display:flex; gap:6px; padding:6px 8px; font-size:0.85em;">
+          <select
+            value={sortMode()}
+            onChange={(e) => setSortMode(e.currentTarget.value as SortMode)}
+            title="정렬"
+          >
+            <option value="activity">활동순</option>
+            <option value="name">이름순</option>
+          </select>
+          <select
+            value={connFilter()}
+            onChange={(e) => setConnFilter(e.currentTarget.value as ConnFilter)}
+            title="연결 필터"
+          >
+            <option value="all">전체</option>
+            <option value="connected">연결만</option>
+            <option value="offline">offline만</option>
+          </select>
+        </div>
+
+        <div class="messenger-friend-list">
+          <For each={groups()}>
+            {(g) => {
+              const isCollapsed = () => collapsed()[g.machine] === true;
+              return (
+                <div class="messenger-machine-group">
+                  <div
+                    class="messenger-machine-header"
+                    onClick={() => toggleCollapse(g.machine)}
+                    style="cursor:pointer; padding:6px 8px; background:rgba(255,255,255,0.04); font-weight:600; font-size:0.9em;"
+                  >
+                    <span style="margin-right:4px;">
+                      {isCollapsed() ? "▶" : "▼"}
+                    </span>
+                    🟢 {g.machine}{" "}
+                    <span style="font-weight:400; opacity:0.7; font-size:0.85em;">
+                      ({g.friends.length} · {g.connected} 연결)
+                    </span>
+                  </div>
+                  <Show when={!isCollapsed()}>
+                    <ul style="margin:0; padding:0;">
+                      <For each={g.friends}>
+                        {(f) => (
+                          <li
+                            class={
+                              selected() === f.id
+                                ? "messenger-friend selected"
+                                : "messenger-friend"
+                            }
+                            onClick={() => setSelected(f.id)}
+                          >
+                            <span class={`messenger-friend-icon kind-${f.kind}`}>
+                              {f.kind === "peer"
+                                ? "🤖"
+                                : f.kind === "discord"
+                                  ? "D"
+                                  : "T"}
+                            </span>
+                            <span class="messenger-friend-text">
+                              <span class="messenger-friend-name">{f.display}</span>
+                              <span class="messenger-friend-sub">{f.subtitle}</span>
+                            </span>
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                  </Show>
+                </div>
+              );
+            }}
           </For>
           <Show when={(friends() ?? []).length === 0}>
-            <li class="messenger-empty">
+            <div class="messenger-empty" style="padding:12px;">
               {t("messenger.no-friends") || "친구 없음 — + 버튼으로 추가"}
-            </li>
+            </div>
           </Show>
-        </ul>
+        </div>
       </aside>
 
       {/* 중: 대화 */}
