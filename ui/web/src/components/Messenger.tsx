@@ -52,14 +52,44 @@ interface NotifyStatusDto {
   discord_webhook_configured: boolean;
 }
 
-type FriendKind = "peer" | "discord" | "telegram";
+type FriendKind = "peer" | "discord" | "telegram" | "tmux" | "claude_project" | "xgram_session";
 
 interface Friend {
   kind: FriendKind;
-  id: string;            // peer.alias 또는 "discord" / "telegram"
+  id: string;            // peer.alias 또는 "discord" / "telegram" / "tmux:<name>" 등
   display: string;       // 화면에 보일 이름
   subtitle: string;      // 화면 보조 (주소·last_seen·"connected" 등)
   meta?: PeerDto;        // peer일 경우 원본 데이터
+  sessionMeta?: DetectedSession; // session 일 경우
+}
+
+// v1.3 §3.2 — /v1/gui/sessions 응답 (M-1 통합 detector).
+interface MachineInfoDto {
+  hostname: string;
+  alias: string;
+  tailscale_ip: string | null;
+}
+interface DetectedSession {
+  kind: "tmux" | "claude_project" | "xgram_session";
+  identifier: string;
+  display: string;
+  status: "active" | "attached" | "detached" | "stale";
+  windows: number | null;
+  attached: boolean | null;
+  created_at: string | null;
+  last_active_at: string | null;
+  agent_id: string | null;
+}
+interface SessionsDto {
+  machine: MachineInfoDto;
+  sessions: DetectedSession[];
+}
+async function fetchSessions(): Promise<SessionsDto | null> {
+  try {
+    return await invoke<SessionsDto>("sessions");
+  } catch {
+    return null;
+  }
 }
 
 async function fetchPeers(): Promise<PeerDto[]> {
@@ -115,6 +145,8 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
   const { t } = useI18n();
   const [peers] = createResource(fetchPeers);
   const [notifyStatus] = createResource(fetchNotifyStatus);
+  // v1.3 §3.2 — 이 머신의 tmux + Claude Code projects + xgram sessions 통합.
+  const [sessions] = createResource(fetchSessions);
   const [selected, setSelected] = createSignal<string | null>(null);     // friend id (에이전트 모드)
   const [selectedThread, setSelectedThread] = createSignal<string | null>(null); // conversation_id
   const [leftMode, setLeftMode] = createSignal<LeftMode>("agent");        // L1
@@ -165,6 +197,35 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
       };
       if (!byMachine.has(m)) byMachine.set(m, []);
       byMachine.get(m)!.push(friend);
+    }
+
+    // 이 머신의 tmux + Claude Code projects + xgram sessions (M-1).
+    // sessions.machine.alias 를 머신 그룹으로 사용 — peers 의 machine 과 중복 시 같은 그룹에 추가.
+    const sess = sessions();
+    if (sess) {
+      const m = sess.machine.alias || sess.machine.hostname || UNKNOWN_MACHINE;
+      const arr = byMachine.get(m) ?? [];
+      for (const s of sess.sessions) {
+        // 연결 필터: attached/active = 연결, 그 외 = offline (간단 매핑)
+        const conn = s.status === "attached" || s.status === "active";
+        if (connFilter() === "connected" && !conn) continue;
+        if (connFilter() === "offline" && conn) continue;
+        const icon =
+          s.kind === "tmux" ? "📟" : s.kind === "claude_project" ? "🤖" : "🪪";
+        arr.push({
+          kind: s.kind as FriendKind,
+          id: `session:${s.identifier}`,
+          display: `${icon} ${s.display}`,
+          subtitle:
+            s.kind === "tmux"
+              ? `tmux · ${s.windows ?? 0} win · ${s.attached ? "attached" : "detached"}`
+              : s.kind === "claude_project"
+              ? `Claude Code · ${s.last_active_at ? new Date(s.last_active_at).toLocaleString() : "—"}`
+              : "xgram session",
+          sessionMeta: s,
+        });
+      }
+      byMachine.set(m, arr);
     }
 
     // 정렬

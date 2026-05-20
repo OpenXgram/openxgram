@@ -202,6 +202,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/status", get(gui_status))
         .route("/v1/gui/initialized", get(gui_initialized))
         .route("/v1/gui/peers", get(gui_peers).post(gui_peer_add))
+        // 메신저 v1.3 §3.2 — 머신×세션 통합 detector (M-1).
+        .route("/v1/gui/sessions", get(gui_sessions))
+        .route("/v1/gui/machine", get(gui_machine_info))
         // 메신저 카드 v1.3 Step 0 — 메시지 송수신.
         .route("/v1/gui/messages", get(gui_messages_recent))
         .route("/v1/gui/peers/{alias}/send", post(gui_peer_send))
@@ -387,6 +390,25 @@ async fn gui_peers(
         })
         .collect();
     Ok(Json(dtos))
+}
+
+/// `GET /v1/gui/sessions` — 머신×세션 통합 detector (UI-MESSENGER-SPEC v1.3 §3.2 M-1).
+/// tmux + Claude Code projects 통합. xgram session 은 후속.
+async fn gui_sessions(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<crate::daemon_gui_sessions::SessionsDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    Ok(Json(crate::daemon_gui_sessions::collect_sessions()))
+}
+
+/// `GET /v1/gui/machine` — 이 머신의 4-tuple machine part (UI-MESSENGER-SPEC L2).
+async fn gui_machine_info(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<crate::daemon_gui_sessions::MachineInfo>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    Ok(Json(crate::daemon_gui_sessions::detect_machine()))
 }
 
 /// `GET /v1/gui/channel/status` — notify.toml + DB 카운트 (peers, schedule pending).

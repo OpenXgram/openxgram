@@ -92,6 +92,10 @@ const ROUTES: Record<string, Route> = {
   peers_list: { method: "GET", path: "/peers", emptyAs: [] },
   peer_add: { method: "POST", path: "/peers", body: true },
 
+  // Messenger v1.3 §3.2 — 머신×세션 통합 detector (M-1)
+  sessions: { method: "GET", path: "/sessions" },
+  machine_info: { method: "GET", path: "/machine" },
+
   // Channel
   channel_status: { method: "GET", path: "/channel/status" },
 

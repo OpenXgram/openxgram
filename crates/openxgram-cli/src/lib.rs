@@ -12,6 +12,7 @@ pub mod channel;
 pub mod channels;
 pub mod daemon;
 pub mod daemon_gui;
+pub mod daemon_gui_sessions;
 pub mod doctor;
 pub mod dump;
 pub mod eas;
