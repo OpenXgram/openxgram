@@ -949,20 +949,37 @@ pub struct WikiUpsertBody {
     pub title: String,
     pub page_type: String, // entity/concept/comparison/other
     pub content: String,   // markdown body
+    /// M-10: edit lock 보유자 (없으면 anonymous). lock holder != requester 이면 409.
+    #[serde(default)]
+    pub requester: Option<String>,
 }
 
-/// `POST /v1/gui/wiki/pages` — 위키 페이지 upsert (M-1 + M-3 + M-11).
+/// `POST /v1/gui/wiki/pages` — 위키 페이지 upsert (M-1 + M-3 + M-11 + M-10 lock 검증).
 async fn gui_wiki_upsert(
     State(state): State<GuiServerState>,
     headers: HeaderMap,
     Json(body): Json<WikiUpsertBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    use rusqlite::OptionalExtension;
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     use sha2::{Digest, Sha256};
     let hash = format!("{:x}", Sha256::digest(body.content.as_bytes()));
     let now = chrono::Utc::now().timestamp();
     let file_path = format!("wiki/{}/{}.md", body.page_type, body.id);
     let mut db = state.db.lock().await;
+    // M-10 edit lock 검증: holder != requester 이면 409 reject (lock 만료 후엔 free).
+    if let Ok(Some(holder)) = db.conn().query_row(
+        "SELECT holder FROM wiki_edit_locks WHERE page_id = ?1 AND expires_at > datetime('now')",
+        rusqlite::params![&body.id],
+        |r| r.get::<_, String>(0),
+    ).optional() {
+        let req = body.requester.as_deref().unwrap_or("");
+        if holder != req {
+            return Err((StatusCode::CONFLICT, Json(ErrorDto{
+                error: format!("M-10 편집 충돌 — 다른 사용자가 잠금 보유 중 (holder={holder})"),
+            })));
+        }
+    }
     db.conn().execute(
         "INSERT INTO wiki_pages (id, file_path, page_type, title, content_hash, embedding_hash, created_at, updated_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?6) \
@@ -1716,16 +1733,19 @@ async fn gui_wiki_edit_lock_acquire(
     State(state): State<GuiServerState>,
     headers: HeaderMap,
     Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let holder = body.get("holder").and_then(|v| v.as_str()).unwrap_or("user").to_string();
+    let ttl = body.get("ttl_seconds").and_then(|v| v.as_i64()).unwrap_or(300);
     let now = chrono::Utc::now();
-    let expires = now + chrono::Duration::minutes(5);
+    let expires = now + chrono::Duration::seconds(ttl);
     let mut db = state.db.lock().await;
     db.conn().execute(
-        "INSERT OR REPLACE INTO wiki_edit_locks (page_id, holder, acquired_at, expires_at) VALUES (?1, 'user', ?2, ?3)",
-        rusqlite::params![id, now.to_rfc3339(), expires.to_rfc3339()],
+        "INSERT OR REPLACE INTO wiki_edit_locks (page_id, holder, acquired_at, expires_at) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![id, holder, now.to_rfc3339(), expires.to_rfc3339()],
     ).ok();
-    Ok(Json(serde_json::json!({"acquired": true, "expires_at": expires.to_rfc3339(), "note": "M-10 — 5분 동안 AI 갱신 차단"})))
+    Ok(Json(serde_json::json!({"acquired": true, "holder": holder, "expires_at": expires.to_rfc3339(), "note": "M-10 — TTL 동안 다른 holder upsert 차단"})))
 }
 
 // ── Peer keypair 자동 생성 (peer-to-peer e2e 가능하게) ──
