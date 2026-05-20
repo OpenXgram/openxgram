@@ -8,12 +8,12 @@ import { MemoryTab } from "./components/MemoryTab";
 import { NetworkTab } from "./components/NetworkTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { LoginView } from "./components/LoginView";
+import { HomeDashboard, type CardId } from "./components/HomeDashboard";
 
-// 4탭 단순화 (PRD-OpenXgram §4.8 v0.9 Beta).
-//   - chat / memory / network / settings + onboarding(daemon 미초기화 시만)
-//   - PRD §1: 1 사람 = 1 메인 daemon + N 머신 attach. multi-user X.
-//   - 잠금 = 단일 keystore 비밀번호. RegisterView 폐기.
-type Tab = "onboarding" | "chat" | "memory" | "network" | "settings";
+// PRD-OpenXgram v1.4 §0 + UI-CARDS-IDENTITY v1.1: 홈 대시보드 = 8 카드 (4 가치 + 4 토대).
+// unlock 후 첫 화면 = HomeDashboard. 카드 클릭 시 해당 탭/뷰 진입.
+// 기존 4탭 (chat·memory·network·settings) 은 카드와 매핑 (placeholder 카드는 settings 로 fallback).
+type Tab = "onboarding" | "home" | "chat" | "memory" | "network" | "settings";
 
 async function checkInitialized(): Promise<boolean> {
   try {
@@ -34,18 +34,32 @@ function AppInner() {
     () => authed() === true,
     async (ok) => (ok ? await checkInitialized() : false),
   );
-  // 기본 탭 = chat. Onboarding 은 daemon 이 명시적으로 false 반환할 때만 진입.
-  // (initialized 가 loading/undefined 일 때는 chat 그대로 — UI 갇히는 버그 방지.)
-  const [tab, setTab] = createSignal<Tab>("chat");
+  // 기본 = home (8 카드 대시보드). Onboarding 은 daemon 이 명시적으로 false 일 때만.
+  const [tab, setTab] = createSignal<Tab>("home");
 
-  // initialized 가 false 로 확정되면 onboarding 강제. true 면 chat 으로 복귀.
+  // initialized 가 false 로 확정되면 onboarding 강제. true 면 home 으로 복귀.
   createEffect(() => {
     const init = initialized();
     if (init === false && tab() !== "onboarding") setTab("onboarding");
-    if (init === true && tab() === "onboarding") setTab("chat");
+    if (init === true && tab() === "onboarding") setTab("home");
   });
 
-  const tabs: { id: Exclude<Tab, "onboarding">; label: () => string }[] = [
+  // 카드 클릭 → 탭 매핑. 미구현 placeholder 는 settings 로.
+  function openCard(id: CardId) {
+    switch (id) {
+      case "messenger": setTab("chat"); break;
+      case "memory": setTab("memory"); break;
+      case "channel": setTab("settings"); break;       // Settings → 알림 채널
+      case "autonomy": setTab("settings"); break;      // Settings → 예약 (cron)
+      case "vault": setTab("settings"); break;         // Settings → Vault·MCP
+      case "external":                                 // placeholder
+      case "identity":                                 // placeholder
+      case "ops":                                      // placeholder
+      default: setTab("settings"); break;
+    }
+  }
+
+  const tabs: { id: Exclude<Tab, "onboarding" | "home">; label: () => string }[] = [
     { id: "chat", label: () => t("tab.chat") },
     { id: "memory", label: () => t("tab.memory") },
     { id: "network", label: () => t("tab.network") },
@@ -92,8 +106,17 @@ function AppInner() {
 
       {/* 메인 GUI — 인증된 사용자만 */}
       <Show when={authed() === true}>
-        <Show when={tab() !== "onboarding"}>
+        {/* tabnav — onboarding/home 일 때는 숨김 */}
+        <Show when={tab() !== "onboarding" && tab() !== "home"}>
           <nav class="tabnav" aria-label="OpenXgram tabs">
+            <button
+              type="button"
+              onClick={() => setTab("home")}
+              style="margin-right:8px;"
+              title="홈 대시보드"
+            >
+              🏠 홈
+            </button>
             {tabs.map((entry) => (
               <button
                 type="button"
@@ -107,7 +130,10 @@ function AppInner() {
         </Show>
         <main>
           <Show when={tab() === "onboarding"}>
-            <Onboarding onReady={() => setTab("chat")} />
+            <Onboarding onReady={() => setTab("home")} />
+          </Show>
+          <Show when={tab() === "home"}>
+            <HomeDashboard onOpen={openCard} />
           </Show>
           <Show when={tab() === "chat"}>
             <ChatTab onJumpToSettings={() => setTab("settings")} />
