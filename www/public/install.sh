@@ -451,33 +451,49 @@ if [ "$PREBUILT_OK" = "1" ]; then
 
   # 6. Tailscale Funnel 자동 활성화 — 외부 https 노출.
   #    daemon 이 47310 에 GUI 직접 서빙 (rc.26 정적 자산 임베드).
-  #    sudo 권한 있으면 자동, 없으면 안내만.
+  #    sudo 권한 있으면 자동, 없으면 GUI URL 안내만.
   echo ""
   echo "==> Web GUI 외부 노출 (Tailscale Funnel)"
   GUI_PORT=47310
-  TS_NAME="$(tailscale status --json 2>/dev/null | grep -o '"DNSName":"[^"]*"' | head -1 | cut -d'"' -f4 | sed 's/\.$//')"
-  if [ -n "$TS_NAME" ] && command -v sudo >/dev/null 2>&1; then
-    if sudo -n true 2>/dev/null; then
+  # Hostname 추출 — 3 단계 fallback:
+  #   (1) tailscale status --json 의 Self.DNSName (trailing dot 제거)
+  #   (2) 페어링 URL 안의 hostname (pair-desktop 출력 reuse)
+  #   (3) tailscale status 텍스트 첫 줄의 short hostname + MagicDNS suffix
+  TS_NAME=""
+  if command -v tailscale >/dev/null 2>&1; then
+    TS_NAME="$(tailscale status --json 2>/dev/null \
+      | python3 -c "import sys,json; d=json.load(sys.stdin); print((d.get('\''Self'\'',{}).get('\''DNSName'\'') or '\'\'').rstrip('\''.'\''))" \
+      2>/dev/null)"
+  fi
+  if [ -z "$TS_NAME" ]; then
+    TS_NAME="$(echo "$PAIRING_OUTPUT" | grep -oE '[a-zA-Z0-9-]+\.tail[a-z0-9]+\.ts\.net' | head -1)"
+  fi
+
+  if [ -n "$TS_NAME" ]; then
+    echo "    감지된 hostname: ${TS_NAME}"
+    if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
       # sudo NOPASSWD 가능 — 자동 활성화
-      if sudo tailscale funnel --bg --https=443 "http://localhost:${GUI_PORT}" 2>&1 | grep -qE "Available|on the internet"; then
+      FUNNEL_OUT="$(sudo tailscale funnel --bg --https=443 "http://localhost:${GUI_PORT}" 2>&1)"
+      if echo "$FUNNEL_OUT" | grep -qE "Available|on the internet|Funnel started"; then
         echo "    ✓ Funnel 활성화 완료"
-        echo ""
-        echo "  ┌─ Web GUI 접속 ─────────────────────────────────────────┐"
-        echo "  │  https://${TS_NAME}/gui/                              "
-        echo "  │  비밀번호 = xgram init 때 정한 keystore 비밀번호       "
-        echo "  └────────────────────────────────────────────────────────┘"
       else
-        echo "    ⚠ Funnel 활성화 실패 — 수동 실행:"
-        echo "      sudo tailscale funnel --bg --https=443 http://localhost:${GUI_PORT}"
+        echo "    ⚠ Funnel 활성화 실패 — 수동 실행 필요:"
+        echo "       sudo tailscale funnel --bg --https=443 http://localhost:${GUI_PORT}"
       fi
     else
-      echo "    (sudo 비밀번호 필요 — 한 줄 실행 후 GUI 사용)"
-      echo "      sudo tailscale funnel --bg --https=443 http://localhost:${GUI_PORT}"
-      echo ""
-      echo "    ▶ 활성화 후 https://${TS_NAME}/gui/ 에서 GUI 사용"
+      echo "    (sudo 권한 필요 — 다음 한 줄 직접 실행)"
+      echo "       sudo tailscale funnel --bg --https=443 http://localhost:${GUI_PORT}"
     fi
+    # 활성화 여부와 무관하게 GUI URL 안내 (사용자가 실행 후 바로 접속).
+    echo ""
+    echo "  ┌─ Web GUI 접속 ─────────────────────────────────────────────┐"
+    echo "  │  https://${TS_NAME}/gui/"
+    echo "  │  비밀번호 = xgram init 때 정한 keystore 비밀번호"
+    echo "  └────────────────────────────────────────────────────────────┘"
   else
-    echo "    (Tailscale 또는 sudo 없음 — GUI 외부 노출 수동 설정 필요)"
+    echo "    ⚠ Tailscale hostname 추출 실패 — 수동 확인:"
+    echo "       tailscale status --json | jq -r .Self.DNSName"
+    echo "       sudo tailscale funnel --bg --https=443 http://localhost:${GUI_PORT}"
   fi
 
   echo ""
