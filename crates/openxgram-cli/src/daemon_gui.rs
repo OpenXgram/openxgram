@@ -226,6 +226,11 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/version", get(gui_version))
         // N7 — 시스템 cron 보호 (비활성화 시도 reject + audit)
         .route("/v1/gui/system-cron/protect-attempt", post(gui_system_cron_protect))
+        // S7 — 첨부 업로드/다운로드 (content-addressed, V2/V3 refcount)
+        .route("/v1/gui/attachments", post(gui_attachment_upload))
+        .route("/v1/gui/attachments/{hash}", get(gui_attachment_get))
+        // M-5 — 사용자 화이트리스트 패턴 CRUD
+        .route("/v1/gui/whitelist-patterns", get(gui_whitelist_list).post(gui_whitelist_add))
         // 메신저 카드 v1.3 Step 0 — 메시지 송수신.
         .route("/v1/gui/messages", get(gui_messages_recent))
         .route("/v1/gui/peers/{alias}/send", post(gui_peer_send))
@@ -648,6 +653,185 @@ async fn gui_system_cron_protect(
     })))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AttachmentUploadBody {
+    pub content_b64: String, // base64
+    pub mime: Option<String>,
+}
+
+/// `POST /v1/gui/attachments` — S7 첨부 업로드 (V2 content-addressed + V3 refcount).
+async fn gui_attachment_upload(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<AttachmentUploadBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use sha2::{Digest, Sha256};
+    let raw = base64_decode(&body.content_b64).map_err(|e| {
+        (StatusCode::BAD_REQUEST, Json(ErrorDto{error: format!("base64: {e}")}))
+    })?;
+    let hash = format!("{:x}", Sha256::digest(&raw));
+    let size = raw.len() as i64;
+    let mime = body.mime.unwrap_or_else(|| "application/octet-stream".into());
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
+    let conn = db.conn();
+    // refcount++. 새 hash 면 INSERT, 기존이면 UPDATE.
+    conn.execute(
+        "INSERT INTO attachment_refs (content_hash, refcount, size_bytes, mime, created_at) \
+         VALUES (?1, 1, ?2, ?3, ?4) \
+         ON CONFLICT(content_hash) DO UPDATE SET refcount = refcount + 1",
+        rusqlite::params![hash, size, mime, now],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("ref:{e}")})))?;
+    // < 1MB: SQLite blob. 그 이상: disk (현재는 inline 만 — disk 는 daemon side path 필요)
+    if size < 1_000_000 {
+        conn.execute(
+            "INSERT OR IGNORE INTO attachment_inline (content_hash, data, mime, size_bytes) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![hash, raw, mime, size],
+        ).ok();
+    }
+    Ok(Json(serde_json::json!({
+        "content_hash": hash,
+        "size_bytes": size,
+        "mime": mime,
+        "storage": if size < 1_000_000 { "inline" } else { "disk_pending" },
+    })))
+}
+
+/// `GET /v1/gui/attachments/{hash}` — S7 첨부 조회.
+async fn gui_attachment_get(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(hash): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let row: Option<(Vec<u8>, String, i64)> = db.conn().query_row(
+        "SELECT data, mime, size_bytes FROM attachment_inline WHERE content_hash = ?1",
+        rusqlite::params![hash],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).ok();
+    if let Some((data, mime, size)) = row {
+        Ok(Json(serde_json::json!({
+            "content_hash": hash,
+            "mime": mime,
+            "size_bytes": size,
+            "content_b64": base64_encode(&data),
+        })))
+    } else {
+        Err((StatusCode::NOT_FOUND, Json(ErrorDto{error: "not_found".into()})))
+    }
+}
+
+fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
+    // 안티-dep: 직접 base64 디코더. 표준 alphabet.
+    const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let s: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+    let s = s.trim_end_matches('=');
+    let mut out = Vec::with_capacity(s.len() * 3 / 4);
+    let mut buf: u32 = 0;
+    let mut bits = 0u8;
+    for c in s.bytes() {
+        let v = match T.iter().position(|&x| x == c) { Some(i) => i as u32, None => return Err(format!("invalid char: {c:?}")) };
+        buf = (buf << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+        }
+    }
+    Ok(out)
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(((data.len() + 2) / 3) * 4);
+    let mut i = 0;
+    while i < data.len() {
+        let b0 = data[i];
+        let b1 = if i + 1 < data.len() { data[i+1] } else { 0 };
+        let b2 = if i + 2 < data.len() { data[i+2] } else { 0 };
+        out.push(T[(b0 >> 2) as usize] as char);
+        out.push(T[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize] as char);
+        if i + 1 < data.len() {
+            out.push(T[(((b1 & 0x0f) << 2) | (b2 >> 6)) as usize] as char);
+        } else { out.push('='); }
+        if i + 2 < data.len() {
+            out.push(T[(b2 & 0x3f) as usize] as char);
+        } else { out.push('='); }
+        i += 3;
+    }
+    out
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WhitelistPatternBody {
+    pub priority: u32,
+    pub pattern_type: String,
+    pub pattern: String,
+    pub default_role: String,
+    pub auto_register: bool,
+    pub auto_approve_pending: bool,
+}
+
+/// `GET /v1/gui/whitelist-patterns` — 사용자 화이트리스트 패턴 (M-5, default + user).
+async fn gui_whitelist_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::daemon_gui_sessions::WhitelistPatternItem>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT priority, pattern_type, pattern, default_role, auto_register, auto_approve_pending \
+         FROM whitelist_patterns WHERE active = 1 ORDER BY priority ASC",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep:{e}")})))?;
+    let user_rows: Vec<crate::daemon_gui_sessions::WhitelistPatternItem> = stmt.query_map([], |r| {
+        Ok(crate::daemon_gui_sessions::WhitelistPatternItem {
+            priority: r.get::<_, i64>(0)? as u32,
+            pattern_type: r.get(1)?,
+            pattern: r.get(2)?,
+            default_role: r.get(3)?,
+            auto_register: r.get::<_, i64>(4)? != 0,
+            auto_approve_pending: r.get::<_, i64>(5)? != 0,
+        })
+    }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q:{e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    // default + user 합쳐서 반환
+    let mut combined = crate::daemon_gui_sessions::default_whitelist().patterns;
+    combined.extend(user_rows);
+    Ok(Json(combined))
+}
+
+/// `POST /v1/gui/whitelist-patterns` — 사용자 화이트리스트 패턴 추가 (M-5).
+async fn gui_whitelist_add(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<WhitelistPatternBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use sha2::{Digest, Sha256};
+    let id = {
+        let mut h = Sha256::new();
+        h.update(format!("{:?}", std::time::SystemTime::now()).as_bytes());
+        h.update(body.pattern.as_bytes());
+        format!("{:x}", h.finalize())[..20].to_string()
+    };
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO whitelist_patterns (id, priority, pattern_type, pattern, default_role, \
+                auto_register, auto_approve_pending, active, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8)",
+        rusqlite::params![
+            id, body.priority as i64, body.pattern_type, body.pattern, body.default_role,
+            if body.auto_register {1} else {0},
+            if body.auto_approve_pending {1} else {0},
+            now,
+        ],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("insert:{e}")})))?;
+    Ok(Json(serde_json::json!({"id": id, "ok": true})))
+}
+
 /// `GET /v1/gui/wallets` — 마스터 + 서브 지갑 (UI-MESSENGER-SPEC §2.4 + M-3 + L4).
 async fn gui_wallets_list(
     State(state): State<GuiServerState>,
@@ -991,7 +1175,20 @@ async fn gui_peer_send(
     )
     .await
     .map_err(|e| internal(&format!("peer_send: {e}")))?;
-    Ok(Json(serde_json::json!({"sent": true, "alias": alias})))
+    // UI-MESSENGER-SPEC v1.3 S6 — LLM 토큰비 + x402 결제 합산.
+    // 추정 비용: 1 message ≈ 0.001 USD (1000 micro) — daemon-side actual cost 측정 시 정확화.
+    let estimated_micro: i64 = (body.body.len() as i64).max(100).min(10_000);
+    let now = chrono::Utc::now().to_rfc3339();
+    {
+        let mut db = state.db.lock().await;
+        // alias 매칭되는 서브 지갑 있으면 spent_micro 증가
+        let _ = db.conn().execute(
+            "UPDATE sub_wallets SET spent_micro = spent_micro + ?1, updated_at = ?2 \
+             WHERE agent_id = ?3",
+            rusqlite::params![estimated_micro, now, alias],
+        );
+    }
+    Ok(Json(serde_json::json!({"sent": true, "alias": alias, "cost_micro": estimated_micro})))
 }
 
 // ── Notify wizard (Discord/Telegram) HTTP endpoints ─────────────────────

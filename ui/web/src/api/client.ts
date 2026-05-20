@@ -114,6 +114,11 @@ const ROUTES: Record<string, Route> = {
   routing_rule_delete: { method: "POST", path: "/routing-rules/{id}" },
   version_info: { method: "GET", path: "/version" },
   system_cron_protect: { method: "POST", path: "/system-cron/protect-attempt", body: true },
+  // S7 첨부, M-5 사용자 화이트리스트
+  attachment_upload: { method: "POST", path: "/attachments", body: true },
+  attachment_get: { method: "GET", path: "/attachments/{hash}" },
+  whitelist_patterns_list: { method: "GET", path: "/whitelist-patterns" },
+  whitelist_pattern_add: { method: "POST", path: "/whitelist-patterns", body: true },
 
   // Channel
   channel_status: { method: "GET", path: "/channel/status" },
