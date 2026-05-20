@@ -51,7 +51,7 @@ const CARDS: CardDef[] = [
     title: "외부 에이전트",
     prdName: "외부 에이전트·결제",
     oneLine: "다른 AI 시스템과의 게이트웨이 (마켓·A2A·ANP·x402)",
-    implStatus: "placeholder",
+    implStatus: "partial",
   },
   {
     id: "channel",
@@ -69,7 +69,7 @@ const CARDS: CardDef[] = [
     title: "신원",
     prdName: "자기주권 신원",
     oneLine: "DID · 마스터 지갑 · 잠금 (모든 카드의 기반)",
-    implStatus: "placeholder",
+    implStatus: "partial",
   },
   {
     id: "autonomy",
@@ -87,7 +87,7 @@ const CARDS: CardDef[] = [
     title: "운영·생존",
     prdName: "운영·생존",
     oneLine: "Daemon · 머신 · 백업 (OpenXgram 자체)",
-    implStatus: "placeholder",
+    implStatus: "partial",
   },
   {
     id: "vault",

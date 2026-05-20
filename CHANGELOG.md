@@ -2,6 +2,18 @@
 
 OpenXgram 의 변경 이력. 모든 시간은 KST(Asia/Seoul). [Semantic Versioning](https://semver.org/) + BUILD 자동 증가 (CI/CD 갱신, 수동 변경 금지).
 
+## [0.2.0-rc.29] — 2026-05-20 KST (HomeDashboard 8 카드 + 7 카드 컴포넌트 + UI 버전 표시)
+
+**누적 publish** — rc.23~rc.28 은 로컬 태그였고 GitHub Releases 에 publish 안 됨. rc.29 가 rc.22 (5월 11일) 이후 첫 공식 release. 묶인 변경:
+
+- **rc.24 (Tauri → 웹 GUI / Tailscale Funnel)** — `xgram-desktop` 폐기, `xgram gui` = Funnel URL → 브라우저. release-binaries Tauri step 제거 → 빌드 시간 30분 → 5~10분.
+- **rc.25 (단일 사용자 잠금 — PRD §1)** — `register`/`login`/`me`/`logout` (JWT) → `unlock`/`check` (keystore 비밀번호 + session_token).
+- **rc.26 (daemon GUI embed + Discord listener)** — `include_dir` 매크로로 `ui/web/dist` 를 xgram 바이너리에 임베드. Discord listener daemon 통합 + GUI 페어링 카드.
+- **rc.27 (Messenger 4 Tier + Step 0)** — 메시지 송수신 API + 좌측 머신×세션 트리 + 4-tuple + 에이전트/스레드 2-모드 + 우측 12탭 MVP 5탭 + 사용자 개입 토글 + Hand-off radio.
+- **rc.28 (테마 일관성)** — prefers-color-scheme 다크/라이트 자동 전환, inline rgba 색 → CSS 변수.
+- **rc.29 (HomeDashboard + 카드 컴포넌트 + 버전 표시)** — unlock 후 첫 화면 = 8 카드 (4 가치 + 4 토대). 7 카드 컴포넌트 신규: Identity·VaultMcp·Channel·Memory·Autonomy (사양 §3 기반) + ExternalAgent·Ops (책임 placeholder). `ui/web/vite.config.ts` define 으로 `__APP_VERSION__`·`__BUILD_TIME__` 빌드 시 주입 → App header 에 `v0.2.0-rc.29` 표시 (CLAUDE.md 룰 6 준수).
+- **install.sh fixes** — Tailscale Funnel 자동 활성화, sudo prompt /dev/tty, python3 의존 제거, hostname 3단계 fallback, Funnel target 47302 (daemon listen port).
+
 ## [0.2.0-rc.25] — 2026-05-19 KST (단일 사용자 잠금 — PRD §1 정렬)
 
 **컨셉 정정**: PRD §1 = **1 사람 = 1 메인 daemon + N 머신 attach**. 이전 rc.24 에서 잘못 추가한 multi-user/register/users 테이블/JWT 흐름을 폐기.
