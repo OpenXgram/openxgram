@@ -231,6 +231,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/attachments/{hash}", get(gui_attachment_get))
         // M-5 — 사용자 화이트리스트 패턴 CRUD
         .route("/v1/gui/whitelist-patterns", get(gui_whitelist_list).post(gui_whitelist_add))
+        // UI-MEMORY-SPEC v1.1 — 위키 CRUD + 검색 + 패턴/실수 보드
+        .route("/v1/gui/wiki/pages", get(gui_wiki_list).post(gui_wiki_upsert))
+        .route("/v1/gui/wiki/pages/{id}", get(gui_wiki_get))
         // 메신저 카드 v1.3 Step 0 — 메시지 송수신.
         .route("/v1/gui/messages", get(gui_messages_recent))
         .route("/v1/gui/peers/{alias}/send", post(gui_peer_send))
@@ -830,6 +833,97 @@ async fn gui_whitelist_add(
         ],
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("insert:{e}")})))?;
     Ok(Json(serde_json::json!({"id": id, "ok": true})))
+}
+
+#[derive(Debug, Serialize)]
+pub struct WikiPageDto {
+    pub id: String,
+    pub title: String,
+    pub page_type: String,
+    pub updated_at: i64,
+}
+
+/// `GET /v1/gui/wiki/pages` — UI-MEMORY-SPEC v1.1 위키 페이지 리스트.
+async fn gui_wiki_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<WikiPageDto>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, title, page_type, updated_at FROM wiki_pages ORDER BY updated_at DESC LIMIT 200",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep:{e}")})))?;
+    let rows = stmt.query_map([], |r| {
+        Ok(WikiPageDto {
+            id: r.get(0)?,
+            title: r.get(1)?,
+            page_type: r.get(2)?,
+            updated_at: r.get(3)?,
+        })
+    }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q:{e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WikiUpsertBody {
+    pub id: String,
+    pub title: String,
+    pub page_type: String, // entity/concept/comparison/other
+    pub content: String,   // markdown body
+}
+
+/// `POST /v1/gui/wiki/pages` — 위키 페이지 upsert (M-1 + M-3 + M-11).
+async fn gui_wiki_upsert(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<WikiUpsertBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use sha2::{Digest, Sha256};
+    let hash = format!("{:x}", Sha256::digest(body.content.as_bytes()));
+    let now = chrono::Utc::now().timestamp();
+    let file_path = format!("wiki/{}/{}.md", body.page_type, body.id);
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO wiki_pages (id, file_path, page_type, title, content_hash, embedding_hash, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?6) \
+         ON CONFLICT(id) DO UPDATE SET title = ?4, content_hash = ?5, updated_at = ?6",
+        rusqlite::params![body.id, file_path, body.page_type, body.title, hash, now],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("upsert:{e}")})))?;
+    // global_search FTS5 인덱스 갱신
+    let _ = db.conn().execute(
+        "INSERT INTO global_search (kind, ref_id, title, body) VALUES ('wiki', ?1, ?2, ?3)",
+        rusqlite::params![body.id, body.title, body.content],
+    );
+    Ok(Json(serde_json::json!({"id": body.id, "content_hash": hash, "updated_at": now})))
+}
+
+/// `GET /v1/gui/wiki/pages/{id}` — 위키 페이지 단일 조회.
+async fn gui_wiki_get(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let row = db.conn().query_row(
+        "SELECT id, title, page_type, content_hash, updated_at FROM wiki_pages WHERE id = ?1",
+        rusqlite::params![id],
+        |r| {
+            Ok(serde_json::json!({
+                "id": r.get::<_, String>(0)?,
+                "title": r.get::<_, String>(1)?,
+                "page_type": r.get::<_, String>(2)?,
+                "content_hash": r.get::<_, String>(3)?,
+                "updated_at": r.get::<_, i64>(4)?,
+            }))
+        },
+    );
+    match row {
+        Ok(j) => Ok(Json(j)),
+        Err(_) => Err((StatusCode::NOT_FOUND, Json(ErrorDto{error: "not_found".into()}))),
+    }
 }
 
 /// `GET /v1/gui/wallets` — 마스터 + 서브 지갑 (UI-MESSENGER-SPEC §2.4 + M-3 + L4).

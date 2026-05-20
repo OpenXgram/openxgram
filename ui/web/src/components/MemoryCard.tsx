@@ -1,6 +1,12 @@
-import { createSignal, Show } from "solid-js";
+import { createResource, createSignal, For, Show } from "solid-js";
 import { MemoryTab } from "./MemoryTab";
 import { Breadcrumb } from "./Breadcrumb";
+import { invoke } from "@/api/client";
+
+interface WikiPage { id: string; title: string; page_type: string; updated_at: number; }
+interface SearchHit { kind: string; ref_id: string; title: string; body: string; rank: number; }
+interface SearchResult { query: string; hits: SearchHit[]; total: number; }
+async function fetchWikiPages(): Promise<WikiPage[]> { try { return await invoke<WikiPage[]>("wiki_pages_list"); } catch { return []; } }
 
 // UI-MEMORY-SPEC v1.1 §3~§7 — 🧠 기억 카드 (PRD §0 #2: 기억·학습).
 // 좌측: 카테고리·태그·최근·새 페이지·패턴 보드·실수 보드·휴지통
@@ -35,31 +41,11 @@ export function MemoryCard(props: { onBack: () => void }) {
       </nav>
 
       <Show when={tab() === "wiki"}>
-        <section class="card-section">
-          <h3>📄 위키 페이지 — 사양 §3~§4 (L2)</h3>
-          <p class="placeholder-note">
-            카테고리 트리 (최대 5단) + 태그 + 최근 + 새 페이지 알림.
-            5 모드: 위키 / 편집 (마크다운+위지윅) / 이력 / 그래프 (Cytoscape.js) / 검색.
-            기존 MemoryTab 통합 (L2 memories) — 위키 페이지 CRUD 별도 신설 필요 (Phase 2).
-          </p>
-          <MemoryTab />
-        </section>
+        <WikiSection />
       </Show>
 
       <Show when={tab() === "search"}>
-        <section class="card-section">
-          <h3>🔍 검색 — 사양 §11 (V-10)</h3>
-          <input
-            type="text"
-            placeholder="검색어 입력… (예: OpenAgentX 결제 정책)"
-            style="width:100%; padding:8px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px; margin-bottom:8px;"
-          />
-          <p class="placeholder-note">
-            FTS5 (키워드) + sqlite-vec (시멘틱) hybrid + RRF (Reciprocal Rank Fusion).
-            L0 raw 메시지 + L1 episode + L2 위키 + L3 패턴 + L4 trait + Mistake + Comments 통합 검색.
-            백엔드 `GET /v1/gui/memory/search?q=` 신설 필요.
-          </p>
-        </section>
+        <SearchSection />
       </Show>
 
       <Show when={tab() === "pattern"}>
@@ -92,5 +78,103 @@ export function MemoryCard(props: { onBack: () => void }) {
         </section>
       </Show>
     </div>
+  );
+}
+
+function WikiSection() {
+  const [pages, { refetch }] = createResource(fetchWikiPages);
+  const [title, setTitle] = createSignal("");
+  const [content, setContent] = createSignal("");
+  const [ptype, setPtype] = createSignal("concept");
+  const [busy, setBusy] = createSignal(false);
+  async function save() {
+    if (!title()) return;
+    setBusy(true);
+    try {
+      const id = title().toLowerCase().replace(/[^a-z0-9가-힣]+/g, "-").replace(/^-|-$/g, "") || `page-${Date.now()}`;
+      await invoke("wiki_page_upsert", { id, title: title(), page_type: ptype(), content: content() });
+      setTitle("");
+      setContent("");
+      await refetch();
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      <section class="card-section">
+        <h3>📄 위키 페이지 — 사양 §3~§4 (L2, M-1·M-3·M-11)</h3>
+        <div style="display:flex; gap:6px; margin-bottom:6px;">
+          <input value={title()} onInput={(e) => setTitle(e.currentTarget.value)} placeholder="제목"
+            style="flex:1; padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+          <select value={ptype()} onChange={(e) => setPtype(e.currentTarget.value)}
+            style="padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;">
+            <option value="entity">entity</option><option value="concept">concept</option>
+            <option value="comparison">comparison</option><option value="other">other</option>
+          </select>
+          <button class="link-btn" onClick={save} disabled={busy()}>저장</button>
+        </div>
+        <textarea value={content()} onInput={(e) => setContent(e.currentTarget.value)}
+          placeholder="마크다운 본문 (M-3 — 저장은 항상 마크다운)"
+          rows={6}
+          style="width:100%; padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;"
+        />
+      </section>
+      <section class="card-section">
+        <h3>최근 페이지 ({pages()?.length ?? 0})</h3>
+        <For each={pages() ?? []}>
+          {(p) => (
+            <div style="font-size:12px; padding:4px 0; border-bottom:1px solid var(--border);">
+              <strong>{p.title}</strong>
+              <span style="color:var(--text-3); margin-left:8px;">{p.page_type} · {new Date(p.updated_at * 1000).toLocaleString()}</span>
+            </div>
+          )}
+        </For>
+      </section>
+      <section class="card-section">
+        <h3>기존 MemoryTab (L2 통합 view)</h3>
+        <MemoryTab />
+      </section>
+    </>
+  );
+}
+
+function SearchSection() {
+  const [q, setQ] = createSignal("");
+  const [r, setR] = createSignal<SearchResult | null>(null);
+  const [busy, setBusy] = createSignal(false);
+  async function run() {
+    if (!q().trim()) return;
+    setBusy(true);
+    try {
+      const res = await invoke<SearchResult>("global_search", { q: q(), limit: 30 });
+      setR(res);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section class="card-section">
+      <h3>🔍 검색 — 사양 §11 (V-10 FTS5 + RRF, sqlite-vec 시멘틱은 Phase 2)</h3>
+      <div style="display:flex; gap:6px; margin-bottom:8px;">
+        <input value={q()} onInput={(e) => setQ(e.currentTarget.value)}
+          onKeyDown={(e) => e.key === "Enter" && run()}
+          placeholder="L0~L4 통합 검색 (메시지·위키·패턴·실수)"
+          style="flex:1; padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+        <button class="link-btn" onClick={run} disabled={busy()}>검색</button>
+      </div>
+      <Show when={r()}>
+        <p style="font-size:11px; color:var(--text-3);">{r()!.total} 건</p>
+        <For each={r()!.hits}>
+          {(h) => (
+            <div style="font-size:12px; padding:6px 0; border-bottom:1px solid var(--border);">
+              <div style="color:var(--text-3); font-size:10px;">[{h.kind}] {h.ref_id} · rank {h.rank.toFixed(2)}</div>
+              <strong>{h.title || "(제목 없음)"}</strong>
+              <div>{h.body.slice(0, 200)}</div>
+            </div>
+          )}
+        </For>
+      </Show>
+    </section>
   );
 }

@@ -119,6 +119,10 @@ const ROUTES: Record<string, Route> = {
   attachment_get: { method: "GET", path: "/attachments/{hash}" },
   whitelist_patterns_list: { method: "GET", path: "/whitelist-patterns" },
   whitelist_pattern_add: { method: "POST", path: "/whitelist-patterns", body: true },
+  // UI-MEMORY-SPEC v1.1 — 위키 CRUD
+  wiki_pages_list: { method: "GET", path: "/wiki/pages" },
+  wiki_page_get: { method: "GET", path: "/wiki/pages/{id}" },
+  wiki_page_upsert: { method: "POST", path: "/wiki/pages", body: true },
 
   // Channel
   channel_status: { method: "GET", path: "/channel/status" },
