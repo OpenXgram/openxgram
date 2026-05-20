@@ -118,6 +118,8 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
   const [selected, setSelected] = createSignal<string | null>(null);     // friend id (에이전트 모드)
   const [selectedThread, setSelectedThread] = createSignal<string | null>(null); // conversation_id
   const [leftMode, setLeftMode] = createSignal<LeftMode>("agent");        // L1
+  // L5 — Hand-off 모달
+  const [handoffSource, setHandoffSource] = createSignal<MessageDto | null>(null);
   const [messages, { refetch: refetchMessages }] = createResource(fetchMessages);
 
   // 좌측 컨트롤
@@ -476,6 +478,14 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
                             <div class="messenger-thread-meta">
                               <span class="messenger-thread-sender">🤖 {m.sender}</span>
                               <span class="messenger-thread-time">{fmtTime(m.timestamp)}</span>
+                              <button
+                                type="button"
+                                title="Hand-off — 다른 에이전트에 인계"
+                                onClick={() => setHandoffSource(m)}
+                                style="background:transparent; border:none; cursor:pointer; opacity:0.6; padding:0 4px;"
+                              >
+                                ↗
+                              </button>
                             </div>
                             <div class="messenger-thread-body-text">{m.body}</div>
                           </li>
@@ -550,6 +560,14 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
                             <div class="messenger-thread-meta">
                               <span class="messenger-thread-sender">{m.sender}</span>
                               <span class="messenger-thread-time">{fmtTime(m.timestamp)}</span>
+                              <button
+                                type="button"
+                                title="Hand-off — 다른 에이전트에 인계"
+                                onClick={() => setHandoffSource(m)}
+                                style="background:transparent; border:none; cursor:pointer; opacity:0.6; padding:0 4px;"
+                              >
+                                ↗
+                              </button>
                             </div>
                             <div class="messenger-thread-body-text">{m.body}</div>
                           </li>
@@ -579,6 +597,144 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
           />
         )}
       </Show>
+
+      {/* L5 — Hand-off 모달 (메시지 옆 ↗ 버튼 클릭 시) */}
+      <Show when={handoffSource()}>
+        {() => (
+          <HandoffModal
+            source={handoffSource()!}
+            peers={(peers() ?? []).filter((p) => p.alias !== handoffSource()!.sender)}
+            onClose={() => setHandoffSource(null)}
+            onSent={() => {
+              setHandoffSource(null);
+              void refetchMessages();
+            }}
+          />
+        )}
+      </Show>
+    </div>
+  );
+}
+
+// ── L5 Hand-off 모달 ──────────────────────────────────────────────
+function HandoffModal(props: {
+  source: MessageDto;
+  peers: PeerDto[];
+  onClose: () => void;
+  onSent: () => void;
+}) {
+  const [target, setTarget] = createSignal<string>(props.peers[0]?.alias ?? "");
+  const [threadMode, setThreadMode] = createSignal<"new" | "existing">("new");
+  const [summary, setSummary] = createSignal(
+    `[hand-off] ${props.source.sender} 가 보낸 메시지 인계 — 검토·후속 작업 부탁:\n"${props.source.body.slice(0, 200)}"`,
+  );
+  const [sending, setSending] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  async function handoff() {
+    if (!target()) {
+      setError("대상 peer 가 없습니다 (다른 peer 1명 이상 필요)");
+      return;
+    }
+    setSending(true);
+    setError(null);
+    try {
+      // 새 스레드 = conversation_id 생략 (daemon 자동 생성).
+      // 기존 스레드 = source 의 conversation_id 그대로.
+      const conv = threadMode() === "existing" ? props.source.conversation_id : undefined;
+      await invoke("peer_send", {
+        alias: target(),
+        body: summary(),
+        ...(conv ? { conversation_id: conv } : {}),
+      });
+      props.onSent();
+    } catch (e: any) {
+      setError(typeof e === "string" ? e : (e?.message ?? String(e)));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div
+      onClick={props.onClose}
+      style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; display:flex; align-items:center; justify-content:center;"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style="background:#1e293b; padding:20px; border-radius:8px; min-width:420px; max-width:560px; box-shadow:0 8px 32px rgba(0,0,0,0.4);"
+      >
+        <h3 style="margin:0 0 12px 0;">↗ Hand-off — 메시지 인계</h3>
+        <div style="font-size:0.85em; margin-bottom:12px; padding:8px; background:rgba(255,255,255,0.05); border-radius:4px;">
+          <div style="opacity:0.7;">출처: 🤖 {props.source.sender}</div>
+          <div style="margin-top:4px;">{props.source.body.slice(0, 120)}{props.source.body.length > 120 ? "…" : ""}</div>
+        </div>
+
+        <div style="margin-bottom:10px;">
+          <label style="display:block; font-size:0.85em; margin-bottom:4px;">대상 peer</label>
+          <select
+            value={target()}
+            onChange={(e) => setTarget(e.currentTarget.value)}
+            style="width:100%; padding:6px;"
+          >
+            <For each={props.peers}>
+              {(p) => <option value={p.alias}>{p.alias} · {p.machine || "(unknown)"}</option>}
+            </For>
+            <Show when={props.peers.length === 0}>
+              <option value="">— 다른 peer 없음 —</option>
+            </Show>
+          </select>
+        </div>
+
+        <div style="margin-bottom:10px;">
+          <label style="display:block; font-size:0.85em; margin-bottom:4px;">자동 요약 (편집 가능)</label>
+          <textarea
+            rows={4}
+            value={summary()}
+            onInput={(e) => setSummary(e.currentTarget.value)}
+            style="width:100%; padding:6px; font-family:inherit;"
+          />
+        </div>
+
+        {/* L5 radio — 새/기존 스레드 둘 중 하나 */}
+        <div style="margin-bottom:14px; font-size:0.9em;">
+          <div style="margin-bottom:4px;">스레드 처리 (radio — 둘 중 하나)</div>
+          <label style="display:block; cursor:pointer; padding:2px 0;">
+            <input
+              type="radio"
+              checked={threadMode() === "new"}
+              onChange={() => setThreadMode("new")}
+            />
+            {" "}● 새 스레드 생성 (parent: 이 스레드)
+          </label>
+          <label style="display:block; cursor:pointer; padding:2px 0;">
+            <input
+              type="radio"
+              checked={threadMode() === "existing"}
+              onChange={() => setThreadMode("existing")}
+            />
+            {" "}○ 기존 스레드에 추가 (conv: {props.source.conversation_id.slice(0, 10)}…)
+          </label>
+        </div>
+
+        <Show when={error()}>
+          <div style="color:#f87171; font-size:0.85em; margin-bottom:8px;">{error()}</div>
+        </Show>
+
+        <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <button type="button" onClick={props.onClose} disabled={sending()}>
+            취소
+          </button>
+          <button
+            type="button"
+            class="primary"
+            onClick={() => void handoff()}
+            disabled={sending() || !target() || props.peers.length === 0}
+          >
+            {sending() ? "인계 중…" : "인계 →"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -592,9 +748,12 @@ function PeerInput(props: { friend: Friend; onSent: () => void }) {
 
   const isPeer = () => props.friend.kind === "peer";
 
+  // UI-MESSENGER-SPEC v1.3 §4.5 — 사용자 개입 = system priority (기본) / 일반 참여자.
+  const [intervention, setIntervention] = createSignal(true);
+
   async function send() {
-    const body = text().trim();
-    if (!body) return;
+    const raw = text().trim();
+    if (!raw) return;
     if (!isPeer()) {
       setError(t("messenger.send-peer-only") || "송신은 peer 친구에게만 가능 (Discord/Telegram 채널 송신은 별도)");
       return;
@@ -602,6 +761,8 @@ function PeerInput(props: { friend: Friend; onSent: () => void }) {
     setSending(true);
     setError(null);
     try {
+      // 개입 모드 = body 에 [개입] prefix (수신 측 LLM 이 system priority 로 인식).
+      const body = intervention() ? `[개입] ${raw}` : raw;
       await invoke("peer_send", { alias: props.friend.display, body });
       setText("");
       props.onSent();
@@ -614,13 +775,34 @@ function PeerInput(props: { friend: Friend; onSent: () => void }) {
 
   return (
     <footer class="messenger-thread-input">
+      {/* L5/§4.5 — 입력 모드 토글 */}
+      <div style="display:flex; gap:10px; padding:4px 8px; font-size:0.85em; opacity:0.85;">
+        <label style="cursor:pointer;">
+          <input
+            type="radio"
+            checked={intervention()}
+            onChange={() => setIntervention(true)}
+          />{" "}
+          ● 개입 (system priority)
+        </label>
+        <label style="cursor:pointer;">
+          <input
+            type="radio"
+            checked={!intervention()}
+            onChange={() => setIntervention(false)}
+          />{" "}
+          ○ 일반 참여
+        </label>
+      </div>
       <textarea
         rows={2}
         value={text()}
         onInput={(ev) => setText(ev.currentTarget.value)}
         placeholder={
           isPeer()
-            ? (t("messenger.input-placeholder") || "메시지 입력 (Enter 보내기, Shift+Enter 줄바꿈)")
+            ? intervention()
+              ? "[개입] 메시지 — system priority 로 전송 (Enter 보내기, Shift+Enter 줄바꿈)"
+              : (t("messenger.input-placeholder") || "메시지 입력")
             : (t("messenger.send-peer-only") || "Discord/Telegram 채널 송신은 별도")
         }
         disabled={!isPeer() || sending()}
@@ -632,7 +814,11 @@ function PeerInput(props: { friend: Friend; onSent: () => void }) {
         }}
       />
       <button type="button" disabled={!isPeer() || sending() || !text().trim()} onClick={() => void send()}>
-        {sending() ? (t("messenger.sending") || "보내는 중…") : (t("messenger.send") || "보내기")}
+        {sending()
+          ? (t("messenger.sending") || "보내는 중…")
+          : intervention()
+            ? "[개입] 전송"
+            : (t("messenger.send") || "전송")}
       </button>
       <Show when={error()}>
         <div class="messenger-thread-error" role="alert">{error()}</div>
