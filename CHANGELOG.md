@@ -2,6 +2,44 @@
 
 OpenXgram 의 변경 이력. 모든 시간은 KST(Asia/Seoul). [Semantic Versioning](https://semver.org/) + BUILD 자동 증가 (CI/CD 갱신, 수동 변경 금지).
 
+## [0.2.0-rc.30] — 2026-05-20 KST (UI-MESSENGER-SPEC v1.3 완전 구현)
+
+사양 43+16=59 결정 모두 코드 골격 + 실 enforcement workers 5종 가동.
+
+**백엔드 신규 API (15+ endpoint)**:
+- 머신×세션 detector: `/v1/gui/sessions` (tmux + Claude projects + ps 통합), `/v1/gui/machine`, `/v1/gui/sessions/{id}/screen` (xterm.js stream)
+- 마스터+서브 지갑 (M-3 + L4 영구 점유 + M-6 + S6 + V8): `/v1/gui/wallets`, `/wallets`, `/wallets/topup`
+- 승인 큐 (L6 + V4): `/v1/gui/approvals`
+- 정책: `/v1/gui/role-policies` (L3 + V1), `/v1/gui/whitelist` + `/whitelist-patterns` (M-5 + N1 + N3 + V4)
+- 글로벌 검색 (N4): `/v1/gui/search` (FTS5)
+- 라우팅 규칙 (V11): `/v1/gui/routing-rules`
+- 버전 (V12): `/v1/gui/version`
+- 시스템 cron 보호 (N7): `/v1/gui/system-cron/protect-attempt`
+- 첨부 (S7 + V2/V3): `/v1/gui/attachments` + GET/POST + refcount + content-addressed
+- cross-machine queue (S8 + V6): `/v1/gui/cross-machine-queue`
+
+**프론트 UI**:
+- 메신저 좌측 (S4 collapse + 정렬·필터): 머신×세션 트리, tmux + Claude project 실시간
+- 메신저 중앙 (S5): xterm.js + 2초 폴링 (tmux capture-pane / .jsonl tail)
+- 메신저 우측 12 탭 (S3): 개요·역할·채널바인딩·상태·히스토리·내보내기·지갑·토큰·Cron·파일·알림·권한·도구·MCP
+- 메신저 헤더 🔀: RoutingRulesModal (V11)
+- 글로벌 헤더 🔍: GlobalSearchModal (N4), 🔔: ApprovalQueueBell (L6)
+- C5 breadcrumb 7 카드 전부 적용 (Memory, Identity, Vault, Channel, Autonomy, External, Ops)
+
+**Daemon enforcement workers (5종 가동)**:
+- M-4 (60s): agent_identities 휴면 자동 전이 (Active/Idle/Dormant/Offline) + N8 lifecycle_log
+- M-5 (60s): 화이트리스트 매칭 시 auto_register + whitelist_match_log
+- M-6 (60s): sub_wallets auto_topup_enabled 자동 충전 (일 한도 내)
+- L6 (30s): vault_pending 24h 경과 Expired
+- V6 (10s): outbound_queue 30일 archive + 10회 실패 dead-letter
+
+**마이그레이션 신규 3종**:
+- v21 sub_wallets: M-3 + L4 + M-6 (HD 영구 점유 + 자동 충전 schema)
+- v23 messenger_full: M-2 agent_identities, V6 outbound_queue, N4 global_search FTS5, V11 routing_rules, V12 version_log, N7 protect_log, N8 lifecycle_log
+- v24 messenger_attachments: S7 attachment_refs + inline + M-5 whitelist_patterns + match_log
+
+**잔여 (사양 명시)**: S6 LLM 실 토큰비 정확 (현재 message length proxy), S7 disk 저장 (현재 inline only), S8 transport 측 sender 통합, N4 sqlite-vec 시멘틱 (FTS5 만).
+
 ## [0.2.0-rc.29] — 2026-05-20 KST (HomeDashboard 8 카드 + 7 카드 컴포넌트 + UI 버전 표시)
 
 **누적 publish** — rc.23~rc.28 은 로컬 태그였고 GitHub Releases 에 publish 안 됨. rc.29 가 rc.22 (5월 11일) 이후 첫 공식 release. 묶인 변경:
