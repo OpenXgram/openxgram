@@ -700,18 +700,29 @@ async fn gui_attachment_upload(
          ON CONFLICT(content_hash) DO UPDATE SET refcount = refcount + 1",
         rusqlite::params![hash, size, mime, now],
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("ref:{e}")})))?;
-    // < 1MB: SQLite blob. 그 이상: disk (현재는 inline 만 — disk 는 daemon side path 필요)
-    if size < 1_000_000 {
+    // S7: < 1MB SQLite blob, ≥ 1MB content-addressed disk (V2: thread_id prefix 제거).
+    let storage = if size < 1_000_000 {
         conn.execute(
             "INSERT OR IGNORE INTO attachment_inline (content_hash, data, mime, size_bytes) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![hash, raw, mime, size],
         ).ok();
-    }
+        "inline"
+    } else {
+        let dir = state.data_dir.join("attachments");
+        std::fs::create_dir_all(&dir).ok();
+        let path = dir.join(&hash);
+        if !path.exists() {
+            if let Err(e) = std::fs::write(&path, &raw) {
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("disk write: {e}")})));
+            }
+        }
+        "disk"
+    };
     Ok(Json(serde_json::json!({
         "content_hash": hash,
         "size_bytes": size,
         "mime": mime,
-        "storage": if size < 1_000_000 { "inline" } else { "disk_pending" },
+        "storage": storage,
     })))
 }
 
@@ -729,15 +740,32 @@ async fn gui_attachment_get(
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     ).ok();
     if let Some((data, mime, size)) = row {
-        Ok(Json(serde_json::json!({
+        return Ok(Json(serde_json::json!({
             "content_hash": hash,
             "mime": mime,
             "size_bytes": size,
+            "storage": "inline",
             "content_b64": base64_encode(&data),
-        })))
-    } else {
-        Err((StatusCode::NOT_FOUND, Json(ErrorDto{error: "not_found".into()})))
+        })));
     }
+    // disk lookup
+    let path = state.data_dir.join("attachments").join(&hash);
+    if let Ok(data) = std::fs::read(&path) {
+        let size = data.len() as i64;
+        let mime: String = db.conn().query_row(
+            "SELECT mime FROM attachment_refs WHERE content_hash = ?1",
+            rusqlite::params![hash],
+            |r| r.get(0),
+        ).unwrap_or_else(|_| "application/octet-stream".into());
+        return Ok(Json(serde_json::json!({
+            "content_hash": hash,
+            "mime": mime,
+            "size_bytes": size,
+            "storage": "disk",
+            "content_b64": base64_encode(&data),
+        })));
+    }
+    Err((StatusCode::NOT_FOUND, Json(ErrorDto{error: "not_found".into()})))
 }
 
 fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
@@ -1445,6 +1473,18 @@ struct GuiPeerSendBody {
     body: String,
     #[serde(default)]
     conversation_id: Option<String>,
+    /// S6 — 정확 비용: 사용한 LLM 모델 (e.g. "claude-sonnet-4-6"). 없으면 length proxy 사용.
+    #[serde(default)]
+    model: Option<String>,
+    /// S6 — 정확 비용: input tokens.
+    #[serde(default)]
+    tokens_in: Option<u32>,
+    /// S6 — 정확 비용: output tokens.
+    #[serde(default)]
+    tokens_out: Option<u32>,
+    /// S6 — x402 결제 (LLM 토큰비 + 별도 합산).
+    #[serde(default)]
+    x402_micro: Option<i64>,
 }
 
 /// `GET /v1/gui/messages?limit=N&sender=X` — L0 최근 메시지 (recv_messages MCP 도구의 HTTP 래퍼).
@@ -1511,19 +1551,48 @@ async fn gui_peer_send(
     .await
     .map_err(|e| internal(&format!("peer_send: {e}")))?;
     // UI-MESSENGER-SPEC v1.3 S6 — LLM 토큰비 + x402 결제 합산.
-    // 추정 비용: 1 message ≈ 0.001 USD (1000 micro) — daemon-side actual cost 측정 시 정확화.
-    let estimated_micro: i64 = (body.body.len() as i64).max(100).min(10_000);
+    // 정확 cost: model + tokens_in + tokens_out 제공 시 정밀, 미제공 시 length proxy.
+    let llm_micro: i64 = match (body.model.as_deref(), body.tokens_in, body.tokens_out) {
+        (Some(model), Some(tin), Some(tout)) => {
+            // 모델별 가격 (USD per 1M tokens, micro USDC):
+            //   claude-sonnet-4-6: in 3 / out 15
+            //   claude-opus-4-7: in 15 / out 75
+            //   gpt-4o: in 5 / out 15
+            //   gemini-1.5-pro: in 3.5 / out 10.5
+            //   ollama/*: 0 (로컬)
+            let (in_rate, out_rate) = match model {
+                m if m.contains("opus") => (15.0, 75.0),
+                m if m.contains("sonnet") || m.contains("claude") => (3.0, 15.0),
+                m if m.contains("gpt-4o") => (5.0, 15.0),
+                m if m.contains("gemini") => (3.5, 10.5),
+                m if m.contains("ollama") || m.contains("local") => (0.0, 0.0),
+                _ => (3.0, 15.0), // default ≈ sonnet
+            };
+            let cost_usd = (tin as f64 * in_rate + tout as f64 * out_rate) / 1_000_000.0;
+            (cost_usd * 1_000_000.0) as i64
+        }
+        _ => (body.body.len() as i64).max(100).min(10_000), // proxy
+    };
+    let x402_micro = body.x402_micro.unwrap_or(0);
+    let total_micro = llm_micro + x402_micro;
     let now = chrono::Utc::now().to_rfc3339();
     {
         let mut db = state.db.lock().await;
-        // alias 매칭되는 서브 지갑 있으면 spent_micro 증가
+        // S6 합산: spent_micro = LLM + x402.
         let _ = db.conn().execute(
             "UPDATE sub_wallets SET spent_micro = spent_micro + ?1, updated_at = ?2 \
              WHERE agent_id = ?3",
-            rusqlite::params![estimated_micro, now, alias],
+            rusqlite::params![total_micro, now, alias],
         );
     }
-    Ok(Json(serde_json::json!({"sent": true, "alias": alias, "cost_micro": estimated_micro})))
+    Ok(Json(serde_json::json!({
+        "sent": true,
+        "alias": alias,
+        "llm_micro": llm_micro,
+        "x402_micro": x402_micro,
+        "total_micro": total_micro,
+        "cost_breakdown_method": if body.model.is_some() { "model_token_rate" } else { "length_proxy" },
+    })))
 }
 
 // ── Notify wizard (Discord/Telegram) HTTP endpoints ─────────────────────
