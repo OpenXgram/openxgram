@@ -131,6 +131,16 @@ const MIGRATIONS: &[Migration] = &[
         name: "messenger_attachments",
         sql: include_str!("../migrations/0023_messenger_attachments.sql"),
     },
+    Migration {
+        version: 25,
+        name: "memory_full",
+        sql: include_str!("../migrations/0024_memory_full.sql"),
+    },
+    Migration {
+        version: 26,
+        name: "session_channel_bindings",
+        sql: include_str!("../migrations/0025_session_channel_bindings.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

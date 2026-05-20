@@ -97,7 +97,7 @@ export function AgentSidePanel(props: {
           <RoleTab peer={props.peer} onJumpToSettings={props.onJumpToSettings} />
         </Show>
         <Show when={tab() === "channel"}>
-          <ChannelTab notify={notify()} onJumpToSettings={props.onJumpToSettings} />
+          <ChannelTab notify={notify()} onJumpToSettings={props.onJumpToSettings} agentId={props.peer.alias} />
         </Show>
         <Show when={tab() === "status"}>
           <StatusTab peer={props.peer} />
@@ -197,21 +197,97 @@ function RoleTab(props: { peer: PeerMeta; onJumpToSettings: () => void }) {
   );
 }
 
-// ── 탭 3: 채널 바인딩 (안티패턴 1 — 토큰 입력 X) ────────────────
-function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () => void }) {
+// ── 탭 3: 채널 바인딩 (메신저 §5 탭 3) — 세션별 채널 + 권한·멘션 트리거 ─────
+interface BindingDto {
+  id: string;
+  platform: string;
+  channel_ref: string;
+  bot_label: string | null;
+  mention_trigger: string | null;
+  permission: string;
+  active: boolean;
+}
+function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () => void; agentId: string }) {
+  const [bindings, { refetch }] = createResource(() => props.agentId, async (aid) => {
+    try { return await invoke<BindingDto[]>("session_bindings_list", { agent_id: aid }); } catch { return []; }
+  });
+  const [platform, setPlatform] = createSignal("telegram");
+  const [channelRef, setChannelRef] = createSignal("");
+  const [mention, setMention] = createSignal("");
+  const [perm, setPerm] = createSignal("reply");
+  const [busy, setBusy] = createSignal(false);
+  async function add() {
+    if (!channelRef()) return;
+    setBusy(true);
+    try {
+      await invoke("session_binding_add", {
+        agent_id: props.agentId,
+        platform: platform(),
+        channel_ref: channelRef(),
+        mention_trigger: mention(),
+        permission: perm(),
+      });
+      setChannelRef("");
+      await refetch();
+    } finally { setBusy(false); }
+  }
+  async function del(id: string) {
+    setBusy(true);
+    try {
+      await invoke("session_binding_delete", { agent_id: props.agentId, binding_id: id });
+      await refetch();
+    } finally { setBusy(false); }
+  }
   return (
     <div>
       <p style="font-size:12px; margin-bottom:8px;">
-        이 세션이 응답할 채널 — 📱 채널 카드 등록 후 여기서 바인딩 선택.
+        이 세션 (<code>{props.agentId}</code>) 이 응답할 채널. 봇 토큰은 📱 채널 카드 마스터 (안티패턴 1).
       </p>
-      <Row label="디스코드" value={props.notify?.discord_configured ? "✓ 연결됨" : "(미연결)"} />
-      <Row label="텔레그램" value={props.notify?.telegram_configured ? "✓ 연결됨" : "(미연결)"} />
-      <button class="link-btn" type="button" onClick={props.onJumpToSettings}>
-        🔗 채널 카드 (Settings → 알림 채널)
+      <Row label="디스코드 봇" value={props.notify?.discord_configured ? "✓ 연결됨" : "(미연결 — 채널 카드)"} />
+      <Row label="텔레그램 봇" value={props.notify?.telegram_configured ? "✓ 연결됨" : "(미연결 — 채널 카드)"} />
+      <hr style="margin:8px 0; opacity:0.2;" />
+      <strong style="font-size:12px;">바인딩 추가</strong>
+      <div style="display:flex; gap:4px; margin-top:6px; flex-wrap:wrap;">
+        <select value={platform()} onChange={(e) => setPlatform(e.currentTarget.value)}
+          style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;">
+          <option value="discord">Discord</option>
+          <option value="telegram">Telegram</option>
+          <option value="slack">Slack</option>
+          <option value="web">Web</option>
+        </select>
+        <input value={channelRef()} onInput={(e) => setChannelRef(e.currentTarget.value)}
+          placeholder={platform() === "discord" ? "channel_id" : platform() === "telegram" ? "chat_id" : "channel"}
+          style="flex:1; min-width:120px; padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+      </div>
+      <div style="display:flex; gap:4px; margin-top:4px; flex-wrap:wrap;">
+        <input value={mention()} onInput={(e) => setMention(e.currentTarget.value)}
+          placeholder="멘션 (@researcher)"
+          style="flex:1; padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+        <select value={perm()} onChange={(e) => setPerm(e.currentTarget.value)}
+          style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;">
+          <option value="reply">답글</option>
+          <option value="read_only">읽기만</option>
+          <option value="command">명령</option>
+        </select>
+        <button class="link-btn" onClick={add} disabled={busy()}>+ 추가</button>
+      </div>
+      <hr style="margin:8px 0; opacity:0.2;" />
+      <strong style="font-size:12px;">활성 바인딩 ({bindings()?.length ?? 0})</strong>
+      <For each={bindings() ?? []}>
+        {(b) => (
+          <div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--border); font-size:12px;">
+            <div>
+              <strong>{b.platform}</strong> · <code>{b.channel_ref}</code>
+              {b.mention_trigger ? <span style="color:var(--text-3);"> · {b.mention_trigger}</span> : null}
+              <span style="color:var(--text-3);"> · {b.permission}</span>
+            </div>
+            <button class="link-btn" onClick={() => del(b.id)} disabled={busy()}>삭제</button>
+          </div>
+        )}
+      </For>
+      <button class="link-btn" type="button" onClick={props.onJumpToSettings} style="margin-top:8px;">
+        🔗 채널 카드 (봇 토큰 마스터)
       </button>
-      <p class="messenger-sidepanel-hint">
-        세션별 멘션 트리거·권한 토글은 Tier 4+. <strong>봇 토큰 입력 X</strong> (마스터 = 📱 채널 카드).
-      </p>
     </div>
   );
 }

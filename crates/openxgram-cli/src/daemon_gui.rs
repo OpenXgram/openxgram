@@ -234,6 +234,23 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // UI-MEMORY-SPEC v1.1 — 위키 CRUD + 검색 + 패턴/실수 보드
         .route("/v1/gui/wiki/pages", get(gui_wiki_list).post(gui_wiki_upsert))
         .route("/v1/gui/wiki/pages/{id}", get(gui_wiki_get))
+        // UI-MEMORY-SPEC v1.1 깊은 endpoint
+        .route("/v1/gui/wiki/pages/{id}/delete", post(gui_wiki_delete))       // M-12 휴지통
+        .route("/v1/gui/wiki/pages/{id}/lock", post(gui_wiki_lock))           // M-7
+        .route("/v1/gui/wiki/pages/{id}/history", get(gui_wiki_history))     // M-11
+        .route("/v1/gui/wiki/pages/{id}/share", post(gui_wiki_share))        // M-4 V-3
+        .route("/v1/gui/wiki/trash", get(gui_wiki_trash_list))               // M-12 휴지통 목록
+        .route("/v1/gui/wiki/trash/{id}/restore", post(gui_wiki_trash_restore))
+        .route("/v1/gui/memory/patterns", get(gui_memory_patterns_list).post(gui_memory_pattern_add)) // M-5
+        .route("/v1/gui/memory/mistakes", get(gui_memory_mistakes_list).post(gui_memory_mistake_add)) // M-13
+        .route("/v1/gui/wiki/new-alerts", get(gui_wiki_new_alerts))          // M-6
+        // UI-MESSENGER-SPEC v1.3 §5 탭 3 — 세션별 채널 바인딩 (Discord/Telegram channel_id 등)
+        .route("/v1/gui/sessions/{agent_id}/channel-bindings",
+               get(gui_session_bindings_list).post(gui_session_binding_add))
+        .route("/v1/gui/sessions/{agent_id}/channel-bindings/{binding_id}",
+               post(gui_session_binding_delete))
+        // Discord 봇이 가입한 guild 의 channel 목록 (세션 바인딩 시 사용자가 선택)
+        .route("/v1/gui/notify/discord/channels", post(gui_notify_discord_channels))
         // UI-IDENTITY-SPEC v1.0 — 신원 카드 endpoint
         .route("/v1/gui/identity/info", get(gui_identity_info))
         .route("/v1/gui/identity/audit", get(gui_identity_audit))
@@ -966,6 +983,371 @@ async fn gui_wiki_get(
         Ok(j) => Ok(Json(j)),
         Err(_) => Err((StatusCode::NOT_FOUND, Json(ErrorDto{error: "not_found".into()}))),
     }
+}
+
+// ── UI-MEMORY-SPEC v1.1 깊은 endpoint ─────────────────────────────────────
+
+/// `POST /v1/gui/wiki/pages/{id}/delete` — M-12 휴지통 (30일 보관, V-4).
+async fn gui_wiki_delete(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let now = chrono::Utc::now();
+    let purge = now + chrono::Duration::days(30);
+    let mut db = state.db.lock().await;
+    let row = db.conn().query_row(
+        "SELECT title, page_type FROM wiki_pages WHERE id = ?1",
+        rusqlite::params![id],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+    );
+    let (title, ptype) = match row {
+        Ok(p) => p,
+        Err(_) => return Err((StatusCode::NOT_FOUND, Json(ErrorDto{error:"page_not_found".into()}))),
+    };
+    db.conn().execute(
+        "INSERT OR REPLACE INTO wiki_trash (id, title, page_type, content, deleted_at, purge_at) \
+         VALUES (?1, ?2, ?3, '(content snapshot)', ?4, ?5)",
+        rusqlite::params![id, title, ptype, now.to_rfc3339(), purge.to_rfc3339()],
+    ).ok();
+    db.conn().execute("DELETE FROM wiki_pages WHERE id = ?1", rusqlite::params![id]).ok();
+    Ok(Json(serde_json::json!({"deleted": id, "purge_at": purge.to_rfc3339()})))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WikiLockBody { pub locked_by: String, pub reason: Option<String> }
+async fn gui_wiki_lock(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<WikiLockBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT OR REPLACE INTO wiki_locks (page_id, locked_by, locked_at, reason) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![id, body.locked_by, now, body.reason],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("lock: {e}")})))?;
+    Ok(Json(serde_json::json!({"page_id": id, "locked_by": body.locked_by, "locked_at": now})))
+}
+
+async fn gui_wiki_history(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT revision, author, event_type, at FROM wiki_history WHERE page_id = ?1 ORDER BY revision DESC",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map(rusqlite::params![id], |r| {
+        Ok(serde_json::json!({
+            "revision": r.get::<_, i64>(0)?,
+            "author": r.get::<_, String>(1)?,
+            "event_type": r.get::<_, String>(2)?,
+            "at": r.get::<_, String>(3)?,
+        }))
+    }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WikiShareBody { pub mode: String, pub expires_at: Option<String>, pub noindex: Option<bool> }
+async fn gui_wiki_share(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<WikiShareBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use sha2::{Digest, Sha256};
+    let now = chrono::Utc::now().to_rfc3339();
+    let token = {
+        let mut h = Sha256::new();
+        h.update(id.as_bytes());
+        h.update(now.as_bytes());
+        format!("{:x}", h.finalize())[..24].to_string()
+    };
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO wiki_shares (id, page_id, mode, expires_at, created_at, noindex) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![token, id, body.mode, body.expires_at, now, if body.noindex.unwrap_or(true) {1} else {0}],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("share: {e}")})))?;
+    Ok(Json(serde_json::json!({"share_token": token, "url": format!("/share/{}", token), "noindex": body.noindex.unwrap_or(true)})))
+}
+
+async fn gui_wiki_trash_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, title, page_type, deleted_at, purge_at FROM wiki_trash ORDER BY deleted_at DESC",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map([], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_, String>(0)?,
+            "title": r.get::<_, String>(1).unwrap_or_default(),
+            "page_type": r.get::<_, String>(2).unwrap_or_default(),
+            "deleted_at": r.get::<_, String>(3)?,
+            "purge_at": r.get::<_, String>(4)?,
+        }))
+    }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+async fn gui_wiki_trash_restore(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let now = chrono::Utc::now().timestamp();
+    let mut db = state.db.lock().await;
+    let row = db.conn().query_row(
+        "SELECT title, page_type, content FROM wiki_trash WHERE id = ?1",
+        rusqlite::params![id],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+    );
+    let (title, ptype, content) = match row {
+        Ok(t) => t,
+        Err(_) => return Err((StatusCode::NOT_FOUND, Json(ErrorDto{error:"trash_not_found".into()}))),
+    };
+    use sha2::{Digest, Sha256};
+    let hash = format!("{:x}", Sha256::digest(content.as_bytes()));
+    db.conn().execute(
+        "INSERT INTO wiki_pages (id, file_path, page_type, title, content_hash, embedding_hash, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?6)",
+        rusqlite::params![id, format!("wiki/{}/{}.md", ptype, id), ptype, title, hash, now],
+    ).ok();
+    db.conn().execute("DELETE FROM wiki_trash WHERE id = ?1", rusqlite::params![id]).ok();
+    Ok(Json(serde_json::json!({"restored": id})))
+}
+
+async fn gui_memory_patterns_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, pattern_type, description, confidence, source, created_at FROM memory_patterns ORDER BY created_at DESC LIMIT 100",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map([], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_, String>(0)?, "pattern_type": r.get::<_, String>(1)?,
+            "description": r.get::<_, String>(2)?, "confidence": r.get::<_, f64>(3)?,
+            "source": r.get::<_, String>(4)?, "created_at": r.get::<_, String>(5)?,
+        }))
+    }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PatternAddBody {
+    pub pattern_type: String, pub description: String,
+    #[serde(default)] pub confidence: Option<f64>,
+    #[serde(default)] pub source: Option<String>,
+}
+async fn gui_memory_pattern_add(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<PatternAddBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use sha2::{Digest, Sha256};
+    let now = chrono::Utc::now().to_rfc3339();
+    let id = format!("{:x}", Sha256::digest(format!("{}{}", now, body.description).as_bytes()))[..20].to_string();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO memory_patterns (id, pattern_type, description, confidence, source, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![id, body.pattern_type, body.description,
+            body.confidence.unwrap_or(1.0), body.source.unwrap_or_else(|| "user".into()), now],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("insert: {e}")})))?;
+    Ok(Json(serde_json::json!({"id": id, "ok": true})))
+}
+
+async fn gui_memory_mistakes_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, title, description, discovery_method, resolved, created_at FROM memory_mistakes ORDER BY created_at DESC LIMIT 100",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map([], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_, String>(0)?, "title": r.get::<_, String>(1)?,
+            "description": r.get::<_, String>(2)?, "discovery_method": r.get::<_, String>(3)?,
+            "resolved": r.get::<_, i64>(4)? != 0, "created_at": r.get::<_, String>(5)?,
+        }))
+    }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MistakeAddBody {
+    pub title: String, pub description: String,
+    pub discovery_method: String,
+    #[serde(default)] pub context: Option<String>,
+}
+async fn gui_memory_mistake_add(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<MistakeAddBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use sha2::{Digest, Sha256};
+    let now = chrono::Utc::now().to_rfc3339();
+    let id = format!("{:x}", Sha256::digest(format!("{}{}", now, body.title).as_bytes()))[..20].to_string();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO memory_mistakes (id, title, description, discovery_method, context, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![id, body.title, body.description, body.discovery_method, body.context, now],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("insert: {e}")})))?;
+    Ok(Json(serde_json::json!({"id": id, "ok": true})))
+}
+
+// ── 세션별 채널 바인딩 (메신저 §5 탭 3) ────────────────────────────────
+
+async fn gui_session_bindings_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(agent_id): Path<String>,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, platform, channel_ref, bot_label, mention_trigger, permission, active, created_at \
+         FROM session_channel_bindings WHERE agent_id = ?1 ORDER BY created_at DESC",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map(rusqlite::params![agent_id], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_, String>(0)?, "platform": r.get::<_, String>(1)?,
+            "channel_ref": r.get::<_, String>(2)?,
+            "bot_label": r.get::<_, Option<String>>(3)?,
+            "mention_trigger": r.get::<_, Option<String>>(4)?,
+            "permission": r.get::<_, String>(5)?,
+            "active": r.get::<_, i64>(6)? != 0,
+            "created_at": r.get::<_, String>(7)?,
+        }))
+    }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SessionBindingBody {
+    pub platform: String,
+    pub channel_ref: String,
+    #[serde(default)] pub bot_label: Option<String>,
+    #[serde(default)] pub mention_trigger: Option<String>,
+    #[serde(default)] pub permission: Option<String>,
+}
+
+async fn gui_session_binding_add(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(agent_id): Path<String>,
+    Json(body): Json<SessionBindingBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use sha2::{Digest, Sha256};
+    let now = chrono::Utc::now().to_rfc3339();
+    let id = format!("{:x}", Sha256::digest(format!("{}{}{}", agent_id, now, body.channel_ref).as_bytes()))[..20].to_string();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO session_channel_bindings \
+            (id, agent_id, platform, channel_ref, bot_label, mention_trigger, permission, active, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8)",
+        rusqlite::params![
+            id, agent_id, body.platform, body.channel_ref,
+            body.bot_label, body.mention_trigger,
+            body.permission.unwrap_or_else(|| "reply".into()), now,
+        ],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("insert: {e}")})))?;
+    Ok(Json(serde_json::json!({"id": id, "agent_id": agent_id, "ok": true})))
+}
+
+async fn gui_session_binding_delete(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path((agent_id, binding_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "DELETE FROM session_channel_bindings WHERE id = ?1 AND agent_id = ?2",
+        rusqlite::params![binding_id, agent_id],
+    ).ok();
+    Ok(Json(serde_json::json!({"deleted": binding_id})))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DiscordChannelsBody {
+    pub token: String,
+    pub guild_id: String,
+}
+
+/// `POST /v1/gui/notify/discord/channels` — Discord guild 의 채널 목록 조회 (세션 바인딩 시 선택).
+async fn gui_notify_discord_channels(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<DiscordChannelsBody>,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let url = format!("https://discord.com/api/v10/guilds/{}/channels", body.guild_id);
+    let client = reqwest::Client::new();
+    let resp = client.get(&url)
+        .header("Authorization", format!("Bot {}", body.token))
+        .send().await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ErrorDto{error: format!("discord: {e}")})))?;
+    if !resp.status().is_success() {
+        return Err((StatusCode::BAD_GATEWAY, Json(ErrorDto{error: format!("discord {}", resp.status())})));
+    }
+    let channels: Vec<serde_json::Value> = resp.json().await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ErrorDto{error: format!("parse: {e}")})))?;
+    // 텍스트 채널 (type=0) 만 노출
+    let filtered: Vec<serde_json::Value> = channels.into_iter()
+        .filter(|c| c.get("type").and_then(|t| t.as_i64()) == Some(0))
+        .map(|c| serde_json::json!({
+            "id": c.get("id").cloned().unwrap_or_default(),
+            "name": c.get("name").cloned().unwrap_or_default(),
+            "position": c.get("position").cloned().unwrap_or_default(),
+        }))
+        .collect();
+    Ok(Json(filtered))
+}
+
+async fn gui_wiki_new_alerts(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT page_id, title, created_at FROM wiki_new_alerts WHERE notified_at IS NULL ORDER BY created_at DESC",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map([], |r| {
+        Ok(serde_json::json!({
+            "page_id": r.get::<_, String>(0)?, "title": r.get::<_, String>(1)?,
+            "created_at": r.get::<_, String>(2)?,
+        }))
+    }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
 }
 
 /// `GET /v1/gui/identity/info` — DID + 마스터 지갑 주소 + 머신 (UI-IDENTITY-SPEC v1.0).

@@ -123,6 +123,39 @@ const ROUTES: Record<string, Route> = {
   wiki_pages_list: { method: "GET", path: "/wiki/pages" },
   wiki_page_get: { method: "GET", path: "/wiki/pages/{id}" },
   wiki_page_upsert: { method: "POST", path: "/wiki/pages", body: true },
+  // Memory deep
+  wiki_delete: { method: "POST", path: "/wiki/pages/{id}/delete" },
+  wiki_lock: { method: "POST", path: "/wiki/pages/{id}/lock", body: true },
+  wiki_history: { method: "GET", path: "/wiki/pages/{id}/history" },
+  wiki_share: { method: "POST", path: "/wiki/pages/{id}/share", body: true },
+  wiki_trash_list: { method: "GET", path: "/wiki/trash" },
+  wiki_trash_restore: { method: "POST", path: "/wiki/trash/{id}/restore" },
+  memory_patterns_list: { method: "GET", path: "/memory/patterns" },
+  memory_pattern_add: { method: "POST", path: "/memory/patterns", body: true },
+  memory_mistakes_list: { method: "GET", path: "/memory/mistakes" },
+  memory_mistake_add: { method: "POST", path: "/memory/mistakes", body: true },
+  wiki_new_alerts: { method: "GET", path: "/wiki/new-alerts" },
+  // Identity deep
+  identity_info: { method: "GET", path: "/identity/info" },
+  identity_audit: { method: "GET", path: "/identity/audit" },
+  identity_allowlist: { method: "GET", path: "/identity/allowlist" },
+  identity_allowlist_add: { method: "POST", path: "/identity/allowlist", body: true },
+  // Channel deep
+  channel_people: { method: "GET", path: "/channel/people" },
+  channel_routing: { method: "GET", path: "/channel/routing" },
+  // Autonomy deep
+  autonomy_history: { method: "GET", path: "/autonomy/history" },
+  autonomy_limits: { method: "GET", path: "/autonomy/limits" },
+  autonomy_vacation: { method: "GET", path: "/autonomy/vacation" },
+  autonomy_vacation_set: { method: "POST", path: "/autonomy/vacation", body: true },
+  // External + Ops
+  external_directory: { method: "GET", path: "/external/directory" },
+  ops_health: { method: "GET", path: "/ops/health" },
+  // 세션별 채널 바인딩 (메신저 §5 탭 3)
+  session_bindings_list: { method: "GET", path: "/sessions/{agent_id}/channel-bindings" },
+  session_binding_add: { method: "POST", path: "/sessions/{agent_id}/channel-bindings", body: true },
+  session_binding_delete: { method: "POST", path: "/sessions/{agent_id}/channel-bindings/{binding_id}" },
+  notify_discord_channels: { method: "POST", path: "/notify/discord/channels", body: true },
 
   // Channel
   channel_status: { method: "GET", path: "/channel/status" },
