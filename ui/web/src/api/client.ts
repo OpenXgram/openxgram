@@ -158,6 +158,10 @@ const ROUTES: Record<string, Route> = {
   chain_list: { method: "GET", path: "/chain", emptyAs: [] },
   chain_delete: { method: "DELETE", path: "/chain/{name}" },
   // chain_show 는 컴포넌트에서 직접 호출 안 함 (chain_list 가 dto 다 줌).
+
+  // 메신저 v1.3 Step 0 — 메시지 송수신
+  messages_recent: { method: "GET", path: "/messages", emptyAs: [] },
+  peer_send: { method: "POST", path: "/peers/{alias}/send", body: true },
 };
 
 /** path 템플릿 치환 + 남은 args 반환. */
@@ -202,7 +206,7 @@ export async function invoke<T>(
 
   const { path, remaining } = renderPath(route.path, args);
   const base = getDaemonUrl().replace(/\/+$/, "");
-  const url = `${base}${path}`;
+  let url = `${base}${path}`;
   const headers: Record<string, string> = {};
   const token = getBearer();
   if (token) {
@@ -220,6 +224,15 @@ export async function invoke<T>(
     // body:true 가 false 여도 POST/PUT 에 잔여 args 있으면 body 로 전송 (안전 기본).
     headers["Content-Type"] = "application/json";
     body = JSON.stringify(remaining);
+  } else if (
+    Object.keys(remaining).length > 0 &&
+    (route.method === "GET" || route.method === "DELETE")
+  ) {
+    // GET/DELETE 의 잔여 args 는 query string 으로 전송.
+    const qs = new URLSearchParams(
+      Object.entries(remaining).map(([k, v]) => [k, String(v)]),
+    ).toString();
+    url += (url.includes("?") ? "&" : "?") + qs;
   }
 
   let res: Response;

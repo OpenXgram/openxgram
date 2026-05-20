@@ -19,12 +19,13 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
+use std::collections::HashMap;
 use openxgram_core::paths::{db_path, manifest_path};
 use openxgram_db::{Db, DbConfig};
 use openxgram_manifest::InstallManifest;
@@ -201,6 +202,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/status", get(gui_status))
         .route("/v1/gui/initialized", get(gui_initialized))
         .route("/v1/gui/peers", get(gui_peers).post(gui_peer_add))
+        // 메신저 카드 v1.3 Step 0 — 메시지 송수신.
+        .route("/v1/gui/messages", get(gui_messages_recent))
+        .route("/v1/gui/peers/{alias}/send", post(gui_peer_send))
         .route("/v1/gui/channel/status", get(gui_channel_status))
         .route("/v1/gui/vault/pending", get(gui_vault_pending_list))
         .route(
@@ -586,6 +590,91 @@ async fn gui_notify_status(
             .map(|s| !s.is_empty())
             .unwrap_or(false),
     }))
+}
+
+// ── Messenger v1.3 Step 0 — 메시지 송수신 ────────────────────────────────
+
+#[derive(Debug, Serialize)]
+struct GuiMessageDto {
+    id: String,
+    session_id: String,
+    sender: String,
+    body: String,
+    timestamp: String,
+    conversation_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GuiPeerSendBody {
+    body: String,
+    #[serde(default)]
+    conversation_id: Option<String>,
+}
+
+/// `GET /v1/gui/messages?limit=N&sender=X` — L0 최근 메시지 (recv_messages MCP 도구의 HTTP 래퍼).
+async fn gui_messages_recent(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Json<Vec<GuiMessageDto>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let limit = q
+        .get("limit")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(50)
+        .min(200);
+    let sender_filter = q.get("sender").map(|s| s.to_lowercase());
+
+    let mut db = state.db.lock().await;
+    let embedder = openxgram_memory::default_embedder()
+        .map_err(|e| internal(&format!("embedder: {e}")))?;
+    let messages = openxgram_memory::MessageStore::new(&mut db, embedder.as_ref())
+        .list_recent(limit * 4) // 필터 후 limit 충족 보장
+        .map_err(|e| internal(&format!("list_recent: {e}")))?;
+
+    let items: Vec<GuiMessageDto> = messages
+        .into_iter()
+        .filter(|m| match &sender_filter {
+            Some(s) => m.sender.to_lowercase() == *s,
+            None => true,
+        })
+        .take(limit)
+        .map(|m| GuiMessageDto {
+            id: m.id,
+            session_id: m.session_id,
+            sender: m.sender,
+            body: m.body,
+            timestamp: m.timestamp.to_rfc3339(),
+            conversation_id: m.conversation_id,
+        })
+        .collect();
+    Ok(Json(items))
+}
+
+/// `POST /v1/gui/peers/{alias}/send` — peer 에게 메시지 송신.
+async fn gui_peer_send(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+    Json(body): Json<GuiPeerSendBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    // master 키 서명 위해 vault password 필요. daemon systemd unit 의 env 사용.
+    let pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").map_err(|_| {
+        internal("XGRAM_KEYSTORE_PASSWORD 미설정 — daemon 환경 변수 필요")
+    })?;
+    let data_dir = state.data_dir.as_ref().clone();
+    crate::peer_send::run_peer_send_with_conv(
+        &data_dir,
+        &alias,
+        None,
+        &body.body,
+        &pw,
+        body.conversation_id,
+    )
+    .await
+    .map_err(|e| internal(&format!("peer_send: {e}")))?;
+    Ok(Json(serde_json::json!({"sent": true, "alias": alias})))
 }
 
 // ── Notify wizard (Discord/Telegram) HTTP endpoints ─────────────────────
