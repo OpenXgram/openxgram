@@ -71,6 +71,11 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
         .await
         .context("GUI HTTP API 서버 가동 실패")?;
 
+    // UI-MESSENGER-SPEC v1.3 enforcement workers (M-4 idle, M-6 auto-topup, L6 expiry, V6 outbound).
+    crate::daemon_workers::spawn_all_from_dir(opts.data_dir.clone())
+        .context("messenger enforcement workers 가동 실패")?;
+    println!("  ✓ messenger workers (M-4 / M-6 / L6 / V6) spawned");
+
     // inbound processor — 1초 주기로 server.drain_received() 한 후 envelope.from 매칭으로
     // peer.touch_by_eth_address. 매칭 실패는 silent (anonymous envelope 도 정상 도착).
     let data_dir_clone = opts.data_dir.clone();
