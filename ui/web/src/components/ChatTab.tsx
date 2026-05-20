@@ -32,7 +32,7 @@ export function ChatTab(props: { onJumpToSettings?: () => void } = {}) {
         </button>
       </nav>
       <Show when={mode() === "thread"}>
-        <Messenger />
+        <Messenger onJumpToSettings={() => props.onJumpToSettings?.()} />
       </Show>
       <Show when={mode() === "search"}>
         <SearchView />

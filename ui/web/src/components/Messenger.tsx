@@ -1,6 +1,7 @@
 import { createMemo, createResource, createSignal, For, Show, onCleanup } from "solid-js";
 import { invoke } from "@/api/client";
 import { useI18n } from "../i18n";
+import { AgentSidePanel } from "./AgentSidePanel";
 
 // v1.3 Tier 1 — 좌측 머신×세션 트리 (UI-MESSENGER-SPEC §3.2, S4).
 //   - peer 목록 = 본인의 다른 머신/세션 — machine 별 그룹화
@@ -110,7 +111,7 @@ interface ThreadSummary {
 const UNKNOWN_MACHINE = "(unknown)";
 const UNKNOWN_CONV = "_no_conversation_";
 
-export function Messenger() {
+export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
   const { t } = useI18n();
   const [peers] = createResource(fetchPeers);
   const [notifyStatus] = createResource(fetchNotifyStatus);
@@ -260,7 +261,15 @@ export function Messenger() {
   });
 
   return (
-    <div class="messenger-shell">
+    <div
+      class="messenger-shell"
+      style={
+        // friend 선택 시 우측 panel — 3-col. 아니면 2-col.
+        selectedFriend()
+          ? "grid-template-columns: 280px 1fr 360px;"
+          : "grid-template-columns: 280px 1fr;"
+      }
+    >
       {/* 좌: 머신×세션 트리 + 스레드 모드 (Tier 1 + L1) */}
       <aside class="messenger-sidebar">
         {/* L1 — 좌측 상단 2-모드 탭 */}
@@ -560,6 +569,16 @@ export function Messenger() {
           }}
         </Show>
       </main>
+
+      {/* 우: 12 탭 사이드 패널 (Tier 3 — friend 선택 시만 표시) */}
+      <Show when={leftMode() === "agent" && selectedFriend()?.kind === "peer" && selectedFriend()?.meta}>
+        {() => (
+          <AgentSidePanel
+            peer={selectedFriend()!.meta!}
+            onJumpToSettings={() => props.onJumpToSettings?.()}
+          />
+        )}
+      </Show>
     </div>
   );
 }
