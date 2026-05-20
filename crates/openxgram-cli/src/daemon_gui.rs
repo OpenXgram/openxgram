@@ -2821,17 +2821,50 @@ pub struct AuthMeDto {
 }
 
 /// `POST /v1/auth/unlock` — keystore 비밀번호 검증 후 session_token 발급.
-/// PRD §1: 1 사람 = 1 메인 daemon. multi-user X, register X.
+/// PRD §1: 1 사람 = 1 메인 daemon. M-8: 5회 실패 → 1분 backoff (auth_failures 테이블).
 async fn auth_unlock(
+    State(state): State<GuiServerState>,
     Json(body): Json<crate::auth::UnlockRequest>,
 ) -> Result<Json<crate::auth::UnlockResponse>, (StatusCode, Json<ErrorDto>)> {
+    use rusqlite::OptionalExtension;
+    {
+        let mut db = state.db.lock().await;
+        if let Ok(Some(backoff)) = db.conn().query_row(
+            "SELECT backoff_until FROM auth_failures WHERE backoff_until IS NOT NULL AND backoff_until > datetime('now') ORDER BY attempted_at DESC LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        ).optional() {
+            return Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(ErrorDto {
+                    error: format!("M-8 lockout 활성 — backoff_until={}. 1분 후 재시도", backoff),
+                }),
+            ));
+        }
+    }
     if !crate::auth::verify_password(&body.password) {
+        let mut db = state.db.lock().await;
+        let count: i64 = db.conn().query_row(
+            "SELECT COUNT(*) FROM auth_failures WHERE attempted_at > datetime('now', '-1 hour')",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(0);
+        let sql = if count >= 4 {
+            "INSERT INTO auth_failures (attempted_at, backoff_until) VALUES (datetime('now'), datetime('now', '+1 minute'))"
+        } else {
+            "INSERT INTO auth_failures (attempted_at, backoff_until) VALUES (datetime('now'), NULL)"
+        };
+        let _ = db.conn().execute(sql, []);
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(ErrorDto {
-                error: "비밀번호가 틀렸습니다".into(),
+                error: format!("비밀번호가 틀렸습니다 (최근 1h 실패 {}회)", count + 1),
             }),
         ));
+    }
+    {
+        let mut db = state.db.lock().await;
+        let _ = db.conn().execute("DELETE FROM auth_failures", []);
     }
     Ok(Json(crate::auth::UnlockResponse {
         session_token: crate::auth::session_token().to_string(),
