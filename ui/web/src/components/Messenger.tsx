@@ -4,6 +4,7 @@ import { useI18n } from "../i18n";
 import { AgentSidePanel } from "./AgentSidePanel";
 import { SessionScreen } from "./SessionScreen";
 import { RoutingRulesModal } from "./RoutingRulesModal";
+import { WhitelistModal } from "./WhitelistModal";
 
 // v1.3 Tier 1 — 좌측 머신×세션 트리 (UI-MESSENGER-SPEC §3.2, S4).
 //   - peer 목록 = 본인의 다른 머신/세션 — machine 별 그룹화
@@ -155,6 +156,7 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
   // L5 — Hand-off 모달
   const [handoffSource, setHandoffSource] = createSignal<MessageDto | null>(null);
   const [showRouting, setShowRouting] = createSignal(false); // V11
+  const [showWhitelist, setShowWhitelist] = createSignal(false); // M-5
   const [messages, { refetch: refetchMessages }] = createResource(fetchMessages);
 
   // 좌측 컨트롤
@@ -365,9 +367,21 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
           >
             🔀
           </button>
+          {/* M-5 — 화이트리스트 패턴 (자동 등록 + V4) */}
+          <button
+            type="button"
+            onClick={() => setShowWhitelist(true)}
+            title="화이트리스트 (M-5)"
+            style="flex:0;"
+          >
+            🛡️
+          </button>
         </div>
         <Show when={showRouting()}>
           <RoutingRulesModal onClose={() => setShowRouting(false)} />
+        </Show>
+        <Show when={showWhitelist()}>
+          <WhitelistModal onClose={() => setShowWhitelist(false)} />
         </Show>
 
         <header class="messenger-sidebar-head">
@@ -915,6 +929,32 @@ function PeerInput(props: { friend: Friend; onSent: () => void }) {
             }
           }}
         />
+        {/* S7 첨부 업로드 — content-addressed (V2/V3 refcount) */}
+        <button
+          type="button"
+          title="첨부 파일 (S7 — <1MB inline / ≥1MB disk)"
+          onClick={() => {
+            const input = document.createElement("input");
+            input.type = "file";
+            input.onchange = async (ev: any) => {
+              const f = ev.target?.files?.[0];
+              if (!f) return;
+              const reader = new FileReader();
+              reader.onload = async () => {
+                const b64 = (reader.result as string).split(",")[1] ?? "";
+                try {
+                  const res: any = await invoke("attachment_upload", { content_b64: b64, mime: f.type || "application/octet-stream" });
+                  setText(`${text()}\n📎 attachment://${res.content_hash} (${(res.size_bytes/1024).toFixed(1)} KB · ${res.storage})`);
+                } catch (e) {
+                  setError(`첨부 실패: ${e}`);
+                }
+              };
+              reader.readAsDataURL(f);
+            };
+            input.click();
+          }}
+          style="background:transparent; border:1px solid var(--border); padding:6px 10px; border-radius:4px; cursor:pointer;"
+        >📎</button>
         <button
           type="button"
           disabled={!isPeer() || sending() || !text().trim()}
