@@ -89,6 +89,7 @@ function fingerprint(pubkeyHex: string): string {
 
 type SortMode = "name" | "activity";
 type ConnFilter = "all" | "connected" | "offline";
+type LeftMode = "agent" | "thread";
 
 interface MachineGroup {
   machine: string;
@@ -96,13 +97,26 @@ interface MachineGroup {
   connected: number;
 }
 
+// 스레드 = 같은 conversation_id 의 메시지 묶음 (Tier 2 — client-side grouping).
+// daemon side ThreadStore 는 별 단계 — 지금은 messages_recent 의 conversation_id 활용.
+interface ThreadSummary {
+  conversation_id: string;
+  participants: string[];           // unique senders
+  message_count: number;
+  last_at: string;                  // ISO
+  last_body: string;                // 미리보기
+}
+
 const UNKNOWN_MACHINE = "(unknown)";
+const UNKNOWN_CONV = "_no_conversation_";
 
 export function Messenger() {
   const { t } = useI18n();
   const [peers] = createResource(fetchPeers);
   const [notifyStatus] = createResource(fetchNotifyStatus);
-  const [selected, setSelected] = createSignal<string | null>(null);
+  const [selected, setSelected] = createSignal<string | null>(null);     // friend id (에이전트 모드)
+  const [selectedThread, setSelectedThread] = createSignal<string | null>(null); // conversation_id
+  const [leftMode, setLeftMode] = createSignal<LeftMode>("agent");        // L1
   const [messages, { refetch: refetchMessages }] = createResource(fetchMessages);
 
   // 좌측 컨트롤
@@ -140,8 +154,10 @@ export function Messenger() {
         kind: "peer",
         id: `peer:${p.alias}`,
         display: p.alias,
-        // 4-tuple 부분표시: alias · machine · fingerprint
-        subtitle: `${fingerprint(p.public_key_hex)}${p.last_seen ? ` · ${p.last_seen}` : ""}`,
+        // L2 4-tuple: alias · machine · address(short) · fingerprint
+        subtitle:
+          `${(p.address || "").slice(0, 10)} · ${fingerprint(p.public_key_hex)}` +
+          (p.last_seen ? ` · ${p.last_seen}` : ""),
         meta: p,
       };
       if (!byMachine.has(m)) byMachine.set(m, []);
@@ -217,28 +233,81 @@ export function Messenger() {
     return friends().find((f) => f.id === id) ?? null;
   });
 
+  // 스레드 모드 (L1) — messages 를 conversation_id 별 그룹화
+  const threads = createMemo<ThreadSummary[]>(() => {
+    const all = messages() ?? [];
+    const map = new Map<string, MessageDto[]>();
+    for (const m of all) {
+      const cid = m.conversation_id || UNKNOWN_CONV;
+      if (!map.has(cid)) map.set(cid, []);
+      map.get(cid)!.push(m);
+    }
+    const list: ThreadSummary[] = [];
+    for (const [cid, msgs] of map.entries()) {
+      msgs.sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
+      const participants = Array.from(new Set(msgs.map((m) => m.sender)));
+      list.push({
+        conversation_id: cid,
+        participants,
+        message_count: msgs.length,
+        last_at: msgs[0].timestamp,
+        last_body: msgs[0].body.slice(0, 60),
+      });
+    }
+    // 최근 활동순
+    list.sort((a, b) => Date.parse(b.last_at) - Date.parse(a.last_at));
+    return list;
+  });
+
   return (
     <div class="messenger-shell">
-      {/* 좌: 머신×세션 트리 (Tier 1) */}
+      {/* 좌: 머신×세션 트리 + 스레드 모드 (Tier 1 + L1) */}
       <aside class="messenger-sidebar">
-        <header class="messenger-sidebar-head">
-          <strong>{t("messenger.friends") || "친구"}</strong>
+        {/* L1 — 좌측 상단 2-모드 탭 */}
+        <div class="messenger-sidebar-mode" style="display:flex; gap:4px; padding:6px 8px; border-bottom:1px solid rgba(255,255,255,0.08);">
           <button
             type="button"
-            class="messenger-add-btn"
-            title={t("messenger.add-friend-tip") || "peer 등록 / 봇 연결"}
-            onClick={() => {
-              alert(
-                t("messenger.add-friend-hint") ||
-                  "친구 추가: 연결 탭의 [+ Peer] 또는 설정 탭의 [Discord/Telegram 봇 추가]",
-              );
-            }}
+            class={leftMode() === "agent" ? "active" : ""}
+            onClick={() => setLeftMode("agent")}
+            style={`flex:1; padding:6px; ${leftMode() === "agent" ? "background:rgba(96,165,250,0.18); font-weight:600;" : ""}`}
           >
-            +
+            🤖 에이전트
           </button>
+          <button
+            type="button"
+            class={leftMode() === "thread" ? "active" : ""}
+            onClick={() => setLeftMode("thread")}
+            style={`flex:1; padding:6px; ${leftMode() === "thread" ? "background:rgba(96,165,250,0.18); font-weight:600;" : ""}`}
+          >
+            🧵 스레드 ({threads().length})
+          </button>
+        </div>
+
+        <header class="messenger-sidebar-head">
+          <strong>
+            {leftMode() === "agent"
+              ? t("messenger.friends") || "친구"
+              : "스레드"}
+          </strong>
+          <Show when={leftMode() === "agent"}>
+            <button
+              type="button"
+              class="messenger-add-btn"
+              title={t("messenger.add-friend-tip") || "peer 등록 / 봇 연결"}
+              onClick={() => {
+                alert(
+                  t("messenger.add-friend-hint") ||
+                    "친구 추가: 연결 탭의 [+ Peer] 또는 설정 탭의 [Discord/Telegram 봇 추가]",
+                );
+              }}
+            >
+              +
+            </button>
+          </Show>
         </header>
 
-        {/* 정렬·필터 컨트롤 (S4) */}
+        {/* 정렬·필터 컨트롤 (S4) — 에이전트 모드만 */}
+        <Show when={leftMode() === "agent"}>
         <div class="messenger-sidebar-ctrl" style="display:flex; gap:6px; padding:6px 8px; font-size:0.85em;">
           <select
             value={sortMode()}
@@ -316,20 +385,117 @@ export function Messenger() {
             </div>
           </Show>
         </div>
+        </Show>
+
+        {/* L1 — 스레드 모드 콘텐츠 */}
+        <Show when={leftMode() === "thread"}>
+          <div class="messenger-friend-list">
+            <Show
+              when={threads().length > 0}
+              fallback={
+                <div class="messenger-empty" style="padding:12px;">
+                  스레드 없음 — 메시지 송수신 시 conversation_id 별 자동 생성
+                </div>
+              }
+            >
+              <For each={threads()}>
+                {(th) => (
+                  <div
+                    class={
+                      selectedThread() === th.conversation_id
+                        ? "messenger-friend selected"
+                        : "messenger-friend"
+                    }
+                    onClick={() => setSelectedThread(th.conversation_id)}
+                    style="cursor:pointer; padding:8px;"
+                  >
+                    <div style="font-weight:600; font-size:0.9em;">
+                      {th.conversation_id === UNKNOWN_CONV
+                        ? "(no conv_id)"
+                        : `#${th.conversation_id.slice(0, 8)}`}
+                    </div>
+                    <div style="font-size:0.8em; opacity:0.7;">
+                      {th.participants.length} agents · {th.message_count} msg ·{" "}
+                      {fmtTime(th.last_at)}
+                    </div>
+                    <div style="font-size:0.85em; opacity:0.85; margin-top:2px;">
+                      {th.last_body}
+                    </div>
+                  </div>
+                )}
+              </For>
+            </Show>
+          </div>
+        </Show>
       </aside>
 
-      {/* 중: 대화 */}
+      {/* 중: 대화 — 에이전트 모드 (friend 선택) or 스레드 모드 (conv_id 선택) */}
       <main class="messenger-thread">
+        {/* 스레드 모드: 선택된 conversation_id 의 메시지 시간순 */}
+        <Show when={leftMode() === "thread" && selectedThread()}>
+          {() => {
+            const cid = selectedThread()!;
+            const th = createMemo(() => threads().find((x) => x.conversation_id === cid));
+            const threadMsgs = createMemo(() =>
+              (messages() ?? [])
+                .filter((m) => (m.conversation_id || UNKNOWN_CONV) === cid)
+                .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp)),
+            );
+            return (
+              <>
+                <header class="messenger-thread-head">
+                  <h2>
+                    🧵{" "}
+                    {cid === UNKNOWN_CONV ? "(no conv_id)" : `#${cid.slice(0, 12)}`}
+                  </h2>
+                  <small>
+                    참여 {th()?.participants.length ?? 0} · 메시지{" "}
+                    {th()?.message_count ?? 0}
+                  </small>
+                </header>
+                <section class="messenger-thread-body">
+                  <Show
+                    when={threadMsgs().length > 0}
+                    fallback={
+                      <div class="messenger-placeholder">메시지 없음</div>
+                    }
+                  >
+                    <ul class="messenger-thread-list">
+                      <For each={threadMsgs()}>
+                        {(m) => (
+                          <li class="messenger-thread-item">
+                            <div class="messenger-thread-meta">
+                              <span class="messenger-thread-sender">🤖 {m.sender}</span>
+                              <span class="messenger-thread-time">{fmtTime(m.timestamp)}</span>
+                            </div>
+                            <div class="messenger-thread-body-text">{m.body}</div>
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                  </Show>
+                </section>
+              </>
+            );
+          }}
+        </Show>
+
+        {/* 에이전트 모드 (기존) */}
         <Show
-          when={selectedFriend()}
+          when={leftMode() === "agent" && selectedFriend()}
           fallback={
-            <div class="messenger-thread-empty">
-              <p>{t("messenger.select-friend") || "왼쪽에서 친구를 선택하세요."}</p>
-              <p class="messenger-thread-hint">
-                {t("messenger.thread-v01-hint") ||
-                  "v0.1 — 친구 목록만. v0.2에서 메시지 스레드(L0) + 송신 라우팅 연결 예정."}
-              </p>
-            </div>
+            <Show when={!(leftMode() === "thread" && selectedThread())}>
+              <div class="messenger-thread-empty">
+                <p>
+                  {leftMode() === "agent"
+                    ? t("messenger.select-friend") || "왼쪽에서 친구를 선택하세요."
+                    : "왼쪽에서 스레드를 선택하세요."}
+                </p>
+                <p class="messenger-thread-hint">
+                  Tier 2 — 에이전트/스레드 2-모드. 4-tuple 표시 (alias·machine·address).
+                </p>
+              </div>
+            </Show>
           }
         >
           {(f) => {
@@ -348,8 +514,15 @@ export function Messenger() {
             return (
               <>
                 <header class="messenger-thread-head">
-                  <h2>{f().display}</h2>
-                  <small>{f().subtitle}</small>
+                  <h2>🤖 {f().display}</h2>
+                  {/* L2 4-tuple — alias · machine · address · fingerprint */}
+                  <small>
+                    {f().meta?.machine ? `${f().meta?.machine} · ` : ""}
+                    {f().meta?.address?.slice(0, 18) || ""}
+                    {f().meta?.public_key_hex
+                      ? ` · ${fingerprint(f().meta!.public_key_hex)}`
+                      : ""}
+                  </small>
                 </header>
                 <section class="messenger-thread-body">
                   <Show
