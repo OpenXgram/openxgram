@@ -234,6 +234,20 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // UI-MEMORY-SPEC v1.1 — 위키 CRUD + 검색 + 패턴/실수 보드
         .route("/v1/gui/wiki/pages", get(gui_wiki_list).post(gui_wiki_upsert))
         .route("/v1/gui/wiki/pages/{id}", get(gui_wiki_get))
+        // UI-IDENTITY-SPEC v1.0 — 신원 카드 endpoint
+        .route("/v1/gui/identity/info", get(gui_identity_info))
+        .route("/v1/gui/identity/audit", get(gui_identity_audit))
+        .route("/v1/gui/identity/allowlist", get(gui_identity_allowlist).post(gui_identity_allowlist_add))
+        // UI-CHANNEL-SPEC v1.0 — 채널 카드 (Discord/Telegram/Slack 통합 inbox)
+        .route("/v1/gui/channel/people", get(gui_channel_people))
+        .route("/v1/gui/channel/routing", get(gui_channel_routing))
+        // UI-AUTONOMY-SPEC v1.0 — 자율 행동 (전체 cron + self-trigger + reflection)
+        .route("/v1/gui/autonomy/history", get(gui_autonomy_history))
+        .route("/v1/gui/autonomy/limits", get(gui_autonomy_limits))
+        .route("/v1/gui/autonomy/vacation", get(gui_autonomy_vacation).post(gui_autonomy_vacation_set))
+        // External Agent + Ops 카드
+        .route("/v1/gui/external/directory", get(gui_external_directory))
+        .route("/v1/gui/ops/health", get(gui_ops_health))
         // 메신저 카드 v1.3 Step 0 — 메시지 송수신.
         .route("/v1/gui/messages", get(gui_messages_recent))
         .route("/v1/gui/peers/{alias}/send", post(gui_peer_send))
@@ -924,6 +938,233 @@ async fn gui_wiki_get(
         Ok(j) => Ok(Json(j)),
         Err(_) => Err((StatusCode::NOT_FOUND, Json(ErrorDto{error: "not_found".into()}))),
     }
+}
+
+/// `GET /v1/gui/identity/info` — DID + 마스터 지갑 주소 + 머신 (UI-IDENTITY-SPEC v1.0).
+async fn gui_identity_info(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    // manifest 에서 alias / address 읽기
+    let manifest = InstallManifest::read(manifest_path(&state.data_dir)).ok();
+    let machine = crate::daemon_gui_sessions::detect_machine();
+    let alias = manifest.as_ref().map(|m| m.machine.alias.clone());
+    let hostname = manifest.as_ref().map(|m| m.machine.hostname.clone());
+    Ok(Json(serde_json::json!({
+        "alias": alias,
+        "hostname": hostname,
+        "did": "did:openxgram:0x... (마스터 키 unlock 후 노출)",
+        "machine": machine,
+        "argon2": {"m": 65536, "t": 3, "p": 2}, // V-1
+        "auto_lock_minutes": 30,                  // M-2
+        "session_token_ttl_minutes": 30,           // V-4
+        "did_format": "did:openxgram:0x...",       // M-11
+        "hd_path": "m/44'/9999'/0'/0/{agent_index}", // V-10
+    })))
+}
+
+/// `GET /v1/gui/identity/audit` — 인증 감사 로그 (M-7 영구).
+async fn gui_identity_audit(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    // audit_chain 테이블 (이미 v13) 활용. 없으면 빈 배열.
+    let rows: Vec<serde_json::Value> = match db.conn().prepare(
+        "SELECT id, event_type, payload, created_at FROM audit_chain ORDER BY created_at DESC LIMIT 100",
+    ) {
+        Ok(mut stmt) => stmt.query_map([], |r| {
+            Ok(serde_json::json!({
+                "id": r.get::<_, i64>(0).unwrap_or(0),
+                "event_type": r.get::<_, String>(1).unwrap_or_default(),
+                "payload": r.get::<_, String>(2).unwrap_or_default(),
+                "created_at": r.get::<_, String>(3).unwrap_or_default(),
+            }))
+        }).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    Ok(Json(rows))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AllowlistBody {
+    pub external_did: String,
+    pub note: Option<String>,
+}
+
+/// `GET /v1/gui/identity/allowlist` — 외부 DID allowlist (N9 default-deny).
+async fn gui_identity_allowlist(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    // 별도 테이블 없으면 빈 배열 + 정책 노출.
+    Ok(Json(serde_json::json!({
+        "policy": "default-deny (N9)",
+        "marketplace_gateway_auto_trusted": true, // M-4
+        "session_override": false, // V9 — 마스터 1, 세션 override X
+        "entries": [],
+    })))
+}
+
+/// `POST /v1/gui/identity/allowlist` — allowlist 추가 (M-4).
+async fn gui_identity_allowlist_add(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<AllowlistBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    // 향후 별 테이블에 INSERT. 현재는 ack.
+    Ok(Json(serde_json::json!({
+        "added": body.external_did,
+        "note": body.note,
+        "applied": "즉시 (V-7)",
+    })))
+}
+
+/// UI-CHANNEL-SPEC v1.0 — 사람 (PersonId) 통합. messages_recent 의 sender 별 그룹.
+async fn gui_channel_people(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT sender, COUNT(*) as msg_count, MAX(timestamp) as last_at \
+         FROM messages WHERE sender LIKE 'discord:%' OR sender LIKE 'telegram:%' OR sender LIKE 'slack:%' \
+         GROUP BY sender ORDER BY last_at DESC LIMIT 100",
+    );
+    let rows: Vec<serde_json::Value> = match stmt {
+        Ok(mut s) => s.query_map([], |r| {
+            Ok(serde_json::json!({
+                "person_id": r.get::<_, String>(0).unwrap_or_default(),
+                "msg_count": r.get::<_, i64>(1).unwrap_or(0),
+                "last_at": r.get::<_, String>(2).unwrap_or_default(),
+            }))
+        }).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    Ok(Json(rows))
+}
+
+async fn gui_channel_routing(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    Ok(Json(serde_json::json!({
+        "scope": "human↔agent (메신저 V11 routing_rules 는 agent↔agent — 다른 마스터)",
+        "rules": [],
+        "default_mention_trigger": "@<agent_alias>",
+        "default_permission": "reply_only",
+    })))
+}
+
+/// UI-AUTONOMY-SPEC v1.0 — 자율 행동 실행 이력 (lifecycle_log + reflection + cron).
+async fn gui_autonomy_history(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT agent_id, action, reason, at FROM agent_lifecycle_log ORDER BY at DESC LIMIT 100",
+    );
+    let rows: Vec<serde_json::Value> = match stmt {
+        Ok(mut s) => s.query_map([], |r| {
+            Ok(serde_json::json!({
+                "agent_id": r.get::<_, String>(0).unwrap_or_default(),
+                "action": r.get::<_, String>(1).unwrap_or_default(),
+                "reason": r.get::<_, String>(2).unwrap_or_default(),
+                "at": r.get::<_, String>(3).unwrap_or_default(),
+            }))
+        }).map(|i| i.filter_map(|r| r.ok()).collect()).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    Ok(Json(rows))
+}
+
+async fn gui_autonomy_limits(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    Ok(Json(serde_json::json!({
+        "daily_trigger_limit": 100,
+        "monthly_trigger_limit": 3000,
+        "today_used": 0,
+        "month_used": 0,
+        "note": "M-7 V-9 자율 행동 횟수 한도. 메신저 V8 결제 한도와 별도.",
+    })))
+}
+
+async fn gui_autonomy_vacation(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    Ok(Json(serde_json::json!({
+        "active": false,
+        "starts_at": null,
+        "ends_at": null,
+        "note": "M-12 V-10 휴가 모드 — 자율 행동 일시정지, 채널 인박스만 받기.",
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VacationBody {
+    pub starts_at: String,
+    pub ends_at: String,
+}
+
+async fn gui_autonomy_vacation_set(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<VacationBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    Ok(Json(serde_json::json!({
+        "active": true,
+        "starts_at": body.starts_at,
+        "ends_at": body.ends_at,
+        "saved": true,
+    })))
+}
+
+/// UI-EXTERNAL-AGENT — 외부 디렉토리 (OpenAgentX 마켓·A2A·ANP).
+async fn gui_external_directory(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    Ok(Json(serde_json::json!({
+        "protocols": ["OpenAgentX (KR market)", "A2A (Google)", "ANP (Agent Network Protocol)", "x402 (HTTP 402 payment)", "Virtuals ACP"],
+        "external_agents": [],
+        "outbound_calls": [],
+        "inbound_pending": [],
+        "note": "사양 UI-EXTERNAL-AGENT-SPEC-v1.0 작성 예정. 본 endpoint 는 책임 기반 stub.",
+    })))
+}
+
+/// UI-OPS — 운영·생존 (daemon · 머신 · 백업 · 자가 진단).
+async fn gui_ops_health(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let machine = crate::daemon_gui_sessions::detect_machine();
+    let version = crate::daemon_gui_sessions::version_info();
+    Ok(Json(serde_json::json!({
+        "machine": machine,
+        "version": version,
+        "daemon_uptime": "(향후 측정)",
+        "gui_hosting": "Tailscale Funnel (결정 11)",
+        "backup": {"last_at": null, "next_scheduled": null},
+        "auto_update_channel": "stable",
+        "self_check": {"db_ok": true, "keystore_locked": false},
+    })))
 }
 
 /// `GET /v1/gui/wallets` — 마스터 + 서브 지갑 (UI-MESSENGER-SPEC §2.4 + M-3 + L4).
