@@ -217,6 +217,15 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/whitelist", get(gui_whitelist))
         // UI-MESSENGER-SPEC v1.3 S8 + V6 — cross-machine 큐 status (Tailscale P2P).
         .route("/v1/gui/cross-machine-queue", get(gui_cross_machine_queue))
+        // UI-MESSENGER-SPEC v1.3 §7.5 + N4 — 글로벌 검색 (FTS5)
+        .route("/v1/gui/search", get(gui_global_search))
+        // V11 — RoutingRule CRUD (에이전트 ↔ 에이전트, Internal scope)
+        .route("/v1/gui/routing-rules", get(gui_routing_rules_list).post(gui_routing_rule_add))
+        .route("/v1/gui/routing-rules/{id}", post(gui_routing_rule_delete))
+        // V12 — 3-layer 버전 정보
+        .route("/v1/gui/version", get(gui_version))
+        // N7 — 시스템 cron 보호 (비활성화 시도 reject + audit)
+        .route("/v1/gui/system-cron/protect-attempt", post(gui_system_cron_protect))
         // 메신저 카드 v1.3 Step 0 — 메시지 송수신.
         .route("/v1/gui/messages", get(gui_messages_recent))
         .route("/v1/gui/peers/{alias}/send", post(gui_peer_send))
@@ -497,6 +506,146 @@ async fn gui_cross_machine_queue(
 ) -> Result<Json<crate::daemon_gui_sessions::CrossMachineQueueDto>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     Ok(Json(crate::daemon_gui_sessions::default_cross_machine_queue()))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SearchQuery {
+    pub q: String,
+    #[serde(default = "default_search_limit")]
+    pub limit: u32,
+}
+fn default_search_limit() -> u32 { 30 }
+
+/// `GET /v1/gui/search?q=...` — 글로벌 FTS5 검색 (N4).
+async fn gui_global_search(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Query(q): Query<SearchQuery>,
+) -> Result<Json<crate::daemon_gui_sessions::SearchResultDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT kind, ref_id, title, body, rank FROM global_search WHERE global_search MATCH ?1 \
+         ORDER BY rank LIMIT ?2",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep:{e}")})))?;
+    let hits = stmt.query_map(rusqlite::params![q.q, q.limit as i64], |r| {
+        Ok(crate::daemon_gui_sessions::SearchHit {
+            kind: r.get(0)?,
+            ref_id: r.get(1)?,
+            title: r.get::<_,String>(2).unwrap_or_default(),
+            body: r.get::<_,String>(3).unwrap_or_default(),
+            rank: r.get::<_, f64>(4).unwrap_or(0.0),
+        })
+    }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("query:{e}")})))?
+        .filter_map(|r| r.ok()).collect::<Vec<_>>();
+    let total = hits.len();
+    Ok(Json(crate::daemon_gui_sessions::SearchResultDto {
+        query: q.q,
+        hits,
+        total,
+    }))
+}
+
+/// `GET /v1/gui/routing-rules` — Internal scope routing rule 리스트 (V11).
+async fn gui_routing_rules_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::daemon_gui_sessions::RoutingRuleDto>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, scope, from_pattern, to_pattern, action, created_at, active FROM routing_rules ORDER BY created_at DESC",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep:{e}")})))?;
+    let rows = stmt.query_map([], |r| {
+        Ok(crate::daemon_gui_sessions::RoutingRuleDto {
+            id: r.get(0)?, scope: r.get(1)?, from_pattern: r.get(2)?, to_pattern: r.get(3)?,
+            action: r.get(4)?, created_at: r.get(5)?, active: r.get::<_, i64>(6)? != 0,
+        })
+    }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q:{e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RoutingRuleBody {
+    pub from_pattern: String,
+    pub to_pattern: String,
+    pub action: String,
+}
+
+/// `POST /v1/gui/routing-rules` — RoutingRule 추가 (V11).
+async fn gui_routing_rule_add(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<RoutingRuleBody>,
+) -> Result<Json<crate::daemon_gui_sessions::RoutingRuleDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let id = {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(format!("{:?}", std::time::SystemTime::now()).as_bytes());
+        h.update(body.from_pattern.as_bytes());
+        h.update(body.to_pattern.as_bytes());
+        format!("{:x}", h.finalize())[..26].to_string()
+    };
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO routing_rules (id, scope, from_pattern, to_pattern, action, created_at, active) \
+         VALUES (?1, 'Internal', ?2, ?3, ?4, ?5, 1)",
+        rusqlite::params![id, body.from_pattern, body.to_pattern, body.action, now],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("insert:{e}")})))?;
+    Ok(Json(crate::daemon_gui_sessions::RoutingRuleDto {
+        id, scope: "Internal".into(), from_pattern: body.from_pattern,
+        to_pattern: body.to_pattern, action: body.action, created_at: now, active: true,
+    }))
+}
+
+/// `POST /v1/gui/routing-rules/{id}` — RoutingRule 삭제 (V11).
+async fn gui_routing_rule_delete(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    db.conn().execute("DELETE FROM routing_rules WHERE id = ?1", rusqlite::params![id])
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("del:{e}")})))?;
+    Ok(Json(serde_json::json!({"ok": true})))
+}
+
+/// `GET /v1/gui/version` — 3-layer 버전 (V12).
+async fn gui_version(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<crate::daemon_gui_sessions::VersionInfoDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    Ok(Json(crate::daemon_gui_sessions::version_info()))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SystemCronAttempt {
+    pub cron_name: String,
+}
+
+/// `POST /v1/gui/system-cron/protect-attempt` — 시스템 cron 비활성화 시도 거부 + audit (N7).
+async fn gui_system_cron_protect(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<SystemCronAttempt>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO system_cron_protect_log (cron_name, attempted_at, result) VALUES (?1, ?2, 'rejected')",
+        rusqlite::params![body.cron_name, now],
+    ).ok();
+    Ok(Json(serde_json::json!({
+        "ok": false,
+        "rejected": true,
+        "message": "시스템 cron 은 비활성화 불가입니다. (UI-MESSENGER-SPEC N7 — 감사 로그 기록됨)"
+    })))
 }
 
 /// `GET /v1/gui/wallets` — 마스터 + 서브 지갑 (UI-MESSENGER-SPEC §2.4 + M-3 + L4).

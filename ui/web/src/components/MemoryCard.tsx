@@ -1,5 +1,6 @@
 import { createSignal, Show } from "solid-js";
 import { MemoryTab } from "./MemoryTab";
+import { Breadcrumb } from "./Breadcrumb";
 
 // UI-MEMORY-SPEC v1.1 §3~§7 — 🧠 기억 카드 (PRD §0 #2: 기억·학습).
 // 좌측: 카테고리·태그·최근·새 페이지·패턴 보드·실수 보드·휴지통
@@ -14,6 +15,7 @@ export function MemoryCard(props: { onBack: () => void }) {
 
   return (
     <div class="card-page">
+      <Breadcrumb cardName="🧠 기억" onReturn={props.onBack} />
       <button class="card-page-back" onClick={props.onBack}>← 홈</button>
       <div class="card-page-head">
         <span class="icon">🧠</span>

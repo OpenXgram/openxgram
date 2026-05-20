@@ -1,9 +1,12 @@
 // UI-OPS-SPEC v1.0 — ⚙️ 운영·생존 (PRD §0 #7).
 // 사양 문서 작성 예정. UI-CARDS-IDENTITY v1.1 §2.7 책임 기반 placeholder.
 
+import { Breadcrumb } from "./Breadcrumb";
+
 export function OpsCard(props: { onBack: () => void }) {
   return (
     <div class="card-page">
+      <Breadcrumb cardName="⚙️ 운영·생존" onReturn={props.onBack} />
       <button class="card-page-back" onClick={props.onBack}>← 홈</button>
       <div class="card-page-head">
         <span class="icon">⚙️</span>

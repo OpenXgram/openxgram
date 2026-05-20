@@ -3,6 +3,7 @@ import { invoke } from "@/api/client";
 import { useI18n } from "../i18n";
 import { AgentSidePanel } from "./AgentSidePanel";
 import { SessionScreen } from "./SessionScreen";
+import { RoutingRulesModal } from "./RoutingRulesModal";
 
 // v1.3 Tier 1 — 좌측 머신×세션 트리 (UI-MESSENGER-SPEC §3.2, S4).
 //   - peer 목록 = 본인의 다른 머신/세션 — machine 별 그룹화
@@ -153,6 +154,7 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
   const [leftMode, setLeftMode] = createSignal<LeftMode>("agent");        // L1
   // L5 — Hand-off 모달
   const [handoffSource, setHandoffSource] = createSignal<MessageDto | null>(null);
+  const [showRouting, setShowRouting] = createSignal(false); // V11
   const [messages, { refetch: refetchMessages }] = createResource(fetchMessages);
 
   // 좌측 컨트롤
@@ -354,7 +356,19 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
           >
             🧵 스레드 ({threads().length})
           </button>
+          {/* V11 — RoutingRule 모달 (agent↔agent internal) */}
+          <button
+            type="button"
+            onClick={() => setShowRouting(true)}
+            title="RoutingRule (V11)"
+            style="flex:0;"
+          >
+            🔀
+          </button>
         </div>
+        <Show when={showRouting()}>
+          <RoutingRulesModal onClose={() => setShowRouting(false)} />
+        </Show>
 
         <header class="messenger-sidebar-head">
           <strong>

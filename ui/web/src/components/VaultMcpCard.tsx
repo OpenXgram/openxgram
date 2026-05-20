@@ -1,5 +1,6 @@
 import { createSignal, Show } from "solid-js";
 import { VaultView } from "./VaultView";
+import { Breadcrumb } from "./Breadcrumb";
 
 // UI-VAULT-MCP-SPEC v1.0 §3 — 🗝️ 도구·Vault·MCP 카드 (PRD §0 #8).
 // 4 탭: 시크릿 · MCP 서버 · 도구 카탈로그 · 감사 로그.
@@ -11,6 +12,7 @@ export function VaultMcpCard(props: { onBack: () => void }) {
 
   return (
     <div class="card-page">
+      <Breadcrumb cardName="🗝️ 도구·Vault·MCP" onReturn={props.onBack} />
       <button class="card-page-back" onClick={props.onBack}>← 홈</button>
       <div class="card-page-head">
         <span class="icon">🗝️</span>

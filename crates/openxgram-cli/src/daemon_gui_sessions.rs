@@ -11,7 +11,7 @@
 use std::process::Command;
 use std::path::PathBuf;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize)]
 pub struct MachineInfo {
@@ -492,6 +492,53 @@ pub struct CrossMachineQueueDto {
     pub dedup_strategy: String, // "message ULID"
     pub pending: u32,           // 향후 실시간; 현재 0
     pub last_sent_at: Option<String>,
+}
+
+/// UI-MESSENGER-SPEC v1.3 §7.5 + N4 — 글로벌 검색 결과 (FTS5).
+#[derive(Debug, Serialize)]
+pub struct SearchHit {
+    pub kind: String,        // 'message' | 'wiki' | 'mistake' | 'pattern' | 'trait'
+    pub ref_id: String,
+    pub title: String,
+    pub body: String,
+    pub rank: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SearchResultDto {
+    pub query: String,
+    pub hits: Vec<SearchHit>,
+    pub total: usize,
+}
+
+/// V11 — RoutingRule (에이전트 ↔ 에이전트 internal scope).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RoutingRuleDto {
+    pub id: String,
+    pub scope: String,
+    pub from_pattern: String,
+    pub to_pattern: String,
+    pub action: String,
+    pub created_at: String,
+    pub active: bool,
+}
+
+/// V12 — 3-layer version (release / GUI / daemon).
+#[derive(Debug, Serialize)]
+pub struct VersionInfoDto {
+    pub release: String,
+    pub daemon: String,
+    pub spec_doc: String,
+    pub prd_doc: String,
+}
+
+pub fn version_info() -> VersionInfoDto {
+    VersionInfoDto {
+        release: env!("CARGO_PKG_VERSION").to_string(),
+        daemon: env!("CARGO_PKG_VERSION").to_string(),
+        spec_doc: "UI-MESSENGER-SPEC v1.3".to_string(),
+        prd_doc: "PRD-OpenXgram v1.4".to_string(),
+    }
 }
 
 pub fn default_cross_machine_queue() -> CrossMachineQueueDto {

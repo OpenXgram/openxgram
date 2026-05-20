@@ -1,5 +1,6 @@
 import { createResource, For, Show } from "solid-js";
 import { invoke } from "@/api/client";
+import { Breadcrumb } from "./Breadcrumb";
 
 // UI-IDENTITY-SPEC v1.0 §3 — 🔑 신원 카드 (PRD §0 #5: 자기주권 신원).
 // 4 구역: 잠금 상태 / DID / 마스터 지갑 / 외부 DID allowlist + 고급 메뉴.
@@ -37,6 +38,7 @@ export function IdentityCard(props: { onBack: () => void }) {
 
   return (
     <div class="card-page">
+      <Breadcrumb cardName="🔑 신원" onReturn={props.onBack} />
       <button class="card-page-back" onClick={props.onBack}>← 홈</button>
       <div class="card-page-head">
         <span class="icon">🔑</span>

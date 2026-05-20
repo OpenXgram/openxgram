@@ -17,6 +17,7 @@ import { AutonomyCard } from "./components/AutonomyCard";
 import { ExternalAgentCard } from "./components/ExternalAgentCard";
 import { OpsCard } from "./components/OpsCard";
 import { ApprovalQueueBell } from "./components/ApprovalQueueBell";
+import { GlobalSearchModal } from "./components/GlobalSearchModal";
 
 // PRD-OpenXgram v1.4 §0 + UI-CARDS-IDENTITY v1.1: 홈 대시보드 = 8 카드 (4 가치 + 4 토대).
 // unlock 후 첫 화면 = HomeDashboard. 카드 클릭 시 해당 카드 전용 페이지 진입.
@@ -107,6 +108,7 @@ function AppInner() {
             <option value="en">English</option>
           </select>
           <Show when={authed() === true}>
+            <SearchButton />
             <ApprovalQueueBell />
             <button type="button" onClick={onLogout}>
               {t("auth.logout")}
@@ -194,6 +196,25 @@ function AppInner() {
         </main>
       </Show>
     </div>
+  );
+}
+
+function SearchButton() {
+  const [open, setOpen] = createSignal(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title="글로벌 검색 (N4)"
+        style="background:transparent; border:1px solid var(--border); border-radius:4px; padding:4px 10px; cursor:pointer; color:var(--text-1); font-size:13px;"
+      >
+        🔍
+      </button>
+      <Show when={open()}>
+        <GlobalSearchModal onClose={() => setOpen(false)} />
+      </Show>
+    </>
   );
 }
 

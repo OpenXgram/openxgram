@@ -106,6 +106,14 @@ const ROUTES: Record<string, Route> = {
   // Messenger v1.3 L3·V1 / M-5·N1·N3·V4 — Role 정책 + 화이트리스트
   role_policies: { method: "GET", path: "/role-policies" },
   whitelist: { method: "GET", path: "/whitelist" },
+  // Messenger v1.3 S8·V6 / N4 / V11 / V12 / N7
+  cross_machine_queue: { method: "GET", path: "/cross-machine-queue" },
+  global_search: { method: "GET", path: "/search" },
+  routing_rules_list: { method: "GET", path: "/routing-rules" },
+  routing_rule_add: { method: "POST", path: "/routing-rules", body: true },
+  routing_rule_delete: { method: "POST", path: "/routing-rules/{id}" },
+  version_info: { method: "GET", path: "/version" },
+  system_cron_protect: { method: "POST", path: "/system-cron/protect-attempt", body: true },
 
   // Channel
   channel_status: { method: "GET", path: "/channel/status" },

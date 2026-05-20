@@ -1,9 +1,12 @@
 // UI-EXTERNAL-AGENT-SPEC v1.0 — 🌐 외부 에이전트·결제 (PRD §0 #3).
 // 사양 작성 예정. UI-CARDS-IDENTITY v1.1 §2.3 책임 기반 placeholder.
 
+import { Breadcrumb } from "./Breadcrumb";
+
 export function ExternalAgentCard(props: { onBack: () => void }) {
   return (
     <div class="card-page">
+      <Breadcrumb cardName="🌐 외부 에이전트" onReturn={props.onBack} />
       <button class="card-page-back" onClick={props.onBack}>← 홈</button>
       <div class="card-page-head">
         <span class="icon">🌐</span>

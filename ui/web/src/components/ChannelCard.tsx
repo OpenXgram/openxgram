@@ -1,6 +1,7 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { invoke } from "@/api/client";
 import { NotifySetup } from "./NotifySetup";
+import { Breadcrumb } from "./Breadcrumb";
 
 // UI-CHANNEL-SPEC v1.0 §3 — 📱 채널 카드 (PRD §0 #4: 인간 친화 채널).
 // 5 탭: 인박스 / 사람 / 채널 등록 / 라우팅 / 모더레이션.
@@ -30,6 +31,7 @@ export function ChannelCard(props: { onBack: () => void }) {
 
   return (
     <div class="card-page">
+      <Breadcrumb cardName="📱 채널" onReturn={props.onBack} />
       <button class="card-page-back" onClick={props.onBack}>← 홈</button>
       <div class="card-page-head">
         <span class="icon">📱</span>

@@ -121,6 +121,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "sub_wallets",
         sql: include_str!("../migrations/0021_sub_wallets.sql"),
     },
+    Migration {
+        version: 23,
+        name: "messenger_full",
+        sql: include_str!("../migrations/0022_messenger_full.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {
