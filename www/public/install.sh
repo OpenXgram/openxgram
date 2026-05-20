@@ -449,14 +449,41 @@ if [ "$PREBUILT_OK" = "1" ]; then
   PAIRING_OUTPUT="$("$INSTALL_DIR/xgram" pair-desktop 2>&1)"
   echo "$PAIRING_OUTPUT"
 
+  # 6. Tailscale Funnel 자동 활성화 — 외부 https 노출.
+  #    daemon 이 47310 에 GUI 직접 서빙 (rc.26 정적 자산 임베드).
+  #    sudo 권한 있으면 자동, 없으면 안내만.
   echo ""
-  echo "✓ 서버측 설정 완료. 위 oxg://... URL 을 데스크탑에 그대로 가져가서:"
+  echo "==> Web GUI 외부 노출 (Tailscale Funnel)"
+  GUI_PORT=47310
+  TS_NAME="$(tailscale status --json 2>/dev/null | grep -o '"DNSName":"[^"]*"' | head -1 | cut -d'"' -f4 | sed 's/\.$//')"
+  if [ -n "$TS_NAME" ] && command -v sudo >/dev/null 2>&1; then
+    if sudo -n true 2>/dev/null; then
+      # sudo NOPASSWD 가능 — 자동 활성화
+      if sudo tailscale funnel --bg --https=443 "http://localhost:${GUI_PORT}" 2>&1 | grep -qE "Available|on the internet"; then
+        echo "    ✓ Funnel 활성화 완료"
+        echo ""
+        echo "  ┌─ Web GUI 접속 ─────────────────────────────────────────┐"
+        echo "  │  https://${TS_NAME}/gui/                              "
+        echo "  │  비밀번호 = xgram init 때 정한 keystore 비밀번호       "
+        echo "  └────────────────────────────────────────────────────────┘"
+      else
+        echo "    ⚠ Funnel 활성화 실패 — 수동 실행:"
+        echo "      sudo tailscale funnel --bg --https=443 http://localhost:${GUI_PORT}"
+      fi
+    else
+      echo "    (sudo 비밀번호 필요 — 한 줄 실행 후 GUI 사용)"
+      echo "      sudo tailscale funnel --bg --https=443 http://localhost:${GUI_PORT}"
+      echo ""
+      echo "    ▶ 활성화 후 https://${TS_NAME}/gui/ 에서 GUI 사용"
+    fi
+  else
+    echo "    (Tailscale 또는 sudo 없음 — GUI 외부 노출 수동 설정 필요)"
+  fi
+
+  echo ""
+  echo "✓ 설치 완료. 데스크탑/노트북에서 이 daemon 에 attach 하려면:"
   echo "    curl -sSfL https://openxgram.org/install.sh | sh"
-  echo "    xgram link '<oxg URL>'"
-  echo ""
-  echo "  웹 GUI (Tailscale Funnel) 사용:"
-  echo "    sudo tailscale funnel --bg --https=443 http://localhost:47310"
-  echo "    xgram gui   # → 브라우저에서 https://<machine>.tailXXXX.ts.net 자동 오픈"
+  echo "    xgram link '<oxg URL>'  # 위 페어링 URL"
   echo ""
   exit 0
 fi

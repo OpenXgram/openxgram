@@ -76,20 +76,11 @@ impl SubInvoker {
     }
 
     /// 서브에이전트 한 번 호출. role 은 alias (예: "eno"), task 는 평문 지시.
-    pub async fn invoke(
-        &self,
-        http: &reqwest::Client,
-        role: &str,
-        task: &str,
-    ) -> Result<String> {
+    pub async fn invoke(&self, http: &reqwest::Client, role: &str, task: &str) -> Result<String> {
         match self {
             Self::Stub => Ok(format!("[{role}]: ack `{task}` (stub)")),
             Self::OpenAgentX { base_url, token } => {
-                let url = format!(
-                    "{}/agents/{}/invoke",
-                    base_url.trim_end_matches('/'),
-                    role
-                );
+                let url = format!("{}/agents/{}/invoke", base_url.trim_end_matches('/'), role);
                 let resp = http
                     .post(&url)
                     .bearer_auth(token)

@@ -17,7 +17,8 @@ pub struct SchemaDefinition {
 /// 4.1.1.1 — xgram-message schema. 한 메시지의 발신자/수신자/conversation/payload hash.
 pub const MESSAGE: SchemaDefinition = SchemaDefinition {
     name: "xgram-message",
-    schema_text: "address from,address to,bytes32 conversation_id,bytes32 payload_hash,uint64 timestamp",
+    schema_text:
+        "address from,address to,bytes32 conversation_id,bytes32 payload_hash,uint64 timestamp",
     revocable: true,
 };
 
@@ -46,9 +47,9 @@ impl SchemaRegistry {
     }
 }
 
+pub use ENDORSEMENT as EndorsementSchema;
 pub use MESSAGE as MessageSchema;
 pub use PAYMENT as PaymentSchema;
-pub use ENDORSEMENT as EndorsementSchema;
 
 /// EAS spec 호환 UID — `keccak256(schema_text || zero_resolver(20) || revocable_bit)`.
 /// Solidity ABI encoding 의 정확한 packing 은 단일 노드 사용에는 불필요. 프로토콜이 같은 입력에
@@ -93,8 +94,9 @@ mod tests {
 
     #[test]
     fn payment_schema_is_irrevocable() {
-        assert!(!PAYMENT.revocable);
-        assert!(MESSAGE.revocable);
-        assert!(ENDORSEMENT.revocable);
+        // const eval — clippy 1.95 가 const_assert 권장 (런타임 영향 0).
+        const { assert!(!PAYMENT.revocable) };
+        const { assert!(MESSAGE.revocable) };
+        const { assert!(ENDORSEMENT.revocable) };
     }
 }

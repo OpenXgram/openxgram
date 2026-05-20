@@ -34,7 +34,9 @@ pub async fn run_send(data_dir: &Path, opts: SendOpts) -> Result<()> {
     }
     let chans = crate::channels::directory_lookup(&h)?;
     if chans.is_empty() {
-        bail!("@{h}: 채널 없음 — `xgram directory set @{h} <json>` 또는 `xgram find @{h}` 후 재시도");
+        bail!(
+            "@{h}: 채널 없음 — `xgram directory set @{h} <json>` 또는 `xgram find @{h}` 후 재시도"
+        );
     }
     let pick = pick_best(&chans, opts.prefer_kind.as_deref())
         .ok_or_else(|| anyhow!("public 채널 없음 (모두 private)"))?;
@@ -71,7 +73,10 @@ async fn dispatch(
         "discord" => {
             // address = webhook URL (또는 channel id — webhook URL 권장)
             if !channel.address.starts_with("https://") {
-                bail!("discord channel 은 webhook URL 필요 (https://...) — got: {}", channel.address);
+                bail!(
+                    "discord channel 은 webhook URL 필요 (https://...) — got: {}",
+                    channel.address
+                );
             }
             let resp = http
                 .post(&channel.address)

@@ -59,7 +59,10 @@ impl<'a> ActionPatternStore<'a> {
     }
 
     /// ID 조회.
-    pub fn get(&self, id: &ActionPatternId) -> Result<Option<ActionPattern>, ActionPatternStoreError> {
+    pub fn get(
+        &self,
+        id: &ActionPatternId,
+    ) -> Result<Option<ActionPattern>, ActionPatternStoreError> {
         let mut stmt = self.conn.prepare(SELECT_ALL)?;
         Ok(stmt
             .query_row(params![id.as_str()], row_to_action)
@@ -112,9 +115,7 @@ impl<'a> ActionPatternStore<'a> {
         // 누적 평균 (성공 케이스만).
         let new_avg = if success {
             match (cur.avg_duration_ms, duration_ms) {
-                (Some(prev), Some(d)) => {
-                    Some(((prev * cur.success_count) + d) / new_success)
-                }
+                (Some(prev), Some(d)) => Some(((prev * cur.success_count) + d) / new_success),
                 (None, Some(d)) => Some(d),
                 (prev, None) => prev,
             }
@@ -150,7 +151,11 @@ impl<'a> ActionPatternStore<'a> {
     }
 
     /// 테스트 헬퍼 — patterns(0004) 테이블에 더미 row 등록.
-    pub fn ensure_pattern(&self, pattern_id: &str, text: &str) -> Result<(), ActionPatternStoreError> {
+    pub fn ensure_pattern(
+        &self,
+        pattern_id: &str,
+        text: &str,
+    ) -> Result<(), ActionPatternStoreError> {
         let now_iso = Utc::now().to_rfc3339();
         self.conn.execute(
             "INSERT OR IGNORE INTO patterns (id, pattern_text, frequency, first_seen, last_seen, metadata)

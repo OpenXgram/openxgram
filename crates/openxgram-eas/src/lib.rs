@@ -31,10 +31,7 @@ pub enum EasError {
     InvalidSchema(String),
 
     #[error("gas policy violation: estimated {estimated_usd:.4} USD > limit {limit_usd:.4} USD")]
-    GasOverLimit {
-        estimated_usd: f64,
-        limit_usd: f64,
-    },
+    GasOverLimit { estimated_usd: f64, limit_usd: f64 },
 
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),

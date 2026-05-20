@@ -191,9 +191,7 @@ impl NewJobRequest {
     /// 검증.
     pub fn validate(&self) -> Result<(), crate::MarketplaceError> {
         if self.agent_id.as_str().trim().is_empty() {
-            return Err(crate::MarketplaceError::Invalid(
-                "agent_id required".into(),
-            ));
+            return Err(crate::MarketplaceError::Invalid("agent_id required".into()));
         }
         if self.service_id.as_str().trim().is_empty() {
             return Err(crate::MarketplaceError::Invalid(

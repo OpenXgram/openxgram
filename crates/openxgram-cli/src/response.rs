@@ -64,19 +64,21 @@ impl Generator {
                 body: echo_body(input),
                 signature: "echo-v0",
             }),
-            Self::Anthropic { api_key } => match anthropic_call(http, api_key, alias, input, history).await {
-                Ok(body) => Ok(GeneratorOutput {
-                    body,
-                    signature: "anthropic-haiku-4.5",
-                }),
-                Err(e) => {
-                    tracing::warn!(error = %e, "Anthropic 호출 실패 — echo fallback");
-                    Ok(GeneratorOutput {
-                        body: echo_body(input),
-                        signature: "echo-v0-fallback",
-                    })
+            Self::Anthropic { api_key } => {
+                match anthropic_call(http, api_key, alias, input, history).await {
+                    Ok(body) => Ok(GeneratorOutput {
+                        body,
+                        signature: "anthropic-haiku-4.5",
+                    }),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Anthropic 호출 실패 — echo fallback");
+                        Ok(GeneratorOutput {
+                            body: echo_body(input),
+                            signature: "echo-v0-fallback",
+                        })
+                    }
                 }
-            },
+            }
         }
     }
 }
@@ -247,7 +249,6 @@ fn history_role(m: &Message, alias: &str) -> &'static str {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,7 +272,10 @@ mod tests {
 
     #[test]
     fn from_anthropic_key_empty_string_falls_back_to_echo() {
-        assert!(matches!(Generator::from_anthropic_key(None), Generator::Echo));
+        assert!(matches!(
+            Generator::from_anthropic_key(None),
+            Generator::Echo
+        ));
         assert!(matches!(
             Generator::from_anthropic_key(Some("   ")),
             Generator::Echo

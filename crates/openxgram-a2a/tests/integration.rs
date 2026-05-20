@@ -3,8 +3,8 @@
 //! 모듈별 unit test는 각 src/*.rs 안의 #[cfg(test)] 에 있음.
 //! 본 파일은 end-to-end 시나리오.
 
-use openxgram_a2a::{A2aError, A2aTools, TaskState};
 use openxgram_a2a::mcp::SendTaskArgs;
+use openxgram_a2a::{A2aError, A2aTools, TaskState};
 use serde_json::json;
 
 const AGENT_CARD_FIXTURE: &str = r#"{

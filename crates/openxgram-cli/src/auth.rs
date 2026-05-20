@@ -45,7 +45,10 @@ pub fn session_token() -> &'static str {
 }
 
 pub fn verify_session_token(token: &str) -> bool {
-    SESSION_TOKEN.get().map(|t| t.as_str() == token).unwrap_or(false)
+    SESSION_TOKEN
+        .get()
+        .map(|t| t.as_str() == token)
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

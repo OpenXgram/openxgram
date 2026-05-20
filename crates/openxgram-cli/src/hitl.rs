@@ -58,7 +58,10 @@ pub struct HumanResponse {
 
 impl HumanResponse {
     pub fn body(&self) -> String {
-        format!("{HUMAN_RESPONSE_PREFIX}\n{}\n{}", self.request_id, self.answer)
+        format!(
+            "{HUMAN_RESPONSE_PREFIX}\n{}\n{}",
+            self.request_id, self.answer
+        )
     }
 }
 
@@ -72,8 +75,15 @@ pub fn parse_human_request(body: &str) -> Option<HumanRequest> {
     if id.is_empty() || question.is_empty() {
         return None;
     }
-    let options: Vec<String> = lines.map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
-    Some(HumanRequest { id, question, options })
+    let options: Vec<String> = lines
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    Some(HumanRequest {
+        id,
+        question,
+        options,
+    })
 }
 
 pub fn parse_human_response(body: &str) -> Option<HumanResponse> {
@@ -178,8 +188,7 @@ pub fn check_response(data_dir: &Path, request_id: &str) -> Result<Option<String
         None => return Ok(None),
     };
     let embedder = default_embedder()?;
-    let messages = MessageStore::new(&mut db, embedder.as_ref())
-        .list_for_session(&inbox.id)?;
+    let messages = MessageStore::new(&mut db, embedder.as_ref()).list_for_session(&inbox.id)?;
     for m in messages {
         if let Some(r) = parse_human_response(&m.body) {
             if r.request_id == request_id {
@@ -202,13 +211,15 @@ pub fn list_pending_requests(data_dir: &Path) -> Result<Vec<HumanRequest>> {
         Some(s) => s.clone(),
         None => return Ok(vec![]),
     };
-    let inbox = sessions.iter().find(|s| s.title == HUMAN_INBOX_SESSION).cloned();
+    let inbox = sessions
+        .iter()
+        .find(|s| s.title == HUMAN_INBOX_SESSION)
+        .cloned();
     let embedder = default_embedder()?;
-    let outbox_msgs = MessageStore::new(&mut db, embedder.as_ref())
-        .list_for_session(&outbox.id)?;
+    let outbox_msgs = MessageStore::new(&mut db, embedder.as_ref()).list_for_session(&outbox.id)?;
     let answered_ids: std::collections::HashSet<String> = if let Some(inbox) = inbox {
-        let inbox_msgs = MessageStore::new(&mut db, embedder.as_ref())
-            .list_for_session(&inbox.id)?;
+        let inbox_msgs =
+            MessageStore::new(&mut db, embedder.as_ref()).list_for_session(&inbox.id)?;
         inbox_msgs
             .iter()
             .filter_map(|m| parse_human_response(&m.body))
@@ -280,8 +291,13 @@ mod tests {
         let dir = tmp.path();
         let _db = open_test_db(dir);
 
-        let req = request_human_input(dir, "@market-bot", "외주 $200 승인?", vec!["OK".into(), "거절".into()])
-            .unwrap();
+        let req = request_human_input(
+            dir,
+            "@market-bot",
+            "외주 $200 승인?",
+            vec!["OK".into(), "거절".into()],
+        )
+        .unwrap();
         // 응답 전 — pending 1개
         let pending_before = list_pending_requests(dir).unwrap();
         assert_eq!(pending_before.len(), 1);

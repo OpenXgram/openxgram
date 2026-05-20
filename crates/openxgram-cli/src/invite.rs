@@ -91,10 +91,9 @@ fn url_decode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(
-                std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""),
-                16,
-            ) {
+            if let Ok(byte) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+            {
                 out.push(byte);
                 i += 3;
                 continue;
@@ -215,7 +214,9 @@ pub fn run_friend_accept(data_dir: &Path, url: &str) -> Result<()> {
             }
         };
         match send_res {
-            Ok(()) => eprintln!("[friend] handshake 메시지 송신 완료 (상대가 자동으로 우리 peer 추가)"),
+            Ok(()) => {
+                eprintln!("[friend] handshake 메시지 송신 완료 (상대가 자동으로 우리 peer 추가)")
+            }
             Err(e) => eprintln!("[friend] handshake 송신 실패 (상대가 수동 invite 필요): {e}"),
         }
     } else {
@@ -275,7 +276,8 @@ mod tests {
     #[test]
     fn token_parse_rejects_wrong_scheme() {
         assert!(InviteToken::parse("https://example.com").is_err());
-        assert!(InviteToken::parse("oxg-friend://?pubkey=x&address=y").is_err()); // missing alias
+        assert!(InviteToken::parse("oxg-friend://?pubkey=x&address=y").is_err());
+        // missing alias
     }
 
     #[test]

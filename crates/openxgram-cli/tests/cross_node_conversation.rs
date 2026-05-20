@@ -119,7 +119,11 @@ fn envelope_carries_conversation_id_to_inbox_message() {
     let thread = MessageStore::new(&mut db, embedder.as_ref())
         .list_for_conversation(&conv_a)
         .unwrap();
-    assert_eq!(thread.len(), 2, "두 envelope 모두 같은 conversation 에 묶임");
+    assert_eq!(
+        thread.len(),
+        2,
+        "두 envelope 모두 같은 conversation 에 묶임"
+    );
     assert!(thread.iter().all(|m| m.conversation_id == conv_a));
     assert_eq!(thread[0].body, "first message in thread");
     assert_eq!(thread[1].body, "second message in same thread");

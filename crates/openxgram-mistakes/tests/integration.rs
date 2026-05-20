@@ -42,7 +42,10 @@ fn end_to_end_log_check_resolve() {
 
     // 4. resolve
     tools
-        .resolve(&logged.id, "GitHub branch protection rule 활성 + pre-receive hook")
+        .resolve(
+            &logged.id,
+            "GitHub branch protection rule 활성 + pre-receive hook",
+        )
         .unwrap();
 
     // 5. 해결됨 확인

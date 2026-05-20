@@ -27,7 +27,7 @@ pub mod message;
 
 pub use client::AnpClient;
 pub use discovery::{discover_endpoint, resolve_did_document, DiscoveryResult};
-pub use mcp::{AnpTools, AnpToolError};
+pub use mcp::{AnpToolError, AnpTools};
 pub use message::{AnpEnvelope, AnpHeader, EnvelopeError};
 
 #[derive(Debug, Error)]

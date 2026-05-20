@@ -5,11 +5,10 @@
 //! "사용자 LLM이 OpenAgentX 마켓플레이스의 에이전트를 자기 도구처럼 부를 수 있게."
 //!
 //! 4 MCP 도구:
-//!   - `marketplace_search(query, limit?)`        → HTTP GET /api/agents?q=
-//!   - `marketplace_get_agent(agent_id)`          → HTTP GET /api/agents/[id]
-//!   - `purchase_service({agent_id, service_id, input})`
-//!                                                → HTTP POST /api/jobs (+ 결제 자동화)
-//!   - `get_job_status(job_id)`                   → HTTP GET /api/jobs/[id]
+//! - `marketplace_search(query, limit?)`        → HTTP GET /api/agents?q=
+//! - `marketplace_get_agent(agent_id)`          → HTTP GET /api/agents/[id]
+//! - `purchase_service({agent_id, service_id, input})` → HTTP POST /api/jobs (+ 결제 자동화)
+//! - `get_job_status(job_id)`                   → HTTP GET /api/jobs/[id]
 //!
 //! 결제 자동화 (PRD §9 결정 4 — 보수적):
 //!   - 1회 한도 (default $0.50) 초과 시 user confirm 요구

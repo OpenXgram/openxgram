@@ -160,7 +160,9 @@ mod tests {
         let bind: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
         let listener = tokio::net::TcpListener::bind(bind).await.unwrap();
         let app = router(state.clone());
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let body = serde_json::json!({

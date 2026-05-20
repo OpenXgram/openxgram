@@ -89,11 +89,7 @@ impl<'a> MistakeStore<'a> {
     /// 텍스트 LIKE 검색 — intended/outcome/reason/lesson 어디든 매칭.
     ///
     /// 벡터 KNN은 후속 작업 (sqlite-vec 통합 시 search.rs로 분리).
-    pub fn search_like(
-        &self,
-        query: &str,
-        limit: i64,
-    ) -> Result<Vec<Mistake>, MistakeStoreError> {
+    pub fn search_like(&self, query: &str, limit: i64) -> Result<Vec<Mistake>, MistakeStoreError> {
         if query.trim().is_empty() {
             return Ok(vec![]);
         }
@@ -115,11 +111,7 @@ impl<'a> MistakeStore<'a> {
     }
 
     /// `resolved=1` + resolution 저장.
-    pub fn mark_resolved(
-        &self,
-        id: &MistakeId,
-        resolution: &str,
-    ) -> Result<(), MistakeStoreError> {
+    pub fn mark_resolved(&self, id: &MistakeId, resolution: &str) -> Result<(), MistakeStoreError> {
         if resolution.trim().is_empty() {
             return Err(MistakeStoreError::Domain("resolution required".into()));
         }
@@ -160,7 +152,10 @@ fn row_to_mistake(r: &rusqlite::Row<'_>) -> rusqlite::Result<Mistake> {
         rusqlite::Error::FromSqlConversionFailure(
             0,
             rusqlite::types::Type::Text,
-            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())),
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                e.to_string(),
+            )),
         )
     })?;
     Ok(Mistake {
@@ -231,12 +226,8 @@ mod tests {
     fn list_unresolved_filters_severity() {
         let conn = fresh();
         let store = MistakeStore::new(&conn);
-        store
-            .insert(&sample("low", "minor typo", Some(2)))
-            .unwrap();
-        store
-            .insert(&sample("high", "data loss", Some(9)))
-            .unwrap();
+        store.insert(&sample("low", "minor typo", Some(2))).unwrap();
+        store.insert(&sample("high", "data loss", Some(9))).unwrap();
 
         let list = store.list_unresolved(5, 10).unwrap();
         assert_eq!(list.len(), 1);

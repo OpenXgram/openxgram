@@ -106,9 +106,8 @@ pub fn compute_summary(data_dir: &Path) -> Result<PaymentSummary> {
             )
             .unwrap_or(false);
         if exists {
-            let mut stmt = conn.prepare(
-                "SELECT fields_json FROM eas_attestations WHERE kind='payment'",
-            )?;
+            let mut stmt =
+                conn.prepare("SELECT fields_json FROM eas_attestations WHERE kind='payment'")?;
             let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
             for row in rows {
                 if let Ok(json) = row {

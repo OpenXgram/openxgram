@@ -25,7 +25,7 @@ pub mod client;
 pub mod mcp;
 pub mod task;
 
-pub use agent_card::{AgentCard, AgentCapabilities, AgentSkill, Authentication};
+pub use agent_card::{AgentCapabilities, AgentCard, AgentSkill, Authentication};
 pub use client::A2aClient;
 pub use mcp::A2aTools;
 pub use task::{Message, Part, Task, TaskState};

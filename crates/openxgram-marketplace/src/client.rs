@@ -90,17 +90,12 @@ impl MarketplaceClient {
     }
 
     /// `GET /api/agents/[id]` — 단일 에이전트 + 서비스 목록.
-    pub async fn get_agent(
-        &self,
-        agent_id: &AgentId,
-    ) -> Result<Agent, MarketplaceClientError> {
-        let req = self
-            .http
-            .get(format!(
-                "{}/api/agents/{}",
-                self.base_url,
-                urlencode(agent_id.as_str())
-            ));
+    pub async fn get_agent(&self, agent_id: &AgentId) -> Result<Agent, MarketplaceClientError> {
+        let req = self.http.get(format!(
+            "{}/api/agents/{}",
+            self.base_url,
+            urlencode(agent_id.as_str())
+        ));
         let req = self.attach_auth(req);
         let resp = req.send().await?;
         let resp = ensure_ok(resp).await?;
@@ -194,7 +189,9 @@ impl MarketplaceClientBuilder {
         if base_url.is_empty() {
             return Err(MarketplaceClientError::Url("base_url empty".into()));
         }
-        let timeout = self.timeout.unwrap_or(Duration::from_secs(DEFAULT_TIMEOUT_SECS));
+        let timeout = self
+            .timeout
+            .unwrap_or(Duration::from_secs(DEFAULT_TIMEOUT_SECS));
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .timeout(timeout)

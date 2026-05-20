@@ -14,7 +14,7 @@ use std::str::FromStr;
 
 use crate::fs::WikiFs;
 use crate::page::{Page, PageId, PageType};
-use crate::search::{SearchHit, search_wiki as search_like};
+use crate::search::{search_wiki as search_like, SearchHit};
 use crate::store::{WikiStore, WikiStoreError};
 use crate::WikiError;
 
@@ -67,10 +67,15 @@ impl<'a> WikiTools<'a> {
 
         // 기존 row의 created_at 보존
         let existing = store.get(&id)?;
-        let mut page = Page::new(id.clone(), final_type, title, content.trim_end().to_string());
+        let mut page = Page::new(
+            id.clone(),
+            final_type,
+            title,
+            content.trim_end().to_string(),
+        );
         if let Some(row) = &existing {
-            page.created_at = chrono::DateTime::from_timestamp(row.created_at, 0)
-                .unwrap_or(page.created_at);
+            page.created_at =
+                chrono::DateTime::from_timestamp(row.created_at, 0).unwrap_or(page.created_at);
         }
 
         // 디스크 먼저 → DB 인덱스
@@ -210,9 +215,15 @@ impl From<WikiStoreError> for WikiError {
             WikiStoreError::Sqlite(s) => WikiError::Other(format!("sqlite: {s}")),
             WikiStoreError::Serde(s) => WikiError::Serde(s),
             WikiStoreError::NotFound(id) => WikiError::Other(format!("not found: {id}")),
-            WikiStoreError::ContentHashMismatch { id, expected, actual } => {
-                WikiError::ContentHashMismatch { id, expected, actual }
-            }
+            WikiStoreError::ContentHashMismatch {
+                id,
+                expected,
+                actual,
+            } => WikiError::ContentHashMismatch {
+                id,
+                expected,
+                actual,
+            },
             WikiStoreError::InvalidPageId(id) => WikiError::InvalidPageId(id),
         }
     }
@@ -260,9 +271,18 @@ mod tests {
     async fn link_then_list() {
         let (_tmp, wf, conn) = setup().await;
         let tools = WikiTools::new(&wf, &conn);
-        tools.write("entity/a", "# A\n\n", None, None).await.unwrap();
-        tools.write("entity/b", "# B\n\n", None, None).await.unwrap();
-        tools.link("entity/a", "entity/b", Some("관련")).await.unwrap();
+        tools
+            .write("entity/a", "# A\n\n", None, None)
+            .await
+            .unwrap();
+        tools
+            .write("entity/b", "# B\n\n", None, None)
+            .await
+            .unwrap();
+        tools
+            .link("entity/a", "entity/b", Some("관련"))
+            .await
+            .unwrap();
 
         let entries = tools.list(Some("entity")).unwrap();
         assert_eq!(entries.len(), 2);

@@ -12,7 +12,10 @@ use openxgram_marketplace::{
     PurchaseDecision, ServiceId, SpendPolicy,
 };
 
-fn make_tools(server_url: &str, policy: SpendPolicy) -> (MarketplaceTools, Arc<NoopPaymentGateway>) {
+fn make_tools(
+    server_url: &str,
+    policy: SpendPolicy,
+) -> (MarketplaceTools, Arc<NoopPaymentGateway>) {
     let client = MarketplaceClient::builder()
         .base_url(server_url)
         .build()
@@ -29,9 +32,10 @@ async fn search_then_get_agent_then_purchase_auto_approved() {
     // 1. search
     let m_search = server
         .mock("GET", "/api/agents")
-        .match_query(mockito::Matcher::AnyOf(vec![
-            mockito::Matcher::UrlEncoded("q".into(), "translate".into()),
-        ]))
+        .match_query(mockito::Matcher::AnyOf(vec![mockito::Matcher::UrlEncoded(
+            "q".into(),
+            "translate".into(),
+        )]))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
@@ -198,9 +202,10 @@ async fn search_handles_bare_array_response() {
     let mut server = mockito::Server::new_async().await;
     let m = server
         .mock("GET", "/api/agents")
-        .match_query(mockito::Matcher::AnyOf(vec![
-            mockito::Matcher::UrlEncoded("q".into(), "code".into()),
-        ]))
+        .match_query(mockito::Matcher::AnyOf(vec![mockito::Matcher::UrlEncoded(
+            "q".into(),
+            "code".into(),
+        )]))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(r#"[{"id":"agent:a","name":"A","description":"x"}]"#)

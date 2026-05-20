@@ -73,7 +73,10 @@ pub fn channel_add(data_dir: &Path, kind: &str, address: &str, visibility: &str)
         bail!("visibility = public | unlisted | private");
     }
     let mut channels = read_channels(data_dir)?;
-    if channels.iter().any(|c| c.kind == kind && c.address == address) {
+    if channels
+        .iter()
+        .any(|c| c.kind == kind && c.address == address)
+    {
         eprintln!("[channels] 이미 등록 — skip");
         return Ok(());
     }
@@ -153,7 +156,10 @@ pub fn directory_lookup(handle: &str) -> Result<Vec<Channel>> {
 /// 채널 우선순위 (best-fit 라우팅) — public 우선, 그 다음 kind 순.
 /// 호출자가 첫 번째 (가장 적합한) channel 사용 권장.
 pub fn pick_best(channels: &[Channel], prefer_kind: Option<&str>) -> Option<Channel> {
-    let public: Vec<&Channel> = channels.iter().filter(|c| c.visibility != "private").collect();
+    let public: Vec<&Channel> = channels
+        .iter()
+        .filter(|c| c.visibility != "private")
+        .collect();
     if public.is_empty() {
         return None;
     }
@@ -224,8 +230,16 @@ mod tests {
     #[test]
     fn pick_best_prefers_explicit_kind() {
         let chans = vec![
-            Channel { kind: "telegram".into(), address: "t".into(), visibility: "public".into() },
-            Channel { kind: "discord".into(), address: "d".into(), visibility: "public".into() },
+            Channel {
+                kind: "telegram".into(),
+                address: "t".into(),
+                visibility: "public".into(),
+            },
+            Channel {
+                kind: "discord".into(),
+                address: "d".into(),
+                visibility: "public".into(),
+            },
         ];
         let pick = pick_best(&chans, Some("telegram")).unwrap();
         assert_eq!(pick.kind, "telegram");
@@ -234,8 +248,16 @@ mod tests {
     #[test]
     fn pick_best_default_prefers_xgram_peer() {
         let chans = vec![
-            Channel { kind: "discord".into(), address: "d".into(), visibility: "public".into() },
-            Channel { kind: "xgram-peer".into(), address: "p".into(), visibility: "public".into() },
+            Channel {
+                kind: "discord".into(),
+                address: "d".into(),
+                visibility: "public".into(),
+            },
+            Channel {
+                kind: "xgram-peer".into(),
+                address: "p".into(),
+                visibility: "public".into(),
+            },
         ];
         let pick = pick_best(&chans, None).unwrap();
         assert_eq!(pick.kind, "xgram-peer");
@@ -244,8 +266,16 @@ mod tests {
     #[test]
     fn pick_best_skips_private() {
         let chans = vec![
-            Channel { kind: "discord".into(), address: "d".into(), visibility: "private".into() },
-            Channel { kind: "telegram".into(), address: "t".into(), visibility: "public".into() },
+            Channel {
+                kind: "discord".into(),
+                address: "d".into(),
+                visibility: "private".into(),
+            },
+            Channel {
+                kind: "telegram".into(),
+                address: "t".into(),
+                visibility: "public".into(),
+            },
         ];
         let pick = pick_best(&chans, None).unwrap();
         assert_eq!(pick.kind, "telegram");

@@ -95,7 +95,9 @@ pub fn claim_handle(data_dir: &Path, handle: &str) -> Result<IdentitySection> {
             // 현 단계: 인터페이스만 제공 + manifest 갱신 완료.
         }
         _ => {
-            eprintln!("[identity] onchain 등록 skip — XGRAM_BASE_RPC + XGRAM_BASE_PRIVATE_KEY 둘 다 필요");
+            eprintln!(
+                "[identity] onchain 등록 skip — XGRAM_BASE_RPC + XGRAM_BASE_PRIVATE_KEY 둘 다 필요"
+            );
         }
     }
     Ok(section)
@@ -105,7 +107,8 @@ pub fn claim_handle(data_dir: &Path, handle: &str) -> Result<IdentitySection> {
 /// `XGRAM_BASE_RPC` + `XGRAM_BASE_PRIVATE_KEY` 미설정 시 dry-run (records 만 print).
 /// visibility=private 면 publish 안 함 (3.2.2).
 pub fn publish_records(data_dir: &Path) -> Result<HashMap<String, String>> {
-    let section = read_identity(data_dir).context("identity 미설정 — `xgram identity claim` 먼저")?;
+    let section =
+        read_identity(data_dir).context("identity 미설정 — `xgram identity claim` 먼저")?;
     let handle = section
         .handle
         .as_deref()
@@ -127,14 +130,20 @@ pub fn publish_records(data_dir: &Path) -> Result<HashMap<String, String>> {
     }
     records.insert("xgram.visibility".into(), visibility.as_str().into());
     // pubkey 는 keystore 에서 — 호출자가 keystore 패스워드 안 가졌을 수 있어 manifest 의 alias 만 fallback.
-    if let Ok(p) = openxgram_core::paths::keystore_dir(data_dir).join("master.pub").canonicalize() {
+    if let Ok(p) = openxgram_core::paths::keystore_dir(data_dir)
+        .join("master.pub")
+        .canonicalize()
+    {
         if let Ok(pub_hex) = std::fs::read_to_string(&p) {
             records.insert("xgram.pubkey".into(), pub_hex.trim().into());
         }
     }
     // e-마무리 — 등록된 채널을 xgram.channels JSON 으로 포함 (visibility=private 채널은 제외).
     let chans = crate::channels::channel_list(data_dir).unwrap_or_default();
-    let public_chans: Vec<_> = chans.into_iter().filter(|c| c.visibility != "private").collect();
+    let public_chans: Vec<_> = chans
+        .into_iter()
+        .filter(|c| c.visibility != "private")
+        .collect();
     if !public_chans.is_empty() {
         if let Ok(json) = serde_json::to_string(&public_chans) {
             records.insert("xgram.channels".into(), json);
@@ -206,7 +215,8 @@ pub async fn register_to_directory(
     indexer_url: &str,
     include_counts: bool,
 ) -> Result<()> {
-    let section = read_identity(data_dir).context("identity 미설정 — `xgram identity claim` 먼저")?;
+    let section =
+        read_identity(data_dir).context("identity 미설정 — `xgram identity claim` 먼저")?;
     let handle = section
         .handle
         .as_deref()
@@ -219,7 +229,10 @@ pub async fn register_to_directory(
     let mut body = serde_json::json!({"handle": handle});
     if include_counts {
         let scores = crate::reputation::aggregate_local_scores(data_dir).unwrap_or_default();
-        if let Some(my) = scores.iter().find(|s| s.identity == "me" || s.identity == handle) {
+        if let Some(my) = scores
+            .iter()
+            .find(|s| s.identity == "me" || s.identity == handle)
+        {
             body["messages"] = serde_json::Value::from(my.messages);
             body["payments_received"] = serde_json::Value::from(my.payments_received);
             body["endorsements_received"] = serde_json::Value::from(my.endorsements_received);
@@ -273,9 +286,16 @@ pub fn build_friend_deny(sender_handle: &str, reason: Option<&str>) -> String {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FriendMessage {
-    Request { sender_handle: String },
-    Accept { sender_handle: String },
-    Deny { sender_handle: String, reason: Option<String> },
+    Request {
+        sender_handle: String,
+    },
+    Accept {
+        sender_handle: String,
+    },
+    Deny {
+        sender_handle: String,
+        reason: Option<String>,
+    },
 }
 
 pub fn parse_friend_message(body: &str) -> Option<FriendMessage> {
@@ -296,7 +316,11 @@ pub fn parse_friend_message(body: &str) -> Option<FriendMessage> {
             let reason = lines.collect::<Vec<_>>().join("\n");
             Some(FriendMessage::Deny {
                 sender_handle: handle.into(),
-                reason: if reason.is_empty() { None } else { Some(reason) },
+                reason: if reason.is_empty() {
+                    None
+                } else {
+                    Some(reason)
+                },
             })
         }
         _ => None,
@@ -418,7 +442,10 @@ mod tests {
         )
         .unwrap();
         let recs = publish_records(tmp.path()).unwrap();
-        assert_eq!(recs.get("xgram.handle").map(String::as_str), Some("x.base.eth"));
+        assert_eq!(
+            recs.get("xgram.handle").map(String::as_str),
+            Some("x.base.eth")
+        );
         assert_eq!(
             recs.get("xgram.visibility").map(String::as_str),
             Some("public")
@@ -443,7 +470,8 @@ mod tests {
         let acc = parse_friend_message(&build_friend_accept("a.base.eth")).unwrap();
         assert!(matches!(acc, FriendMessage::Accept { .. }));
 
-        let den = parse_friend_message(&build_friend_deny("a.base.eth", Some("거절 사유"))).unwrap();
+        let den =
+            parse_friend_message(&build_friend_deny("a.base.eth", Some("거절 사유"))).unwrap();
         match den {
             FriendMessage::Deny { reason, .. } => assert_eq!(reason.as_deref(), Some("거절 사유")),
             _ => panic!("expected Deny"),

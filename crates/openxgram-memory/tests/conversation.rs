@@ -41,7 +41,10 @@ fn insert_with_none_generates_fresh_conversation_id() {
 
     assert!(!m1.conversation_id.is_empty());
     assert!(!m2.conversation_id.is_empty());
-    assert_ne!(m1.conversation_id, m2.conversation_id, "각 inbound 는 서로 다른 conversation");
+    assert_ne!(
+        m1.conversation_id, m2.conversation_id,
+        "각 inbound 는 서로 다른 conversation"
+    );
 }
 
 #[test]
@@ -83,13 +86,7 @@ fn list_for_conversation_returns_cross_session_thread() {
     {
         let mut store = MessageStore::new(&mut db, &embedder);
         let inbound = store
-            .insert(
-                "inbox-from-discord:m",
-                "discord:m",
-                "안녕",
-                "discord",
-                None,
-            )
+            .insert("inbox-from-discord:m", "discord:m", "안녕", "discord", None)
             .unwrap();
         conv_id = inbound.conversation_id.clone();
         store

@@ -14,7 +14,9 @@ impl GasPolicy {
             .ok()
             .and_then(|s| s.parse::<f64>().ok())
             .unwrap_or(0.10);
-        Self { max_usd_per_attest: max }
+        Self {
+            max_usd_per_attest: max,
+        }
     }
 }
 
@@ -92,7 +94,10 @@ mod tests {
             max_usd_per_attest: 0.10,
         };
         match q.check(&p) {
-            Err(EasError::GasOverLimit { estimated_usd, limit_usd }) => {
+            Err(EasError::GasOverLimit {
+                estimated_usd,
+                limit_usd,
+            }) => {
                 assert!(estimated_usd > 0.10);
                 assert_eq!(limit_usd, 0.10);
             }

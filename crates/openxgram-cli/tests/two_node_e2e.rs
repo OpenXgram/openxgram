@@ -50,9 +50,13 @@ async fn two_node_round_trip_with_conversation_thread() {
     let dir_b = tmp_b.path().join("b");
 
     // 2.1.3 — 양 노드 init (master keypair 생성)
-    unsafe { std::env::set_var("XGRAM_KEYSTORE_PASSWORD", PW_A); }
+    unsafe {
+        std::env::set_var("XGRAM_KEYSTORE_PASSWORD", PW_A);
+    }
     run_init(&init_opts(dir_a.clone(), "alice")).unwrap();
-    unsafe { std::env::set_var("XGRAM_KEYSTORE_PASSWORD", PW_B); }
+    unsafe {
+        std::env::set_var("XGRAM_KEYSTORE_PASSWORD", PW_B);
+    }
     run_init(&init_opts(dir_b.clone(), "bob")).unwrap();
 
     // master keypair load
@@ -73,7 +77,9 @@ async fn two_node_round_trip_with_conversation_thread() {
     let url_b = format!("http://{}", server_b.bound_addr);
 
     // 2.2.1 / 2.2.2 — 양쪽 peer add
-    unsafe { std::env::set_var("XGRAM_KEYSTORE_PASSWORD", PW_A); }
+    unsafe {
+        std::env::set_var("XGRAM_KEYSTORE_PASSWORD", PW_A);
+    }
     run_peer(
         &dir_a,
         PeerAction::Add {
@@ -101,7 +107,9 @@ async fn two_node_round_trip_with_conversation_thread() {
             .unwrap();
     }
 
-    unsafe { std::env::set_var("XGRAM_KEYSTORE_PASSWORD", PW_B); }
+    unsafe {
+        std::env::set_var("XGRAM_KEYSTORE_PASSWORD", PW_B);
+    }
     run_peer(
         &dir_b,
         PeerAction::Add {
@@ -161,7 +169,9 @@ async fn two_node_round_trip_with_conversation_thread() {
 
     // 2.3.1 — A → B 한 줄 메시지 (conversation_id 동봉)
     let conv_thread = "thread-2node-1234".to_string();
-    unsafe { std::env::set_var("XGRAM_KEYSTORE_PASSWORD", PW_A); }
+    unsafe {
+        std::env::set_var("XGRAM_KEYSTORE_PASSWORD", PW_A);
+    }
     run_peer_send_with_conv(
         &dir_a,
         "bob",
@@ -176,8 +186,15 @@ async fn two_node_round_trip_with_conversation_thread() {
     // server_b 가 envelope 받음 — drain + B 의 process_inbound
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let envs_b = server_b.drain_received();
-    assert_eq!(envs_b.len(), 1, "2.3.1 — B 의 transport 가 envelope 1개 수신");
-    assert_eq!(envs_b[0].conversation_id.as_deref(), Some(conv_thread.as_str()));
+    assert_eq!(
+        envs_b.len(),
+        1,
+        "2.3.1 — B 의 transport 가 envelope 1개 수신"
+    );
+    assert_eq!(
+        envs_b[0].conversation_id.as_deref(),
+        Some(conv_thread.as_str())
+    );
     process_inbound(&dir_b, &envs_b).unwrap();
 
     // 2.3.2 — B 메모리 기록 검증
@@ -203,7 +220,9 @@ async fn two_node_round_trip_with_conversation_thread() {
     assert_eq!(msgs_b[0].conversation_id, conv_thread, "2.3.4 conv_id 보존");
 
     // 2.3.3 — B 응답 → A (같은 conversation_id thread 유지)
-    unsafe { std::env::set_var("XGRAM_KEYSTORE_PASSWORD", PW_B); }
+    unsafe {
+        std::env::set_var("XGRAM_KEYSTORE_PASSWORD", PW_B);
+    }
     run_peer_send_with_conv(
         &dir_b,
         "alice",
@@ -217,7 +236,10 @@ async fn two_node_round_trip_with_conversation_thread() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let envs_a = server_a.drain_received();
     assert_eq!(envs_a.len(), 1, "2.3.3 — A 가 응답 envelope 받음");
-    assert_eq!(envs_a[0].conversation_id.as_deref(), Some(conv_thread.as_str()));
+    assert_eq!(
+        envs_a[0].conversation_id.as_deref(),
+        Some(conv_thread.as_str())
+    );
     process_inbound(&dir_a, &envs_a).unwrap();
 
     let mut db_a = Db::open(DbConfig {

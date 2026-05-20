@@ -45,7 +45,9 @@ pub async fn run_find(opts: FindOpts) -> Result<()> {
     })?;
 
     if records.is_empty() {
-        println!("(no entry for @{q} — `xgram directory set @{q} <channels_json>` 또는 RPC 설정 필요)");
+        println!(
+            "(no entry for @{q} — `xgram directory set @{q} <channels_json>` 또는 RPC 설정 필요)"
+        );
     } else {
         println!("ENS records for @{q}:");
         for (k, v) in records {

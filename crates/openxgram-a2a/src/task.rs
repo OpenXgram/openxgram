@@ -122,7 +122,12 @@ pub struct Task {
     /// task id.
     pub id: String,
     /// session/context id (선택).
-    #[serde(default, rename = "sessionId", alias = "session_id", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "sessionId",
+        alias = "session_id",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub session_id: Option<String>,
     /// 현재 상태.
     pub status: TaskStatus,

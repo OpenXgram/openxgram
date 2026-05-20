@@ -91,9 +91,7 @@ pub async fn run_wiki(data_dir: &Path, action: WikiAction) -> Result<()> {
             }
         }
         WikiAction::List { page_type } => {
-            let entries = tools
-                .list(page_type.as_deref())
-                .context("list_wiki 실패")?;
+            let entries = tools.list(page_type.as_deref()).context("list_wiki 실패")?;
             if entries.is_empty() {
                 println!("(페이지 없음)");
                 return Ok(());

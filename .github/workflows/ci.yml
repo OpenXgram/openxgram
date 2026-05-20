@@ -74,7 +74,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: cargo test (agent + response + sub_invoker + self-trigger)
-        run: cargo test -p openxgram-cli --test agent_inject --test self_trigger_e2e --test cross_node_conversation --test two_node_e2e --lib response::tests --lib sub_invoker::tests
+        # rust 1.95 clap: `--lib` 두 번 호출 reject → 한 번에 두 모듈 패턴 substring 필터.
+        run: cargo test -p openxgram-cli --test agent_inject --test self_trigger_e2e --test cross_node_conversation --test two_node_e2e --lib response sub_invoker
 
   audit:
     name: cargo audit (RustSec)

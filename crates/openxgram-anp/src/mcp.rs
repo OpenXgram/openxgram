@@ -51,20 +51,11 @@ pub const TOOL_ANNOUNCE_SELF: &str = "anp_announce_self";
 /// 4개 도구의 dispatcher.
 ///
 /// `self_keypair` 는 announce/send 시 자기 서명에 사용. None 이면 announce/send 거부.
+#[derive(Default)]
 pub struct AnpTools {
     pub client: AnpClient,
     pub self_did: Option<String>,
     pub self_keypair: Option<Keypair>,
-}
-
-impl Default for AnpTools {
-    fn default() -> Self {
-        Self {
-            client: AnpClient::new(),
-            self_did: None,
-            self_keypair: None,
-        }
-    }
 }
 
 impl AnpTools {

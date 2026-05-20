@@ -43,11 +43,7 @@ pub fn run_pattern(data_dir: &Path, action: PatternAction) -> Result<()> {
             min_similarity,
         } => {
             let r = tools
-                .match_pattern(
-                    &new_action,
-                    k.unwrap_or(5),
-                    min_similarity.unwrap_or(0.0),
-                )
+                .match_pattern(&new_action, k.unwrap_or(5), min_similarity.unwrap_or(0.0))
                 .context("match_action_pattern 실패")?;
             println!("input: {}", r.input);
             println!("count: {}", r.count);

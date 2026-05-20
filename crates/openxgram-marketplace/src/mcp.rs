@@ -77,7 +77,8 @@ impl MarketplaceTools {
         let agents = self.client.search_agents(query, limit).await?;
         debug!(
             target = "openxgram_marketplace",
-            query, hits = agents.len(),
+            query,
+            hits = agents.len(),
             "marketplace_search"
         );
         Ok(SearchResult {

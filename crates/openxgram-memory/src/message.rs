@@ -136,11 +136,7 @@ impl<'a, E: Embedder + ?Sized> MessageStore<'a, E> {
         )
     }
 
-    fn query_messages(
-        &mut self,
-        sql: &str,
-        params: impl rusqlite::Params,
-    ) -> Result<Vec<Message>> {
+    fn query_messages(&mut self, sql: &str, params: impl rusqlite::Params) -> Result<Vec<Message>> {
         let mut stmt = self.db.conn().prepare(sql)?;
         let rows = stmt.query_map(params, |r| {
             Ok((

@@ -3,7 +3,7 @@
 //! 모듈별 unit test는 각 src/*.rs 안의 #[cfg(test)]에 있음.
 //! 본 파일은 end-to-end 시나리오.
 
-use openxgram_wiki::{Syncer, WikiFs, mcp::WikiTools};
+use openxgram_wiki::{mcp::WikiTools, Syncer, WikiFs};
 use rusqlite::Connection;
 use tempfile::tempdir;
 

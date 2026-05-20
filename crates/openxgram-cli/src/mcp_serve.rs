@@ -607,7 +607,7 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     .map(|s| s.to_lowercase());
                 let embedder = default_embedder().map_err(internal)?;
                 let messages = MessageStore::new(&mut self.db, embedder.as_ref())
-                    .list_recent(limit * 4)  // filter 적용 후도 충분히 남도록 4배 fetch
+                    .list_recent(limit * 4) // filter 적용 후도 충분히 남도록 4배 fetch
                     .map_err(internal)?;
                 let items: Vec<Value> = messages
                     .into_iter()
@@ -640,9 +640,18 @@ impl ToolDispatcher for OpenxgramDispatcher {
             }
             "connect_discord" => {
                 let pw = self.require_vault()?.to_string();
-                let token_arg = args.get("bot_token").and_then(|v| v.as_str()).map(str::to_string);
-                let guild_arg = args.get("guild_id").and_then(|v| v.as_str()).map(str::to_string);
-                let webhook_arg = args.get("webhook_url").and_then(|v| v.as_str()).map(str::to_string);
+                let token_arg = args
+                    .get("bot_token")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let guild_arg = args
+                    .get("guild_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let webhook_arg = args
+                    .get("webhook_url")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
 
                 // 1. bot_token 결정 — 인자 우선, 없으면 vault.
                 let bot_token = if let Some(t) = token_arg.as_ref() {
@@ -650,10 +659,12 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 } else {
                     let bytes = VaultStore::new(&mut self.db)
                         .get("notify.discord.bot_token", &pw)
-                        .map_err(|_| invalid(
-                            "Discord bot token 미설정 — bot_token 인자로 전달. \
-                             webhook 만 쓸 거면 vault 에 notify.discord.webhook_url 직접 set"
-                        ))?;
+                        .map_err(|_| {
+                            invalid(
+                                "Discord bot token 미설정 — bot_token 인자로 전달. \
+                             webhook 만 쓸 거면 vault 에 notify.discord.webhook_url 직접 set",
+                            )
+                        })?;
                     String::from_utf8(bytes).map_err(|e| internal(format!("token utf8: {e}")))?
                 };
 
@@ -668,15 +679,26 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     if !resp.status().is_success() {
                         return Err(format!(
                             "bot token 검증 실패: HTTP {} — {}",
-                            resp.status(), resp.text().unwrap_or_default()
+                            resp.status(),
+                            resp.text().unwrap_or_default()
                         ));
                     }
                     resp.json().map_err(|e| format!("json: {e}"))
-                }).join().map_err(|_| internal("HTTP thread panic"))?
-                  .map_err(internal)?;
+                })
+                .join()
+                .map_err(|_| internal("HTTP thread panic"))?
+                .map_err(internal)?;
 
-                let bot_id = bot_info.get("id").and_then(|v| v.as_str()).unwrap_or("?").to_string();
-                let bot_username = bot_info.get("username").and_then(|v| v.as_str()).unwrap_or("?").to_string();
+                let bot_id = bot_info
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let bot_username = bot_info
+                    .get("username")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
 
                 // 3. vault 저장.
                 if token_arg.is_some() {
@@ -740,43 +762,63 @@ impl ToolDispatcher for OpenxgramDispatcher {
             }
             "connect_telegram" => {
                 let pw = self.require_vault()?.to_string();
-                let token_arg = args.get("bot_token").and_then(|v| v.as_str()).map(str::to_string);
-                let chat_arg = args.get("chat_id").and_then(|v| v.as_str()).map(str::to_string);
+                let token_arg = args
+                    .get("bot_token")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let chat_arg = args
+                    .get("chat_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
                 let test_msg = args
                     .get("test_message")
                     .and_then(|v| v.as_str())
                     .unwrap_or("✓ OpenXgram → Telegram 연결 테스트")
                     .to_string();
 
-                let read_vault_or_arg = |arg: &Option<String>, key: &str, db: &mut Db| -> Result<String, JsonRpcError> {
-                    if let Some(v) = arg { return Ok(v.clone()); }
-                    let bytes = VaultStore::new(db)
-                        .get(key, &pw)
-                        .map_err(|_| invalid(&format!("{} 미설정 — 인자로 전달하거나 vault 에 미리 저장", key)))?;
+                let read_vault_or_arg = |arg: &Option<String>,
+                                         key: &str,
+                                         db: &mut Db|
+                 -> Result<String, JsonRpcError> {
+                    if let Some(v) = arg {
+                        return Ok(v.clone());
+                    }
+                    let bytes = VaultStore::new(db).get(key, &pw).map_err(|_| {
+                        invalid(&format!(
+                            "{} 미설정 — 인자로 전달하거나 vault 에 미리 저장",
+                            key
+                        ))
+                    })?;
                     String::from_utf8(bytes).map_err(|e| internal(format!("vault utf8: {e}")))
                 };
 
-                let token = read_vault_or_arg(&token_arg, "notify.telegram.bot_token", &mut self.db)?;
-                let chat_id = read_vault_or_arg(&chat_arg, "notify.telegram.chat_id", &mut self.db)?;
+                let token =
+                    read_vault_or_arg(&token_arg, "notify.telegram.bot_token", &mut self.db)?;
+                let chat_id =
+                    read_vault_or_arg(&chat_arg, "notify.telegram.chat_id", &mut self.db)?;
 
                 let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
-                let body_str = serde_json::to_string(&json!({"chat_id": chat_id, "text": test_msg})).unwrap();
-                let (status_code, err_body): (u16, String) = std::thread::spawn(move || -> Result<(u16, String), String> {
-                    let resp = reqwest::blocking::Client::new()
-                        .post(&url)
-                        .header("content-type", "application/json")
-                        .body(body_str)
-                        .send()
-                        .map_err(|e| format!("Telegram POST: {e}"))?;
-                    let status = resp.status().as_u16();
-                    let text = if (200..300).contains(&status) {
-                        String::new()
-                    } else {
-                        resp.text().unwrap_or_else(|_| "(body 읽기 실패)".into())
-                    };
-                    Ok((status, text))
-                }).join().map_err(|_| internal("HTTP thread panic"))?
-                  .map_err(internal)?;
+                let body_str =
+                    serde_json::to_string(&json!({"chat_id": chat_id, "text": test_msg})).unwrap();
+                let (status_code, err_body): (u16, String) =
+                    std::thread::spawn(move || -> Result<(u16, String), String> {
+                        let resp = reqwest::blocking::Client::new()
+                            .post(&url)
+                            .header("content-type", "application/json")
+                            .body(body_str)
+                            .send()
+                            .map_err(|e| format!("Telegram POST: {e}"))?;
+                        let status = resp.status().as_u16();
+                        let text = if (200..300).contains(&status) {
+                            String::new()
+                        } else {
+                            resp.text().unwrap_or_else(|_| "(body 읽기 실패)".into())
+                        };
+                        Ok((status, text))
+                    })
+                    .join()
+                    .map_err(|_| internal("HTTP thread panic"))?
+                    .map_err(internal)?;
                 if !(200..300).contains(&status_code) {
                     return Err(invalid(&format!(
                         "Telegram API 응답 비정상: HTTP {} — {}",
@@ -838,24 +880,29 @@ impl ToolDispatcher for OpenxgramDispatcher {
 
                 let body_str = serde_json::to_string(&json!({"content": content})).unwrap();
                 let webhook_clone = webhook.clone();
-                let (status, err_body): (u16, String) = std::thread::spawn(move || -> Result<(u16, String), String> {
-                    let resp = reqwest::blocking::Client::new()
-                        .post(&webhook_clone)
-                        .header("content-type", "application/json")
-                        .body(body_str)
-                        .send()
-                        .map_err(|e| format!("Discord POST: {e}"))?;
-                    let s = resp.status().as_u16();
-                    let t = if (200..300).contains(&s) {
-                        String::new()
-                    } else {
-                        resp.text().unwrap_or_default()
-                    };
-                    Ok((s, t))
-                }).join().map_err(|_| internal("HTTP thread panic"))?
-                  .map_err(internal)?;
+                let (status, err_body): (u16, String) =
+                    std::thread::spawn(move || -> Result<(u16, String), String> {
+                        let resp = reqwest::blocking::Client::new()
+                            .post(&webhook_clone)
+                            .header("content-type", "application/json")
+                            .body(body_str)
+                            .send()
+                            .map_err(|e| format!("Discord POST: {e}"))?;
+                        let s = resp.status().as_u16();
+                        let t = if (200..300).contains(&s) {
+                            String::new()
+                        } else {
+                            resp.text().unwrap_or_default()
+                        };
+                        Ok((s, t))
+                    })
+                    .join()
+                    .map_err(|_| internal("HTTP thread panic"))?
+                    .map_err(internal)?;
                 if !(200..300).contains(&status) {
-                    return Err(invalid(&format!("Discord webhook 응답 HTTP {status}: {err_body}")));
+                    return Err(invalid(&format!(
+                        "Discord webhook 응답 HTTP {status}: {err_body}"
+                    )));
                 }
                 Ok(json!({"sent": true, "status": status, "content_len": content.len()}))
             }
@@ -868,8 +915,11 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     .to_string();
                 let token_bytes = VaultStore::new(&mut self.db)
                     .get("notify.telegram.bot_token", &pw)
-                    .map_err(|_| invalid("notify.telegram.bot_token vault 에 없음 — 먼저 connect_telegram"))?;
-                let token = String::from_utf8(token_bytes).map_err(|e| internal(format!("vault utf8: {e}")))?;
+                    .map_err(|_| {
+                        invalid("notify.telegram.bot_token vault 에 없음 — 먼저 connect_telegram")
+                    })?;
+                let token = String::from_utf8(token_bytes)
+                    .map_err(|e| internal(format!("vault utf8: {e}")))?;
                 let chat_id = if let Some(c) = args.get("chat_id").and_then(|v| v.as_str()) {
                     c.to_string()
                 } else {
@@ -880,25 +930,31 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 };
 
                 let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
-                let body_str = serde_json::to_string(&json!({"chat_id": chat_id, "text": content})).unwrap();
-                let (status, err_body): (u16, String) = std::thread::spawn(move || -> Result<(u16, String), String> {
-                    let resp = reqwest::blocking::Client::new()
-                        .post(&url)
-                        .header("content-type", "application/json")
-                        .body(body_str)
-                        .send()
-                        .map_err(|e| format!("Telegram POST: {e}"))?;
-                    let s = resp.status().as_u16();
-                    let t = if (200..300).contains(&s) {
-                        String::new()
-                    } else {
-                        resp.text().unwrap_or_default()
-                    };
-                    Ok((s, t))
-                }).join().map_err(|_| internal("HTTP thread panic"))?
-                  .map_err(internal)?;
+                let body_str =
+                    serde_json::to_string(&json!({"chat_id": chat_id, "text": content})).unwrap();
+                let (status, err_body): (u16, String) =
+                    std::thread::spawn(move || -> Result<(u16, String), String> {
+                        let resp = reqwest::blocking::Client::new()
+                            .post(&url)
+                            .header("content-type", "application/json")
+                            .body(body_str)
+                            .send()
+                            .map_err(|e| format!("Telegram POST: {e}"))?;
+                        let s = resp.status().as_u16();
+                        let t = if (200..300).contains(&s) {
+                            String::new()
+                        } else {
+                            resp.text().unwrap_or_default()
+                        };
+                        Ok((s, t))
+                    })
+                    .join()
+                    .map_err(|_| internal("HTTP thread panic"))?
+                    .map_err(internal)?;
                 if !(200..300).contains(&status) {
-                    return Err(invalid(&format!("Telegram API 응답 HTTP {status}: {err_body}")));
+                    return Err(invalid(&format!(
+                        "Telegram API 응답 HTTP {status}: {err_body}"
+                    )));
                 }
                 Ok(json!({"sent": true, "status": status, "content_len": content.len()}))
             }
@@ -908,7 +964,10 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     .get("role")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| invalid("missing 'role'"))?;
-                if !role.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                if !role
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                {
                     return Err(invalid("role 은 영숫자/-/_ 만"));
                 }
 
@@ -959,10 +1018,7 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 }))
             }
             "install_hooks" => {
-                let scope = args
-                    .get("scope")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("user");
+                let scope = args.get("scope").and_then(|v| v.as_str()).unwrap_or("user");
                 let settings_path = match scope {
                     "user" => {
                         let home = std::env::var("HOME")
@@ -970,7 +1026,8 @@ impl ToolDispatcher for OpenxgramDispatcher {
                             .map_err(|_| internal("HOME/USERPROFILE 미설정"))?;
                         std::path::PathBuf::from(home).join(".claude/settings.json")
                     }
-                    "project" => std::env::current_dir().map_err(|e| internal(e))?
+                    "project" => std::env::current_dir()
+                        .map_err(|e| internal(e))?
                         .join(".claude/settings.json"),
                     _ => return Err(invalid("scope 는 user 또는 project")),
                 };
@@ -1003,14 +1060,17 @@ impl ToolDispatcher for OpenxgramDispatcher {
 
                 // 기존 openxgram 훅 있으면 skip.
                 let already = arr.iter().any(|h| {
-                    h.get("hooks").and_then(|v| v.as_array()).map(|hs| {
-                        hs.iter().any(|sub| {
-                            sub.get("command")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.contains("xgram") && s.contains("identity"))
-                                .unwrap_or(false)
+                    h.get("hooks")
+                        .and_then(|v| v.as_array())
+                        .map(|hs| {
+                            hs.iter().any(|sub| {
+                                sub.get("command")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.contains("xgram") && s.contains("identity"))
+                                    .unwrap_or(false)
+                            })
                         })
-                    }).unwrap_or(false)
+                        .unwrap_or(false)
                 });
 
                 if !already {
@@ -1023,7 +1083,8 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     }));
                 }
 
-                let new_content = serde_json::to_string_pretty(&settings).map_err(|e| internal(e))?;
+                let new_content =
+                    serde_json::to_string_pretty(&settings).map_err(|e| internal(e))?;
                 std::fs::write(&settings_path, new_content).map_err(|e| internal(e))?;
 
                 Ok(json!({
@@ -1036,22 +1097,31 @@ impl ToolDispatcher for OpenxgramDispatcher {
             }
             "create_project_category" => {
                 let pw = self.require_vault()?.to_string();
-                let name_arg = args.get("name").and_then(|v| v.as_str()).map(str::to_string);
+                let name_arg = args
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
                 let subagents: Vec<String> = args
                     .get("subagents")
                     .and_then(|v| v.as_array())
-                    .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(str::to_string))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 // bot_token + guild_id 는 vault 에서.
                 let bot_token = VaultStore::new(&mut self.db)
                     .get("notify.discord.bot_token", &pw)
                     .map_err(|_| invalid("notify.discord.bot_token vault 에 없음 — 먼저 connect_discord 또는 xgram setup discord"))?;
-                let bot_token = String::from_utf8(bot_token).map_err(|e| internal(format!("token utf8: {e}")))?;
+                let bot_token = String::from_utf8(bot_token)
+                    .map_err(|e| internal(format!("token utf8: {e}")))?;
                 let guild_id = VaultStore::new(&mut self.db)
                     .get("notify.discord.guild_id", &pw)
                     .map_err(|_| invalid("notify.discord.guild_id vault 에 없음 — vault_set 으로 추가 (Discord 서버 ID)"))?;
-                let guild_id = String::from_utf8(guild_id).map_err(|e| internal(format!("guild_id utf8: {e}")))?;
+                let guild_id = String::from_utf8(guild_id)
+                    .map_err(|e| internal(format!("guild_id utf8: {e}")))?;
 
                 // 프로젝트 alias 가져오기 (manifest).
                 let project_alias = {
@@ -1072,7 +1142,10 @@ impl ToolDispatcher for OpenxgramDispatcher {
 
                     // 1. 카테고리 생성 (type=4).
                     let cat_resp = client
-                        .post(format!("https://discord.com/api/v10/guilds/{}/channels", guild_clone))
+                        .post(format!(
+                            "https://discord.com/api/v10/guilds/{}/channels",
+                            guild_clone
+                        ))
                         .header("Authorization", &auth)
                         .header("content-type", "application/json")
                         .body(serde_json::to_string(&json!({"name": cat_name, "type": 4})).unwrap())
@@ -1085,53 +1158,98 @@ impl ToolDispatcher for OpenxgramDispatcher {
                             cat_resp.text().unwrap_or_default()
                         ));
                     }
-                    let cat_obj: Value = cat_resp.json().map_err(|e| format!("category json: {e}"))?;
-                    let cat_id = cat_obj.get("id").and_then(|v| v.as_str()).ok_or("카테고리 id 누락")?.to_string();
+                    let cat_obj: Value =
+                        cat_resp.json().map_err(|e| format!("category json: {e}"))?;
+                    let cat_id = cat_obj
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .ok_or("카테고리 id 누락")?
+                        .to_string();
 
                     // 2. 채널들 생성 — main + sub-agents.
                     let mut channels: Vec<Value> = Vec::new();
-                    let names: Vec<String> = std::iter::once("main".to_string()).chain(subs.into_iter()).collect();
+                    let names: Vec<String> = std::iter::once("main".to_string())
+                        .chain(subs.into_iter())
+                        .collect();
                     for ch_name in &names {
                         let ch_resp = client
-                            .post(format!("https://discord.com/api/v10/guilds/{}/channels", guild_clone))
+                            .post(format!(
+                                "https://discord.com/api/v10/guilds/{}/channels",
+                                guild_clone
+                            ))
                             .header("Authorization", &auth)
                             .header("content-type", "application/json")
-                            .body(serde_json::to_string(&json!({
-                                "name": ch_name,
-                                "type": 0,
-                                "parent_id": cat_id,
-                            })).unwrap())
+                            .body(
+                                serde_json::to_string(&json!({
+                                    "name": ch_name,
+                                    "type": 0,
+                                    "parent_id": cat_id,
+                                }))
+                                .unwrap(),
+                            )
                             .send()
                             .map_err(|e| format!("channel {ch_name} POST: {e}"))?;
                         if !ch_resp.status().is_success() {
-                            return Err(format!("채널 {ch_name} 생성 실패: HTTP {}", ch_resp.status()));
+                            return Err(format!(
+                                "채널 {ch_name} 생성 실패: HTTP {}",
+                                ch_resp.status()
+                            ));
                         }
-                        let ch_obj: Value = ch_resp.json().map_err(|e| format!("channel json: {e}"))?;
-                        let ch_id = ch_obj.get("id").and_then(|v| v.as_str()).ok_or("채널 id 누락")?.to_string();
+                        let ch_obj: Value =
+                            ch_resp.json().map_err(|e| format!("channel json: {e}"))?;
+                        let ch_id = ch_obj
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .ok_or("채널 id 누락")?
+                            .to_string();
 
                         // 3. webhook 발급.
                         let wh_resp = client
-                            .post(format!("https://discord.com/api/v10/channels/{}/webhooks", ch_id))
+                            .post(format!(
+                                "https://discord.com/api/v10/channels/{}/webhooks",
+                                ch_id
+                            ))
                             .header("Authorization", &auth)
                             .header("content-type", "application/json")
-                            .body(serde_json::to_string(&json!({"name": format!("openxgram-{ch_name}")})).unwrap())
+                            .body(
+                                serde_json::to_string(
+                                    &json!({"name": format!("openxgram-{ch_name}")}),
+                                )
+                                .unwrap(),
+                            )
                             .send()
                             .map_err(|e| format!("webhook {ch_name} POST: {e}"))?;
                         if !wh_resp.status().is_success() {
-                            return Err(format!("채널 {ch_name} webhook 발급 실패: HTTP {}", wh_resp.status()));
+                            return Err(format!(
+                                "채널 {ch_name} webhook 발급 실패: HTTP {}",
+                                wh_resp.status()
+                            ));
                         }
-                        let wh_obj: Value = wh_resp.json().map_err(|e| format!("webhook json: {e}"))?;
-                        let wh_url = wh_obj.get("url").and_then(|v| v.as_str()).ok_or("webhook url 누락")?.to_string();
+                        let wh_obj: Value =
+                            wh_resp.json().map_err(|e| format!("webhook json: {e}"))?;
+                        let wh_url = wh_obj
+                            .get("url")
+                            .and_then(|v| v.as_str())
+                            .ok_or("webhook url 누락")?
+                            .to_string();
 
-                        channels.push(json!({"name": ch_name, "channel_id": ch_id, "webhook_url": wh_url}));
+                        channels.push(
+                            json!({"name": ch_name, "channel_id": ch_id, "webhook_url": wh_url}),
+                        );
                     }
 
                     Ok(json!({"category_id": cat_id, "channels": channels}))
-                }).join().map_err(|_| internal("HTTP thread panic"))?
-                  .map_err(internal)?;
+                })
+                .join()
+                .map_err(|_| internal("HTTP thread panic"))?
+                .map_err(internal)?;
 
                 // vault 에 main 채널의 webhook 저장 (기본 forward 채널).
-                if let Some(main_ch) = result.get("channels").and_then(|v| v.as_array()).and_then(|a| a.first()) {
+                if let Some(main_ch) = result
+                    .get("channels")
+                    .and_then(|v| v.as_array())
+                    .and_then(|a| a.first())
+                {
                     if let Some(url) = main_ch.get("webhook_url").and_then(|v| v.as_str()) {
                         VaultStore::new(&mut self.db)
                             .set("notify.discord.webhook_url", url.as_bytes(), &pw, &[])
@@ -1233,7 +1351,10 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| invalid("missing 'content'"))?
                     .to_string();
-                let page_type = args.get("page_type").and_then(|v| v.as_str()).map(str::to_string);
+                let page_type = args
+                    .get("page_type")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
                 let expected_hash = args
                     .get("expected_hash")
                     .and_then(|v| v.as_str())
@@ -1265,7 +1386,10 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| invalid("missing 'to'"))?
                     .to_string();
-                let reason = args.get("reason").and_then(|v| v.as_str()).map(str::to_string);
+                let reason = args
+                    .get("reason")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
                 let wiki_root = self.data_dir.join("wiki");
                 let fs = WikiFs::new(&wiki_root);
                 let conn: &rusqlite::Connection = self.db.conn();
@@ -1290,11 +1414,13 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 let hits = tools.search(&query, k).map_err(internal)?;
                 let items: Vec<Value> = hits
                     .iter()
-                    .map(|h| json!({
-                        "id": h.id.to_string(),
-                        "title": h.title,
-                        "score": h.score,
-                    }))
+                    .map(|h| {
+                        json!({
+                            "id": h.id.to_string(),
+                            "title": h.title,
+                            "score": h.score,
+                        })
+                    })
                     .collect();
                 Ok(json!({"hits": items, "count": items.len()}))
             }
@@ -1308,7 +1434,9 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 let conn: &rusqlite::Connection = self.db.conn();
                 let tools = WikiTools::new(&fs, conn);
                 let entries = tools.list(page_type.as_deref()).map_err(internal)?;
-                Ok(json!({"entries": serde_json::to_value(&entries).map_err(internal)?, "count": entries.len()}))
+                Ok(
+                    json!({"entries": serde_json::to_value(&entries).map_err(internal)?, "count": entries.len()}),
+                )
             }
             // ─── 실수 레지스트리 (4) ───
             "check_for_mistakes" => {
@@ -1341,7 +1469,9 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 let conn: &rusqlite::Connection = self.db.conn();
                 let tools = MistakeTools::new(conn);
                 let hits = tools.find_similar(&situation, k).map_err(internal)?;
-                Ok(json!({"hits": serde_json::to_value(&hits).map_err(internal)?, "count": hits.len()}))
+                Ok(
+                    json!({"hits": serde_json::to_value(&hits).map_err(internal)?, "count": hits.len()}),
+                )
             }
             "resolve_mistake" => {
                 let mistake_id = args
@@ -1387,7 +1517,9 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 let conn: &rusqlite::Connection = self.db.conn();
                 let tools = PatternTools::new(conn);
                 let suggestions = tools.suggest_next(&current_state).map_err(internal)?;
-                Ok(json!({"suggestions": serde_json::to_value(&suggestions).map_err(internal)?, "count": suggestions.len()}))
+                Ok(
+                    json!({"suggestions": serde_json::to_value(&suggestions).map_err(internal)?, "count": suggestions.len()}),
+                )
             }
             "confirm_pattern_execution" => {
                 let pattern_id = args
@@ -1404,7 +1536,9 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 };
                 let conn: &rusqlite::Connection = self.db.conn();
                 let tools = PatternTools::new(conn);
-                let r = tools.confirm(&pattern_id, modifications).map_err(internal)?;
+                let r = tools
+                    .confirm(&pattern_id, modifications)
+                    .map_err(internal)?;
                 Ok(serde_json::to_value(r).map_err(internal)?)
             }
             "record_pattern_outcome" => {

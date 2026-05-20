@@ -28,9 +28,9 @@ pub mod sync;
 
 pub use fs::WikiFs;
 pub use page::{Page, PageId, PageType, Related};
-pub use search::{SearchHit, search_wiki};
+pub use search::{search_wiki, SearchHit};
 pub use store::{WikiStore, WikiStoreError};
-pub use sync::{Syncer, SyncReport};
+pub use sync::{SyncReport, Syncer};
 
 use thiserror::Error;
 

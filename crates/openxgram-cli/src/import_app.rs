@@ -66,7 +66,12 @@ pub fn run_import_app(
         .trim()
         .to_string();
     let title = if title.is_empty() {
-        format!("import-{}", file.file_name().and_then(|s| s.to_str()).unwrap_or("untitled"))
+        format!(
+            "import-{}",
+            file.file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("untitled")
+        )
     } else {
         title
     };
@@ -171,7 +176,10 @@ fn parse_chatgpt(raw: &str) -> Result<(String, &'static str, Vec<Turn>)> {
     let v: serde_json::Value = serde_json::from_str(raw).context("ChatGPT JSON 파싱")?;
     let conv: ChatgptConversation = match v {
         serde_json::Value::Array(arr) => {
-            let first = arr.into_iter().next().ok_or_else(|| anyhow!("빈 conversations array"))?;
+            let first = arr
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("빈 conversations array"))?;
             serde_json::from_value(first)?
         }
         other => serde_json::from_value(other)?,
@@ -387,9 +395,15 @@ mod tests {
 
     #[test]
     fn format_parse_round_trip() {
-        assert_eq!(ImportFormat::parse("chatgpt").unwrap(), ImportFormat::Chatgpt);
+        assert_eq!(
+            ImportFormat::parse("chatgpt").unwrap(),
+            ImportFormat::Chatgpt
+        );
         assert_eq!(ImportFormat::parse("gemini").unwrap(), ImportFormat::Gemini);
-        assert_eq!(ImportFormat::parse("claude-code").unwrap(), ImportFormat::ClaudeCode);
+        assert_eq!(
+            ImportFormat::parse("claude-code").unwrap(),
+            ImportFormat::ClaudeCode
+        );
         assert!(ImportFormat::parse("invalid").is_err());
     }
 
@@ -510,7 +524,11 @@ mod tests {
         let f = dir.join("c.json");
         std::fs::write(&f, raw).unwrap();
         {
-            let mut db = Db::open(DbConfig { path: db_path(dir), ..Default::default() }).unwrap();
+            let mut db = Db::open(DbConfig {
+                path: db_path(dir),
+                ..Default::default()
+            })
+            .unwrap();
             db.migrate().unwrap();
         }
         let s = run_import_app(dir, &f, ImportFormat::Chatgpt, Some("override-title")).unwrap();

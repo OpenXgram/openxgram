@@ -117,10 +117,7 @@ impl SpendPolicy {
             ));
         }
         if self.whitelist_required && !self.whitelist.contains(agent.as_str()) {
-            reasons.push(format!(
-                "agent not in whitelist: {}",
-                agent
-            ));
+            reasons.push(format!("agent not in whitelist: {}", agent));
         }
         if reasons.is_empty() {
             SpendPolicyDecision::AutoApprove
@@ -318,8 +315,10 @@ mod tests {
 
     #[test]
     fn whitelist_disabled_allows_any() {
-        let mut p = SpendPolicy::default();
-        p.whitelist_required = false;
+        let p = SpendPolicy {
+            whitelist_required: false,
+            ..Default::default()
+        };
         let d = p.evaluate(&aid("agent:anyone"), 100_000, 0, 0, 0);
         assert_eq!(d, SpendPolicyDecision::AutoApprove);
     }

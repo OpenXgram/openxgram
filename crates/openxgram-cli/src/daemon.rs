@@ -99,8 +99,7 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
                 let dir = opts.data_dir.clone();
                 let token = d.bot_token.clone();
                 let handle = tokio::spawn(async move {
-                    if let Err(e) =
-                        crate::notify::run_discord_inbound_for_daemon(dir, token).await
+                    if let Err(e) = crate::notify::run_discord_inbound_for_daemon(dir, token).await
                     {
                         tracing::warn!(error = %e, "discord inbound listener 종료");
                     }

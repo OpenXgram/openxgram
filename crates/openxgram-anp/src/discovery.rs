@@ -44,9 +44,7 @@ pub async fn resolve_did_document_at_url(
     let resp = client.get(url).send().await?;
     let status = resp.status();
     if !status.is_success() {
-        return Err(AnpError::Resolution(format!(
-            "GET {url} returned {status}"
-        )));
+        return Err(AnpError::Resolution(format!("GET {url} returned {status}")));
     }
     let doc: Value = resp.json().await?;
     validate_did_document(did, &doc).map_err(|e| AnpError::InvalidDocument(e.to_string()))?;
@@ -94,8 +92,8 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let kp = Keypair::from_secret_bytes(&[0x11u8; 32]).unwrap();
         let did = "did:wba:example.com";
-        let doc = generate_did_document(did, &kp, Some(("AnpAgent", "https://example.com/anp")))
-            .unwrap();
+        let doc =
+            generate_did_document(did, &kp, Some(("AnpAgent", "https://example.com/anp"))).unwrap();
         let body = serde_json::to_string(&doc).unwrap();
         let _m = server
             .mock("GET", "/.well-known/did.json")
@@ -166,8 +164,7 @@ mod tests {
             .await;
         let url = format!("{}/.well-known/did.json", server.url());
         let client = reqwest::Client::new();
-        let res =
-            discover_endpoint_at_url(&client, "did:wba:example.com", &url).await;
+        let res = discover_endpoint_at_url(&client, "did:wba:example.com", &url).await;
         assert!(matches!(res, Err(AnpError::Resolution(_))));
     }
 }

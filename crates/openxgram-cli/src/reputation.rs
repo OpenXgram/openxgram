@@ -31,9 +31,7 @@ pub fn aggregate_local_scores(data_dir: &Path) -> Result<Vec<IdentityScore>> {
              WHERE sender LIKE 'peer:%'
              GROUP BY sender",
         )?;
-        let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
-        })?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
         rows.collect::<rusqlite::Result<Vec<_>>>()?
     };
     for (alias, count) in message_counts {
@@ -52,9 +50,7 @@ pub fn aggregate_local_scores(data_dir: &Path) -> Result<Vec<IdentityScore>> {
              WHERE state='confirmed' GROUP BY payee_address",
         ) {
             Ok(mut stmt) => {
-                match stmt.query_map([], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
-                }) {
+                match stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))) {
                     Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
                     Err(_) => Vec::new(),
                 }
@@ -73,27 +69,23 @@ pub fn aggregate_local_scores(data_dir: &Path) -> Result<Vec<IdentityScore>> {
     // 3) endorsement — eas_attestations 의 kind='endorsement' fields_json 의 endorsee
     let endorsement_jsons: Vec<String> = {
         let conn = db.conn();
-        match conn.prepare(
-            "SELECT fields_json FROM eas_attestations WHERE kind='endorsement'",
-        ) {
-            Ok(mut stmt) => {
-                match stmt.query_map([], |r| r.get::<_, String>(0)) {
-                    Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
-                    Err(_) => Vec::new(),
-                }
-            }
+        match conn.prepare("SELECT fields_json FROM eas_attestations WHERE kind='endorsement'") {
+            Ok(mut stmt) => match stmt.query_map([], |r| r.get::<_, String>(0)) {
+                Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+                Err(_) => Vec::new(),
+            },
             Err(_) => Vec::new(),
         }
     };
     for json in endorsement_jsons {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
             if let Some(endorsee) = v.get("endorsee").and_then(|x| x.as_str()) {
-                let s = by_id.entry(endorsee.to_string()).or_insert_with(|| {
-                    IdentityScore {
+                let s = by_id
+                    .entry(endorsee.to_string())
+                    .or_insert_with(|| IdentityScore {
                         identity: endorsee.to_string(),
                         ..Default::default()
-                    }
-                });
+                    });
                 s.endorsements_received += 1;
             }
         }
@@ -138,9 +130,7 @@ mod tests {
                 "INSERT INTO messages
                   (id, session_id, sender, body, signature, timestamp, conversation_id)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                rusqlite::params![
-                    id, session_id, sender, body, "sig", &now, "conv-1"
-                ],
+                rusqlite::params![id, session_id, sender, body, "sig", &now, "conv-1"],
             )
             .unwrap();
     }

@@ -47,7 +47,9 @@ impl WbaDid {
     /// `did:wba:example.com:alice`       → domain=example.com, segments=[alice]
     /// `did:wba:example.com:agents:alice`→ domain=example.com, segments=[agents, alice]
     pub fn parse(did: &str) -> Result<Self, DidError> {
-        let rest = did.strip_prefix("did:wba:").ok_or(DidError::InvalidDidKey)?;
+        let rest = did
+            .strip_prefix("did:wba:")
+            .ok_or(DidError::InvalidDidKey)?;
         if rest.is_empty() {
             return Err(DidError::InvalidDidKey);
         }
@@ -100,9 +102,8 @@ impl WbaDid {
 /// 도메인 문자열의 매우 느슨한 검증. (`/`, 공백, 제어문자 등은 금지)
 fn is_valid_domain(s: &str) -> bool {
     !s.is_empty()
-        && s.chars().all(|c| {
-            c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_'
-        })
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
         && !s.starts_with('.')
         && !s.ends_with('.')
 }
@@ -110,9 +111,8 @@ fn is_valid_domain(s: &str) -> bool {
 /// path segment 의 매우 느슨한 검증. RFC 3986 의 `pchar` 부분집합.
 fn is_valid_path_segment(s: &str) -> bool {
     !s.is_empty()
-        && s.chars().all(|c| {
-            c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~')
-        })
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~'))
 }
 
 /// 해석된 DID Document 의 정합성 검증.
@@ -345,12 +345,8 @@ mod tests {
     fn generate_doc_with_service() {
         let kp = Keypair::from_secret_bytes(&[0x88u8; 32]).unwrap();
         let did = "did:wba:example.com";
-        let doc = generate_did_document(
-            did,
-            &kp,
-            Some(("AnpAgent", "https://example.com/anp")),
-        )
-        .unwrap();
+        let doc =
+            generate_did_document(did, &kp, Some(("AnpAgent", "https://example.com/anp"))).unwrap();
         validate_did_document(did, &doc).unwrap();
         let endpoint = extract_service_endpoint(&doc, Some("AnpAgent"));
         assert_eq!(endpoint.as_deref(), Some("https://example.com/anp"));

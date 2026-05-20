@@ -36,10 +36,7 @@ impl<'a> PatternTools<'a> {
     }
 
     /// `suggest_next_steps` — current_state로 매칭 → 다음 단계 추천.
-    pub fn suggest_next(
-        &self,
-        current_state: &str,
-    ) -> Result<Vec<SuggestedStep>, PatternsError> {
+    pub fn suggest_next(&self, current_state: &str) -> Result<Vec<SuggestedStep>, PatternsError> {
         let store = ActionPatternStore::new(self.conn);
         let hits = store.search_like(current_state, 3)?;
         let mut out = Vec::new();
@@ -231,7 +228,11 @@ mod tests {
         tools
             .create(NewActionPattern {
                 pattern_id: "p:deploy".into(),
-                action_sequence: vec![step("lint", None), step("build", None), step("deploy", None)],
+                action_sequence: vec![
+                    step("lint", None),
+                    step("build", None),
+                    step("deploy", None),
+                ],
             })
             .unwrap();
 

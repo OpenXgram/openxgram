@@ -21,9 +21,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use openxgram_db::{Db, DbConfig};
 use openxgram_memory::{default_embedder, MessageStore, SessionStore};
-use openxgram_orchestration::{
-    kst_now_epoch, ScheduleKind, ScheduledStore, TargetKind,
-};
+use openxgram_orchestration::{kst_now_epoch, ScheduleKind, ScheduledStore, TargetKind};
 use serde::{Deserialize, Serialize};
 
 use crate::response::Generator;
@@ -468,7 +466,10 @@ async fn poll_once(
                     ) {
                         eprintln!("[agent][friend] auto peer add 실패 ({}): {e}", acc.alias);
                     } else {
-                        eprintln!("[agent][friend] handshake → 자동 peer 등록: {} ({})", acc.alias, acc.address);
+                        eprintln!(
+                            "[agent][friend] handshake → 자동 peer 등록: {} ({})",
+                            acc.alias, acc.address
+                        );
                     }
                 }
                 last_ts = ts;
@@ -663,8 +664,7 @@ async fn forward_hitl_outbox(
         Some(s) => s,
         None => return Ok(0),
     };
-    let messages = MessageStore::new(&mut db, embedder.as_ref())
-        .list_for_session(&session.id)?;
+    let messages = MessageStore::new(&mut db, embedder.as_ref()).list_for_session(&session.id)?;
     let mut last_ts = state.hitl_outbox_watermark.clone();
     let mut count = 0usize;
     for m in messages {
@@ -686,10 +686,7 @@ async fn forward_hitl_outbox(
                 payload.push_str(&format!("\n- {o}"));
             }
         }
-        payload.push_str(&format!(
-            "\n\n응답: `xgram human respond {} <답>`",
-            req.id
-        ));
+        payload.push_str(&format!("\n\n응답: `xgram human respond {} <답>`", req.id));
         if let Some(url) = discord_url {
             if let Err(e) = post_to_discord(http, url, &payload).await {
                 eprintln!("[agent][warn] HITL Discord push 실패: {e}");

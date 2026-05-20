@@ -1894,9 +1894,10 @@ impl TryFrom<PatternCli> for PatternAction {
             },
             PatternCli::Confirm { id, modifications } => {
                 let parsed = match modifications {
-                    Some(s) => Some(serde_json::from_str(&s).map_err(|e| {
-                        anyhow::anyhow!("--modifications JSON 파싱 실패: {e}")
-                    })?),
+                    Some(s) => Some(
+                        serde_json::from_str(&s)
+                            .map_err(|e| anyhow::anyhow!("--modifications JSON 파싱 실패: {e}"))?,
+                    ),
                     None => None,
                 };
                 PatternAction::Confirm {
@@ -2177,14 +2178,15 @@ async fn main() -> anyhow::Result<()> {
         Commands::Session { data_dir, action } => {
             let dir = resolve_data_dir(data_dir)?;
             // ImportApp 은 별도 함수 호출
-            if let SessionCli::ImportApp { file, format, title } = action {
+            if let SessionCli::ImportApp {
+                file,
+                format,
+                title,
+            } = action
+            {
                 let fmt = openxgram_cli::import_app::ImportFormat::parse(&format)?;
-                let summary = openxgram_cli::import_app::run_import_app(
-                    &dir,
-                    &file,
-                    fmt,
-                    title.as_deref(),
-                )?;
+                let summary =
+                    openxgram_cli::import_app::run_import_app(&dir, &file, fmt, title.as_deref())?;
                 println!(
                     "✓ import 완료 — session '{}' (id={}) / 메시지 {} 개",
                     summary.title, summary.session_id, summary.messages_inserted
@@ -2825,7 +2827,11 @@ async fn main() -> anyhow::Result<()> {
             openxgram_cli::mcp_install::run_agent_restart(&dir)?;
         }
 
-        Commands::Invite { data_dir, alias, address } => {
+        Commands::Invite {
+            data_dir,
+            alias,
+            address,
+        } => {
             let dir = resolve_data_dir(data_dir)?;
             let alias = alias.unwrap_or_else(|| "me".into());
             openxgram_cli::invite::run_invite(&dir, &alias, &address)?;
@@ -2869,41 +2875,42 @@ async fn main() -> anyhow::Result<()> {
             }
         },
 
-        Commands::Directory { cmd } => match cmd {
-            DirectoryCli::Lookup { handle } => {
-                let chans = openxgram_cli::channels::directory_lookup(&handle)?;
-                if chans.is_empty() {
-                    println!("(채널 없음 — directory cache miss; xgram identity publish 시 등록 권장)");
-                } else {
-                    for c in chans {
-                        println!("{:<12} {:<40} {}", c.kind, c.address, c.visibility);
+        Commands::Directory { cmd } => {
+            match cmd {
+                DirectoryCli::Lookup { handle } => {
+                    let chans = openxgram_cli::channels::directory_lookup(&handle)?;
+                    if chans.is_empty() {
+                        println!("(채널 없음 — directory cache miss; xgram identity publish 시 등록 권장)");
+                    } else {
+                        for c in chans {
+                            println!("{:<12} {:<40} {}", c.kind, c.address, c.visibility);
+                        }
                     }
                 }
+                DirectoryCli::Set {
+                    handle,
+                    channels_json,
+                } => {
+                    let chans: Vec<openxgram_cli::channels::Channel> =
+                        serde_json::from_str(&channels_json)
+                            .map_err(|e| anyhow::anyhow!("channels_json 파싱 (JSON): {e}"))?;
+                    openxgram_cli::channels::directory_set(&handle, chans)?;
+                    println!("✓ {handle} 디렉터리 cache 갱신");
+                }
+                DirectoryCli::Register {
+                    to,
+                    with_counts,
+                    data_dir,
+                } => {
+                    let dir = resolve_data_dir(data_dir)?;
+                    openxgram_cli::identity_handle::register_to_directory(&dir, &to, with_counts)
+                        .await?;
+                }
             }
-            DirectoryCli::Set {
-                handle,
-                channels_json,
-            } => {
-                let chans: Vec<openxgram_cli::channels::Channel> =
-                    serde_json::from_str(&channels_json)
-                        .map_err(|e| anyhow::anyhow!("channels_json 파싱 (JSON): {e}"))?;
-                openxgram_cli::channels::directory_set(&handle, chans)?;
-                println!("✓ {handle} 디렉터리 cache 갱신");
-            }
-            DirectoryCli::Register {
-                to,
-                with_counts,
-                data_dir,
-            } => {
-                let dir = resolve_data_dir(data_dir)?;
-                openxgram_cli::identity_handle::register_to_directory(&dir, &to, with_counts)
-                    .await?;
-            }
-        },
+        }
 
         Commands::Find { query, indexer } => {
-            openxgram_cli::find::run_find(openxgram_cli::find::FindOpts { query, indexer })
-                .await?;
+            openxgram_cli::find::run_find(openxgram_cli::find::FindOpts { query, indexer }).await?;
         }
 
         Commands::Eas { cmd } => match cmd {
@@ -2915,7 +2922,11 @@ async fn main() -> anyhow::Result<()> {
                 let dir = resolve_data_dir(data_dir)?;
                 openxgram_cli::eas::run_count(&dir)?;
             }
-            EasCli::Attest { kind, fields, data_dir } => {
+            EasCli::Attest {
+                kind,
+                fields,
+                data_dir,
+            } => {
                 let dir = resolve_data_dir(data_dir)?;
                 let k = match kind.as_str() {
                     "message" => openxgram_eas::AttestationKind::Message,

@@ -186,7 +186,13 @@ pub fn import_session(
             } else {
                 Some(msg.conversation_id.as_str())
             };
-            store.insert(&new_session_id, &msg.sender, &msg.body, &msg.signature, conv)?;
+            store.insert(
+                &new_session_id,
+                &msg.sender,
+                &msg.body,
+                &msg.signature,
+                conv,
+            )?;
             messages_inserted += 1;
         }
     }

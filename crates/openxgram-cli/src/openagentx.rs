@@ -69,8 +69,9 @@ pub async fn run_call(data_dir: &Path, opts: CallOpts) -> Result<String> {
         if amount == 0 {
             None
         } else {
-            let intent_id = create_payment_draft(&mut db, &opts.agent, amount, opts.memo.as_deref())
-                .context("payment_intent draft")?;
+            let intent_id =
+                create_payment_draft(&mut db, &opts.agent, amount, opts.memo.as_deref())
+                    .context("payment_intent draft")?;
             eprintln!("[openagentx] payment_intent draft: {intent_id} ({amount} micro USDC). 서명/제출은 별도 (`xgram payment ...`).");
             Some(intent_id)
         }
@@ -120,7 +121,12 @@ pub async fn run_call(data_dir: &Path, opts: CallOpts) -> Result<String> {
         )
         .context("openagentx response insert")?;
 
-    eprintln!("[openagentx] ← {} ({} chars). receipt={:?}", opts.agent, answer.len(), parsed.receipt_id);
+    eprintln!(
+        "[openagentx] ← {} ({} chars). receipt={:?}",
+        opts.agent,
+        answer.len(),
+        parsed.receipt_id
+    );
     Ok(answer)
 }
 
@@ -197,7 +203,10 @@ mod tests {
         )
         .await;
         assert!(res.is_err());
-        assert!(res.unwrap_err().to_string().contains("XGRAM_OPENAGENTX_URL"));
+        assert!(res
+            .unwrap_err()
+            .to_string()
+            .contains("XGRAM_OPENAGENTX_URL"));
     }
 
     #[tokio::test]
@@ -218,7 +227,9 @@ mod tests {
         let app = Router::new().route("/agents/invoke", post(handler));
         let bind: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
         let listener = tokio::net::TcpListener::bind(bind).await.unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let tmp = open_test_dir();

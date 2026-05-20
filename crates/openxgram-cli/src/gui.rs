@@ -72,8 +72,8 @@ fn detect_funnel_url() -> Result<Option<String>> {
         ));
     }
 
-    let json: Value = serde_json::from_slice(&output.stdout)
-        .context("tailscale status --json 파싱 실패")?;
+    let json: Value =
+        serde_json::from_slice(&output.stdout).context("tailscale status --json 파싱 실패")?;
 
     // Self.DNSName — 자기 머신의 MagicDNS 이름 (예: "whitegun-win-1.tail0957ca.ts.net.")
     let dns_name = json

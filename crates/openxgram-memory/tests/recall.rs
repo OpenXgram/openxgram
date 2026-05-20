@@ -49,8 +49,12 @@ fn insert_and_recall_self_returns_distance_zero() {
 
     {
         let mut store = MessageStore::new(&mut db, &embedder);
-        store.insert("s1", "alice", "hello world", "sig", None).unwrap();
-        store.insert("s1", "bob", "foo bar baz", "sig", None).unwrap();
+        store
+            .insert("s1", "alice", "hello world", "sig", None)
+            .unwrap();
+        store
+            .insert("s1", "bob", "foo bar baz", "sig", None)
+            .unwrap();
         store
             .insert("s1", "alice", "openxgram memory", "sig", None)
             .unwrap();

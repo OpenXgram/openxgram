@@ -14,7 +14,7 @@ use tracing::{debug, info, warn};
 use crate::fs::WikiFs;
 use crate::page::PageId;
 use crate::store::WikiStore;
-use crate::{WikiError, content_hash};
+use crate::{content_hash, WikiError};
 
 /// 동기화 1회 실행 보고.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -88,11 +88,9 @@ impl<'a> Syncer<'a> {
         _path: &Path,
     ) -> Result<SyncOutcome, WikiError> {
         // 디스크 정본 파싱
-        let page = self
-            .fs
-            .read(id)
-            .await?
-            .ok_or_else(|| WikiError::Other(format!("walk reported {id} but read returned None")))?;
+        let page = self.fs.read(id).await?.ok_or_else(|| {
+            WikiError::Other(format!("walk reported {id} but read returned None"))
+        })?;
 
         // 기존 row와 비교
         match store.get(id)? {

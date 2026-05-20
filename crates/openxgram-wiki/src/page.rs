@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
-use crate::{WikiError, content_hash};
+use crate::{content_hash, WikiError};
 
 /// 페이지 종류 (디렉토리 분류 = type).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

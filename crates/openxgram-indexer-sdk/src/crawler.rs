@@ -98,7 +98,9 @@ mod tests {
         let c = EnsCrawler::new(m);
         let recs = c.crawl(&["starian.base.eth"]).await.unwrap();
         assert_eq!(recs.len(), 2, "set 한 두 key 만 반환");
-        assert!(recs.iter().any(|r| r.key == "xgram.handle" && r.value == "starian"));
+        assert!(recs
+            .iter()
+            .any(|r| r.key == "xgram.handle" && r.value == "starian"));
     }
 
     #[tokio::test]

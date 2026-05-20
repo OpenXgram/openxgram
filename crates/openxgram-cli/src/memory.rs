@@ -120,7 +120,14 @@ fn show_conversation(db: &mut Db, conversation_id: &str) -> Result<()> {
     }
     println!("conversation {conversation_id} ({} messages)", msgs.len());
     for m in &msgs {
-        let preview = m.body.lines().next().unwrap_or("").chars().take(160).collect::<String>();
+        let preview = m
+            .body
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(160)
+            .collect::<String>();
         println!(
             "  [{}] {} {} → {}",
             m.timestamp.format("%Y-%m-%d %H:%M:%S"),

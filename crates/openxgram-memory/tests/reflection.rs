@@ -42,7 +42,9 @@ fn reflect_session_creates_episode_with_correct_stats() {
         let mut store = MessageStore::new(&mut db, &embedder);
         store.insert("s1", "alice", "hello", "sig", None).unwrap();
         store.insert("s1", "bob", "hi", "sig", None).unwrap();
-        store.insert("s1", "alice", "how are you", "sig", None).unwrap();
+        store
+            .insert("s1", "alice", "how are you", "sig", None)
+            .unwrap();
     }
 
     let ep = reflect_session(&mut db, "s1").unwrap().unwrap();
@@ -81,13 +83,17 @@ fn reflect_multiple_calls_accumulate_episodes() {
 
     {
         let mut store = MessageStore::new(&mut db, &embedder);
-        store.insert("s1", "alice", "first batch", "sig", None).unwrap();
+        store
+            .insert("s1", "alice", "first batch", "sig", None)
+            .unwrap();
     }
     let _ep1 = reflect_session(&mut db, "s1").unwrap().unwrap();
 
     {
         let mut store = MessageStore::new(&mut db, &embedder);
-        store.insert("s1", "alice", "second batch", "sig", None).unwrap();
+        store
+            .insert("s1", "alice", "second batch", "sig", None)
+            .unwrap();
     }
     let _ep2 = reflect_session(&mut db, "s1").unwrap().unwrap();
 

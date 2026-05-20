@@ -303,7 +303,9 @@ mod tests {
         };
         let rendered = render_agent_unit(&opts);
         assert!(rendered.contains("EnvironmentFile=-/etc/openxgram/openxgram.env"));
-        assert!(rendered.contains("ExecStart=/usr/local/bin/xgram agent --data-dir /var/lib/openxgram"));
+        assert!(
+            rendered.contains("ExecStart=/usr/local/bin/xgram agent --data-dir /var/lib/openxgram")
+        );
         assert!(rendered.contains("After=network.target openxgram-sidecar.service"));
     }
 
@@ -382,7 +384,9 @@ mod tests {
 
     #[test]
     fn agent_unit_path_default_under_user_systemd() {
-        unsafe { std::env::set_var("HOME", "/home/test"); }
+        unsafe {
+            std::env::set_var("HOME", "/home/test");
+        }
         let p = default_agent_unit_path().unwrap();
         assert!(p.ends_with(".config/systemd/user/openxgram-agent.service"));
     }

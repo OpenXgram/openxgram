@@ -95,7 +95,10 @@ pub fn bot_add(name: &str, alias: Option<&str>) -> Result<BotEntry> {
     if name.trim().is_empty() {
         bail!("이름 비어있음");
     }
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         bail!("이름은 영숫자/-/_ 만 (got: {name})");
     }
 
@@ -121,8 +124,19 @@ pub fn bot_add(name: &str, alias: Option<&str>) -> Result<BotEntry> {
     reg.add(entry.clone())?;
     reg.save(&root)?;
 
-    eprintln!("[bot] 등록: {} (alias={}, port={}/{}, dir={})", entry.name, entry.alias, entry.transport_port, entry.gui_port, entry.data_dir.display());
-    eprintln!("[bot] 다음: xgram init --data-dir '{}' --alias '{}' (keystore 패스워드 입력)", entry.data_dir.display(), entry.alias);
+    eprintln!(
+        "[bot] 등록: {} (alias={}, port={}/{}, dir={})",
+        entry.name,
+        entry.alias,
+        entry.transport_port,
+        entry.gui_port,
+        entry.data_dir.display()
+    );
+    eprintln!(
+        "[bot] 다음: xgram init --data-dir '{}' --alias '{}' (keystore 패스워드 입력)",
+        entry.data_dir.display(),
+        entry.alias
+    );
     eprintln!("[bot] 그 후: xgram bot start {}", entry.name);
     Ok(entry)
 }
@@ -182,7 +196,10 @@ pub fn bot_register(name: &str, alias: Option<&str>) -> Result<()> {
     eprintln!("  data_dir     : {}", entry.data_dir.display());
     eprintln!("  transport    : http://127.0.0.1:{}", entry.transport_port);
     eprintln!("  gui          : http://127.0.0.1:{}", entry.gui_port);
-    eprintln!("  mcp          : http://127.0.0.1:{}", entry.transport_port + 2);
+    eprintln!(
+        "  mcp          : http://127.0.0.1:{}",
+        entry.transport_port + 2
+    );
     eprintln!("  linked peers : {}", other_names.len());
     Ok(())
 }
@@ -194,7 +211,12 @@ fn allocate_ports(reg: &BotRegistry) -> Result<(u16, u16)> {
         .iter()
         .flat_map(|b| {
             // bot start 가 transport+2 를 mcp 로 사용 — 그 영역도 reserve.
-            [b.transport_port, b.gui_port, b.transport_port + 2, b.transport_port + 3]
+            [
+                b.transport_port,
+                b.gui_port,
+                b.transport_port + 2,
+                b.transport_port + 3,
+            ]
         })
         .collect();
     for base in (47300..47900).step_by(4) {
@@ -220,9 +242,16 @@ pub fn bot_list() -> Result<()> {
         println!("(등록된 봇 없음)");
         return Ok(());
     }
-    println!("{:<20} {:<10} {:<7} {:<7} {:<10} {}", "NAME", "ALIAS", "TPORT", "GPORT", "STATUS", "DATA_DIR");
+    println!(
+        "{:<20} {:<10} {:<7} {:<7} {:<10} {}",
+        "NAME", "ALIAS", "TPORT", "GPORT", "STATUS", "DATA_DIR"
+    );
     for b in &reg.bots {
-        let status = if pid_alive(&b.data_dir) { "running" } else { "stopped" };
+        let status = if pid_alive(&b.data_dir) {
+            "running"
+        } else {
+            "stopped"
+        };
         println!(
             "{:<20} {:<10} {:<7} {:<7} {:<10} {}",
             b.name,
@@ -260,8 +289,12 @@ pub fn pid_alive(data_dir: &Path) -> bool {
     if !pid_path.exists() {
         return false;
     }
-    let Ok(s) = std::fs::read_to_string(&pid_path) else { return false };
-    let Ok(pid) = s.trim().parse::<i32>() else { return false };
+    let Ok(s) = std::fs::read_to_string(&pid_path) else {
+        return false;
+    };
+    let Ok(pid) = s.trim().parse::<i32>() else {
+        return false;
+    };
     #[cfg(unix)]
     {
         // signal 0 — alive 체크만, 신호 안 보냄
@@ -279,7 +312,10 @@ pub fn pid_alive(data_dir: &Path) -> bool {
 pub fn bot_start(name: &str) -> Result<()> {
     let root = xgram_root()?;
     let reg = BotRegistry::load(&root)?;
-    let b = reg.get(name).ok_or_else(|| anyhow!("봇 없음: {name}"))?.clone();
+    let b = reg
+        .get(name)
+        .ok_or_else(|| anyhow!("봇 없음: {name}"))?
+        .clone();
     if pid_alive(&b.data_dir) {
         eprintln!("[bot] {name}: 이미 가동 중 (skip)");
         return Ok(());
@@ -353,7 +389,11 @@ pub fn bot_start(name: &str) -> Result<()> {
     eprintln!("  daemon PID    : {daemon_pid}  (transport http://{bind}, gui http://{gui_bind})");
     eprintln!("  mcp-serve PID : {mcp_pid}     (mcp http://{mcp_bind}/rpc)");
     eprintln!("  data_dir      : {}", b.data_dir.display());
-    eprintln!("  log           : {}, {}", log_path.display(), mcp_log_path.display());
+    eprintln!(
+        "  log           : {}, {}",
+        log_path.display(),
+        mcp_log_path.display()
+    );
     eprintln!();
     eprintln!("Claude Code / Codex / Cursor 의 mcp config 에 추가 (.mcp.json):");
     eprintln!(
@@ -364,8 +404,8 @@ pub fn bot_start(name: &str) -> Result<()> {
 
 /// MCP 토큰 발급 (없으면 신규). `~/.xgram/bots/<name>/mcp.token` 0600 으로 보존.
 fn ensure_mcp_token(data_dir: &Path, name: &str) -> Result<String> {
-    use openxgram_db::{Db, DbConfig};
     use openxgram_core::paths::db_path;
+    use openxgram_db::{Db, DbConfig};
 
     let token_path = data_dir.join("mcp.token");
     if token_path.exists() {
@@ -423,15 +463,21 @@ pub fn bot_stop(name: &str) -> Result<()> {
 /// `xgram bot link a b` — 양방향 peer add (a 의 peers 에 b 추가, b 의 peers 에 a 추가).
 /// 두 봇 모두 같은 머신에 있어야 함 (다른 머신 봇끼리는 invite QR 사용).
 pub fn bot_link(a_name: &str, b_name: &str) -> Result<()> {
+    use openxgram_core::paths::{db_path, keystore_dir, MASTER_KEY_NAME};
     use openxgram_db::{Db, DbConfig};
     use openxgram_keystore::{FsKeystore, Keystore};
     use openxgram_peer::{PeerRole, PeerStore};
-    use openxgram_core::paths::{db_path, keystore_dir, MASTER_KEY_NAME};
 
     let root = xgram_root()?;
     let reg = BotRegistry::load(&root)?;
-    let a = reg.get(a_name).ok_or_else(|| anyhow!("봇 없음: {a_name}"))?.clone();
-    let b = reg.get(b_name).ok_or_else(|| anyhow!("봇 없음: {b_name}"))?.clone();
+    let a = reg
+        .get(a_name)
+        .ok_or_else(|| anyhow!("봇 없음: {a_name}"))?
+        .clone();
+    let b = reg
+        .get(b_name)
+        .ok_or_else(|| anyhow!("봇 없음: {b_name}"))?
+        .clone();
 
     let pw = std::env::var("XGRAM_KEYSTORE_PASSWORD")
         .context("XGRAM_KEYSTORE_PASSWORD env 필요 — 두 봇이 같은 패스워드 가정")?;
@@ -457,10 +503,16 @@ pub fn bot_link(a_name: &str, b_name: &str) -> Result<()> {
     Ok(())
 }
 
-fn add_peer(data_dir: &Path, alias: &str, pubkey_hex: &str, eth_addr: &str, port: u16) -> Result<()> {
+fn add_peer(
+    data_dir: &Path,
+    alias: &str,
+    pubkey_hex: &str,
+    eth_addr: &str,
+    port: u16,
+) -> Result<()> {
+    use openxgram_core::paths::db_path;
     use openxgram_db::{Db, DbConfig};
     use openxgram_peer::{PeerRole, PeerStore};
-    use openxgram_core::paths::db_path;
 
     let mut db = Db::open(DbConfig {
         path: db_path(data_dir),
@@ -473,7 +525,14 @@ fn add_peer(data_dir: &Path, alias: &str, pubkey_hex: &str, eth_addr: &str, port
     if store.get_by_alias(alias)?.is_some() {
         return Ok(());
     }
-    let _ = store.add_with_eth(alias, pubkey_hex, &address, Some(eth_addr), PeerRole::Worker, Some("local-bot"));
+    let _ = store.add_with_eth(
+        alias,
+        pubkey_hex,
+        &address,
+        Some(eth_addr),
+        PeerRole::Worker,
+        Some("local-bot"),
+    );
     Ok(())
 }
 
@@ -485,9 +544,13 @@ mod tests {
     // XGRAM_HOME 은 process-global env — 테스트 병렬 실행 시 충돌. file_serial 로 직렬화.
     fn with_xgram_root<F: FnOnce()>(f: F) {
         let tmp = tempdir().unwrap();
-        unsafe { std::env::set_var("XGRAM_HOME", tmp.path()); }
+        unsafe {
+            std::env::set_var("XGRAM_HOME", tmp.path());
+        }
         f();
-        unsafe { std::env::remove_var("XGRAM_HOME"); }
+        unsafe {
+            std::env::remove_var("XGRAM_HOME");
+        }
     }
 
     #[test]
@@ -562,7 +625,8 @@ mod tests {
                 gui_port: 47301,
                 alias: "rt".into(),
                 created_at: "2026-05-10T00:00:00+09:00".into(),
-            }).unwrap();
+            })
+            .unwrap();
             reg.save(&root).unwrap();
 
             let loaded = BotRegistry::load(&root).unwrap();

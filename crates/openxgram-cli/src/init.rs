@@ -122,7 +122,9 @@ pub fn run_init(opts: &InitOpts) -> Result<()> {
         // 2) SessionStart hook 설치 — ~/.claude/settings.json
         match crate::mcp_install::run_install_hooks(&opts.data_dir, "user") {
             Ok(()) => println!("  ✓ Hook 설치 : ~/.claude/settings.json"),
-            Err(e) => eprintln!("  ⚠ Hook 설치 실패 (수동: `xgram` 안에서 install_hooks 도구): {e}"),
+            Err(e) => {
+                eprintln!("  ⚠ Hook 설치 실패 (수동: `xgram` 안에서 install_hooks 도구): {e}")
+            }
         }
         println!();
         println!("이제 어떤 폴더에서든 `claude` 시작 시 OpenXgram MCP 자동 로드.");

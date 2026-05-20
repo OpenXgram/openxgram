@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 
 use crate::page::{Page, PageId, PageType};
-use crate::{WikiError, content_hash};
+use crate::{content_hash, WikiError};
 
 /// 위키 디스크 레이아웃 핸들러.
 pub struct WikiFs {
@@ -22,7 +22,12 @@ impl WikiFs {
     /// 디렉토리 보장 (entity/, concept/, comparison/, other/).
     pub async fn ensure_dirs(&self) -> Result<(), WikiError> {
         fs::create_dir_all(&self.root).await?;
-        for ty in [PageType::Entity, PageType::Concept, PageType::Comparison, PageType::Other] {
+        for ty in [
+            PageType::Entity,
+            PageType::Concept,
+            PageType::Comparison,
+            PageType::Other,
+        ] {
             fs::create_dir_all(self.root.join(ty.as_dir())).await?;
         }
         Ok(())
@@ -94,7 +99,12 @@ impl WikiFs {
     /// 디렉토리 전체 스캔 (sync 시 사용).
     pub async fn walk(&self) -> Result<Vec<(PageId, PathBuf)>, WikiError> {
         let mut out = Vec::new();
-        for ty in [PageType::Entity, PageType::Concept, PageType::Comparison, PageType::Other] {
+        for ty in [
+            PageType::Entity,
+            PageType::Concept,
+            PageType::Comparison,
+            PageType::Other,
+        ] {
             let dir = self.root.join(ty.as_dir());
             if !dir.exists() {
                 continue;

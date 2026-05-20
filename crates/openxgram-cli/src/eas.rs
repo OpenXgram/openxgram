@@ -34,7 +34,10 @@ pub fn run_list(data_dir: &Path, limit: usize) -> Result<()> {
         ))
     })?;
     let mut count = 0;
-    println!("{:<14} {:<14} {:<26} {}", "kind", "uid(prefix)", "created_at", "fields");
+    println!(
+        "{:<14} {:<14} {:<26} {}",
+        "kind", "uid(prefix)", "created_at", "fields"
+    );
     for row in rows {
         let (_id, uid, kind, fields, ts, _tx) = row?;
         let preview: String = fields.chars().take(60).collect();
@@ -74,11 +77,7 @@ pub fn run_count(data_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn run_attest(
-    data_dir: &Path,
-    kind: AttestationKind,
-    fields_json: &str,
-) -> Result<()> {
+pub fn run_attest(data_dir: &Path, kind: AttestationKind, fields_json: &str) -> Result<()> {
     let fields: serde_json::Value =
         serde_json::from_str(fields_json).context("fields JSON 파싱")?;
     let mut db = Db::open(DbConfig {
@@ -88,7 +87,12 @@ pub fn run_attest(
     db.migrate()?;
     let att = Attestation::new(AttestationData { kind, fields });
     AttestationStore::new(&mut db).insert(&att)?;
-    println!("✓ attest 완료 — id={} kind={} uid={}", att.id, att.kind.as_str(), att.schema_uid);
+    println!(
+        "✓ attest 완료 — id={} kind={} uid={}",
+        att.id,
+        att.kind.as_str(),
+        att.schema_uid
+    );
     Ok(())
 }
 
@@ -101,7 +105,11 @@ mod tests {
     fn count_empty_returns_zero() {
         let tmp = tempdir().unwrap();
         let dir = tmp.path();
-        let mut db = Db::open(DbConfig { path: db_path(dir), ..Default::default() }).unwrap();
+        let mut db = Db::open(DbConfig {
+            path: db_path(dir),
+            ..Default::default()
+        })
+        .unwrap();
         db.migrate().unwrap();
         AttestationStore::new(&mut db).ensure_schema().unwrap();
         drop(db);
@@ -112,16 +120,32 @@ mod tests {
     fn attest_then_count_increments() {
         let tmp = tempdir().unwrap();
         let dir = tmp.path();
-        let mut db = Db::open(DbConfig { path: db_path(dir), ..Default::default() }).unwrap();
+        let mut db = Db::open(DbConfig {
+            path: db_path(dir),
+            ..Default::default()
+        })
+        .unwrap();
         db.migrate().unwrap();
         drop(db);
         run_attest(dir, AttestationKind::Message, r#"{"from":"a","to":"b"}"#).unwrap();
-        run_attest(dir, AttestationKind::Endorsement, r#"{"endorser":"a","endorsee":"b","tag":"trust"}"#).unwrap();
-        let mut db = Db::open(DbConfig { path: db_path(dir), ..Default::default() }).unwrap();
+        run_attest(
+            dir,
+            AttestationKind::Endorsement,
+            r#"{"endorser":"a","endorsee":"b","tag":"trust"}"#,
+        )
+        .unwrap();
+        let mut db = Db::open(DbConfig {
+            path: db_path(dir),
+            ..Default::default()
+        })
+        .unwrap();
         db.migrate().unwrap();
         let mut store = AttestationStore::new(&mut db);
         assert_eq!(store.count().unwrap(), 2);
         assert_eq!(store.count_by_kind(AttestationKind::Message).unwrap(), 1);
-        assert_eq!(store.count_by_kind(AttestationKind::Endorsement).unwrap(), 1);
+        assert_eq!(
+            store.count_by_kind(AttestationKind::Endorsement).unwrap(),
+            1
+        );
     }
 }

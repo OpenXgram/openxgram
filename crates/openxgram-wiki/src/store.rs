@@ -5,8 +5,8 @@
 use rusqlite::{params, Connection};
 use thiserror::Error;
 
-use crate::page::{Page, PageId, PageType};
 use crate::content_hash;
+use crate::page::{Page, PageId, PageType};
 use std::str::FromStr;
 
 /// DB 인덱스 에러.
@@ -74,7 +74,11 @@ impl<'a> WikiStore<'a> {
         }
 
         let related_json = serde_json::to_string(
-            &page.related.iter().map(|r| r.to.as_str()).collect::<Vec<_>>(),
+            &page
+                .related
+                .iter()
+                .map(|r| r.to.as_str())
+                .collect::<Vec<_>>(),
         )?;
         let source_refs_json = serde_json::to_string(&page.source_refs)?;
 
@@ -186,7 +190,8 @@ impl<'a> WikiStore<'a> {
             stmt.query_map(params![t.as_dir()], mapper)?
                 .collect::<rusqlite::Result<_>>()?
         } else {
-            stmt.query_map([], mapper)?.collect::<rusqlite::Result<_>>()?
+            stmt.query_map([], mapper)?
+                .collect::<rusqlite::Result<_>>()?
         };
         Ok(rows)
     }
@@ -219,7 +224,12 @@ impl<'a> WikiStore<'a> {
     }
 
     /// `link_concepts` MCP 도구 — from의 related에 to를 추가.
-    pub fn link(&self, from: &PageId, to: &PageId, reason: Option<&str>) -> Result<(), WikiStoreError> {
+    pub fn link(
+        &self,
+        from: &PageId,
+        to: &PageId,
+        reason: Option<&str>,
+    ) -> Result<(), WikiStoreError> {
         let row = self
             .get(from)?
             .ok_or_else(|| WikiStoreError::NotFound(from.to_string()))?;
