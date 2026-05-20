@@ -11,16 +11,21 @@
 // 라우팅 표는 daemon_gui.rs (Router::new()) 와 1:1 대응.
 // daemon 에 없는 명령은 Error 던짐 (UI 가 에러 메시지 표시).
 
-// nginx reverse proxy 권장 — same-origin /api/gui/* → localhost:47302/v1/gui/*
-// (CORS 회피). 다른 호스트의 daemon 사용 시 Settings 탭에서 절대 URL 입력.
-const DEFAULT_BASE = "/api/gui";
+// daemon 이 직접 /gui/ 정적 자산 서빙하므로 same-origin /v1/gui/* 그대로 호출.
+// nginx reverse proxy 있으면 그쪽도 /v1/gui/* pass-through.
+// 다른 호스트의 daemon 사용 시 Settings 탭에서 절대 URL 입력.
+const DEFAULT_BASE = "/v1/gui";
+const LEGACY_BASE = "/api/gui"; // pre-rc.26 default — 자동 마이그레이션
 
 const URL_KEY = "xgram_daemon_url";
 const TOKEN_KEY = "xgram_mcp_token";
 
 export function getDaemonUrl(): string {
   try {
-    return localStorage.getItem(URL_KEY) || DEFAULT_BASE;
+    const stored = localStorage.getItem(URL_KEY);
+    // rc.26 마이그레이션: 옛 default 가 저장돼 있으면 무시 → 새 default.
+    if (!stored || stored === LEGACY_BASE) return DEFAULT_BASE;
+    return stored;
   } catch {
     return DEFAULT_BASE;
   }

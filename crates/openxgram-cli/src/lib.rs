@@ -57,6 +57,7 @@ pub mod status;
 pub mod systemd;
 pub mod traits;
 pub mod tui;
+pub mod ui_assets;
 pub mod uninstall;
 pub mod vault;
 pub mod wiki;

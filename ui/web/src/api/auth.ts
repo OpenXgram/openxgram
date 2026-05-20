@@ -5,7 +5,8 @@ const TOKEN_KEY = "xgram_session_token";
 
 function authBase(): string {
   const meta = document.querySelector("meta[name=\"xgram-daemon\"]") as HTMLMetaElement | null;
-  return meta?.content || "/api/auth";
+  // rc.26: daemon 이 직접 /v1/auth/* 노출. nginx 있으면 거기도 pass-through.
+  return meta?.content || "/v1/auth";
 }
 
 export async function unlock(password: string): Promise<void> {

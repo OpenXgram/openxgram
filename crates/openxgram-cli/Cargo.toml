@@ -77,6 +77,11 @@ arboard = { version = "3", default-features = false, features = ["wayland-data-c
 toml = "0.8"
 libc = "0.2"
 qrcode = "0.14"
+# Web GUI 정적 자산 임베드 (PRD-OpenXgram §4.8 v1.3 결정 13).
+# 빌드 시 ui/web/dist/ 통째로 바이너리에 포함 → daemon 이 /gui/* 자체 서빙.
+# nginx/별도 호스팅 불필요. dist 가 비어있어도 컴파일 통과 (404 만 응답).
+include_dir = "0.7"
+mime_guess = "2"
 
 [dev-dependencies]
 tempfile = "3"

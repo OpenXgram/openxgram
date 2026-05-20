@@ -41,6 +41,10 @@ pub struct GuiServerState {
     db: Arc<Mutex<Db>>,
 }
 
+// (axum 의 layer middleware 가 URI 를 mutate 해도 router matching 은 재실행
+// 되지 않는 알려진 동작 — `/api/*` → `/v1/*` rewrite 는 frontend 측에서 처리.
+// rc.26 부터 client.ts/auth.ts 가 직접 `/v1/*` 호출.)
+
 #[derive(Debug, Serialize)]
 pub struct StatusDto {
     pub initialized: bool,
@@ -251,6 +255,11 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // register/users 테이블·JWT 모두 폐기 (multi-user X — 사이드카는 1 사람용).
         .route("/v1/auth/unlock", post(auth_unlock))
         .route("/v1/auth/check", get(auth_check))
+        // Web GUI 정적 자산 — xgram 바이너리에 임베드 (PRD-OpenXgram v1.3 §4.8).
+        // nginx 외부 호스팅 불필요. 외부 노출은 Tailscale Funnel 또는 reverse proxy 위임.
+        .route("/gui", get(crate::ui_assets::gui_root))
+        .route("/gui/", get(crate::ui_assets::gui_root))
+        .route("/gui/{*path}", get(crate::ui_assets::gui_asset_path))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr)

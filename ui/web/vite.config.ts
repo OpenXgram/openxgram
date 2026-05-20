@@ -24,5 +24,12 @@ export default defineConfig({
     minify: "esbuild",
     sourcemap: false,
     outDir: "dist",
+    // rust-embed (xgram daemon GUI 임베드) 가 base64 hash 의 trailing `-`
+    // 를 처리 못 해 rustc ICE → hex 강제.
+    rollupOptions: {
+      output: {
+        hashCharacters: "hex",
+      },
+    },
   },
 });
