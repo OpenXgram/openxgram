@@ -481,15 +481,14 @@ if [ "$PREBUILT_OK" = "1" ]; then
           FUNNEL_DONE=1
         fi
       fi
-      # 2단계 — 사용자 터미널에서 비밀번호 한 번 prompt (curl|sh 환경에서도 /dev/tty 로 가능)
+      # 2단계 — /dev/tty 로 사용자 비밀번호 prompt + 응답.
+      # stderr (sudo prompt) 도 /dev/tty 로 보내야 사용자에게 보임 (pipe 안에 묻히지 않게).
       if [ "$FUNNEL_DONE" = "0" ] && [ -e /dev/tty ]; then
         echo "    sudo 비밀번호 한 번 입력 (Funnel 활성화 — 한 번만)"
-        if sudo -p "  [sudo] password: " tailscale funnel --bg --https=443 "http://localhost:${GUI_PORT}" </dev/tty 2>&1 \
-            | tee /tmp/xgram-funnel.out \
-            | grep -qE "Available|on the internet|Funnel started"; then
-          echo "    ✓ Funnel 활성화 완료"
-          FUNNEL_DONE=1
-        elif grep -qE "Available|on the internet|Funnel started" /tmp/xgram-funnel.out 2>/dev/null; then
+        sudo -p "  [sudo] password: " \
+             tailscale funnel --bg --https=443 "http://localhost:${GUI_PORT}" \
+             </dev/tty 2>/dev/tty > /tmp/xgram-funnel.out
+        if grep -qE "Available|on the internet|Funnel started" /tmp/xgram-funnel.out 2>/dev/null; then
           echo "    ✓ Funnel 활성화 완료"
           FUNNEL_DONE=1
         else
