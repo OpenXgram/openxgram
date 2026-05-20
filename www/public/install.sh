@@ -450,11 +450,24 @@ if [ "$PREBUILT_OK" = "1" ]; then
   echo "$PAIRING_OUTPUT"
 
   # 6. Tailscale Funnel 자동 활성화 — 외부 https 노출.
-  #    daemon 이 47310 에 GUI 직접 서빙 (rc.26 정적 자산 임베드).
-  #    sudo 권한 있으면 자동, 없으면 GUI URL 안내만.
+  #    daemon 이 ${TS_IP}:47302 에 GUI 직접 서빙 (rc.26 정적 자산 임베드).
+  #    Funnel target 은 같은 IP:47302 (localhost 가 아님 — daemon 이 TS_IP 에 bind).
   echo ""
   echo "==> Web GUI 외부 노출 (Tailscale Funnel)"
-  GUI_PORT=47310
+  GUI_PORT=47302
+  # daemon 이 어디 listen 하나 확인 — Tailscale IP 우선, fallback 으로 127.0.0.1.
+  FUNNEL_TARGET="http://${TS_IP}:${GUI_PORT}"
+  if ! curl -s -o /dev/null --max-time 2 "$FUNNEL_TARGET/gui/" 2>/dev/null; then
+    if curl -s -o /dev/null --max-time 2 "http://127.0.0.1:${GUI_PORT}/gui/" 2>/dev/null; then
+      FUNNEL_TARGET="http://127.0.0.1:${GUI_PORT}"
+    fi
+  fi
+  echo "    daemon GUI : ${FUNNEL_TARGET}"
+  # 옛 funnel (다른 port) 가 켜진 상태면 reset 후 새로 — funnel 은 한 https port 당
+  # 하나의 target 만 가질 수 있어서 충돌 회피.
+  if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    sudo tailscale funnel reset 2>/dev/null || true
+  fi
   # Hostname 추출 — 3 단계 fallback:
   #   (1) tailscale status --json 의 Self.DNSName (trailing dot 제거)
   #   (2) 페어링 URL 안의 hostname (pair-desktop 출력 reuse)
@@ -479,7 +492,7 @@ if [ "$PREBUILT_OK" = "1" ]; then
     if command -v sudo >/dev/null 2>&1; then
       # 1단계 — NOPASSWD 가능하면 즉시 자동 활성화 (CI/스크립트 환경)
       if sudo -n true 2>/dev/null; then
-        FUNNEL_OUT="$(sudo tailscale funnel --bg --https=443 "http://localhost:${GUI_PORT}" 2>&1)"
+        FUNNEL_OUT="$(sudo tailscale funnel --bg --https=443 "$FUNNEL_TARGET" 2>&1)"
         if echo "$FUNNEL_OUT" | grep -qE "Available|on the internet|Funnel started"; then
           echo "    ✓ Funnel 활성화 완료 (sudo NOPASSWD)"
           FUNNEL_DONE=1
@@ -490,23 +503,23 @@ if [ "$PREBUILT_OK" = "1" ]; then
       if [ "$FUNNEL_DONE" = "0" ] && [ -e /dev/tty ]; then
         echo "    sudo 비밀번호 한 번 입력 (Funnel 활성화 — 한 번만)"
         sudo -p "  [sudo] password: " \
-             tailscale funnel --bg --https=443 "http://localhost:${GUI_PORT}" \
+             tailscale funnel --bg --https=443 "$FUNNEL_TARGET" \
              </dev/tty 2>/dev/tty > /tmp/xgram-funnel.out
         if grep -qE "Available|on the internet|Funnel started" /tmp/xgram-funnel.out 2>/dev/null; then
           echo "    ✓ Funnel 활성화 완료"
           FUNNEL_DONE=1
         else
           echo "    ⚠ Funnel 활성화 실패 — 수동 실행:"
-          echo "       sudo tailscale funnel --bg --https=443 http://localhost:${GUI_PORT}"
+          echo "       sudo tailscale funnel --bg --https=443 $FUNNEL_TARGET"
         fi
       fi
       if [ "$FUNNEL_DONE" = "0" ]; then
         echo "    (sudo 권한 또는 TTY 없음 — 다음 한 줄 직접 실행)"
-        echo "       sudo tailscale funnel --bg --https=443 http://localhost:${GUI_PORT}"
+        echo "       sudo tailscale funnel --bg --https=443 $FUNNEL_TARGET"
       fi
     else
       echo "    (sudo 없음 — 다음 한 줄 직접 실행)"
-      echo "       tailscale funnel --bg --https=443 http://localhost:${GUI_PORT}"
+      echo "       tailscale funnel --bg --https=443 $FUNNEL_TARGET"
     fi
     # 활성화 여부와 무관하게 GUI URL 안내.
     echo ""
@@ -517,7 +530,7 @@ if [ "$PREBUILT_OK" = "1" ]; then
   else
     echo "    ⚠ Tailscale hostname 추출 실패 — 수동 확인:"
     echo "       tailscale status --json | jq -r .Self.DNSName"
-    echo "       sudo tailscale funnel --bg --https=443 http://localhost:${GUI_PORT}"
+    echo "       sudo tailscale funnel --bg --https=443 $FUNNEL_TARGET"
   fi
 
   echo ""
