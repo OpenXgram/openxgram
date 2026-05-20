@@ -415,6 +415,30 @@ async fn run_discord_listen(
     }
 }
 
+/// daemon 내부에서 spawn 하는 long-running Discord inbound listener.
+/// CLI 의 run_discord_listen 과 다르게 ctrl_c 안 잡음 + 항상 store 모드.
+/// daemon 의 ctrl_c 가 tokio runtime 종료 시 같이 정리됨.
+pub async fn run_discord_inbound_for_daemon(
+    data_dir: PathBuf,
+    bot_token: String,
+) -> Result<()> {
+    let mut store = StoreCtx::open(&data_dir, "discord-inbox")?;
+    let client = DiscordGatewayClient::new(bot_token);
+    let mut stream: std::pin::Pin<
+        Box<dyn futures_util::Stream<Item = DiscordIncomingMessage> + Send>,
+    > = Box::pin(client.connect().await?);
+
+    tracing::info!("discord inbound listener: connected, draining stream");
+    while let Some(msg) = stream.next().await {
+        let sender = format!("discord:{}", msg.author_name);
+        if let Err(e) = store.append(&sender, &msg.content) {
+            tracing::warn!(error = %e, "discord inbound L0 저장 실패");
+        }
+    }
+    tracing::warn!("discord inbound stream 종료 (server disconnect)");
+    Ok(())
+}
+
 fn emit_discord(msg: &DiscordIncomingMessage, pretty: bool) {
     if pretty {
         println!(

@@ -110,7 +110,7 @@ function AppInner() {
             <Onboarding onReady={() => setTab("chat")} />
           </Show>
           <Show when={tab() === "chat"}>
-            <ChatTab />
+            <ChatTab onJumpToSettings={() => setTab("settings")} />
           </Show>
           <Show when={tab() === "memory"}>
             <MemoryTab />

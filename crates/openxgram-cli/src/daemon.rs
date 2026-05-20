@@ -91,6 +91,31 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
     });
     println!("  ✓ inbound processor running (1s interval)");
 
+    // Discord inbound listener — notify.toml 의 discord.bot_token 있으면 자동 spawn.
+    // 별 systemd unit 없이 daemon 1 프로세스 (PRD §1). 토큰 미설정·연결 실패 시 silent skip.
+    let _discord_handle = match crate::notify_setup::NotifyConfig::load(Some(&opts.data_dir)) {
+        Ok(cfg) => match cfg.discord {
+            Some(d) if !d.bot_token.is_empty() => {
+                let dir = opts.data_dir.clone();
+                let token = d.bot_token.clone();
+                let handle = tokio::spawn(async move {
+                    if let Err(e) =
+                        crate::notify::run_discord_inbound_for_daemon(dir, token).await
+                    {
+                        tracing::warn!(error = %e, "discord inbound listener 종료");
+                    }
+                });
+                println!("  ✓ discord inbound listener spawned (notify.toml.bot_token)");
+                Some(handle)
+            }
+            _ => {
+                tracing::info!("discord inbound skip — notify.toml.discord.bot_token 미설정");
+                None
+            }
+        },
+        Err(_) => None,
+    };
+
     // Nostr inbound processor (PRD-NOSTR-10) — XGRAM_NOSTR_RELAYS env 가 설정된 경우만 활성.
     // master keystore 패스워드는 XGRAM_NOSTR_PASSWORD env 에서 로드 (없으면 skip).
     let (nostr_shutdown_tx, nostr_handle) = match crate::nostr_inbound::NostrInboundConfig::from_env(
