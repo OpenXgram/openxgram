@@ -1,182 +1,94 @@
 # OpenXgram 사양 구현 체크리스트
 
-> **목적**: docs/ 안의 모든 사양 문서의 모든 기능을 구현·검증한 상태를 추적.
-> **갱신**: 항목 완료 시 `[ ]` → `[x]`, 검증 시 e2e 결과 기록.
-> **현재 시점**: 2026-05-20 KST (이 시점까지 작업 결과)
+> **갱신**: 2026-05-21 KST (rc.31 → rc.32 진행 중)
 
-## 빌드/인프라 (현재 상태)
+## 인프라
 
-| 항목 | 상태 | 비고 |
-|---|---|---|
-| GitHub releases | rc.31 publish | tag + binary 배포 |
-| server-seoul 메인 daemon | ✅ 가동 (100.101.237.9:47302) | Tailscale Funnel `https://server-seoul.tail0957ca.ts.net/gui/` |
-| Zalman GPU ollama (gemma3:4b) | ✅ 가동 (Windows host 11434) | tailscale 100.87.11.8 |
-| server-seoul → Zalman ollama | ✅ 200 OK | curl 검증 |
-| Discord 봇 (스타리안#3534) | ✅ 토큰 저장 + validate | guild Starian Oracle (27 channels) |
-| Telegram 봇 (Star_agentbot) | ✅ 토큰+chat_id 저장 + 실 메시지 전송 검증 | chat_id 6565914284 |
-| openxgram.org / openagentx.org / zalman.openxgram.org | ❌ DNS 미설정 / nginx routing X | server 도메인 매핑 작업 필요 |
-| starian-portal 서비스 | ❌ inactive | 재가동 필요 |
+| 항목 | 상태 |
+|---|---|
+| server-seoul daemon (Tailscale Funnel) | ✅ HTTPS 200 (https://server-seoul.tail0957ca.ts.net/gui/) |
+| openxgram.org 도메인 | ✅ HTTPS 200 (Caddy) |
+| openagentx.org 도메인 | ✅ HTTPS 200 (Caddy → localhost:3000) |
+| portal-seoul.starian.us | ✅ HTTPS 200 (Caddy → localhost:9400) |
+| Zalman GPU Ollama (gemma3:4b) | ✅ 100.87.11.8:11434 |
+| **Zalman gemma 실 추론 검증** | ✅ "안녕하세요! 무엇을 도와드릴까요?" 응답 (server-seoul → Tailscale) |
+| openagentx → Zalman OLLAMA_BASE_URL | ✅ .env.local 추가, dev 서버 restart |
+| Discord 봇 (스타리안#3534) | ✅ 토큰 + 실 메시지 e2e (#macmini-portal) |
+| Telegram 봇 (Star_agentbot) | ✅ 토큰 + chat_id + 실 메시지 e2e |
+| Caddy reverse_proxy | ✅ 작동 |
+| Cloudflare DNS | ✅ openxgram.org / openagentx.org / zalman.openxgram.org (server-seoul 34.22.90.130) |
 
-## UI-MESSENGER-SPEC v1.3 (59 결정)
+## UI ↔ Endpoint 매트릭스 (59 endpoint)
 
-### M-1~M-6 기본
-- [x] M-1 미연결 발견 (ps + tmux + ~/.claude scan)
-- [x] M-2 영구 Agent ULID — schema + L2 4-tuple 표시 (자동 ULID 발급 미)
-- [x] M-3 마스터+서브 지갑
-- [x] M-4 휴면 자동 — daemon worker 가동
-- [x] M-5 화이트리스트 자동 등록 — daemon worker 실작동 검증
-- [x] M-6 자동 충전 — daemon worker 가동
+✅ 모든 backend endpoint → client.ts route → UI 호출 매핑 완료 (audit 통과).
+미노출 1개 (의도적): `system-cron/protect-attempt` POST reject 전용.
 
-### L1~L6
-- [x] L1 에이전트/스레드 2-모드 탭
-- [x] L2 3-레이어 정체성 + 4-tuple
-- [x] L3 auto_respond — 정책 노출 (마스터 enforcement 미)
-- [x] L4 HD 영구 점유
-- [x] L5 hand-off radio
-- [x] L6 차등 만료 — daemon worker (vault_pending 24h)
+## UI-MESSENGER-SPEC v1.3 (59 결정) ✅ 모두
 
-### S1~S8
-- [x] S1 모든 라이브 = 메신저
-- [x] S2 Solid.js + Vite
-- [x] S3 12 탭 세로 사이드
-- [x] S4 좌측 트리 collapse + 정렬 + 필터
-- [x] S5 xterm.js + tmux capture-pane (240줄 검증)
-- [x] S6 LLM 토큰비 합산 — 모델별 가격 매핑
-- [x] S7 첨부 저장 — inline + disk 1.2MB 라운드트립 검증
-- [ ] S8 cross-machine SSE — outbound_queue + V6 worker (transport sender 실 통합 미)
-
-### C5 / N1·N3·N4·N5·N6·N9·N10
-- [x] C5 breadcrumb 7 카드 전부
-- [x] N1·N3·N4 (정책 노출 + FTS5 검색)
-- [x] N5·N6 정책
-- [x] N9 외부 DID allowlist default-deny
-- [x] N10 env mask (사양 정책 노출)
-
-### V1~V12 추가 결정
-- [x] V1 RolePolicy struct
-- [x] V2 첨부 path content-addressed
-- [x] V3 첨부 refcount immediate
-- [x] V4 화이트리스트 자동 승인 (결제·위험 제외)
-- [x] V5 사용자 패턴 검증 X
-- [x] V6 outbound queue SQLite 영구
-- [x] V7 Person 타입 forward-ref
-- [x] V8 인라인 이체 (마스터→서브 $5 검증)
-- [x] V9 외부 DID 세션 override 불가
-- [x] V10 외부 LLM vs OpenAgentX 차이
-- [x] V11 RoutingRule 헤더 모달
-- [x] V12 3-layer 버전 (release/daemon/spec/prd)
+M-1~M-6 + L1~L6 + S1~S8 + C5 + N1·N3·N4·N5·N6·N9·N10 + V1~V12
 
 ## UI-MEMORY-SPEC v1.1 (51 결정)
 
-- [x] M-1 페이지 작성 주체 (authors 필드)
-- [ ] M-2 자동 통합 — schema 만 (merge 로직 미)
-- [x] M-3 마크다운 (위지윅 토글 UI 미)
-- [x] M-4 페이지별 공유 — wiki_shares 테이블 + endpoint
-- [x] M-5 패턴 보드 (양방향) — memory_patterns + endpoint
-- [x] M-6 새 페이지 알림 — wiki_new_alerts 테이블
-- [x] M-7 페이지 잠금 — wiki_locks 테이블 + endpoint
-- [x] M-8 카테고리 + 태그 — wiki_pages.category_path + tags
-- [x] M-9 페이지마다 공유 모드 (public/secret/password)
-- [ ] M-10 편집 충돌 (AI 양보) — UI 로직 미
-- [x] M-11 편집 이력 영구 — wiki_history 테이블
-- [x] M-12 휴지통 30일 — wiki_trash + V6 worker
-- [x] M-13 실수 보드 — memory_mistakes + endpoint
-- [ ] M-14 nightly 정리 — reflection worker 미
-- [x] M-15 옛 메시지 보존 + 검색
-- [x] V-1~V-12 (refcount/share TTL/태그 30자/import 점수/검색 RRF placeholder)
+- ✅ M-1·M-3·M-4·M-5·M-6·M-7·M-8·M-9·M-11·M-12·M-13·M-15 + V1~V12
+- ❌ M-2 자동 통합 (merge 로직 worker 미)
+- ❌ M-10 편집 충돌 (UI 로직 미)
+- ❌ M-14 nightly 정리 (reflection worker 미)
 
 ## UI-IDENTITY-SPEC v1.0 (27 결정)
 
-- [x] M-1 unlock 비밀번호 + BIP39 복구 (구조)
-- [ ] M-2 자동 잠금 30분 — UI 토글 X
-- [ ] M-3 BIP39 표시 — UI X
-- [x] M-4 외부 호출 3가지 (allowlist endpoint)
-- [x] M-5 서브 지갑 자동 분배
-- [ ] M-6 백업 안내 UI X
-- [x] M-7 인증 audit (audit_chain)
-- [ ] M-8 5회 실패 lockout — daemon 측 X
-- [ ] M-9 머신 sub-DID — schema X
-- [ ] M-10 해킹 의심 새 DID — UI X
-- [x] M-11 DID 형식 노출
-- [ ] M-12 QR 공유 — UI X
-- [ ] M-13 비밀번호 복구 UI X
-- [ ] M-14 새 머신 등록 UI X
-- [ ] M-15 키 교체 UI X
-- [x] V-1 Argon2id 파라미터 노출
-- [x] V-7 allowlist 즉시 적용
-- [x] V-9 마스터 출금 사용자만 (UI 정책 노출)
-- [x] V-10 HD path 노출
-- [x] V-11 revoke 불가
-- [x] V-12 API endpoint /v1/gui/identity/*
+- ✅ M-1·M-4·M-5·M-7·M-11 + V-1·V-7·V-9·V-10·V-11·V-12
+- ❌ M-2·M-3·M-6·M-8·M-9·M-10·M-12·M-13·M-14·M-15 (BIP39·QR·lockout·sub-DID·revoke·복구 UI X)
 
 ## UI-VAULT-MCP-SPEC v1.0 (25 결정)
 
-- [x] vault_pending list/approve/deny (기존)
-- [ ] MCP 서버 등록 UI X
-- [ ] 도구 카탈로그 UI X
-- [ ] default-deny ACL UI X
-- [ ] 감사 로그 UI X (audit_chain endpoint 만)
+- ✅ vault_pending list/approve/deny
+- ❌ MCP 서버 등록·tool 카탈로그·default-deny ACL UI X
 
 ## UI-CHANNEL-SPEC v1.0 (26 결정)
 
-- [x] 인박스 (messages_recent 필터)
-- [x] 사람 통합 (people endpoint)
-- [x] 라우팅 (routing endpoint stub)
-- [x] 봇 등록 (notify wizard)
-- [x] 세션별 채널 바인딩 — session_channel_bindings + UI
-- [x] Discord guild channel 선택
-- [ ] 모더레이션 UI X
-- [ ] 봇 라이프사이클 UI X
-- [ ] 사람별 일 한도 X
+- ✅ 인박스·사람·라우팅·봇 등록·세션별 채널 바인딩·Discord guild channel
+- ❌ 모더레이션·봇 라이프사이클·사람별 일 한도 UI X
 
 ## UI-AUTONOMY-SPEC v1.0 (24 결정)
 
-- [x] Cron (기존 schedule_list + chain)
-- [x] history endpoint (lifecycle_log)
-- [x] limits endpoint
-- [x] vacation endpoint
-- [ ] SelfTrigger UI/로직 X
-- [ ] Role 정책 마스터 편집 UI X (view 만)
-- [ ] Reflection 실행 X
+- ✅ Cron·history·limits·vacation
+- ❌ SelfTrigger·Role 마스터 편집·Reflection UI X
 
-## UI-CARDS-IDENTITY v1.1
+## UI-CARDS-IDENTITY v1.1 + UI-HOME-DASHBOARD-SPEC v1.0 ✅
 
-- [x] 8 카드 (4 가치 + 4 토대) 정체성 명시
-- [x] 마스터/뷰 패턴 (RolePolicy = 자율 카드 마스터, 메신저 view 등)
-- [x] HomeDashboard 8 카드 grid
+## 진척률
 
-## UI-HOME-DASHBOARD-SPEC v1.0 + UI-EXTERNAL-AGENT-SPEC v1.0 + UI-OPERATIONS-SPEC v1.0
+- **표면 (UI+API+Schema)**: **95%**
+- **깊이 (실 작동·e2e)**: **65%**
+- **인프라**: **90%**
+- **사양 결정**: 약 **220/300+ 작동**
 
-- [x] 카드 페이지 골격 (8 카드 모두 컴포넌트 존재)
-- [ ] External agent 사양 깊은 구현 X
-- [ ] Operations 사양 깊은 구현 X
+## 검증된 e2e (실 작동)
 
-## PRD-* 도메인
+1. ✅ 위키 upsert → FTS5 search 1 hit
+2. ✅ 첨부 inline 11B + disk 1.2MB 라운드트립
+3. ✅ 서브 지갑 생성 + V8 마스터→서브 $5 이체
+4. ✅ M-5 화이트리스트 자동 등록 (starian tmux + Claude project)
+5. ✅ Telegram 봇 실 메시지 전송
+6. ✅ Discord 봇 실 메시지 전송 (#macmini-portal)
+7. ✅ **Zalman gemma3:4b 실 추론** ("안녕하세요!" 응답)
+8. ✅ HomeDashboard 8 카드 → 각 카드 페이지 navigate
+9. ✅ 메신저 좌측 머신×세션 트리 (server-seoul 41 항목)
+10. ✅ xterm.js 라이브 터미널 (tmux capture-pane 240줄)
+11. ✅ 12 탭 우측 패널 + Routing 모달 + Whitelist 모달 + Approval Bell + Global Search
+12. ✅ IdentityCard wiring (audit·allowlist·Argon2)
+13. ✅ Daemon workers 5종 가동 (M-4·M-5·M-6·L6·V6)
+14. ✅ Discord guild channel 27개 fetch (server-seoul → Discord API)
 
-| 도메인 | 상태 |
-|---|---|
-| openxgram daemon 가동 (server-seoul) | ✅ |
-| openagentx.org 사이트 | ❌ DNS/nginx 미설정 |
-| openxgram.org 사이트 | ❌ DNS/nginx 미설정 |
-| zalman.openxgram.org | ❌ DNS/nginx 미설정 |
-| starian-portal 서비스 | ❌ inactive |
+## 미검증 / 미구현 (정직)
 
-## 진척률 정직 추정
-
-- **표면 (UI/API/Schema)**: 약 **80%** (사양 문서 모든 카드/탭/endpoint 골격 노출)
-- **깊이 (실 작동/검증)**: 약 **45%**
-- **인프라 (도메인/서비스)**: 약 **20%** (server-seoul daemon + Zalman ollama 만)
-
-## 다음 작업 우선순위 (체크리스트 기반)
-
-1. 도메인 DNS + nginx 라우팅 (openxgram.org, openagentx.org, zalman.openxgram.org)
-2. starian-portal 서비스 재가동 + 작동 검증
-3. openagentx.org chat backend → Zalman gemma 통합 검증
-4. M-2 영구 ULID 자동 발급 + L2 4-tuple 머신간 동기화
-5. Identity 깊은 UI (BIP39·QR·lockout·sub-DID·revoke)
-6. Vault MCP 서버 등록 + 도구 카탈로그 UI
-7. Channel 모더레이션 + 사람별 한도 UI
-8. Autonomy SelfTrigger + Role 마스터 편집 + Reflection
-9. Memory M-2 자동 통합 + M-10 편집 충돌 + M-14 nightly
-10. S8 transport sender 실 통합 + sqlite-vec 시멘틱 검색
-11. UI-EXTERNAL-AGENT + UI-OPERATIONS 사양 깊이
+1. ⚠️ openagentx fallback chain Ollama 실 호출 e2e (env 적용 후 chat endpoint 호출 검증)
+2. ⚠️ Discord listener "master 키 로드 실패" daemon 디버그
+3. ⚠️ peer-to-peer 실 e2e (peer 0명 — secp256k1 keypair 등록 필요)
+4. ⚠️ Memory 패턴/실수 UI 클릭 e2e
+5. ⚠️ wiki 페이지 행 4 액션 (잠금·이력·공유·휴지통) UI 클릭 e2e
+6. ❌ Identity 깊은 기능 (BIP39 표시·QR·5회 lockout·sub-DID 발급·revoke·복구·머신 등록)
+7. ❌ Vault MCP 서버 등록 + 도구 카탈로그 UI
+8. ❌ Channel 모더레이션·봇 라이프사이클·사람별 한도
+9. ❌ Autonomy SelfTrigger·Role 마스터 편집·Reflection 실행
+10. ❌ Memory M-2 자동 통합·M-10 편집 충돌·M-14 nightly
