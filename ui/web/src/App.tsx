@@ -80,12 +80,8 @@ function AppInner() {
     }
   }
 
-  const tabs: { id: Exclude<Tab, "onboarding" | "home">; label: () => string }[] = [
-    { id: "chat", label: () => t("tab.chat") },
-    { id: "memory", label: () => t("tab.memory") },
-    { id: "network", label: () => t("tab.network") },
-    { id: "settings", label: () => t("tab.settings") },
-  ];
+  // 옛 tabs (chat/memory/network/settings) 제거됨 — 8 카드가 진짜 진입로.
+  // 카드 안에서 추가 진입 (메신저 → 설정 등) 은 onJumpToSettings 같은 prop 으로 직접 카드 ID 로 setTab.
 
   const onLogout = async () => {
     lock();
@@ -131,26 +127,16 @@ function AppInner() {
 
       {/* 메인 GUI — 인증된 사용자만 */}
       <Show when={authed() === true}>
-        {/* tabnav — onboarding/home/카드 전용 페이지에서는 숨김 (카드 페이지는 자체 ← 홈 버튼) */}
-        <Show when={tab() !== "onboarding" && tab() !== "home" && !tab().startsWith("card-")}>
+        {/* tabnav — 모든 화면에서 🏠 홈만 (8 카드 = 진짜 진입로). 옛 chat/memory/network/settings 탭 제거. */}
+        <Show when={tab() !== "onboarding" && tab() !== "home"}>
           <nav class="tabnav" aria-label="OpenXgram tabs">
             <button
               type="button"
               onClick={() => setTab("home")}
-              style="margin-right:8px;"
-              title="홈 대시보드"
+              title="홈 대시보드 — 8 카드"
             >
               🏠 홈
             </button>
-            {tabs.map((entry) => (
-              <button
-                type="button"
-                class={tab() === entry.id ? "active" : ""}
-                onClick={() => setTab(entry.id)}
-              >
-                {entry.label()}
-              </button>
-            ))}
           </nav>
         </Show>
         <main>

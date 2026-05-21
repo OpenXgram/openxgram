@@ -557,7 +557,8 @@ input:focus-visible {
   min-height: 0;
   resize: horizontal;
   overflow: auto;
-  min-width: 200px;
+  min-width: 280px;
+  width: 320px;
   max-width: 600px;
 }
 .messenger-sidepanel {
@@ -565,9 +566,16 @@ input:focus-visible {
   background: #161616;
   resize: horizontal;
   overflow: auto;
-  min-width: 200px;
+  min-width: 360px;
+  width: 420px;
   max-width: 800px;
-  width: 320px;
+}
+.messenger-sidebar-mode button {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  padding: 6px 4px;
 }
 .messenger-sidebar-head {
   display: flex;
@@ -765,18 +773,24 @@ input:focus-visible {
 .messenger-sidepanel-nav {
   display: flex;
   flex-direction: column;
-  width: 48px;
+  width: 140px;
   padding: 6px 0;
   border-right: 1px solid var(--border);
   background: var(--surface-2);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .messenger-sidepanel-nav button {
-  padding: 10px 0;
-  font-size: 18px;
+  padding: 8px 12px;
+  font-size: 12px;
   background: transparent;
   color: var(--text-2);
   border: none;
   cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .messenger-sidepanel-nav button.active {
   background: var(--surface-active);
