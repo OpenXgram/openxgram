@@ -51,8 +51,14 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
     add_reflection_job(&mut scheduler, &cron, db_path(&opts.data_dir))
         .await
         .context("reflection job 등록 실패")?;
+    // UI-MESSENGER-SPEC v1.4 §20 W-4/W-9 — workflows.cron_expr 자동 등록.
+    let dbp = db_path(&opts.data_dir);
+    let wf_count = match register_workflow_cron_jobs(&mut scheduler, &dbp).await {
+        Ok(n) => n,
+        Err(e) => { tracing::warn!("workflow cron 등록 실패: {e}"); 0 }
+    };
     scheduler.start().await.context("scheduler 시작 실패")?;
-    println!("  ✓ reflection scheduler started");
+    println!("  ✓ reflection scheduler started + {wf_count} workflow cron job(s)");
 
     // Prometheus metrics provider — DB 카운트 매 scrape 마다 조회
     let data_dir_for_metrics = opts.data_dir.clone();
@@ -394,4 +400,56 @@ fn record_payment_receipt(
     );
     let m = MemoryStore::new(db).insert(None, MemoryKind::Reference, &content)?;
     Ok(m.id)
+}
+
+/// UI-MESSENGER-SPEC v1.4 §20 W-4/W-9 — workflows.cron_expr 자동 trigger.
+async fn register_workflow_cron_jobs(
+    scheduler: &mut tokio_cron_scheduler::JobScheduler,
+    db_path: &std::path::Path,
+) -> Result<usize> {
+    use openxgram_db::{Db, DbConfig};
+    let mut db = Db::open(DbConfig { path: db_path.to_path_buf(), ..Default::default() })?;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, name, cron_expr, yaml_body FROM workflows WHERE enabled=1 AND cron_expr IS NOT NULL AND cron_expr != ''"
+    )?;
+    let rows: Vec<(String, String, String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .filter_map(|r| r.ok())
+        .collect();
+    drop(stmt);
+    let dbp_arc = std::sync::Arc::new(db_path.to_path_buf());
+    let mut registered = 0usize;
+    for (id, name, cron_expr, yaml_body) in rows {
+        let dbp = dbp_arc.clone();
+        let id_c = id.clone();
+        let yaml = yaml_body.clone();
+        let job = match tokio_cron_scheduler::Job::new_async(cron_expr.as_str(), move |_uuid, _l| {
+            let dbp = dbp.clone();
+            let id_c = id_c.clone();
+            let yaml = yaml.clone();
+            Box::pin(async move {
+                let run_id = uuid::Uuid::new_v4().to_string();
+                match openxgram_db::Db::open(openxgram_db::DbConfig {
+                    path: dbp.as_ref().clone(), ..Default::default()
+                }) {
+                    Ok(mut db) => {
+                        let _ = db.conn().execute(
+                            "INSERT INTO workflow_runs (id, workflow_id, started_at, status, trigger_source) VALUES (?1, ?2, datetime('now'), 'running', 'cron')",
+                            rusqlite::params![run_id, id_c],
+                        );
+                        let _ = crate::workflow_engine::run_workflow(&mut db, &id_c, &run_id, &yaml).await;
+                    }
+                    Err(e) => tracing::error!(error = %e, "workflow cron: DB open 실패"),
+                }
+            })
+        }) {
+            Ok(j) => j,
+            Err(e) => { tracing::warn!("workflow '{}' cron 등록 실패: {}", name, e); continue; }
+        };
+        if scheduler.add(job).await.is_ok() {
+            registered += 1;
+            tracing::info!("workflow cron 등록: {} ({})", name, cron_expr);
+        }
+    }
+    Ok(registered)
 }
