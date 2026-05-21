@@ -2187,12 +2187,27 @@ async fn gui_workflow_run(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     let run_id = uuid::Uuid::new_v4().to_string();
+    let yaml_body: String = {
+        let mut db = state.db.lock().await;
+        db.conn().execute(
+            "INSERT INTO workflow_runs (id, workflow_id, started_at, status, trigger_source) VALUES (?1, ?2, datetime('now'), 'running', 'manual')",
+            rusqlite::params![run_id, id],
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+        db.conn().query_row(
+            "SELECT yaml_body FROM workflows WHERE id=?1",
+            rusqlite::params![id],
+            |r| r.get::<_, String>(0),
+        ).map_err(|_| (StatusCode::NOT_FOUND, Json(ErrorDto{error: format!("workflow {id} not found")})))?
+    };
+    // Engine 실행 (block until complete) — TODO: tokio::spawn 으로 background, GET runs 로 진행 확인
     let mut db = state.db.lock().await;
-    db.conn().execute(
-        "INSERT INTO workflow_runs (id, workflow_id, started_at, status, trigger_source) VALUES (?1, ?2, datetime('now'), 'running', 'manual')",
-        rusqlite::params![run_id, id],
-    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
-    Ok(Json(serde_json::json!({"run_id": run_id, "workflow_id": id, "status": "running"})))
+    let result = crate::workflow_engine::run_workflow(&mut *db, &id, &run_id, &yaml_body).await;
+    Ok(Json(serde_json::json!({
+        "run_id": run_id, "workflow_id": id,
+        "status": result.status, "error": result.error,
+        "total_cost": result.total_cost,
+        "step_outputs": result.step_outputs,
+    })))
 }
 
 async fn gui_workflow_runs(

@@ -993,11 +993,33 @@ input:focus-visible {
    각 카드 = 정체성 헤더 + 4~5 구역 (사양의 §3) + 고급 메뉴.
    ───────────────────────────────────────────────────────────────────── */
 .card-page {
-  max-width: 1100px;
-  margin: 0 auto;
+  max-width: none;       /* 전체 화면 채움 */
+  width: 100%;
+  margin: 0;
   padding: 20px 24px 40px;
   color: var(--text-1);
 }
+.card-page .card-section table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.card-page .card-section table th, .card-page .card-section table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  resize: horizontal;     /* W 요청: tr/td 너비 조절 */
+  overflow: auto;
+}
+.card-page .card-section table th {
+  font-size: 12px;
+  color: var(--text-3);
+  border-bottom: 2px solid var(--border);
+  cursor: col-resize;
+}
+.card-page .card-section { width: 100%; }
+.card-page .card-section-row { width: 100%; }
+.card-page .card-section-row .label { min-width: 140px; flex: 0 0 140px; color: var(--text-3); }
+.card-page .card-section-row .value { flex: 1; word-break: break-word; }
 .card-page-head {
   display: flex;
   align-items: baseline;
