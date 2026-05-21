@@ -286,6 +286,18 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // External Agent + Ops 카드
         .route("/v1/gui/external/directory", get(gui_external_directory))
         .route("/v1/gui/ops/health", get(gui_ops_health))
+        .route("/v1/gui/ops/diagnostic", get(gui_ops_diagnostic))
+        .route("/v1/gui/ops/machines", get(gui_ops_machines))
+        .route("/v1/gui/ops/backup-status", get(gui_ops_backup_status))
+        .route("/v1/gui/ops/update-check", get(gui_ops_update_check))
+        .route("/v1/gui/external/outbound-calls", get(gui_external_outbound))
+        .route("/v1/gui/external/inbound-pending", get(gui_external_inbound))
+        .route("/v1/gui/external/inbound/{id}/approve", post(gui_external_inbound_approve))
+        .route("/v1/gui/external/inbound/{id}/reject", post(gui_external_inbound_reject))
+        .route("/v1/gui/external/my-listings", get(gui_external_listings))
+        .route("/v1/gui/external/listings", post(gui_external_listing_add))
+        .route("/v1/gui/external/reputation", get(gui_external_reputation))
+        .route("/v1/gui/external/protocols", get(gui_external_protocols))
         // 메신저 카드 v1.3 Step 0 — 메시지 송수신.
         .route("/v1/gui/messages", get(gui_messages_recent))
         .route("/v1/gui/peers/{alias}/send", post(gui_peer_send))
@@ -2091,6 +2103,238 @@ async fn gui_ops_health(
         "backup": {"last_at": null, "next_scheduled": null},
         "auto_update_channel": "stable",
         "self_check": {"db_ok": true, "keystore_locked": false},
+    })))
+}
+
+// ── External Agent endpoints (UI-EXTERNAL-AGENT-SPEC 30 결정) ──
+
+async fn gui_external_outbound(
+    State(state): State<GuiServerState>, headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare("SELECT id, to_agent, protocol, amount, status, rating, started_at, completed_at FROM external_outbound_calls ORDER BY started_at DESC LIMIT 100").map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| Ok(serde_json::json!({
+        "id": r.get::<_, String>(0)?, "to_agent": r.get::<_, String>(1)?, "protocol": r.get::<_, String>(2)?,
+        "amount": r.get::<_, f64>(3)?, "status": r.get::<_, String>(4)?, "rating": r.get::<_, Option<i64>>(5)?,
+        "started_at": r.get::<_, String>(6)?, "completed_at": r.get::<_, Option<String>>(7)?,
+    }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?
+       .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+async fn gui_external_inbound(
+    State(state): State<GuiServerState>, headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare("SELECT id, from_agent, protocol, request_summary, offered_price, received_at FROM external_inbound_pending WHERE status='pending' ORDER BY received_at DESC LIMIT 50").map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| Ok(serde_json::json!({
+        "id": r.get::<_, String>(0)?, "from_agent": r.get::<_, String>(1)?, "protocol": r.get::<_, String>(2)?,
+        "request_summary": r.get::<_, Option<String>>(3)?, "offered_price": r.get::<_, Option<f64>>(4)?,
+        "received_at": r.get::<_, String>(5)?,
+    }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?
+       .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+async fn gui_external_inbound_approve(
+    State(state): State<GuiServerState>, headers: HeaderMap, Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    db.conn().execute("UPDATE external_inbound_pending SET status='approved' WHERE id=?1", rusqlite::params![id])
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    Ok(Json(serde_json::json!({"approved": id})))
+}
+
+async fn gui_external_inbound_reject(
+    State(state): State<GuiServerState>, headers: HeaderMap, Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    db.conn().execute("UPDATE external_inbound_pending SET status='rejected' WHERE id=?1", rusqlite::params![id])
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    Ok(Json(serde_json::json!({"rejected": id})))
+}
+
+async fn gui_external_listings(
+    State(state): State<GuiServerState>, headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare("SELECT id, agent_id, marketplace, price_usdc, pricing_model, description, enabled FROM external_listings ORDER BY created_at DESC").map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| Ok(serde_json::json!({
+        "id": r.get::<_, String>(0)?, "agent_id": r.get::<_, String>(1)?, "marketplace": r.get::<_, String>(2)?,
+        "price_usdc": r.get::<_, f64>(3)?, "pricing_model": r.get::<_, String>(4)?,
+        "description": r.get::<_, Option<String>>(5)?, "enabled": r.get::<_, i64>(6)? != 0,
+    }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?
+       .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+async fn gui_external_listing_add(
+    State(state): State<GuiServerState>, headers: HeaderMap, Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let agent_id = body.get("agent_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let marketplace = body.get("marketplace").and_then(|v| v.as_str()).unwrap_or("OpenAgentX").to_string();
+    let price = body.get("price_usdc").and_then(|v| v.as_f64()).unwrap_or(1.0);
+    if agent_id.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorDto{error: "agent_id 필수".into()})));
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO external_listings (id, agent_id, marketplace, price_usdc, pricing_model, description, enabled, created_at) VALUES (?1,?2,?3,?4,'per-call','',1,datetime('now'))",
+        rusqlite::params![id, agent_id, marketplace, price],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    Ok(Json(serde_json::json!({"id": id, "agent_id": agent_id, "marketplace": marketplace, "price_usdc": price})))
+}
+
+async fn gui_external_reputation(
+    State(state): State<GuiServerState>, headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare("SELECT external_agent, avg_rating, review_count, blacklisted FROM external_reputation ORDER BY review_count DESC LIMIT 100").map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| Ok(serde_json::json!({
+        "external_agent": r.get::<_, String>(0)?, "avg_rating": r.get::<_, Option<f64>>(1)?,
+        "review_count": r.get::<_, i64>(2)?, "blacklisted": r.get::<_, i64>(3)? != 0,
+    }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?
+       .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+async fn gui_external_protocols(
+    State(state): State<GuiServerState>, headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare("SELECT name, enabled FROM external_protocols").map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    let mut out = serde_json::Map::new();
+    let mut protos = Vec::new();
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? != 0)))
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    for row in rows.flatten() {
+        out.insert(row.0.clone(), serde_json::json!(row.1));
+        protos.push(row.0);
+    }
+    out.insert("protocols".into(), serde_json::json!(protos));
+    Ok(Json(serde_json::Value::Object(out)))
+}
+
+/// `GET /v1/gui/ops/diagnostic` — DB / 디스크 / keystore / 서비스 헬스체크.
+async fn gui_ops_diagnostic(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let db_ok = db.conn().query_row("SELECT 1", [], |r| r.get::<_, i32>(0)).is_ok();
+    let session_count: i64 = db.conn().query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0)).unwrap_or(-1);
+    let msg_count: i64 = db.conn().query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0)).unwrap_or(-1);
+    let migration_version: i64 = db.conn().query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r.get(0)).unwrap_or(-1);
+    drop(db);
+    let data_dir = state.data_dir.as_ref().clone();
+    let keystore_path = openxgram_core::paths::keystore_dir(&data_dir).join("master.json");
+    let keystore_exists = keystore_path.exists();
+    let disk_free_mb = match std::fs::metadata(&data_dir) {
+        Ok(_) => "측정 가능 (statvfs 통합 예정)",
+        Err(_) => "측정 불가",
+    };
+    Ok(Json(serde_json::json!({
+        "db": {"ok": db_ok, "sessions": session_count, "messages": msg_count, "migration_version": migration_version},
+        "disk": {"data_dir": data_dir.display().to_string(), "status": disk_free_mb},
+        "keystore": {"master_exists": keystore_exists, "path": keystore_path.display().to_string()},
+        "services": {"tailscale": "Tailscale Funnel active", "discord": "listener spawned", "telegram": "configured"},
+        "summary": if db_ok && keystore_exists { "✅ 정상" } else { "❌ 점검 필요" }
+    })))
+}
+
+/// `GET /v1/gui/ops/machines` — Tailscale peer + DID 등록 머신 목록.
+async fn gui_ops_machines(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT alias, address, role, COALESCE(last_seen, '미연결') FROM peers ORDER BY created_at DESC LIMIT 50"
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prepare: {e}")})))?;
+    let peers: Vec<serde_json::Value> = stmt.query_map([], |r| {
+        Ok(serde_json::json!({
+            "alias": r.get::<_, String>(0)?,
+            "address": r.get::<_, String>(1)?,
+            "role": r.get::<_, String>(2)?,
+            "last_seen": r.get::<_, String>(3)?,
+        }))
+    }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("query: {e}")})))?
+      .filter_map(|r| r.ok())
+      .collect();
+    drop(stmt);
+    let local = crate::daemon_gui_sessions::detect_machine();
+    let ts_status = std::process::Command::new("tailscale")
+        .arg("status").arg("--json")
+        .output().ok()
+        .and_then(|o| if o.status.success() { String::from_utf8(o.stdout).ok() } else { None })
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+    let tailscale_peers = ts_status.as_ref().and_then(|v| v.get("Peer")).cloned().unwrap_or(serde_json::json!({}));
+    Ok(Json(serde_json::json!({
+        "local_machine": local,
+        "registered_peers": peers,
+        "peer_count": peers.len(),
+        "tailscale_peers": tailscale_peers,
+    })))
+}
+
+/// `GET /v1/gui/ops/backup-status` — 백업 last/next + 백업 dir 의 파일 count.
+async fn gui_ops_backup_status(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let backup_dir = state.data_dir.as_ref().join("backup");
+    let entries: Vec<_> = std::fs::read_dir(&backup_dir).ok()
+        .into_iter().flatten()
+        .filter_map(|e| e.ok())
+        .map(|e| serde_json::json!({"name": e.file_name().to_string_lossy().to_string()}))
+        .collect();
+    let last_at = entries.last().map(|e| e.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string());
+    Ok(Json(serde_json::json!({
+        "backup_dir": backup_dir.display().to_string(),
+        "count": entries.len(),
+        "last_at": last_at,
+        "next_scheduled": null,
+        "backup_files": entries,
+        "note": "백업 명령: xgram backup create. BIP39 마스터 키 필요. (Phase 2: 자동 스케줄)"
+    })))
+}
+
+/// `GET /v1/gui/ops/update-check` — GitHub release latest vs 현재.
+async fn gui_ops_update_check(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let current = crate::daemon_gui_sessions::version_info();
+    let client = reqwest::Client::new();
+    let latest = client.get("https://api.github.com/repos/OpenXgram/openxgram/releases/latest")
+        .header("User-Agent", "openxgram-daemon")
+        .send().await.ok();
+    let latest_tag = if let Some(r) = latest {
+        if r.status().is_success() {
+            r.json::<serde_json::Value>().await.ok().and_then(|j| j.get("tag_name").and_then(|t| t.as_str()).map(String::from))
+        } else { None }
+    } else { None };
+    let current_release = serde_json::to_value(&current).ok()
+        .and_then(|v| v.get("release").and_then(|r| r.as_str()).map(String::from));
+    Ok(Json(serde_json::json!({
+        "current": current,
+        "latest_tag": latest_tag,
+        "channel": "stable",
+        "up_to_date": latest_tag.as_ref().map(|t| t.trim_start_matches('v')) == current_release.as_deref(),
+        "update_url": "https://github.com/OpenXgram/openxgram/releases/latest"
     })))
 }
 

@@ -146,6 +146,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "full_specs",
         sql: include_str!("../migrations/0026_full_specs.sql"),
     },
+    Migration {
+        version: 28,
+        name: "external_agent",
+        sql: include_str!("../migrations/0028_external_agent.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {
