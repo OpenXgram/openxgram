@@ -1,7 +1,7 @@
 // Web GUI — Tauri invoke() shim.
 //
-// 기존 컴포넌트는 `import { invoke } from "@tauri-apps/api/core"` 사용.
-// Web 빌드에서는 `import { invoke } from "@/api/client"` 로 1줄 교체.
+// 기존 컴포넌트는 `import { invoke} from "@tauri-apps/api/core"` 사용.
+// Web 빌드에서는 `import { invoke} from "@/api/client"` 로 1줄 교체.
 //
 // daemon HTTP API 는 REST 스타일 (GET/POST/PUT/DELETE + 경로). Tauri 의
 // `invoke(name, args)` (모두 POST + command name) 패턴과 다르므로 이 모듈에서
@@ -21,361 +21,361 @@ const URL_KEY = "xgram_daemon_url";
 const TOKEN_KEY = "xgram_mcp_token";
 
 export function getDaemonUrl(): string {
-  try {
-    const stored = localStorage.getItem(URL_KEY);
-    // rc.26 마이그레이션: 옛 default 가 저장돼 있으면 무시 → 새 default.
-    if (!stored || stored === LEGACY_BASE) return DEFAULT_BASE;
-    return stored;
-  } catch {
-    return DEFAULT_BASE;
-  }
+ try {
+ const stored = localStorage.getItem(URL_KEY);
+ // rc.26 마이그레이션: 옛 default 가 저장돼 있으면 무시 → 새 default.
+ if (!stored || stored === LEGACY_BASE) return DEFAULT_BASE;
+ return stored;
+} catch {
+ return DEFAULT_BASE;
+}
 }
 
 export function setDaemonUrl(url: string): void {
-  try {
-    if (url.trim()) {
-      localStorage.setItem(URL_KEY, url.trim());
-    } else {
-      localStorage.removeItem(URL_KEY);
-    }
-  } catch {
-    // ignored — private mode
-  }
+ try {
+ if (url.trim()) {
+ localStorage.setItem(URL_KEY, url.trim());
+} else {
+ localStorage.removeItem(URL_KEY);
+}
+} catch {
+ // ignored — private mode
+}
 }
 
 export function getBearer(): string | null {
-  // 우선순위: session_token (웹 GUI unlock) > mcp_token (CLI 발급).
-  // 두 키가 분리된 이유: unlock 토큰은 daemon 프로세스 수명, mcp-token 은 영구.
-  // require_auth 핸들러는 둘 다 받음.
-  try {
-    return (
-      localStorage.getItem("xgram_session_token") ||
-      localStorage.getItem(TOKEN_KEY)
-    );
-  } catch {
-    return null;
-  }
+ // 우선순위: session_token (웹 GUI unlock) > mcp_token (CLI 발급).
+ // 두 키가 분리된 이유: unlock 토큰은 daemon 프로세스 수명, mcp-token 은 영구.
+ // require_auth 핸들러는 둘 다 받음.
+ try {
+ return (
+ localStorage.getItem("xgram_session_token") ||
+ localStorage.getItem(TOKEN_KEY)
+);
+} catch {
+ return null;
+}
 }
 
 export function setBearer(token: string): void {
-  try {
-    if (token.trim()) {
-      localStorage.setItem(TOKEN_KEY, token.trim());
-    } else {
-      localStorage.removeItem(TOKEN_KEY);
-    }
-  } catch {
-    // ignored
-  }
+ try {
+ if (token.trim()) {
+ localStorage.setItem(TOKEN_KEY, token.trim());
+} else {
+ localStorage.removeItem(TOKEN_KEY);
+}
+} catch {
+ // ignored
+}
 }
 
 type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
 interface Route {
-  method: HttpMethod;
-  /** path 템플릿; `{id}` 등은 args 에서 같은 키로 치환. */
-  path: string;
-  /** path placeholder 채운 후 남는 args 키를 body 로 보낼지 (POST/PUT 기본 true). */
-  body?: boolean;
-  /** 응답 본문이 비어있으면 이 값을 반환 (기본 undefined). */
-  emptyAs?: unknown;
+ method: HttpMethod;
+ /** path 템플릿; `{id}` 등은 args 에서 같은 키로 치환. */
+ path: string;
+ /** path placeholder 채운 후 남는 args 키를 body 로 보낼지 (POST/PUT 기본 true). */
+ body?: boolean;
+ /** 응답 본문이 비어있으면 이 값을 반환 (기본 undefined). */
+ emptyAs?: unknown;
 }
 
 // daemon_gui.rs Router::new() 에 정의된 엔드포인트와 1:1 매핑.
 const ROUTES: Record<string, Route> = {
-  // 기본 상태
-  status: { method: "GET", path: "/status" },
-  is_initialized: { method: "GET", path: "/initialized" },
-  health: { method: "GET", path: "/health" },
+ // 기본 상태
+ status: { method: "GET", path: "/status"},
+ is_initialized: { method: "GET", path: "/initialized"},
+ health: { method: "GET", path: "/health"},
 
-  // Peers
-  peers_list: { method: "GET", path: "/peers", emptyAs: [] },
-  peer_add: { method: "POST", path: "/peers", body: true },
+ // Peers
+ peers_list: { method: "GET", path: "/peers", emptyAs: []},
+ peer_add: { method: "POST", path: "/peers", body: true},
 
-  // Messenger v1.3 §3.2 — 머신×세션 통합 detector (M-1)
-  sessions: { method: "GET", path: "/sessions" },
-  machine_info: { method: "GET", path: "/machine" },
-  // Messenger v1.3 §4.3 (S5) — 세션 라이브 터미널 출력
-  session_screen: { method: "GET", path: "/sessions/{identifier}/screen" },
-  // Messenger v1.3 §7.1·§7.3 — 헤더 🔔 통합 승인 큐 (L6 + V4)
-  approvals: { method: "GET", path: "/approvals" },
-  // Messenger v1.3 §2.4 + M-3 + L4 — 마스터+서브 지갑 (HD 영구 점유)
-  wallets_list: { method: "GET", path: "/wallets" },
-  wallet_create: { method: "POST", path: "/wallets", body: true },
-  wallet_topup: { method: "POST", path: "/wallets/topup", body: true },
-  // Messenger v1.3 L3·V1 / M-5·N1·N3·V4 — Role 정책 + 화이트리스트
-  role_policies: { method: "GET", path: "/role-policies" },
-  whitelist: { method: "GET", path: "/whitelist" },
-  // Messenger v1.3 S8·V6 / N4 / V11 / V12 / N7
-  cross_machine_queue: { method: "GET", path: "/cross-machine-queue" },
-  global_search: { method: "GET", path: "/search" },
-  routing_rules_list: { method: "GET", path: "/routing-rules" },
-  routing_rule_add: { method: "POST", path: "/routing-rules", body: true },
-  routing_rule_delete: { method: "POST", path: "/routing-rules/{id}" },
-  version_info: { method: "GET", path: "/version" },
-  system_cron_protect: { method: "POST", path: "/system-cron/protect-attempt", body: true },
-  // S7 첨부, M-5 사용자 화이트리스트
-  attachment_upload: { method: "POST", path: "/attachments", body: true },
-  attachment_get: { method: "GET", path: "/attachments/{hash}" },
-  whitelist_patterns_list: { method: "GET", path: "/whitelist-patterns" },
-  whitelist_pattern_add: { method: "POST", path: "/whitelist-patterns", body: true },
-  // UI-MEMORY-SPEC v1.1 — 위키 CRUD
-  wiki_pages_list: { method: "GET", path: "/wiki/pages" },
-  wiki_page_get: { method: "GET", path: "/wiki/pages/{id}" },
-  wiki_page_upsert: { method: "POST", path: "/wiki/pages", body: true },
-  // Memory deep
-  wiki_delete: { method: "POST", path: "/wiki/pages/{id}/delete" },
-  wiki_lock: { method: "POST", path: "/wiki/pages/{id}/lock", body: true },
-  wiki_history: { method: "GET", path: "/wiki/pages/{id}/history" },
-  wiki_share: { method: "POST", path: "/wiki/pages/{id}/share", body: true },
-  wiki_trash_list: { method: "GET", path: "/wiki/trash" },
-  wiki_trash_restore: { method: "POST", path: "/wiki/trash/{id}/restore" },
-  memory_patterns_list: { method: "GET", path: "/memory/patterns" },
-  memory_pattern_add: { method: "POST", path: "/memory/patterns", body: true },
-  memory_mistakes_list: { method: "GET", path: "/memory/mistakes" },
-  memory_mistake_add: { method: "POST", path: "/memory/mistakes", body: true },
-  wiki_new_alerts: { method: "GET", path: "/wiki/new-alerts" },
-  // Identity deep
-  identity_info: { method: "GET", path: "/identity/info" },
-  identity_audit: { method: "GET", path: "/identity/audit" },
-  identity_allowlist: { method: "GET", path: "/identity/allowlist" },
-  identity_allowlist_add: { method: "POST", path: "/identity/allowlist", body: true },
-  // Channel deep
-  channel_people: { method: "GET", path: "/channel/people" },
-  channel_routing: { method: "GET", path: "/channel/routing" },
-  // Autonomy deep
-  autonomy_history: { method: "GET", path: "/autonomy/history" },
-  autonomy_limits: { method: "GET", path: "/autonomy/limits" },
-  autonomy_vacation: { method: "GET", path: "/autonomy/vacation" },
-  autonomy_vacation_set: { method: "POST", path: "/autonomy/vacation", body: true },
-  // External + Ops
-  external_directory: { method: "GET", path: "/external/directory" },
-  ops_health: { method: "GET", path: "/ops/health" },
-  // 세션별 채널 바인딩 (메신저 §5 탭 3)
-  session_bindings_list: { method: "GET", path: "/sessions/{agent_id}/channel-bindings" },
-  session_binding_add: { method: "POST", path: "/sessions/{agent_id}/channel-bindings", body: true },
-  session_binding_delete: { method: "POST", path: "/sessions/{agent_id}/channel-bindings/{binding_id}" },
-  notify_discord_channels: { method: "POST", path: "/notify/discord/channels", body: true },
-  notify_discord_diagnostic: { method: "GET", path: "/notify/discord/diagnostic" },
-  ops_diagnostic: { method: "GET", path: "/ops/diagnostic" },
-  ops_machines: { method: "GET", path: "/ops/machines" },
-  ops_backup_status: { method: "GET", path: "/ops/backup-status" },
-  ops_update_check: { method: "GET", path: "/ops/update-check" },
-  external_outbound_calls: { method: "GET", path: "/external/outbound-calls" },
-  external_inbound_pending: { method: "GET", path: "/external/inbound-pending" },
-  external_inbound_approve: { method: "POST", path: "/external/inbound/{id}/approve", body: true },
-  external_inbound_reject: { method: "POST", path: "/external/inbound/{id}/reject", body: true },
-  external_my_listings: { method: "GET", path: "/external/my-listings" },
-  external_listing_add: { method: "POST", path: "/external/listings", body: true },
-  external_reputation: { method: "GET", path: "/external/reputation" },
-  external_protocols: { method: "GET", path: "/external/protocols" },
-  workflows_list: { method: "GET", path: "/workflows" },
-  workflow_upsert: { method: "POST", path: "/workflows", body: true },
-  workflow_get: { method: "GET", path: "/workflows/{id}" },
-  workflow_delete: { method: "POST", path: "/workflows/{id}", body: true },
-  workflow_run: { method: "POST", path: "/workflows/{id}/run", body: true },
-  workflow_runs: { method: "GET", path: "/workflows/{id}/runs" },
-  // Identity 깊은
-  identity_bip39: { method: "POST", path: "/identity/bip39", body: true },
-  identity_sub_dids: { method: "GET", path: "/identity/sub-dids" },
-  identity_sub_did_new: { method: "POST", path: "/identity/sub-dids", body: true },
-  identity_sub_did_revoke: { method: "POST", path: "/identity/sub-dids/{id}/revoke" },
-  identity_lockout_status: { method: "GET", path: "/identity/lockout-status" },
-  // Vault MCP
-  vault_mcp_servers_list: { method: "GET", path: "/vault/mcp-servers" },
-  vault_mcp_server_add: { method: "POST", path: "/vault/mcp-servers", body: true },
-  vault_tool_catalog: { method: "GET", path: "/vault/tool-catalog" },
-  vault_tool_acl_set: { method: "POST", path: "/vault/tool-catalog", body: true },
-  // Channel 모더레이션
-  channel_blocks_list: { method: "GET", path: "/channel/moderation/blocks" },
-  channel_block_add: { method: "POST", path: "/channel/moderation/blocks", body: true },
-  channel_limits_list: { method: "GET", path: "/channel/moderation/limits" },
-  channel_limit_set: { method: "POST", path: "/channel/moderation/limits", body: true },
-  // Autonomy SelfTrigger + Reflection
-  self_triggers_list: { method: "GET", path: "/autonomy/self-triggers" },
-  self_trigger_add: { method: "POST", path: "/autonomy/self-triggers", body: true },
-  reflection_runs_list: { method: "GET", path: "/autonomy/reflection-runs" },
-  reflection_now: { method: "POST", path: "/autonomy/reflection-runs" },
-  // Memory M-2 merge + M-10 edit lock
-  wiki_merge_candidates: { method: "GET", path: "/wiki/merge-candidates" },
-  wiki_edit_lock_get: { method: "GET", path: "/wiki/pages/{id}/edit-lock" },
-  wiki_edit_lock_acquire: { method: "POST", path: "/wiki/pages/{id}/edit-lock" },
-  // Peer keypair generate
-  peer_keypair_generate: { method: "POST", path: "/peers/generate-keypair", body: true },
+ // Messenger v1.3 §3.2 — 머신×세션 통합 detector (M-1)
+ sessions: { method: "GET", path: "/sessions"},
+ machine_info: { method: "GET", path: "/machine"},
+ // Messenger v1.3 §4.3 (S5) — 세션 라이브 터미널 출력
+ session_screen: { method: "GET", path: "/sessions/{identifier}/screen"},
+ // Messenger v1.3 §7.1·§7.3 — 헤더 통합 승인 큐 (L6 + V4)
+ approvals: { method: "GET", path: "/approvals"},
+ // Messenger v1.3 §2.4 + M-3 + L4 — 마스터+서브 지갑 (HD 영구 점유)
+ wallets_list: { method: "GET", path: "/wallets"},
+ wallet_create: { method: "POST", path: "/wallets", body: true},
+ wallet_topup: { method: "POST", path: "/wallets/topup", body: true},
+ // Messenger v1.3 L3·V1 / M-5·N1·N3·V4 — Role 정책 + 화이트리스트
+ role_policies: { method: "GET", path: "/role-policies"},
+ whitelist: { method: "GET", path: "/whitelist"},
+ // Messenger v1.3 S8·V6 / N4 / V11 / V12 / N7
+ cross_machine_queue: { method: "GET", path: "/cross-machine-queue"},
+ global_search: { method: "GET", path: "/search"},
+ routing_rules_list: { method: "GET", path: "/routing-rules"},
+ routing_rule_add: { method: "POST", path: "/routing-rules", body: true},
+ routing_rule_delete: { method: "POST", path: "/routing-rules/{id}"},
+ version_info: { method: "GET", path: "/version"},
+ system_cron_protect: { method: "POST", path: "/system-cron/protect-attempt", body: true},
+ // S7 첨부, M-5 사용자 화이트리스트
+ attachment_upload: { method: "POST", path: "/attachments", body: true},
+ attachment_get: { method: "GET", path: "/attachments/{hash}"},
+ whitelist_patterns_list: { method: "GET", path: "/whitelist-patterns"},
+ whitelist_pattern_add: { method: "POST", path: "/whitelist-patterns", body: true},
+ // UI-MEMORY-SPEC v1.1 — 위키 CRUD
+ wiki_pages_list: { method: "GET", path: "/wiki/pages"},
+ wiki_page_get: { method: "GET", path: "/wiki/pages/{id}"},
+ wiki_page_upsert: { method: "POST", path: "/wiki/pages", body: true},
+ // Memory deep
+ wiki_delete: { method: "POST", path: "/wiki/pages/{id}/delete"},
+ wiki_lock: { method: "POST", path: "/wiki/pages/{id}/lock", body: true},
+ wiki_history: { method: "GET", path: "/wiki/pages/{id}/history"},
+ wiki_share: { method: "POST", path: "/wiki/pages/{id}/share", body: true},
+ wiki_trash_list: { method: "GET", path: "/wiki/trash"},
+ wiki_trash_restore: { method: "POST", path: "/wiki/trash/{id}/restore"},
+ memory_patterns_list: { method: "GET", path: "/memory/patterns"},
+ memory_pattern_add: { method: "POST", path: "/memory/patterns", body: true},
+ memory_mistakes_list: { method: "GET", path: "/memory/mistakes"},
+ memory_mistake_add: { method: "POST", path: "/memory/mistakes", body: true},
+ wiki_new_alerts: { method: "GET", path: "/wiki/new-alerts"},
+ // Identity deep
+ identity_info: { method: "GET", path: "/identity/info"},
+ identity_audit: { method: "GET", path: "/identity/audit"},
+ identity_allowlist: { method: "GET", path: "/identity/allowlist"},
+ identity_allowlist_add: { method: "POST", path: "/identity/allowlist", body: true},
+ // Channel deep
+ channel_people: { method: "GET", path: "/channel/people"},
+ channel_routing: { method: "GET", path: "/channel/routing"},
+ // Autonomy deep
+ autonomy_history: { method: "GET", path: "/autonomy/history"},
+ autonomy_limits: { method: "GET", path: "/autonomy/limits"},
+ autonomy_vacation: { method: "GET", path: "/autonomy/vacation"},
+ autonomy_vacation_set: { method: "POST", path: "/autonomy/vacation", body: true},
+ // External + Ops
+ external_directory: { method: "GET", path: "/external/directory"},
+ ops_health: { method: "GET", path: "/ops/health"},
+ // 세션별 채널 바인딩 (메신저 §5 탭 3)
+ session_bindings_list: { method: "GET", path: "/sessions/{agent_id}/channel-bindings"},
+ session_binding_add: { method: "POST", path: "/sessions/{agent_id}/channel-bindings", body: true},
+ session_binding_delete: { method: "POST", path: "/sessions/{agent_id}/channel-bindings/{binding_id}"},
+ notify_discord_channels: { method: "POST", path: "/notify/discord/channels", body: true},
+ notify_discord_diagnostic: { method: "GET", path: "/notify/discord/diagnostic"},
+ ops_diagnostic: { method: "GET", path: "/ops/diagnostic"},
+ ops_machines: { method: "GET", path: "/ops/machines"},
+ ops_backup_status: { method: "GET", path: "/ops/backup-status"},
+ ops_update_check: { method: "GET", path: "/ops/update-check"},
+ external_outbound_calls: { method: "GET", path: "/external/outbound-calls"},
+ external_inbound_pending: { method: "GET", path: "/external/inbound-pending"},
+ external_inbound_approve: { method: "POST", path: "/external/inbound/{id}/approve", body: true},
+ external_inbound_reject: { method: "POST", path: "/external/inbound/{id}/reject", body: true},
+ external_my_listings: { method: "GET", path: "/external/my-listings"},
+ external_listing_add: { method: "POST", path: "/external/listings", body: true},
+ external_reputation: { method: "GET", path: "/external/reputation"},
+ external_protocols: { method: "GET", path: "/external/protocols"},
+ workflows_list: { method: "GET", path: "/workflows"},
+ workflow_upsert: { method: "POST", path: "/workflows", body: true},
+ workflow_get: { method: "GET", path: "/workflows/{id}"},
+ workflow_delete: { method: "POST", path: "/workflows/{id}", body: true},
+ workflow_run: { method: "POST", path: "/workflows/{id}/run", body: true},
+ workflow_runs: { method: "GET", path: "/workflows/{id}/runs"},
+ // Identity 깊은
+ identity_bip39: { method: "POST", path: "/identity/bip39", body: true},
+ identity_sub_dids: { method: "GET", path: "/identity/sub-dids"},
+ identity_sub_did_new: { method: "POST", path: "/identity/sub-dids", body: true},
+ identity_sub_did_revoke: { method: "POST", path: "/identity/sub-dids/{id}/revoke"},
+ identity_lockout_status: { method: "GET", path: "/identity/lockout-status"},
+ // Vault MCP
+ vault_mcp_servers_list: { method: "GET", path: "/vault/mcp-servers"},
+ vault_mcp_server_add: { method: "POST", path: "/vault/mcp-servers", body: true},
+ vault_tool_catalog: { method: "GET", path: "/vault/tool-catalog"},
+ vault_tool_acl_set: { method: "POST", path: "/vault/tool-catalog", body: true},
+ // Channel 모더레이션
+ channel_blocks_list: { method: "GET", path: "/channel/moderation/blocks"},
+ channel_block_add: { method: "POST", path: "/channel/moderation/blocks", body: true},
+ channel_limits_list: { method: "GET", path: "/channel/moderation/limits"},
+ channel_limit_set: { method: "POST", path: "/channel/moderation/limits", body: true},
+ // Autonomy SelfTrigger + Reflection
+ self_triggers_list: { method: "GET", path: "/autonomy/self-triggers"},
+ self_trigger_add: { method: "POST", path: "/autonomy/self-triggers", body: true},
+ reflection_runs_list: { method: "GET", path: "/autonomy/reflection-runs"},
+ reflection_now: { method: "POST", path: "/autonomy/reflection-runs"},
+ // Memory M-2 merge + M-10 edit lock
+ wiki_merge_candidates: { method: "GET", path: "/wiki/merge-candidates"},
+ wiki_edit_lock_get: { method: "GET", path: "/wiki/pages/{id}/edit-lock"},
+ wiki_edit_lock_acquire: { method: "POST", path: "/wiki/pages/{id}/edit-lock"},
+ // Peer keypair generate
+ peer_keypair_generate: { method: "POST", path: "/peers/generate-keypair", body: true},
 
-  // Channel
-  channel_status: { method: "GET", path: "/channel/status" },
+ // Channel
+ channel_status: { method: "GET", path: "/channel/status"},
 
-  // Vault
-  vault_pending_list: { method: "GET", path: "/vault/pending", emptyAs: [] },
-  vault_pending_approve: {
-    method: "POST",
-    path: "/vault/pending/{id}/approve",
-  },
-  vault_pending_deny: {
-    method: "POST",
-    path: "/vault/pending/{id}/deny",
-    body: true,
-  },
+ // Vault
+ vault_pending_list: { method: "GET", path: "/vault/pending", emptyAs: []},
+ vault_pending_approve: {
+ method: "POST",
+ path: "/vault/pending/{id}/approve",
+},
+ vault_pending_deny: {
+ method: "POST",
+ path: "/vault/pending/{id}/deny",
+ body: true,
+},
 
-  // Payment limit
-  payment_get_daily_limit: { method: "GET", path: "/payment/daily-limit" },
-  payment_set_daily_limit: {
-    method: "PUT",
-    path: "/payment/daily-limit",
-    body: true,
-  },
+ // Payment limit
+ payment_get_daily_limit: { method: "GET", path: "/payment/daily-limit"},
+ payment_set_daily_limit: {
+ method: "PUT",
+ path: "/payment/daily-limit",
+ body: true,
+},
 
-  // Notify
-  notify_status: { method: "GET", path: "/notify/status" },
-  notify_discord_validate: {
-    method: "POST",
-    path: "/notify/discord/validate",
-    body: true,
-  },
-  notify_discord_guilds: {
-    method: "POST",
-    path: "/notify/discord/guilds",
-    body: true,
-  },
-  notify_discord_save: {
-    method: "POST",
-    path: "/notify/discord/save",
-    body: true,
-  },
-  notify_telegram_validate: {
-    method: "POST",
-    path: "/notify/telegram/validate",
-    body: true,
-  },
-  notify_telegram_detect_chat: {
-    method: "POST",
-    path: "/notify/telegram/detect_chat",
-    body: true,
-  },
-  notify_telegram_save: {
-    method: "POST",
-    path: "/notify/telegram/save",
-    body: true,
-  },
+ // Notify
+ notify_status: { method: "GET", path: "/notify/status"},
+ notify_discord_validate: {
+ method: "POST",
+ path: "/notify/discord/validate",
+ body: true,
+},
+ notify_discord_guilds: {
+ method: "POST",
+ path: "/notify/discord/guilds",
+ body: true,
+},
+ notify_discord_save: {
+ method: "POST",
+ path: "/notify/discord/save",
+ body: true,
+},
+ notify_telegram_validate: {
+ method: "POST",
+ path: "/notify/telegram/validate",
+ body: true,
+},
+ notify_telegram_detect_chat: {
+ method: "POST",
+ path: "/notify/telegram/detect_chat",
+ body: true,
+},
+ notify_telegram_save: {
+ method: "POST",
+ path: "/notify/telegram/save",
+ body: true,
+},
 
-  // Schedule
-  schedule_list: { method: "GET", path: "/schedule", emptyAs: [] },
-  schedule_create: { method: "POST", path: "/schedule", body: true },
-  schedule_stats: { method: "GET", path: "/schedule/stats" },
-  schedule_cancel: { method: "POST", path: "/schedule/{id}/cancel" },
+ // Schedule
+ schedule_list: { method: "GET", path: "/schedule", emptyAs: []},
+ schedule_create: { method: "POST", path: "/schedule", body: true},
+ schedule_stats: { method: "GET", path: "/schedule/stats"},
+ schedule_cancel: { method: "POST", path: "/schedule/{id}/cancel"},
 
-  // Chain
-  chain_list: { method: "GET", path: "/chain", emptyAs: [] },
-  chain_delete: { method: "DELETE", path: "/chain/{name}" },
-  // chain_show 는 컴포넌트에서 직접 호출 안 함 (chain_list 가 dto 다 줌).
+ // Chain
+ chain_list: { method: "GET", path: "/chain", emptyAs: []},
+ chain_delete: { method: "DELETE", path: "/chain/{name}"},
+ // chain_show 는 컴포넌트에서 직접 호출 안 함 (chain_list 가 dto 다 줌).
 
-  // 메신저 v1.3 Step 0 — 메시지 송수신
-  messages_recent: { method: "GET", path: "/messages", emptyAs: [] },
-  peer_send: { method: "POST", path: "/peers/{alias}/send", body: true },
+ // 메신저 v1.3 Step 0 — 메시지 송수신
+ messages_recent: { method: "GET", path: "/messages", emptyAs: []},
+ peer_send: { method: "POST", path: "/peers/{alias}/send", body: true},
 };
 
 /** path 템플릿 치환 + 남은 args 반환. */
 function renderPath(
-  template: string,
-  args: Record<string, unknown> | undefined,
-): { path: string; remaining: Record<string, unknown> } {
-  if (!args) return { path: template, remaining: {} };
-  const remaining: Record<string, unknown> = { ...args };
-  const path = template.replace(/\{(\w+)\}/g, (_m, key: string) => {
-    const v = remaining[key];
-    if (v === undefined || v === null) {
-      throw new Error(`invoke: path placeholder {${key}} 누락`);
-    }
-    delete remaining[key];
-    return encodeURIComponent(String(v));
-  });
-  return { path, remaining };
+ template: string,
+ args: Record<string, unknown> | undefined,
+): { path: string; remaining: Record<string, unknown>} {
+ if (!args) return { path: template, remaining: {}};
+ const remaining: Record<string, unknown> = { ...args};
+ const path = template.replace(/\{(\w+)\}/g, (_m, key: string) => {
+ const v = remaining[key];
+ if (v === undefined || v === null) {
+ throw new Error(`invoke: path placeholder {${key}} 누락`);
+}
+ delete remaining[key];
+ return encodeURIComponent(String(v));
+});
+ return { path, remaining};
 }
 
 /**
  * invoke shim — Tauri 코어의 `invoke()` 와 동일한 signature.
  *
- * @param command  daemon GUI 명령 (예: "peers_list", "vault_pending_approve").
- * @param args     path placeholder + body. POST/PUT 에선 path placeholder 외 모든
- *                 키가 JSON body 로 전송됨.
+ * @param command daemon GUI 명령 (예: "peers_list", "vault_pending_approve").
+ * @param args path placeholder + body. POST/PUT 에선 path placeholder 외 모든
+ * 키가 JSON body 로 전송됨.
  * @throws Error("미인증 ...") on 401.
  * @throws Error("HTTP NNN: ...") on non-2xx.
  * @throws Error("invoke: ... 미지원 ...") on unknown command.
  */
 export async function invoke<T>(
-  command: string,
-  args?: Record<string, unknown>,
+ command: string,
+ args?: Record<string, unknown>,
 ): Promise<T> {
-  const route = ROUTES[command];
-  if (!route) {
-    throw new Error(
-      `invoke: 명령 '${command}' 은(는) Web GUI 에서 미지원. ` +
-        `(daemon REST API 미존재 — Tauri 빌드만 가능)`,
-    );
-  }
+ const route = ROUTES[command];
+ if (!route) {
+ throw new Error(
+ `invoke: 명령 '${command}' 은(는) Web GUI 에서 미지원. ` +
+ `(daemon REST API 미존재 — Tauri 빌드만 가능)`,
+);
+}
 
-  const { path, remaining } = renderPath(route.path, args);
-  const base = getDaemonUrl().replace(/\/+$/, "");
-  let url = `${base}${path}`;
-  const headers: Record<string, string> = {};
-  const token = getBearer();
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
+ const { path, remaining} = renderPath(route.path, args);
+ const base = getDaemonUrl().replace(/\/+$/, "");
+ let url = `${base}${path}`;
+ const headers: Record<string, string> = {};
+ const token = getBearer();
+ if (token) {
+ headers["Authorization"] = `Bearer ${token}`;
+}
 
-  let body: string | undefined;
-  if (route.body && (route.method === "POST" || route.method === "PUT")) {
-    headers["Content-Type"] = "application/json";
-    body = JSON.stringify(remaining);
-  } else if (
-    Object.keys(remaining).length > 0 &&
-    (route.method === "POST" || route.method === "PUT")
-  ) {
-    // body:true 가 false 여도 POST/PUT 에 잔여 args 있으면 body 로 전송 (안전 기본).
-    headers["Content-Type"] = "application/json";
-    body = JSON.stringify(remaining);
-  } else if (
-    Object.keys(remaining).length > 0 &&
-    (route.method === "GET" || route.method === "DELETE")
-  ) {
-    // GET/DELETE 의 잔여 args 는 query string 으로 전송.
-    const qs = new URLSearchParams(
-      Object.entries(remaining).map(([k, v]) => [k, String(v)]),
-    ).toString();
-    url += (url.includes("?") ? "&" : "?") + qs;
-  }
+ let body: string | undefined;
+ if (route.body && (route.method === "POST" || route.method === "PUT")) {
+ headers["Content-Type"] = "application/json";
+ body = JSON.stringify(remaining);
+} else if (
+ Object.keys(remaining).length > 0 &&
+ (route.method === "POST" || route.method === "PUT")
+) {
+ // body:true 가 false 여도 POST/PUT 에 잔여 args 있으면 body 로 전송 (안전 기본).
+ headers["Content-Type"] = "application/json";
+ body = JSON.stringify(remaining);
+} else if (
+ Object.keys(remaining).length > 0 &&
+ (route.method === "GET" || route.method === "DELETE")
+) {
+ // GET/DELETE 의 잔여 args 는 query string 으로 전송.
+ const qs = new URLSearchParams(
+ Object.entries(remaining).map(([k, v]) => [k, String(v)]),
+).toString();
+ url += (url.includes("?") ? "&" : "?") + qs;
+}
 
-  let res: Response;
-  try {
-    res = await fetch(url, { method: route.method, headers, body });
-  } catch (e) {
-    throw new Error(
-      `daemon 연결 실패 (${url}) — daemon 가동 + URL 확인: ${(e as Error).message}`,
-    );
-  }
+ let res: Response;
+ try {
+ res = await fetch(url, { method: route.method, headers, body});
+} catch (e) {
+ throw new Error(
+ `daemon 연결 실패 (${url}) — daemon 가동 + URL 확인: ${(e as Error).message}`,
+);
+}
 
-  if (res.status === 401) {
-    // 세션 만료/위조 — 로컬 Bearer 삭제 후 throw. App.tsx 가 LoginView 로 복귀.
-    try {
-      localStorage.removeItem(TOKEN_KEY);
-    } catch {
-      // ignored
-    }
-    throw new Error("미인증 — 다시 로그인하세요");
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
-  }
+ if (res.status === 401) {
+ // 세션 만료/위조 — 로컬 Bearer 삭제 후 throw. App.tsx 가 LoginView 로 복귀.
+ try {
+ localStorage.removeItem(TOKEN_KEY);
+} catch {
+ // ignored
+}
+ throw new Error("미인증 — 다시 로그인하세요");
+}
+ if (!res.ok) {
+ const text = await res.text().catch(() => "");
+ throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
+}
 
-  const text = await res.text();
-  if (!text) {
-    return (route.emptyAs ?? (undefined as unknown)) as T;
-  }
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    return text as unknown as T;
-  }
+ const text = await res.text();
+ if (!text) {
+ return (route.emptyAs ?? (undefined as unknown)) as T;
+}
+ try {
+ return JSON.parse(text) as T;
+} catch {
+ return text as unknown as T;
+}
 }
