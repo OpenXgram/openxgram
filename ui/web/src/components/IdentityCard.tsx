@@ -199,6 +199,31 @@ export function IdentityCard(props: { onBack: () => void }) {
       </section>
 
       <section class="card-section">
+        <h3>⏱ 자동 잠금 시간 (M-2)</h3>
+        <p style="font-size:12px; color:var(--text-3);">
+          현재: {info()?.auto_lock_minutes ?? "?"} 분 후 자동 잠금. daemon 재시작 시 무효.
+          편집은 daemon 환경변수 <code>XGRAM_AUTO_LOCK_MINUTES</code> 로 (재시작 필요).
+        </p>
+      </section>
+
+      <section class="card-section">
+        <h3>📱 DID QR 공유 (M-12)</h3>
+        <p style="font-size:12px; color:var(--text-3);">
+          내 DID 를 QR 로 공유 (휴대폰 → 카메라 스캔 → 새 머신 등록).
+          QR 생성: <code>qrencode -t ANSI256 "did:openxgram:{s()?.address || '...'}"</code> (CLI)
+          또는 외부 QR 생성기에 위 DID 입력.
+        </p>
+        <a href={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=did:openxgram:${s()?.address || ''}`} target="_blank" style="color:#06c; font-size:11px;">→ QR 코드 생성 (외부)</a>
+      </section>
+
+      <section class="card-section">
+        <h3>🔑 비밀번호 복구 (M-13)</h3>
+        <p style="font-size:12px; color:var(--text-3);">
+          BIP39 12 단어 → 새 비밀번호 설정: <code>xgram keystore restore --from-seed</code> CLI (Phase 2: GUI 마법사).
+        </p>
+      </section>
+
+      <section class="card-section">
         <h3>🔒 비밀번호 실패 lockout (M-8)</h3>
         <Show when={lockout()}>
           <Row label="최근 1시간 실패" value={String(lockout()?.recent_failures_1h ?? 0)} />

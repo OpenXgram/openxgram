@@ -53,12 +53,7 @@ export function VaultMcpCard(props: { onBack: () => void }) {
       </Show>
 
       <Show when={tab() === "audit"}>
-        <section class="card-section">
-          <h3>📋 Vault 감사 로그 — 사양 §3.4</h3>
-          <p class="placeholder-note">
-            시크릿 접근·등록·로테이션 영구 기록 (M-11). 신원 카드의 인증 감사와 별도. audit_chain endpoint 활용.
-          </p>
-        </section>
+        <VaultAuditSection />
       </Show>
     </div>
   );
@@ -98,6 +93,25 @@ function McpSection() {
           <div style="color:var(--text-3); font-size:11px;">{s.command || s.url || "—"}</div>
         </div>
       )}</For>
+    </section>
+  );
+}
+
+function VaultAuditSection() {
+  const [audit] = createResource<any[]>(async () => { try { return await invoke<any[]>("audit_chain"); } catch { return []; } });
+  return (
+    <section class="card-section">
+      <h3>📋 Vault 감사 로그 — 사양 §3.4 (M-11 영구)</h3>
+      <p style="font-size:11px; color:var(--text-3);">시크릿 접근·등록·로테이션 영구 기록.</p>
+      <For each={(audit() ?? []).slice(0, 50)}>{(a: any) => (
+        <div style="font-size:11px; padding:4px 0; border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-3);">{a.created_at}</span> · <strong>{a.event_type}</strong>
+          {a.target && <span style="margin-left:6px;"> → {a.target}</span>}
+        </div>
+      )}</For>
+      <Show when={(audit() ?? []).length === 0}>
+        <p style="font-size:12px; color:var(--text-3);">감사 로그 없음.</p>
+      </Show>
     </section>
   );
 }

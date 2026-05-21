@@ -63,12 +63,28 @@ export function MemoryCard(props: { onBack: () => void }) {
   );
 }
 
+function renderMarkdown(md: string): string {
+  // 단순 markdown — heading / bold / italic / code / link / list
+  return md
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/^### (.+)$/gm, "<h3>$1</h3>")
+    .replace(/^## (.+)$/gm, "<h2>$1</h2>")
+    .replace(/^# (.+)$/gm, "<h1>$1</h1>")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/`(.+?)`/g, "<code>$1</code>")
+    .replace(/^- (.+)$/gm, "<li>$1</li>")
+    .replace(/\n\n/g, "<br/><br/>")
+    .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank">$1</a>');
+}
+
 function WikiSection() {
   const [pages, { refetch }] = createResource(fetchWikiPages);
   const [title, setTitle] = createSignal("");
   const [content, setContent] = createSignal("");
   const [ptype, setPtype] = createSignal("concept");
   const [busy, setBusy] = createSignal(false);
+  const [mode, setMode] = createSignal<"edit" | "preview">("edit"); // M-3 위지윅 토글
   async function save() {
     if (!title()) return;
     setBusy(true);
@@ -96,11 +112,26 @@ function WikiSection() {
           </select>
           <button class="link-btn" onClick={save} disabled={busy()}>저장</button>
         </div>
-        <textarea value={content()} onInput={(e) => setContent(e.currentTarget.value)}
-          placeholder="마크다운 본문 (M-3 — 저장은 항상 마크다운)"
-          rows={6}
-          style="width:100%; padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;"
-        />
+        <div style="display:flex; gap:4px; margin-bottom:4px;">
+          <button class={"link-btn " + (mode() === "edit" ? "active" : "")} onClick={() => setMode("edit")}>✏ 편집 (M-3 마크다운)</button>
+          <button class={"link-btn " + (mode() === "preview" ? "active" : "")} onClick={() => setMode("preview")}>👁 미리보기 (위지윅)</button>
+        </div>
+        <Show when={mode() === "edit"}>
+          <textarea value={content()} onInput={(e) => setContent(e.currentTarget.value)}
+            placeholder="마크다운 본문 (M-3 — 저장은 항상 마크다운). # 헤딩 / **굵게** / *기울임* / `코드` / [링크](url) / - 리스트"
+            rows={10}
+            style="width:100%; padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px; font-family:monospace;"
+          />
+        </Show>
+        <Show when={mode() === "preview"}>
+          <div style="min-height:200px; padding:10px; background:var(--surface-2); border:1px solid var(--border); border-radius:4px;" innerHTML={renderMarkdown(content() || "*(편집 모드에서 마크다운 입력 — 미리보기로 위지윅 렌더)*")} />
+        </Show>
+      </section>
+      <section class="card-section">
+        <h3>💾 백업 안내 (M-6)</h3>
+        <p style="font-size:12px; color:var(--text-3);">
+          위키 + 마스터 키 백업: <code>xgram backup create</code> CLI (BIP39 마스터 키 필요). 자동 백업은 ⚙️ 운영·생존 카드 → 백업·복원.
+        </p>
       </section>
       <section class="card-section">
         <h3>📬 새 페이지 알림 (M-6)</h3>
