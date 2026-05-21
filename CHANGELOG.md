@@ -2,6 +2,27 @@
 
 OpenXgram 의 변경 이력. 모든 시간은 KST(Asia/Seoul). [Semantic Versioning](https://semver.org/) + BUILD 자동 증가 (CI/CD 갱신, 수동 변경 금지).
 
+## [0.2.0-rc.36] — 2026-05-21 KST (Discord 봇 진단 endpoint + GUI)
+
+- `GET /v1/gui/notify/discord/diagnostic` — bot user + application + channel 한 번에 진단
+- ChannelCard DiscordDiagnosticSection UI — 권한 부족 시 재초대 URL 자동 생성·표시 (permissions=68608)
+- e2e 검증: server-seoul 봇 진단 결과 needs_reinvite=true (install_permissions=0, scopes=[applications.commands]) → reinvite_url 자동 생성
+
+## [0.2.0-rc.35] — 2026-05-21 KST (Discord listener unsigned fallback)
+
+- `StoreCtx.signing_key: Option<Keypair>` — master keystore unlock 안 되면 signature="external" (agent_inject 패턴)
+- `daemon.rs` discord block: master 로드 실패해도 listener spawn (unsigned). 로그 명시 (signed / unsigned 구분)
+- = master.json password 모르는 환경에서도 Discord 받기 가능
+
+## [0.2.0-rc.34] — 2026-05-21 KST (4 enforcement worker e2e + chat 통합)
+
+- **M-8 lockout enforcement**: `auth_unlock` 가 `auth_failures` 테이블 활용 — 5회 실패 → 1분 backoff (e2e: try 6 → 429, 정답도 lockout 중 거부)
+- **M-10 wiki edit_lock enforcement**: `gui_wiki_upsert` 가 진입 시 lock holder 검증 → holder != requester 시 409 (e2e: alice/bob 충돌)
+- **M-2 자동 wiki merge worker**: 10분 주기 + spawn 시 1회 즉시, normalized title (lower + 공백/하이픈/언더바 제거) 동일 → `wiki_merge_candidates` INSERT (e2e: 1 pair detected)
+- **Discord listener nostr 패턴**: master keystore 를 daemon main 에서 unlock → Arc<Keypair> 로 listener 에 주입 (이전: spawn task 안에서 require_password 호출 실패)
+- **openagentx chat fallback-chain 통합**: engine.ts 의 message 함수가 GoogleGenerativeAI 직접 호출 제거 → `fallback-chain.generateResponse` (Claude → Gemini → **Ollama Zalman gemma3:4b** → Static). e2e: "안녕하세요! 무엇을 도와드릴까요?" 응답.
+- **chat_profiles + referral_codes/history/share_rewards migrations**: 코드는 있는데 schema 누락 fix
+
 ## [0.2.0-rc.30] — 2026-05-20 KST (UI-MESSENGER-SPEC v1.3 완전 구현)
 
 사양 43+16=59 결정 모두 코드 골격 + 실 enforcement workers 5종 가동.
