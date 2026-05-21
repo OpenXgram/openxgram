@@ -165,7 +165,13 @@ fn message_stream(
                         continue;
                     }
                 };
+                tracing::info!("[DEBUG] discord event: {:?}", event.kind());
                 if let Event::MessageCreate(msg_create) = event {
+                    tracing::info!(
+                        "[DEBUG] MessageCreate ch={} author_bot={} content_len={} content_preview={:?}",
+                        msg_create.channel_id, msg_create.author.bot, msg_create.content.len(),
+                        msg_create.content.chars().take(40).collect::<String>()
+                    );
                     let Some(msg) = DiscordIncomingMessage::from_event(&msg_create) else {
                         continue;
                     };
