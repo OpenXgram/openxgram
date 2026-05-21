@@ -105,7 +105,21 @@ async fn execute_step(step: &StepDef, input: &str) -> Result<(String, f64), Stri
     let mut cost = 0.001;
     let output = match step.action.as_str() {
         "echo" => format!("[echo:{}] {}", step.agent, input),
-        "web_search" => format!("[web_search mock:{}] '{}'", step.agent, input),
+        "web_search" => {
+            // DuckDuckGo lite HTML — 외부 API key 불필요.
+            let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build()
+                .map_err(|e| format!("client: {e}"))?;
+            let url = format!("https://html.duckduckgo.com/html/?q={}", urlencoding::encode(input));
+            let resp = client.get(&url).header("User-Agent", "Mozilla/5.0 openxgram-workflow").send().await
+                .map_err(|e| format!("ddg: {e}"))?;
+            let body = resp.text().await.unwrap_or_default();
+            // 단순 추출: <a class="result__a" href="...">텍스트</a> 의 텍스트 + URL 첫 5개.
+            let re = regex::Regex::new(r#"<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([^<]+)</a>"#).unwrap();
+            let hits: Vec<String> = re.captures_iter(&body).take(5)
+                .map(|c| format!("{} — {}", &c[2].trim(), &c[1])).collect();
+            cost = 0.002;
+            if hits.is_empty() { format!("[web_search: 0 results]") } else { hits.join("\n") }
+        }
         "llm_call" => {
             let base = std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://localhost:11434".into());
             let model = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "gemma3:4b".into());
@@ -121,7 +135,44 @@ async fn execute_step(step: &StepDef, input: &str) -> Result<(String, f64), Stri
             cost = 0.005;
             j.get("response").and_then(|r| r.as_str()).unwrap_or("(no response)").to_string()
         }
-        "email" => format!("[email mock:{}] to={} body='{}'", step.agent, step.to.as_deref().unwrap_or("?"), step.body.as_deref().unwrap_or(input)),
+        "email" => {
+            // SMTP via env SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / SMTP_FROM. 미설정 시 mock.
+            let host = std::env::var("SMTP_HOST").ok();
+            let to = step.to.as_deref().unwrap_or("");
+            let body = step.body.as_deref().unwrap_or(input);
+            if to.is_empty() {
+                return Err("email: 'to' 필수".into());
+            }
+            if host.is_none() {
+                format!("[email mock — SMTP_HOST 미설정] to={to} body='{}'", body.chars().take(80).collect::<String>())
+            } else {
+                let host = host.unwrap();
+                let port: u16 = std::env::var("SMTP_PORT").ok().and_then(|s| s.parse().ok()).unwrap_or(587);
+                let user = std::env::var("SMTP_USER").unwrap_or_default();
+                let pass = std::env::var("SMTP_PASS").unwrap_or_default();
+                let from = std::env::var("SMTP_FROM").unwrap_or_else(|_| user.clone());
+                use lettre::{Message, SmtpTransport, Transport};
+                use lettre::transport::smtp::authentication::Credentials;
+                let from_c = from.clone(); let to_c = to.to_string(); let body_c = body.to_string();
+                let subject = format!("workflow {} - {}", step.agent, step.id);
+                let host_c = host.clone(); let user_c = user.clone(); let pass_c = pass.clone();
+                tokio::task::spawn_blocking(move || -> Result<(), String> {
+                    let email = Message::builder()
+                        .from(from_c.parse().map_err(|e: lettre::address::AddressError| format!("from: {e}"))?)
+                        .to(to_c.parse().map_err(|e: lettre::address::AddressError| format!("to: {e}"))?)
+                        .subject(subject)
+                        .body(body_c)
+                        .map_err(|e| format!("build: {e}"))?;
+                    let creds = Credentials::new(user_c, pass_c);
+                    let mailer = SmtpTransport::relay(&host_c).map_err(|e| format!("relay: {e}"))?
+                        .port(port).credentials(creds).build();
+                    mailer.send(&email).map_err(|e| format!("send: {e}"))?;
+                    Ok(())
+                }).await.map_err(|e| format!("join: {e}"))??;
+                cost = 0.001;
+                format!("[email sent] to={to} subject='workflow {} - {}'", step.agent, step.id)
+            }
+        }
         other => format!("[unsupported:{}] {}={}", other, step.agent, input),
     };
     Ok((output, cost))

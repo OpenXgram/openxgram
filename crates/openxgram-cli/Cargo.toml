@@ -73,6 +73,9 @@ tracing-opentelemetry = { workspace = true }
 futures-util = "0.3"
 reqwest = { workspace = true }
 serde_yaml = "0.9"
+regex = "1"
+urlencoding = "2"
+lettre = { version = "0.11", features = ["smtp-transport", "builder", "rustls-tls"], default-features = false }
 arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }
 toml = "0.8"
 libc = "0.2"

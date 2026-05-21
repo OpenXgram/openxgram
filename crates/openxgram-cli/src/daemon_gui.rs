@@ -303,6 +303,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/workflows/{id}", get(gui_workflow_get).post(gui_workflow_delete))
         .route("/v1/gui/workflows/{id}/run", post(gui_workflow_run))
         .route("/v1/gui/workflows/{id}/runs", get(gui_workflow_runs))
+        .route("/v1/gui/workflows/runs/{run_id}/approve", post(gui_workflow_run_approve))
+        .route("/v1/gui/peers/{alias}/send-unsigned", post(gui_peer_send_unsigned))
         // 메신저 카드 v1.3 Step 0 — 메시지 송수신.
         .route("/v1/gui/messages", get(gui_messages_recent))
         .route("/v1/gui/peers/{alias}/send", post(gui_peer_send))
@@ -2208,6 +2210,51 @@ async fn gui_workflow_run(
         "total_cost": result.total_cost,
         "step_outputs": result.step_outputs,
     })))
+}
+
+/// W-3 human_approval resume: waiting_human → running 으로 전환 + 나머지 step 재실행.
+async fn gui_workflow_run_approve(
+    State(state): State<GuiServerState>, headers: HeaderMap, Path(run_id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let (workflow_id, yaml_body): (String, String) = {
+        let mut db = state.db.lock().await;
+        let row = db.conn().query_row(
+            "SELECT r.workflow_id, w.yaml_body FROM workflow_runs r JOIN workflows w ON w.id=r.workflow_id WHERE r.id=?1 AND r.status='waiting_human'",
+            rusqlite::params![run_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        ).map_err(|_| (StatusCode::NOT_FOUND, Json(ErrorDto{error: "run not found or not waiting_human".into()})))?;
+        db.conn().execute("UPDATE workflow_runs SET status='running' WHERE id=?1", rusqlite::params![run_id])
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+        row
+    };
+    let mut db = state.db.lock().await;
+    let result = crate::workflow_engine::run_workflow(&mut *db, &workflow_id, &run_id, &yaml_body).await;
+    Ok(Json(serde_json::json!({"resumed": run_id, "status": result.status, "total_cost": result.total_cost})))
+}
+
+/// peer-to-peer 메시지 — master 없이 outbound_queue 에 unsigned envelope 직접 enqueue.
+async fn gui_peer_send_unsigned(
+    State(state): State<GuiServerState>, headers: HeaderMap, Path(alias): Path<String>, Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let text = body.get("body").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if text.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorDto{error: "body 필수".into()})));
+    }
+    let mut db = state.db.lock().await;
+    // peer 의 address 조회.
+    let to_addr: String = db.conn().query_row(
+        "SELECT address FROM peers WHERE alias=?1", rusqlite::params![alias],
+        |r| r.get(0),
+    ).map_err(|_| (StatusCode::NOT_FOUND, Json(ErrorDto{error: format!("peer {alias} not found")})))?;
+    let envelope_id = uuid::Uuid::new_v4().to_string();
+    db.conn().execute(
+        "INSERT INTO outbound_queue (id, to_address, body, signature, created_at, attempts, status) \
+         VALUES (?1, ?2, ?3, 'external', datetime('now'), 0, 'pending')",
+        rusqlite::params![envelope_id, to_addr, text],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("enqueue: {e}")})))?;
+    Ok(Json(serde_json::json!({"queued": envelope_id, "to_alias": alias, "to_address": to_addr, "signature": "external"})))
 }
 
 async fn gui_workflow_runs(

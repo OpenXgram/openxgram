@@ -71,6 +71,16 @@ pub fn spawn_all(db: Arc<Mutex<Db>>) {
             }
         }
     });
+    // W-5 message_trigger: 새 메시지 (last 60s) 가 workflow.message_trigger pattern 매칭 시 자동 실행.
+    let db_wfmsg = db.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            if let Err(e) = workflow_message_trigger_tick(&db_wfmsg).await {
+                tracing::warn!("workflow message trigger tick: {e}");
+            }
+        }
+    });
     let db_m2 = db.clone();
     tokio::spawn(async move {
         if let Err(e) = m2_merge_candidates_tick(&db_m2).await {
@@ -84,6 +94,51 @@ pub fn spawn_all(db: Arc<Mutex<Db>>) {
         }
     });
     tracing::info!("daemon workers spawned (M-2, M-4, M-5, M-6, L6, V6)");
+}
+
+/// W-5 message_trigger: workflows.message_trigger (json: {"pattern": "..."}) 가 최근 60s 메시지 body 매칭 시 workflow 자동 실행.
+async fn workflow_message_trigger_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
+    let mut db = db.lock().await;
+    let conn = db.conn();
+    let mut stmt = conn.prepare(
+        "SELECT id, yaml_body, message_trigger FROM workflows WHERE enabled=1 AND message_trigger IS NOT NULL AND message_trigger != ''"
+    )?;
+    let wfs: Vec<(String, String, String)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .filter_map(|r| r.ok()).collect();
+    drop(stmt);
+    if wfs.is_empty() { return Ok(()); }
+    let mut msg_stmt = conn.prepare(
+        "SELECT id, body FROM messages WHERE created_at > datetime('now', '-60 seconds') LIMIT 50"
+    )?;
+    let recent: Vec<(String, String)> = msg_stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .filter_map(|r| r.ok()).collect();
+    drop(msg_stmt);
+    for (wf_id, yaml, trigger_json) in &wfs {
+        let pattern = serde_json::from_str::<serde_json::Value>(trigger_json).ok()
+            .and_then(|v| v.get("pattern").and_then(|p| p.as_str().map(String::from)))
+            .unwrap_or_default();
+        if pattern.is_empty() { continue; }
+        for (msg_id, body) in &recent {
+            if body.contains(&pattern) {
+                // 이미 trigger 됐는지 확인 (msg_id + workflow_id 조합).
+                let already: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM workflow_runs WHERE workflow_id=?1 AND trigger_source LIKE 'message:%' AND trigger_source = ?2",
+                    rusqlite::params![wf_id, format!("message:{msg_id}")],
+                    |r| r.get(0),
+                ).unwrap_or(0);
+                if already > 0 { continue; }
+                let run_id = uuid::Uuid::new_v4().to_string();
+                let _ = conn.execute(
+                    "INSERT INTO workflow_runs (id, workflow_id, started_at, status, trigger_source) VALUES (?1, ?2, datetime('now'), 'pending', ?3)",
+                    rusqlite::params![run_id, wf_id, format!("message:{msg_id}")],
+                );
+                tracing::info!("W-5 message trigger: workflow {wf_id} fired by msg {msg_id} → pending run {run_id}");
+                let _ = yaml;
+                return Ok(());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// M-2 자동 위키 merge candidate 발견 — 10분 주기.
