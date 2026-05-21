@@ -186,11 +186,12 @@ pub struct ChainDetailDto {
 
 /// GUI HTTP 서버 가동 — 별도 axum 인스턴스, transport(47300) 와 분리된 포트.
 pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Result<()> {
-    let db = Db::open(DbConfig {
+    let mut db = Db::open(DbConfig {
         path: db_path(&data_dir),
         ..Default::default()
     })
     .context("daemon-gui DB open 실패")?;
+    db.migrate().context("daemon-gui DB migrate 실패")?;
 
     let state = GuiServerState {
         data_dir: Arc::new(data_dir),
@@ -212,7 +213,7 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/wallets", get(gui_wallets_list).post(gui_wallet_create))
         .route("/v1/gui/wallets/topup", post(gui_wallet_topup))
         // UI-MESSENGER-SPEC v1.3 L3 + V1 — 역할별 auto_respond 마스터 정책.
-        .route("/v1/gui/role-policies", get(gui_role_policies))
+        .route("/v1/gui/role-policies", get(gui_role_policies).post(gui_role_policies_set))
         // UI-MESSENGER-SPEC v1.3 §3.6 M-5 + N1 + N3 + V4 — 화이트리스트 패턴 + 우선순위.
         .route("/v1/gui/whitelist", get(gui_whitelist))
         // UI-MESSENGER-SPEC v1.3 S8 + V6 — cross-machine 큐 status (Tailscale P2P).
@@ -274,6 +275,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/notify/discord/diagnostic", get(gui_notify_discord_diagnostic))
         // UI-IDENTITY-SPEC v1.0 — 신원 카드 endpoint
         .route("/v1/gui/identity/info", get(gui_identity_info))
+        .route("/v1/gui/identity/settings", post(gui_identity_settings_update))
+        .route("/v1/gui/identity/suspicious_dids", get(gui_identity_suspicious_list))
+        .route("/v1/gui/identity/suspicious_dismiss", post(gui_identity_suspicious_dismiss))
         .route("/v1/gui/identity/audit", get(gui_identity_audit))
         .route("/v1/gui/identity/allowlist", get(gui_identity_allowlist).post(gui_identity_allowlist_add))
         // UI-CHANNEL-SPEC v1.0 — 채널 카드 (Discord/Telegram/Slack 통합 inbox)
@@ -560,13 +564,74 @@ async fn gui_approvals(
     }))
 }
 
-/// `GET /v1/gui/role-policies` — 역할별 auto_respond 기본 정책 (L3 + V1).
+/// `GET /v1/gui/role-policies` — 역할별 auto_respond 기본 정책 (L3 + V1, DB v31).
 async fn gui_role_policies(
     State(state): State<GuiServerState>,
     headers: HeaderMap,
 ) -> Result<Json<crate::daemon_gui_sessions::RolePolicyDto>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    Ok(Json(crate::daemon_gui_sessions::default_role_policies()))
+    let mut db = state.db.lock().await;
+    let mut roles: Vec<crate::daemon_gui_sessions::RolePolicyItem> = Vec::new();
+    if let Ok(mut stmt) = db.conn().prepare(
+        "SELECT role, auto_respond_default, max_concurrent FROM role_policies ORDER BY role",
+    ) {
+        let it = stmt.query_map([], |r| {
+            Ok(crate::daemon_gui_sessions::RolePolicyItem {
+                role: r.get::<_, String>(0)?,
+                auto_respond_default: r.get::<_, i64>(1)? != 0,
+                max_concurrent: r.get::<_, i64>(2)? as u32,
+            })
+        });
+        if let Ok(it) = it {
+            for r in it.flatten() {
+                roles.push(r);
+            }
+        }
+    }
+    if roles.is_empty() {
+        return Ok(Json(crate::daemon_gui_sessions::default_role_policies()));
+    }
+    Ok(Json(crate::daemon_gui_sessions::RolePolicyDto {
+        master_card: "자율 행동 카드".into(),
+        roles,
+    }))
+}
+
+#[derive(serde::Deserialize)]
+struct RolePolicyUpdate {
+    role: String,
+    auto_respond_default: bool,
+    max_concurrent: u32,
+}
+async fn gui_role_policies_set(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(req): Json<RolePolicyUpdate>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    if req.role.is_empty() || req.role.len() > 32 {
+        return Err(bad_request("role length must be 1..=32"));
+    }
+    if req.max_concurrent == 0 || req.max_concurrent > 100 {
+        return Err(bad_request("max_concurrent must be 1..=100"));
+    }
+    let mut db = state.db.lock().await;
+    db.conn()
+        .execute(
+            "INSERT INTO role_policies(role,auto_respond_default,max_concurrent,updated_at) \
+             VALUES(?1,?2,?3,datetime('now')) \
+             ON CONFLICT(role) DO UPDATE SET \
+               auto_respond_default=excluded.auto_respond_default, \
+               max_concurrent=excluded.max_concurrent, \
+               updated_at=excluded.updated_at",
+            rusqlite::params![
+                req.role,
+                if req.auto_respond_default { 1_i64 } else { 0 },
+                req.max_concurrent as i64
+            ],
+        )
+        .map_err(|e| internal(&format!("db: {e}")))?;
+    Ok(Json(serde_json::json!({"ok": true})))
 }
 
 /// `GET /v1/gui/whitelist` — 화이트리스트 패턴 + 우선순위 (M-5 + N1 + N3 + V4).
@@ -1892,22 +1957,133 @@ async fn gui_identity_info(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    // manifest 에서 alias / address 읽기
     let manifest = InstallManifest::read(manifest_path(&state.data_dir)).ok();
     let machine = crate::daemon_gui_sessions::detect_machine();
     let alias = manifest.as_ref().map(|m| m.machine.alias.clone());
     let hostname = manifest.as_ref().map(|m| m.machine.hostname.clone());
+
+    // M-2: identity_settings 테이블에서 동적 조회 (DB v30)
+    let (auto_lock, sess_ttl) = {
+        let mut db = state.db.lock().await;
+        let al: i64 = db
+            .conn()
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM identity_settings WHERE key='auto_lock_minutes'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(30);
+        let st: i64 = db
+            .conn()
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM identity_settings WHERE key='session_token_ttl_minutes'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(30);
+        (al, st)
+    };
+
     Ok(Json(serde_json::json!({
         "alias": alias,
         "hostname": hostname,
         "did": "did:openxgram:0x... (마스터 키 unlock 후 노출)",
         "machine": machine,
-        "argon2": {"m": 65536, "t": 3, "p": 2}, // V-1
-        "auto_lock_minutes": 30,                  // M-2
-        "session_token_ttl_minutes": 30,           // V-4
-        "did_format": "did:openxgram:0x...",       // M-11
-        "hd_path": "m/44'/9999'/0'/0/{agent_index}", // V-10
+        "argon2": {"m": 65536, "t": 3, "p": 2},
+        "auto_lock_minutes": auto_lock,
+        "session_token_ttl_minutes": sess_ttl,
+        "did_format": "did:openxgram:0x...",
+        "hd_path": "m/44'/9999'/0'/0/{agent_index}",
     })))
+}
+
+/// `POST /v1/gui/identity/settings` — M-2 auto_lock_minutes 편집.
+#[derive(serde::Deserialize)]
+struct IdentitySettingsUpdate {
+    auto_lock_minutes: Option<i64>,
+    session_token_ttl_minutes: Option<i64>,
+}
+async fn gui_identity_settings_update(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(req): Json<IdentitySettingsUpdate>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    if let Some(v) = req.auto_lock_minutes {
+        if !(1..=1440).contains(&v) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorDto { error: "auto_lock_minutes must be 1..=1440".into() }),
+            ));
+        }
+        db.conn()
+            .execute(
+                "INSERT INTO identity_settings(key,value,updated_at) VALUES('auto_lock_minutes',?1,datetime('now')) \
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=datetime('now')",
+                rusqlite::params![v.to_string()],
+            )
+            .map_err(|e| internal(&format!("db: {e}")))?;
+    }
+    if let Some(v) = req.session_token_ttl_minutes {
+        if !(1..=1440).contains(&v) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorDto { error: "session_token_ttl_minutes must be 1..=1440".into() }),
+            ));
+        }
+        db.conn()
+            .execute(
+                "INSERT INTO identity_settings(key,value,updated_at) VALUES('session_token_ttl_minutes',?1,datetime('now')) \
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=datetime('now')",
+                rusqlite::params![v.to_string()],
+            )
+            .map_err(|e| internal(&format!("db: {e}")))?;
+    }
+    Ok(Json(serde_json::json!({"ok": true})))
+}
+
+/// `GET /v1/gui/identity/suspicious_dids` — M-10 해킹 의심 DID 목록.
+async fn gui_identity_suspicious_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, external_did, reason, first_seen, dismissed \
+         FROM identity_suspicious_dids WHERE dismissed=0 ORDER BY first_seen DESC LIMIT 100",
+    ).map_err(|e| internal(&format!("db: {e}")))?;
+    let rows: Vec<serde_json::Value> = stmt
+        .query_map([], |r| {
+            Ok(serde_json::json!({
+                "id": r.get::<_,i64>(0).unwrap_or(0),
+                "external_did": r.get::<_,String>(1).unwrap_or_default(),
+                "reason": r.get::<_,String>(2).unwrap_or_default(),
+                "first_seen": r.get::<_,String>(3).unwrap_or_default(),
+                "dismissed": r.get::<_,i64>(4).unwrap_or(0) != 0,
+            }))
+        })
+        .map_err(|e| internal(&format!("db: {e}")))?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(Json(rows))
+}
+
+#[derive(serde::Deserialize)]
+struct SuspiciousDismissReq { id: i64 }
+async fn gui_identity_suspicious_dismiss(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(req): Json<SuspiciousDismissReq>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "UPDATE identity_suspicious_dids SET dismissed=1, dismissed_at=datetime('now') WHERE id=?1",
+        rusqlite::params![req.id],
+    ).map_err(|e| internal(&format!("db: {e}")))?;
+    Ok(Json(serde_json::json!({"ok": true})))
 }
 
 /// `GET /v1/gui/identity/audit` — 인증 감사 로그 (M-7 영구).

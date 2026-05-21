@@ -98,7 +98,7 @@ function McpSection() {
 }
 
 function VaultAuditSection() {
- const [audit] = createResource<any[]>(async () => { try { return await invoke<any[]>("audit_chain");} catch { return [];}});
+ const [audit] = createResource<any[]>(async () => { try { return await invoke<any[]>("identity_audit");} catch { return [];}});
  return (
  <section class="card-section">
  <h3> Vault 감사 로그 — 사양 §3.4 (M-11 영구)</h3>

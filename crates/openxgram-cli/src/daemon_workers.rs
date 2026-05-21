@@ -385,21 +385,96 @@ async fn m5_auto_register_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
 }
 
 async fn v6_outbound_drain(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
-    // outbound_queue 의 pending 항목 처리 — 현재는 sent_at 만 기록 (실 전송은 transport 측).
+    // S8: outbound_queue 의 pending 항목을 peer transport URL 로 실제 POST.
+    // 성공 → sent_at 기록, 실패 → attempts++ + next_retry_at backoff.
     let now = chrono::Utc::now();
-    let mut db = db.lock().await;
-    let conn = db.conn();
-    // 30일 경과한 sent 항목 archive (제거)
     let archive_cutoff = (now - chrono::Duration::days(30)).to_rfc3339();
-    conn.execute(
-        "DELETE FROM outbound_queue WHERE sent_at IS NOT NULL AND sent_at < ?1",
-        rusqlite::params![archive_cutoff],
-    )?;
-    // attempts > 10 인 항목 dead-letter (last_error 갱신)
-    conn.execute(
-        "UPDATE outbound_queue SET last_error = 'max_retries_exceeded' \
-         WHERE attempts > 10 AND sent_at IS NULL",
-        [],
-    )?;
+    let now_str = now.to_rfc3339();
+
+    // 처리할 pending 항목 + 머신 별 transport URL 함께 추출
+    let to_send: Vec<(String, String, String, i64, String)> = {
+        let mut guard = db.lock().await;
+        let conn = guard.conn();
+        let _ = conn.execute(
+            "DELETE FROM outbound_queue WHERE sent_at IS NOT NULL AND sent_at < ?1",
+            rusqlite::params![archive_cutoff],
+        );
+        let _ = conn.execute(
+            "UPDATE outbound_queue SET last_error = 'max_retries_exceeded' \
+             WHERE attempts > 10 AND sent_at IS NULL AND last_error != 'max_retries_exceeded'",
+            [],
+        );
+        let mut rows_out: Vec<(String, String, String, i64, String)> = Vec::new();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT q.msg_ulid, q.target_alias, q.body, q.attempts, p.address \
+             FROM outbound_queue q \
+             JOIN peers p ON p.alias = q.target_alias \
+             WHERE q.sent_at IS NULL \
+               AND q.attempts <= 10 \
+               AND (q.next_retry_at IS NULL OR q.next_retry_at <= ?1) \
+             LIMIT 20",
+        ) {
+            if let Ok(iter) = stmt.query_map(rusqlite::params![now_str], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            }) {
+                for r in iter.flatten() {
+                    rows_out.push(r);
+                }
+            }
+        }
+        rows_out
+    };
+
+    if to_send.is_empty() {
+        return Ok(());
+    }
+
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+
+    for (ulid, alias, body, attempts, address) in to_send {
+        let target_url = if address.ends_with('/') {
+            format!("{address}v1/inbound")
+        } else {
+            format!("{address}/v1/inbound")
+        };
+        let result = http
+            .post(&target_url)
+            .header("Content-Type", "application/json")
+            .body(body.clone())
+            .send()
+            .await;
+        let success = match result {
+            Ok(resp) => resp.status().is_success(),
+            Err(_) => false,
+        };
+        let now_str2 = chrono::Utc::now().to_rfc3339();
+        let mut guard = db.lock().await;
+        let conn = guard.conn();
+        if success {
+            let _ = conn.execute(
+                "UPDATE outbound_queue SET sent_at = ?1, last_error = NULL WHERE msg_ulid = ?2",
+                rusqlite::params![now_str2, ulid],
+            );
+            tracing::debug!(ulid=%ulid, alias=%alias, "S8 outbound sent");
+        } else {
+            // backoff: 1s * 2^attempts (cap 5min)
+            let backoff_secs = std::cmp::min(300, 1_i64 << std::cmp::min(attempts, 8));
+            let next = (chrono::Utc::now() + chrono::Duration::seconds(backoff_secs)).to_rfc3339();
+            let _ = conn.execute(
+                "UPDATE outbound_queue SET attempts = attempts + 1, next_retry_at = ?1, \
+                 last_error = ?2 WHERE msg_ulid = ?3",
+                rusqlite::params![next, "transport send failed", ulid],
+            );
+            tracing::debug!(ulid=%ulid, alias=%alias, target=%target_url, "S8 outbound failed, backoff");
+        }
+    }
     Ok(())
 }

@@ -42,7 +42,7 @@ const TABS: { id: TabId; label: string; icon: string}[] = [
  { id: "export", label: "내보내기", icon: ""},
  { id: "wallet", label: "지갑·결제", icon: ""},
  { id: "tokens", label: "토큰", icon: ""},
- { id: "cron", label: "Cron", icon: "⏰"},
+ { id: "cron", label: "Cron", icon: ""},
  { id: "files", label: "파일·지침", icon: ""},
  { id: "notify", label: "알림", icon: ""},
  { id: "permissions", label: "권한·도구·MCP", icon: ""},
@@ -180,7 +180,7 @@ function RoleTab(props: { peer: PeerMeta; onJumpToSettings: () => void}) {
  <hr style="margin:10px 0; opacity:0.2;" />
  <strong style="font-size:12px;">L3 + V1 — 역할별 auto_respond 마스터 정책</strong>
  <p class="messenger-sidepanel-hint">
- 마스터 = {policies()?.master_card ?? "⏰ 자율 행동 카드"}. 본 탭은 view.
+ 마스터 = {policies()?.master_card ?? "자율 행동 카드"}. 본 탭은 view.
  </p>
  <For each={policies()?.roles ?? []}>
  {(r) => (

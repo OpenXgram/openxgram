@@ -105,6 +105,7 @@ const ROUTES: Record<string, Route> = {
  wallet_topup: { method: "POST", path: "/wallets/topup", body: true},
  // Messenger v1.3 L3·V1 / M-5·N1·N3·V4 — Role 정책 + 화이트리스트
  role_policies: { method: "GET", path: "/role-policies"},
+ role_policy_set: { method: "POST", path: "/role-policies", body: true},
  whitelist: { method: "GET", path: "/whitelist"},
  // Messenger v1.3 S8·V6 / N4 / V11 / V12 / N7
  cross_machine_queue: { method: "GET", path: "/cross-machine-queue"},
@@ -140,6 +141,9 @@ const ROUTES: Record<string, Route> = {
  identity_audit: { method: "GET", path: "/identity/audit"},
  identity_allowlist: { method: "GET", path: "/identity/allowlist"},
  identity_allowlist_add: { method: "POST", path: "/identity/allowlist", body: true},
+ identity_settings: { method: "POST", path: "/identity/settings", body: true},
+ identity_suspicious_dids: { method: "GET", path: "/identity/suspicious_dids"},
+ identity_suspicious_dismiss: { method: "POST", path: "/identity/suspicious_dismiss", body: true},
  // Channel deep
  channel_people: { method: "GET", path: "/channel/people"},
  channel_routing: { method: "GET", path: "/channel/routing"},

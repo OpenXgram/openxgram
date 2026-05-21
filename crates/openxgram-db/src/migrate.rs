@@ -156,6 +156,16 @@ const MIGRATIONS: &[Migration] = &[
         name: "workflows",
         sql: include_str!("../migrations/0029_workflows.sql"),
     },
+    Migration {
+        version: 30,
+        name: "identity_settings",
+        sql: include_str!("../migrations/0030_identity_settings.sql"),
+    },
+    Migration {
+        version: 31,
+        name: "role_policies",
+        sql: include_str!("../migrations/0031_role_policies.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

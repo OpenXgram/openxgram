@@ -25,6 +25,7 @@ async function fetchAudit(): Promise<any[]> { try { return await invoke("identit
 async function fetchAllowlist(): Promise<any> { try { return await invoke("identity_allowlist");} catch { return null;}}
 async function fetchSubDids(): Promise<any[]> { try { return await invoke("identity_sub_dids");} catch { return [];}}
 async function fetchLockout(): Promise<any> { try { return await invoke("identity_lockout_status");} catch { return null;}}
+async function fetchSuspicious(): Promise<any[]> { try { return await invoke("identity_suspicious_dids");} catch { return [];}}
 
 export function IdentityCard(props: { onBack: () => void}) {
  const [s] = createResource(fetchStatus);
@@ -33,9 +34,23 @@ export function IdentityCard(props: { onBack: () => void}) {
  const [allowlist, { refetch: refetchAllow}] = createResource(fetchAllowlist);
  const [subDids, { refetch: refetchSub}] = createResource(fetchSubDids);
  const [lockout] = createResource(fetchLockout);
+ const [suspicious, { refetch: refetchSusp}] = createResource(fetchSuspicious);
  const [bip39, setBip39] = createSignal<string[] | null>(null);
  const [newDid, setNewDid] = createSignal("");
  const [newMachine, setNewMachine] = createSignal("");
+ const [autoLockEdit, setAutoLockEdit] = createSignal<number | null>(null);
+ async function saveAutoLock() {
+ const v = autoLockEdit();
+ if (v == null || v < 1 || v > 1440) { alert("1~1440 분 사이"); return;}
+ try {
+ await invoke("identity_settings", { auto_lock_minutes: v});
+ setAutoLockEdit(null);
+ alert("저장됨. 새로고침하면 반영됩니다.");
+ } catch (e) { alert(String(e));}
+ }
+ async function dismissSusp(id: number) {
+ try { await invoke("identity_suspicious_dismiss", { id}); await refetchSusp();} catch (e) { alert(String(e));}
+ }
  async function showBip39() {
  try { const r: any = await invoke("identity_bip39", {}); setBip39(r.words); setTimeout(() => setBip39(null), 30000);} catch (e) { alert(String(e));}
 }
@@ -199,11 +214,70 @@ export function IdentityCard(props: { onBack: () => void}) {
  </section>
 
  <section class="card-section">
- <h3>⏱ 자동 잠금 시간 (M-2)</h3>
- <p style="font-size:12px; color:var(--text-3);">
- 현재: {info()?.auto_lock_minutes ?? "?"} 분 후 자동 잠금. daemon 재시작 시 무효.
- 편집은 daemon 환경변수 <code>XGRAM_AUTO_LOCK_MINUTES</code> 로 (재시작 필요).
+ <h3>자동 잠금 시간 (M-2)</h3>
+ <div class="card-section-row">
+ <span class="label">현재</span>
+ <span class="value">{info()?.auto_lock_minutes ?? "?"} 분</span>
+ </div>
+ <div style="display:flex; gap:6px; align-items:center; margin-top:8px;">
+ <input
+ type="number"
+ min="1"
+ max="1440"
+ value={autoLockEdit() ?? info()?.auto_lock_minutes ?? 30}
+ onInput={(e) => setAutoLockEdit(parseInt(e.currentTarget.value))}
+ style="width:100px; padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;"
+ />
+ <span style="color:var(--text-3); font-size:12px;">분 (1~1440)</span>
+ <button class="link-btn" onClick={saveAutoLock}>저장</button>
+ </div>
+ <p style="font-size:11px; color:var(--text-3); margin-top:6px;">
+ DB identity_settings 에 영구 저장. daemon 재시작 후에도 유지.
  </p>
+ </section>
+
+ <section class="card-section">
+ <h3>해킹 의심 새 DID (M-10)</h3>
+ <Show when={(suspicious() ?? []).length === 0}>
+ <p style="font-size:12px; color:var(--text-3);">의심 DID 없음. 외부에서 새 DID 가 들어올 때 자동 적재됩니다.</p>
+ </Show>
+ <For each={suspicious() ?? []}>{(d: any) => (
+ <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border); font-size:11px;">
+ <div>
+ <div class="mono" style="color:var(--text-1);">{d.external_did}</div>
+ <div style="color:var(--text-3);">{d.reason} · {d.first_seen}</div>
+ </div>
+ <button class="link-btn" onClick={() => dismissSusp(d.id)}>무시</button>
+ </div>
+ )}</For>
+ </section>
+
+ <section class="card-section">
+ <h3>백업 안내 (M-6)</h3>
+ <p style="font-size:12px; color:var(--text-3);">
+ <strong>3 단계 백업 권장</strong>:
+ </p>
+ <ol style="font-size:12px; color:var(--text-3); padding-left:18px;">
+ <li>BIP39 12 단어 (위 섹션) — 종이에 적어서 금고/안전한 곳</li>
+ <li>keystore 파일 (<code>~/.openxgram/keystore/master.json</code>) — 외장 SSD 또는 암호화 클라우드</li>
+ <li>SQLite DB (<code>~/.openxgram/db.sqlite</code>) — 위키·메모리·감사 로그 복구용</li>
+ </ol>
+ <p style="font-size:11px; color:#f88; margin-top:4px;">
+ 자동 백업 cron: <code>xgram backup --to s3://...</code> (Phase 2). 현재는 수동.
+ </p>
+ </section>
+
+ <section class="card-section">
+ <h3>새 머신 등록 (M-14)</h3>
+ <p style="font-size:12px; color:var(--text-3);">
+ 신규 머신(예: 노트북·서버) 에 OpenXgram install 시:
+ </p>
+ <ol style="font-size:12px; color:var(--text-3); padding-left:18px;">
+ <li>새 머신에서 <code>curl -s openxgram.org/install.sh | sh</code></li>
+ <li><code>xgram init --restore-from-seed</code> + BIP39 12 단어 입력</li>
+ <li>위 sub-DID 섹션에서 머신 alias 등록 (라이브 동기화 시작)</li>
+ </ol>
+ <p style="font-size:11px; color:var(--text-3);">QR 코드 페어링은 M-12 섹션 참고.</p>
  </section>
 
  <section class="card-section">

@@ -331,17 +331,11 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
 
  return (
  <div
- class="messenger-shell"
- style={
- // friend 선택 시 우측 panel — 3-col. 아니면 2-col.
- selectedFriend()
- ? "grid-template-columns: 280px 1fr 360px;"
- : "grid-template-columns: 280px 1fr;"
-}
+ class={selectedFriend() ? "messenger-shell messenger-shell-3" : "messenger-shell messenger-shell-2"}
  >
  {/* 좌: 머신×세션 트리 + 스레드 모드 (Tier 1 + L1) */}
  <aside class="messenger-sidebar">
- {/* L1 — 좌측 상단 2-모드 탭 */}
+ {/* L1 — 좌측 상단 3 모드 탭 */}
  <div class="messenger-sidebar-mode" style="display:flex; gap:4px; padding:6px 8px; border-bottom:1px solid var(--border);">
  <button
  type="button"
@@ -356,8 +350,9 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  class={leftMode() === "thread" ? "active" : ""}
  onClick={() => setLeftMode("thread")}
  style="flex:1;"
+ title={`conversation_id 별 스레드 (${threads().length})`}
  >
- 스레드 ({threads().length})
+ 스레드·{threads().length}
  </button>
  <button
  type="button"
@@ -368,23 +363,24 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  >
  워크플로
  </button>
- {/* V11 — RoutingRule 모달 (agent↔agent internal) */}
+ </div>
+ {/* L1b — 액션 (RoutingRule + Whitelist) 2 버튼 */}
+ <div class="messenger-sidebar-actions" style="display:flex; gap:4px; padding:0 8px 6px; border-bottom:1px solid var(--border);">
  <button
  type="button"
  onClick={() => setShowRouting(true)}
- title="RoutingRule (V11)"
- style="flex:0;"
+ title="RoutingRule (V11) — 에이전트↔에이전트 라우팅"
+ style="flex:1; padding:6px 8px; white-space:nowrap; font-size:12px;"
  >
- 
+ 라우팅
  </button>
- {/* M-5 — 화이트리스트 패턴 (자동 등록 + V4) */}
  <button
  type="button"
  onClick={() => setShowWhitelist(true)}
- title="화이트리스트 (M-5)"
- style="flex:0;"
+ title="화이트리스트 (M-5) — 자동 등록 패턴"
+ style="flex:1; padding:6px 8px; white-space:nowrap; font-size:12px;"
  >
- 
+ 허용
  </button>
  </div>
  <Show when={showRouting()}>

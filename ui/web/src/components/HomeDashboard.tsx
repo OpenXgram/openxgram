@@ -74,7 +74,7 @@ const CARDS: CardDef[] = [
  {
  id: "autonomy",
  group: "foundation",
- icon: "⏰",
+ icon: "",
  title: "자율 행동",
  prdName: "자율 행동",
  oneLine: "Cron · Reflection · SelfTrigger (잠자는 동안 수익)",

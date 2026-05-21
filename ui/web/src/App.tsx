@@ -104,9 +104,19 @@ function AppInner() {
  <option value="en">English</option>
  </select>
  <Show when={authed() === true}>
+ <Show when={tab() !== "onboarding" && tab() !== "home"}>
+ <button
+ type="button"
+ onClick={() => setTab("home")}
+ title="홈 대시보드 — 8 카드"
+ style="background:transparent; border:1px solid var(--border); border-radius:4px; padding:4px 12px; cursor:pointer; color:var(--text-1); font-size:13px; white-space:nowrap;"
+ >
+ 홈
+ </button>
+ </Show>
  <SearchButton />
  <ApprovalQueueBell />
- <button type="button" onClick={onLogout}>
+ <button type="button" onClick={onLogout} style="white-space:nowrap;">
  {t("auth.logout")}
  </button>
  </Show>
@@ -127,18 +137,6 @@ function AppInner() {
 
  {/* 메인 GUI — 인증된 사용자만 */}
  <Show when={authed() === true}>
- {/* tabnav — 모든 화면에서 홈만 (8 카드 = 진짜 진입로). 옛 chat/memory/network/settings 탭 제거. */}
- <Show when={tab() !== "onboarding" && tab() !== "home"}>
- <nav class="tabnav" aria-label="OpenXgram tabs">
- <button
- type="button"
- onClick={() => setTab("home")}
- title="홈 대시보드 — 8 카드"
- >
- 홈
- </button>
- </nav>
- </Show>
  <main>
  <Show when={tab() === "onboarding"}>
  <Onboarding onReady={() => setTab("home")} />
@@ -192,10 +190,10 @@ function SearchButton() {
  <button
  type="button"
  onClick={() => setOpen(true)}
- title="글로벌 검색 (N4)"
- style="background:transparent; border:1px solid var(--border); border-radius:4px; padding:4px 10px; cursor:pointer; color:var(--text-1); font-size:13px;"
+ title="글로벌 검색 (N4) — 피어/지식/감사 통합"
+ style="background:transparent; border:1px solid var(--border); border-radius:4px; padding:4px 10px; cursor:pointer; color:var(--text-1); font-size:13px; white-space:nowrap;"
  >
- 
+ 검색
  </button>
  <Show when={open()}>
  <GlobalSearchModal onClose={() => setOpen(false)} />

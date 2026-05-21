@@ -4,7 +4,7 @@ import { ChainView} from "./ChainView";
 import { Breadcrumb} from "./Breadcrumb";
 import { invoke} from "@/api/client";
 
-// UI-AUTONOMY-SPEC v1.0 §3 — ⏰ 자율 행동 카드 (PRD §0 #6).
+// UI-AUTONOMY-SPEC v1.0 §3 — 자율 행동 카드 (PRD §0 #6).
 // 4 섹션: Cron / SelfTrigger / Role 정책 (auto_respond 마스터) / 이력.
 // + 자율 한도·휴가 모드 별도.
 
@@ -15,10 +15,10 @@ export function AutonomyCard(props: { onBack: () => void}) {
 
  return (
  <div class="card-page">
- <Breadcrumb cardName="⏰ 자율 행동" onReturn={props.onBack} />
+ <Breadcrumb cardName="자율 행동" onReturn={props.onBack} />
  <button class="card-page-back" onClick={props.onBack}>← 홈</button>
  <div class="card-page-head">
- <span class="icon">⏰</span>
+ <span class="icon"></span>
  <h1>자율 행동</h1>
  </div>
  <div class="card-page-prd">PRD-OpenXgram v1.4 §0 #6 — 자율 행동 ("에이전트"의 본질)</div>
@@ -27,7 +27,7 @@ export function AutonomyCard(props: { onBack: () => void}) {
  </div>
 
  <nav style="display:flex; gap:4px; margin-bottom:14px;">
- <button class={"link-btn " + (tab() === "cron" ? "active" : "")} onClick={() => setTab("cron")}>⏰ Cron</button>
+ <button class={"link-btn " + (tab() === "cron" ? "active" : "")} onClick={() => setTab("cron")}>Cron</button>
  <button class={"link-btn " + (tab() === "trigger" ? "active" : "")} onClick={() => setTab("trigger")}> SelfTrigger</button>
  <button class={"link-btn " + (tab() === "role" ? "active" : "")} onClick={() => setTab("role")}> Role 정책</button>
  <button class={"link-btn " + (tab() === "history" ? "active" : "")} onClick={() => setTab("history")}> 이력</button>
@@ -36,7 +36,7 @@ export function AutonomyCard(props: { onBack: () => void}) {
 
  <Show when={tab() === "cron"}>
  <section class="card-section">
- <h3>⏰ Cron — 사양 §3.1 (M-1·M-2)</h3>
+ <h3>Cron — 사양 §3.1 (M-1·M-2)</h3>
  <p class="placeholder-note">
  전체 cron 통합 (모든 세션 · 모든 작업). 자연어 cron 입력 ("매주 평일 오전 9시 → 0 9 * * 1-5"). 시스템 cron (heartbeat 등 — 사용자 비활성화 불가).
  기존 ScheduleView 통합. 작업 의존성 DAG (M-8) Phase 2.
@@ -55,15 +55,7 @@ export function AutonomyCard(props: { onBack: () => void}) {
  </Show>
 
  <Show when={tab() === "role"}>
- <section class="card-section">
- <h3> Role 정책 (auto_respond 마스터) — 사양 §3.3 (M-6 V-1)</h3>
- <p class="placeholder-note">
- 역할별 auto_respond 기본값 (researcher / reviewer / coder / orchestrator / scribe / ...).
- 메신저 탭 2는 뷰만 (이 카드가 마스터).
- 예: researcher = true, reviewer = false, orchestrator = true.
- 백엔드 RolePolicy 테이블 + `GET·PUT /v1/gui/autonomy/role` 신설 필요.
- </p>
- </section>
+ <RolePolicyEditor />
  </Show>
 
  <Show when={tab() === "history"}>
@@ -76,6 +68,77 @@ export function AutonomyCard(props: { onBack: () => void}) {
  </Show>
  </div>
 );
+}
+
+function RolePolicyEditor() {
+ const [data, { refetch}] = createResource<any>(async () => { try { return await invoke<any>("role_policies");} catch { return null;}});
+ async function save(role: string, auto: boolean, mc: number) {
+ try {
+ await invoke("role_policy_set", { role, auto_respond_default: auto, max_concurrent: mc});
+ await refetch();
+ } catch (e) { alert(String(e));}
+ }
+ const [newRole, setNewRole] = createSignal("");
+ const [newAuto, setNewAuto] = createSignal(true);
+ const [newMc, setNewMc] = createSignal(1);
+ async function addRole() {
+ if (!newRole().trim()) return;
+ await save(newRole().trim(), newAuto(), newMc());
+ setNewRole("");
+ }
+ return (
+ <section class="card-section">
+ <h3>Role 정책 (auto_respond 마스터) — 사양 §3.3 (M-6 V-1)</h3>
+ <p style="font-size:11px; color:var(--text-3);">
+ 역할별 auto_respond 기본값 + 동시 실행 max_concurrent. DB v31 role_policies 영구 저장.
+ 메신저 사이드패널 역할 탭은 이 정책의 뷰 (마스터는 여기).
+ </p>
+ <table style="width:100%; font-size:12px; margin-top:8px; border-collapse:collapse;">
+ <thead>
+ <tr style="border-bottom:1px solid var(--border); text-align:left;">
+ <th style="padding:6px 4px;">역할</th>
+ <th style="padding:6px 4px;">auto_respond</th>
+ <th style="padding:6px 4px;">max_concurrent</th>
+ <th></th>
+ </tr>
+ </thead>
+ <tbody>
+ <For each={data()?.roles ?? []}>{(r: any) => {
+ const [a, setA] = createSignal(r.auto_respond_default);
+ const [m, setM] = createSignal(r.max_concurrent);
+ return (
+ <tr style="border-bottom:1px dashed var(--border);">
+ <td style="padding:6px 4px;"><strong>{r.role}</strong></td>
+ <td style="padding:6px 4px;">
+ <input type="checkbox" checked={a()} onChange={(e) => setA(e.currentTarget.checked)} />
+ </td>
+ <td style="padding:6px 4px;">
+ <input type="number" min="1" max="100" value={m()}
+ onInput={(e) => setM(parseInt(e.currentTarget.value) || 1)}
+ style="width:60px; padding:3px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:3px;" />
+ </td>
+ <td style="padding:6px 4px;">
+ <button class="link-btn" onClick={() => save(r.role, a(), m())}>저장</button>
+ </td>
+ </tr>
+ );
+ }}</For>
+ <tr>
+ <td style="padding:8px 4px;">
+ <input value={newRole()} onInput={(e) => setNewRole(e.currentTarget.value)}
+ placeholder="새 역할명" style="width:100%; padding:3px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:3px;" />
+ </td>
+ <td><input type="checkbox" checked={newAuto()} onChange={(e) => setNewAuto(e.currentTarget.checked)} /></td>
+ <td>
+ <input type="number" min="1" max="100" value={newMc()} onInput={(e) => setNewMc(parseInt(e.currentTarget.value) || 1)}
+ style="width:60px; padding:3px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:3px;" />
+ </td>
+ <td><button class="link-btn" onClick={addRole}>+ 추가</button></td>
+ </tr>
+ </tbody>
+ </table>
+ </section>
+ );
 }
 
 function SelfTriggerSection() {
