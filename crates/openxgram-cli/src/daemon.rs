@@ -96,46 +96,48 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
     });
     println!("  ✓ inbound processor running (1s interval)");
 
-    // Discord inbound listener — notify.toml 의 discord.bot_token 있으면 자동 spawn.
-    // master key 를 시작 시 unlock 해서 listener 에 주입 (nostr 패턴). XGRAM_KEYSTORE_PASSWORD
-    // 미설정 시 listener skip — token 만으로는 L0 저장 서명 불가.
+    // Discord inbound listener — notify.toml.bot_token 있으면 자동 spawn.
+    // master key 가 unlock 되면 서명, 안 되면 unsigned (signature="external", agent_inject 패턴).
+    // 단 token 없으면 skip — listener 자체 의미 없음.
     let _discord_handle = match crate::notify_setup::NotifyConfig::load(Some(&opts.data_dir)) {
         Ok(cfg) => match cfg.discord {
-            Some(d) if !d.bot_token.is_empty() => match std::env::var("XGRAM_KEYSTORE_PASSWORD") {
-                Ok(pw) => {
-                    use openxgram_keystore::Keystore;
-                    let ks = openxgram_keystore::FsKeystore::new(
-                        openxgram_core::paths::keystore_dir(&opts.data_dir),
-                    );
-                    match ks.load(openxgram_core::paths::MASTER_KEY_NAME, &pw) {
-                        Ok(master) => {
-                            let dir = opts.data_dir.clone();
-                            let token = d.bot_token.clone();
-                            let handle = tokio::spawn(async move {
-                                if let Err(e) = crate::notify::run_discord_inbound_for_daemon(
-                                    dir, token, master,
-                                )
-                                .await
-                                {
-                                    tracing::warn!(error = %e, "discord inbound listener 종료");
-                                }
-                            });
-                            println!("  ✓ discord inbound listener spawned (notify.toml.bot_token)");
-                            Some(handle)
-                        }
-                        Err(e) => {
-                            tracing::warn!(error = %e, "discord inbound — master 로드 실패 (skip)");
-                            None
+            Some(d) if !d.bot_token.is_empty() => {
+                let master_key = match std::env::var("XGRAM_KEYSTORE_PASSWORD") {
+                    Ok(pw) => {
+                        use openxgram_keystore::Keystore;
+                        let ks = openxgram_keystore::FsKeystore::new(
+                            openxgram_core::paths::keystore_dir(&opts.data_dir),
+                        );
+                        match ks.load(openxgram_core::paths::MASTER_KEY_NAME, &pw) {
+                            Ok(m) => {
+                                tracing::info!("discord listener: master unlocked → signed mode");
+                                Some(m)
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "discord listener: master 로드 실패 → unsigned fallback (signature=external)");
+                                None
+                            }
                         }
                     }
-                }
-                Err(_) => {
-                    tracing::info!(
-                        "discord inbound skip — XGRAM_KEYSTORE_PASSWORD 미설정 (서명 불가)"
-                    );
-                    None
-                }
-            },
+                    Err(_) => {
+                        tracing::info!("discord listener: XGRAM_KEYSTORE_PASSWORD 미설정 → unsigned fallback");
+                        None
+                    }
+                };
+                let dir = opts.data_dir.clone();
+                let token = d.bot_token.clone();
+                let handle = tokio::spawn(async move {
+                    if let Err(e) = crate::notify::run_discord_inbound_for_daemon(
+                        dir, token, master_key,
+                    )
+                    .await
+                    {
+                        tracing::warn!(error = %e, "discord inbound listener 종료");
+                    }
+                });
+                println!("  ✓ discord inbound listener spawned (notify.toml.bot_token)");
+                Some(handle)
+            }
             _ => {
                 tracing::info!("discord inbound skip — notify.toml.discord.bot_token 미설정");
                 None

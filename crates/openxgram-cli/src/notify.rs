@@ -421,9 +421,12 @@ async fn run_discord_listen(
 pub async fn run_discord_inbound_for_daemon(
     data_dir: PathBuf,
     bot_token: String,
-    master_key: Keypair,
+    master_key: Option<Keypair>,
 ) -> Result<()> {
-    let mut store = StoreCtx::open_with_key(&data_dir, "discord-inbox", master_key)?;
+    let mut store = match master_key {
+        Some(k) => StoreCtx::open_with_key(&data_dir, "discord-inbox", Some(k))?,
+        None => StoreCtx::open_with_key(&data_dir, "discord-inbox", None)?,
+    };
     let client = DiscordGatewayClient::new(bot_token);
     let mut stream: std::pin::Pin<
         Box<dyn futures_util::Stream<Item = DiscordIncomingMessage> + Send>,
@@ -468,7 +471,8 @@ fn emit_discord(msg: &DiscordIncomingMessage, pretty: bool) {
 struct StoreCtx {
     db: Db,
     session_id: String,
-    signing_key: Keypair,
+    /// None 이면 unsigned 모드 — signature = "external" placeholder (agent_inject 패턴).
+    signing_key: Option<Keypair>,
 }
 
 impl StoreCtx {
@@ -478,10 +482,10 @@ impl StoreCtx {
         let kp = ks
             .load(MASTER_KEY_NAME, &password)
             .context("master 키 로드 실패 — keystore 패스워드 확인")?;
-        Self::open_with_key(data_dir, session_title, kp)
+        Self::open_with_key(data_dir, session_title, Some(kp))
     }
 
-    fn open_with_key(data_dir: &Path, session_title: &str, signing_key: Keypair) -> Result<Self> {
+    fn open_with_key(data_dir: &Path, session_title: &str, signing_key: Option<Keypair>) -> Result<Self> {
         let path = db_path(data_dir);
         if !path.exists() {
             bail!(
@@ -496,8 +500,9 @@ impl StoreCtx {
         .with_context(|| format!("DB open 실패: {}", path.display()))?;
         let home_machine = std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".into());
         let session = SessionStore::new(&mut db).ensure_by_title(session_title, &home_machine)?;
+        let mode = if signing_key.is_some() { "signed" } else { "unsigned (external)" };
         println!(
-            "✓ store-session 모드 — session={} ({}), 메시지를 L0 으로 저장합니다.",
+            "✓ store-session 모드 — session={} ({}, {mode}), 메시지를 L0 으로 저장합니다.",
             session.id, session_title
         );
         Ok(Self {
@@ -508,7 +513,10 @@ impl StoreCtx {
     }
 
     fn append(&mut self, sender: &str, body: &str) -> Result<()> {
-        let signature = hex::encode(self.signing_key.sign(body.as_bytes()));
+        let signature = match &self.signing_key {
+            Some(k) => hex::encode(k.sign(body.as_bytes())),
+            None => "external".to_string(),
+        };
         let embedder = default_embedder()?;
         let msg = MessageStore::new(&mut self.db, embedder.as_ref()).insert(
             &self.session_id,
