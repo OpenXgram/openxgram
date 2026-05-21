@@ -191,7 +191,7 @@ export function HomeDashboard(props: { onOpen: (id: CardId) => void }) {
               <CardTile
                 card={c}
                 badge={badge(c)}
-                status={statusLabel(c.implStatus)}
+                status={statusLabel(dynImpl(c))}
                 onClick={() => props.onOpen(c.id)}
               />
             )}
@@ -207,7 +207,7 @@ export function HomeDashboard(props: { onOpen: (id: CardId) => void }) {
               <CardTile
                 card={c}
                 badge={badge(c)}
-                status={statusLabel(c.implStatus)}
+                status={statusLabel(dynImpl(c))}
                 onClick={() => props.onOpen(c.id)}
               />
             )}
