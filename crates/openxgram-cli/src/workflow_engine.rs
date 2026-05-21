@@ -100,15 +100,29 @@ fn topo_sort(steps: &[StepDef]) -> Result<Vec<String>, String> {
     Ok(order)
 }
 
-/// 단계 action 실행 — MVP: mock + 일부 실 (echo / llm_call placeholder).
+/// 단계 action 실행. llm_call = Ollama 진짜 호출. 나머지 mock.
 async fn execute_step(step: &StepDef, input: &str) -> Result<(String, f64), String> {
-    let cost = 0.001; // 단계당 default cost (mock)
+    let mut cost = 0.001;
     let output = match step.action.as_str() {
         "echo" => format!("[echo:{}] {}", step.agent, input),
-        "web_search" => format!("[mock web_search:{}] '{}' → result placeholder", step.agent, input),
-        "llm_call" => format!("[mock llm_call:{}] prompt='{}' → response placeholder", step.agent, input),
-        "email" => format!("[mock email:{}] to={} body='{}'", step.agent, step.to.as_deref().unwrap_or("?"), step.body.as_deref().unwrap_or(input)),
-        other => format!("[unsupported action:{}] {}={}", other, step.agent, input),
+        "web_search" => format!("[web_search mock:{}] '{}'", step.agent, input),
+        "llm_call" => {
+            let base = std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://localhost:11434".into());
+            let model = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "gemma3:4b".into());
+            let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build()
+                .map_err(|e| format!("client: {e}"))?;
+            let resp = client.post(format!("{base}/api/generate"))
+                .json(&serde_json::json!({"model": model, "prompt": input, "stream": false}))
+                .send().await.map_err(|e| format!("ollama: {e}"))?;
+            if !resp.status().is_success() {
+                return Err(format!("ollama HTTP {}", resp.status()));
+            }
+            let j: serde_json::Value = resp.json().await.map_err(|e| format!("ollama json: {e}"))?;
+            cost = 0.005;
+            j.get("response").and_then(|r| r.as_str()).unwrap_or("(no response)").to_string()
+        }
+        "email" => format!("[email mock:{}] to={} body='{}'", step.agent, step.to.as_deref().unwrap_or("?"), step.body.as_deref().unwrap_or(input)),
+        other => format!("[unsupported:{}] {}={}", other, step.agent, input),
     };
     Ok((output, cost))
 }
