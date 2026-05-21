@@ -169,6 +169,12 @@ const ROUTES: Record<string, Route> = {
   external_listing_add: { method: "POST", path: "/external/listings", body: true },
   external_reputation: { method: "GET", path: "/external/reputation" },
   external_protocols: { method: "GET", path: "/external/protocols" },
+  workflows_list: { method: "GET", path: "/workflows" },
+  workflow_upsert: { method: "POST", path: "/workflows", body: true },
+  workflow_get: { method: "GET", path: "/workflows/{id}" },
+  workflow_delete: { method: "POST", path: "/workflows/{id}", body: true },
+  workflow_run: { method: "POST", path: "/workflows/{id}/run", body: true },
+  workflow_runs: { method: "GET", path: "/workflows/{id}/runs" },
   // Identity 깊은
   identity_bip39: { method: "POST", path: "/identity/bip39", body: true },
   identity_sub_dids: { method: "GET", path: "/identity/sub-dids" },

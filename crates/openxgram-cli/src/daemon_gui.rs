@@ -298,6 +298,11 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/external/listings", post(gui_external_listing_add))
         .route("/v1/gui/external/reputation", get(gui_external_reputation))
         .route("/v1/gui/external/protocols", get(gui_external_protocols))
+        // UI-MESSENGER-SPEC v1.4 §20 — 오케스트레이션 워크플로 (W-1 ~ W-10)
+        .route("/v1/gui/workflows", get(gui_workflows_list).post(gui_workflow_upsert))
+        .route("/v1/gui/workflows/{id}", get(gui_workflow_get).post(gui_workflow_delete))
+        .route("/v1/gui/workflows/{id}/run", post(gui_workflow_run))
+        .route("/v1/gui/workflows/{id}/runs", get(gui_workflow_runs))
         // 메신저 카드 v1.3 Step 0 — 메시지 송수신.
         .route("/v1/gui/messages", get(gui_messages_recent))
         .route("/v1/gui/peers/{alias}/send", post(gui_peer_send))
@@ -2104,6 +2109,105 @@ async fn gui_ops_health(
         "auto_update_channel": "stable",
         "self_check": {"db_ok": true, "keystore_locked": false},
     })))
+}
+
+// ── Workflows (UI-MESSENGER-SPEC v1.4 §20 — W-1 ~ W-10) ──
+
+async fn gui_workflows_list(
+    State(state): State<GuiServerState>, headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare("SELECT id, name, description, orchestrator, cron_expr, cost_limit, enabled, updated_at FROM workflows ORDER BY updated_at DESC").map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| Ok(serde_json::json!({
+        "id": r.get::<_, String>(0)?, "name": r.get::<_, String>(1)?,
+        "description": r.get::<_, Option<String>>(2)?, "orchestrator": r.get::<_, Option<String>>(3)?,
+        "cron_expr": r.get::<_, Option<String>>(4)?, "cost_limit": r.get::<_, Option<f64>>(5)?,
+        "enabled": r.get::<_, i64>(6)? != 0, "updated_at": r.get::<_, String>(7)?,
+    }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?
+       .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+async fn gui_workflow_upsert(
+    State(state): State<GuiServerState>, headers: HeaderMap, Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let id = body.get("id").and_then(|v| v.as_str()).map(String::from).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let name = body.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let description = body.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let yaml_body = body.get("yaml_body").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let orchestrator = body.get("orchestrator").and_then(|v| v.as_str()).map(String::from);
+    let cron_expr = body.get("cron_expr").and_then(|v| v.as_str()).map(String::from);
+    let cost_limit = body.get("cost_limit").and_then(|v| v.as_f64());
+    if name.is_empty() || yaml_body.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorDto{error: "name + yaml_body 필수".into()})));
+    }
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO workflows (id, name, description, yaml_body, orchestrator, cron_expr, cost_limit, enabled, created_at, updated_at) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,1,datetime('now'),datetime('now')) \
+         ON CONFLICT(id) DO UPDATE SET name=?2, description=?3, yaml_body=?4, orchestrator=?5, cron_expr=?6, cost_limit=?7, updated_at=datetime('now')",
+        rusqlite::params![id, name, description, yaml_body, orchestrator, cron_expr, cost_limit],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    Ok(Json(serde_json::json!({"id": id, "name": name, "saved": true})))
+}
+
+async fn gui_workflow_get(
+    State(state): State<GuiServerState>, headers: HeaderMap, Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let row = db.conn().query_row(
+        "SELECT id, name, description, yaml_body, orchestrator, cron_expr, message_trigger, cost_limit, enabled, updated_at FROM workflows WHERE id=?1",
+        rusqlite::params![id],
+        |r| Ok(serde_json::json!({
+            "id": r.get::<_, String>(0)?, "name": r.get::<_, String>(1)?,
+            "description": r.get::<_, Option<String>>(2)?, "yaml_body": r.get::<_, String>(3)?,
+            "orchestrator": r.get::<_, Option<String>>(4)?, "cron_expr": r.get::<_, Option<String>>(5)?,
+            "message_trigger": r.get::<_, Option<String>>(6)?, "cost_limit": r.get::<_, Option<f64>>(7)?,
+            "enabled": r.get::<_, i64>(8)? != 0, "updated_at": r.get::<_, String>(9)?,
+        })),
+    ).map_err(|_| (StatusCode::NOT_FOUND, Json(ErrorDto{error: "not found".into()})))?;
+    Ok(Json(row))
+}
+
+async fn gui_workflow_delete(
+    State(state): State<GuiServerState>, headers: HeaderMap, Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    db.conn().execute("DELETE FROM workflows WHERE id=?1", rusqlite::params![id])
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    Ok(Json(serde_json::json!({"deleted": id})))
+}
+
+async fn gui_workflow_run(
+    State(state): State<GuiServerState>, headers: HeaderMap, Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO workflow_runs (id, workflow_id, started_at, status, trigger_source) VALUES (?1, ?2, datetime('now'), 'running', 'manual')",
+        rusqlite::params![run_id, id],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    Ok(Json(serde_json::json!({"run_id": run_id, "workflow_id": id, "status": "running"})))
+}
+
+async fn gui_workflow_runs(
+    State(state): State<GuiServerState>, headers: HeaderMap, Path(id): Path<String>,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare("SELECT id, started_at, finished_at, status, current_step, total_cost FROM workflow_runs WHERE workflow_id=?1 ORDER BY started_at DESC LIMIT 50").map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    let rows: Vec<serde_json::Value> = stmt.query_map(rusqlite::params![id], |r| Ok(serde_json::json!({
+        "id": r.get::<_, String>(0)?, "started_at": r.get::<_, String>(1)?,
+        "finished_at": r.get::<_, Option<String>>(2)?, "status": r.get::<_, String>(3)?,
+        "current_step": r.get::<_, Option<String>>(4)?, "total_cost": r.get::<_, Option<f64>>(5)?,
+    }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?
+       .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
 }
 
 // ── External Agent endpoints (UI-EXTERNAL-AGENT-SPEC 30 결정) ──

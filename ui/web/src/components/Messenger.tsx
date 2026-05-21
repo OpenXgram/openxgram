@@ -5,6 +5,7 @@ import { AgentSidePanel } from "./AgentSidePanel";
 import { SessionScreen } from "./SessionScreen";
 import { RoutingRulesModal } from "./RoutingRulesModal";
 import { WhitelistModal } from "./WhitelistModal";
+import { WorkflowPanel } from "./WorkflowPanel";
 
 // v1.3 Tier 1 — 좌측 머신×세션 트리 (UI-MESSENGER-SPEC §3.2, S4).
 //   - peer 목록 = 본인의 다른 머신/세션 — machine 별 그룹화
@@ -123,7 +124,7 @@ function fingerprint(pubkeyHex: string): string {
 
 type SortMode = "name" | "activity";
 type ConnFilter = "all" | "connected" | "offline";
-type LeftMode = "agent" | "thread";
+type LeftMode = "agent" | "thread" | "workflow";
 
 interface MachineGroup {
   machine: string;
@@ -358,6 +359,15 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
           >
             🧵 스레드 ({threads().length})
           </button>
+          <button
+            type="button"
+            class={leftMode() === "workflow" ? "active" : ""}
+            onClick={() => setLeftMode("workflow")}
+            style="flex:1;"
+            title="UI-MESSENGER-SPEC v1.4 §20 — 오케스트레이션 워크플로 (W-1~W-10)"
+          >
+            🎼 워크플로
+          </button>
           {/* V11 — RoutingRule 모달 (agent↔agent internal) */}
           <button
             type="button"
@@ -487,6 +497,10 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
         </Show>
 
         {/* L1 — 스레드 모드 콘텐츠 */}
+        <Show when={leftMode() === "workflow"}>
+          <WorkflowPanel />
+        </Show>
+
         <Show when={leftMode() === "thread"}>
           <div class="messenger-friend-list">
             <Show
