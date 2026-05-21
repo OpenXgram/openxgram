@@ -162,7 +162,7 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
 
   // 좌측 컨트롤
   const [sortMode, setSortMode] = createSignal<SortMode>("activity");
-  const [connFilter, setConnFilter] = createSignal<ConnFilter>("all");
+  const [connFilter, setConnFilter] = createSignal<ConnFilter>("connected");
   const [collapsed, setCollapsed] = createSignal<Record<string, boolean>>({});
 
   // 3초 간격 메시지 폴링 — 활동 흐름 모니터링.
