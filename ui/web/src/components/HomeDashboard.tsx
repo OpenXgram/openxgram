@@ -141,34 +141,28 @@ export function HomeDashboard(props: { onOpen: (id: CardId) => void }) {
     const s = summary();
     if (!s) return "";
     switch (card.id) {
-      case "messenger":
-        return s.peerCount > 0 ? `${s.peerCount} peer` : "peer 0";
+      case "messenger": return `${s.peerCount} peer`;
+      case "memory": return `${s.wikiCount} 위키`;
+      case "external": return `${s.externalAgents} 에이전트`;
       case "channel": {
         const n = (s.notify.discord_configured ? 1 : 0) + (s.notify.telegram_configured ? 1 : 0);
-        return n > 0 ? `${n} 채널 연결` : "미연결";
+        return `${n}/4 채널`;
       }
-      default:
-        return "";
+      case "identity": return `${s.auditCount} audit`;
+      case "autonomy": return `${s.autonomyCount} event`;
+      case "vault": return `${s.mcpCount} MCP`;
+      case "ops": return s.statusOk ? "✓ daemon" : "✗ down";
+      default: return "";
     }
   }
 
   function dynImpl(card: CardDef): "ready" | "partial" | "placeholder" {
     const s = summary();
-    if (!s) return card.implStatus;
-    switch (card.id) {
-      case "messenger": return s.peerCount > 0 ? "ready" : "partial";
-      case "memory": return s.wikiCount > 0 ? "ready" : "partial";
-      case "external": return s.externalAgents > 0 ? "ready" : "placeholder";
-      case "channel": {
-        const n = (s.notify.discord_configured ? 1 : 0) + (s.notify.telegram_configured ? 1 : 0);
-        return n >= 2 ? "ready" : n === 1 ? "partial" : "placeholder";
-      }
-      case "identity": return s.statusOk ? (s.auditCount > 0 ? "ready" : "partial") : "placeholder";
-      case "autonomy": return s.autonomyCount > 0 ? "ready" : "partial";
-      case "vault": return s.mcpCount > 0 ? "ready" : "partial";
-      case "ops": return s.statusOk ? "partial" : "placeholder";
-      default: return card.implStatus;
-    }
+    if (!s) return "partial";
+    // endpoint 응답 OK 하면 ready (UI 작동 가능). 데이터 개수 무관.
+    // 진짜 미연결 (statusOk=false) 인 경우만 placeholder.
+    if (!s.statusOk) return "placeholder";
+    return "ready";
   }
   function statusLabel(s: "ready" | "partial" | "placeholder"): string {
     return s === "ready" ? "✅ 사용 가능" : s === "partial" ? "🟡 일부 구현" : "⏳ 예정";
