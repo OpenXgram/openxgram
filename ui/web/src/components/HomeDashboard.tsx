@@ -110,13 +110,28 @@ interface PeerDto {
 }
 
 async function fetchSummary() {
-  const [peers, notify] = await Promise.all([
+  const [peers, notify, wikiPages, mcpServers, audit, autonomyHistory, status, externalDir] = await Promise.all([
     invoke<PeerDto[]>("peers_list").catch(() => [] as PeerDto[]),
     invoke<NotifyStatus>("notify_status").catch(
       () => ({ discord_configured: false, telegram_configured: false }) as NotifyStatus,
     ),
+    invoke<any[]>("wiki_list").catch(() => []),
+    invoke<any[]>("vault_mcp_servers_list").catch(() => []),
+    invoke<any[]>("identity_audit").catch(() => []),
+    invoke<any[]>("autonomy_history").catch(() => []),
+    invoke<any>("status").catch(() => null),
+    invoke<any>("external_directory").catch(() => null),
   ]);
-  return { peerCount: peers.length, notify };
+  return {
+    peerCount: peers.length,
+    notify,
+    wikiCount: wikiPages.length,
+    mcpCount: mcpServers.length,
+    auditCount: audit.length,
+    autonomyCount: autonomyHistory.length,
+    statusOk: !!status?.initialized || !!status?.alias,
+    externalAgents: (externalDir?.external_agents ?? []).length,
+  };
 }
 
 export function HomeDashboard(props: { onOpen: (id: CardId) => void }) {
@@ -137,7 +152,25 @@ export function HomeDashboard(props: { onOpen: (id: CardId) => void }) {
     }
   }
 
-  function statusLabel(s: CardDef["implStatus"]): string {
+  function dynImpl(card: CardDef): "ready" | "partial" | "placeholder" {
+    const s = summary();
+    if (!s) return card.implStatus;
+    switch (card.id) {
+      case "messenger": return s.peerCount > 0 ? "ready" : "partial";
+      case "memory": return s.wikiCount > 0 ? "ready" : "partial";
+      case "external": return s.externalAgents > 0 ? "ready" : "placeholder";
+      case "channel": {
+        const n = (s.notify.discord_configured ? 1 : 0) + (s.notify.telegram_configured ? 1 : 0);
+        return n >= 2 ? "ready" : n === 1 ? "partial" : "placeholder";
+      }
+      case "identity": return s.statusOk ? (s.auditCount > 0 ? "ready" : "partial") : "placeholder";
+      case "autonomy": return s.autonomyCount > 0 ? "ready" : "partial";
+      case "vault": return s.mcpCount > 0 ? "ready" : "partial";
+      case "ops": return s.statusOk ? "partial" : "placeholder";
+      default: return card.implStatus;
+    }
+  }
+  function statusLabel(s: "ready" | "partial" | "placeholder"): string {
     return s === "ready" ? "✅ 사용 가능" : s === "partial" ? "🟡 일부 구현" : "⏳ 예정";
   }
 

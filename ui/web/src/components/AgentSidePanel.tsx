@@ -78,8 +78,10 @@ export function AgentSidePanel(props: {
               class={tab() === tt.id ? "active" : ""}
               onClick={() => setTab(tt.id)}
               title={tt.label}
+              style="display:flex; align-items:center; gap:6px; padding:6px 10px; text-align:left; width:100%;"
             >
-              {tt.icon}
+              <span style="font-size:14px;">{tt.icon}</span>
+              <span style="font-size:12px;">{tt.label}</span>
             </button>
           )}
         </For>

@@ -384,25 +384,19 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
           <WhitelistModal onClose={() => setShowWhitelist(false)} />
         </Show>
 
-        <header class="messenger-sidebar-head">
-          <strong>
-            {leftMode() === "agent"
-              ? t("messenger.friends") || "친구"
-              : "스레드"}
+        <header class="messenger-sidebar-head" style="padding:10px 14px;">
+          <strong style="font-size:13px;">
+            {leftMode() === "agent" ? "👥 에이전트·봇" : "💬 스레드"}
           </strong>
           <Show when={leftMode() === "agent"}>
             <button
               type="button"
               class="messenger-add-btn"
-              title={t("messenger.add-friend-tip") || "peer 등록 / 봇 연결"}
-              onClick={() => {
-                alert(
-                  t("messenger.add-friend-hint") ||
-                    "친구 추가: 연결 탭의 [+ Peer] 또는 설정 탭의 [Discord/Telegram 봇 추가]",
-                );
-              }}
+              title="peer 등록 / 봇 연결"
+              style="padding:4px 10px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:12px;"
+              onClick={() => alert("peer 등록: peer add CLI 또는 채널 카드 → 봇 등록")}
             >
-              +
+              + 추가
             </button>
           </Show>
         </header>
@@ -467,9 +461,13 @@ export function Messenger(props: { onJumpToSettings?: () => void } = {}) {
                                   ? "D"
                                   : "T"}
                             </span>
+                            <span
+                              title={isConnected(f) ? "연결됨" : "오프라인"}
+                              style={`display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; background:${isConnected(f) ? "#4caf50" : "#666"};`}
+                            />
                             <span class="messenger-friend-text">
-                              <span class="messenger-friend-name">{f.display}</span>
-                              <span class="messenger-friend-sub">{f.subtitle}</span>
+                              <span class="messenger-friend-name" style={isConnected(f) ? "" : "opacity:0.55;"}>{f.display}</span>
+                              <span class="messenger-friend-sub">{f.subtitle}{isConnected(f) ? "" : " · 오프라인"}</span>
                             </span>
                           </li>
                         )}
