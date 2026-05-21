@@ -71,7 +71,53 @@ pub fn spawn_all(db: Arc<Mutex<Db>>) {
             }
         }
     });
-    tracing::info!("daemon workers spawned (M-4, M-5, M-6, L6, V6)");
+    let db_m2 = db.clone();
+    tokio::spawn(async move {
+        if let Err(e) = m2_merge_candidates_tick(&db_m2).await {
+            tracing::warn!("M-2 initial tick error: {e}");
+        }
+        loop {
+            tokio::time::sleep(Duration::from_secs(600)).await;
+            if let Err(e) = m2_merge_candidates_tick(&db_m2).await {
+                tracing::warn!("M-2 merge candidates tick error: {e}");
+            }
+        }
+    });
+    tracing::info!("daemon workers spawned (M-2, M-4, M-5, M-6, L6, V6)");
+}
+
+/// M-2 자동 위키 merge candidate 발견 — 10분 주기.
+/// 같은 page_type 의 페이지 쌍 중 normalized title 가 정확히 일치하면 INSERT.
+async fn m2_merge_candidates_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
+    let mut db = db.lock().await;
+    let conn = db.conn();
+    let mut stmt = conn.prepare(
+        "SELECT a.id, b.id FROM wiki_pages a JOIN wiki_pages b \
+         ON a.page_type = b.page_type AND a.id < b.id \
+         AND LOWER(REPLACE(REPLACE(REPLACE(a.title, ' ', ''), '-', ''), '_', '')) \
+           = LOWER(REPLACE(REPLACE(REPLACE(b.title, ' ', ''), '-', ''), '_', '')) \
+         WHERE NOT EXISTS ( \
+           SELECT 1 FROM wiki_merge_candidates m \
+           WHERE (m.page_a_id = a.id AND m.page_b_id = b.id) \
+              OR (m.page_a_id = b.id AND m.page_b_id = a.id) \
+         ) LIMIT 100",
+    )?;
+    let rows: Vec<(String, String)> = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+        .filter_map(|r| r.ok())
+        .collect();
+    drop(stmt);
+    let now = chrono::Utc::now().to_rfc3339();
+    for (a, b) in &rows {
+        let _ = conn.execute(
+            "INSERT INTO wiki_merge_candidates (page_a_id, page_b_id, similarity, detected_at, status) VALUES (?1, ?2, 1.0, ?3, 'pending')",
+            rusqlite::params![a, b, now],
+        );
+    }
+    if !rows.is_empty() {
+        tracing::info!("M-2 merge candidates: {} new pair(s) detected", rows.len());
+    }
+    Ok(())
 }
 
 async fn m4_idle_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
