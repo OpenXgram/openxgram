@@ -82,6 +82,7 @@ export function ChannelCard(props: { onBack: () => void }) {
           </p>
           <NotifySetup />
         </section>
+        <DiscordDiagnosticSection />
       </Show>
 
       <Show when={tab() === "routing"}>
@@ -154,6 +155,33 @@ function ModerationSection() {
         )}</For>
       </section>
     </>
+  );
+}
+
+function DiscordDiagnosticSection() {
+  const [d, { refetch }] = createResource<any>(async () => { try { return await invoke<any>("notify_discord_diagnostic"); } catch (e) { return { error: String(e) }; } });
+  return (
+    <section class="card-section">
+      <h3>🔍 Discord 봇 진단</h3>
+      <button class="link-btn" onClick={() => refetch()}>↻ 진단 다시 실행</button>
+      <Show when={d()}>
+        <div class="card-section-row"><span class="label">상태</span><span class="value">{d()?.summary || d()?.error}</span></div>
+        <div class="card-section-row"><span class="label">token_status</span><span class="value">{d()?.token_status}</span></div>
+        <div class="card-section-row"><span class="label">봇 이름</span><span class="value">{d()?.bot_username}</span></div>
+        <div class="card-section-row"><span class="label">guild 가입 수</span><span class="value">{d()?.guild_count}</span></div>
+        <div class="card-section-row"><span class="label">install_permissions</span><span class="value mono">{d()?.install_permissions}</span></div>
+        <div class="card-section-row"><span class="label">scopes</span><span class="value mono">{JSON.stringify(d()?.install_scopes)}</span></div>
+        <div class="card-section-row"><span class="label">channel_id</span><span class="value mono">{d()?.channel_id_configured}</span></div>
+        <div class="card-section-row"><span class="label">channel 접근</span><span class="value">{d()?.channel_access_ok ? "✅ 200" : `❌ ${d()?.channel_access_status}`}</span></div>
+        <Show when={d()?.needs_reinvite && d()?.reinvite_url}>
+          <div style="margin-top:8px; padding:10px; background:#fee; border:1px solid #f88; border-radius:4px;">
+            <p style="margin:0 0 6px; color:#c00; font-weight:bold;">⚠ 봇 권한 부족 — 아래 URL 로 재초대:</p>
+            <a href={d().reinvite_url} target="_blank" style="word-break:break-all; color:#06c; font-family:monospace; font-size:11px;">{d().reinvite_url}</a>
+            <p style="margin:6px 0 0; font-size:11px; color:#666;">권한 = View Channels + Send Messages + Read Message History (68608)</p>
+          </div>
+        </Show>
+      </Show>
+    </section>
   );
 }
 

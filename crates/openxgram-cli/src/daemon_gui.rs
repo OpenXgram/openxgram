@@ -270,6 +270,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
                post(gui_session_binding_delete))
         // Discord 봇이 가입한 guild 의 channel 목록 (세션 바인딩 시 사용자가 선택)
         .route("/v1/gui/notify/discord/channels", post(gui_notify_discord_channels))
+        // Discord 봇 진단 — token + permission + guild + channel 한 번에
+        .route("/v1/gui/notify/discord/diagnostic", get(gui_notify_discord_diagnostic))
         // UI-IDENTITY-SPEC v1.0 — 신원 카드 endpoint
         .route("/v1/gui/identity/info", get(gui_identity_info))
         .route("/v1/gui/identity/audit", get(gui_identity_audit))
@@ -1366,6 +1368,75 @@ async fn gui_notify_discord_channels(
         }))
         .collect();
     Ok(Json(filtered))
+}
+
+/// `GET /v1/gui/notify/discord/diagnostic` — Discord 봇 진단 (W의 즉시 확인용).
+/// notify.toml.discord.bot_token 으로 Discord API 호출 → token / guilds / channel 권한 확인.
+async fn gui_notify_discord_diagnostic(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let cfg = crate::notify_setup::NotifyConfig::load(Some(&state.data_dir))
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("notify.toml: {e}")})))?;
+    let d = cfg.discord.ok_or((StatusCode::NOT_FOUND, Json(ErrorDto{error: "notify.toml.discord 없음".into()})))?;
+    if d.bot_token.is_empty() {
+        return Err((StatusCode::NOT_FOUND, Json(ErrorDto{error: "discord.bot_token 비어있음".into()})));
+    }
+    let api_base = std::env::var("DISCORD_API_BASE").unwrap_or_else(|_| "https://discord.com/api/v10".into());
+    let client = reqwest::Client::new();
+    // 1) bot user info
+    let user_resp = client.get(format!("{api_base}/users/@me"))
+        .header("Authorization", format!("Bot {}", d.bot_token))
+        .send().await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ErrorDto{error: format!("user: {e}")})))?;
+    let user_status = user_resp.status();
+    let user_json: serde_json::Value = if user_status.is_success() {
+        user_resp.json().await.unwrap_or(serde_json::json!(null))
+    } else { serde_json::json!(null) };
+    // 2) application info — guild_count + install_params.permissions
+    let app_resp = client.get(format!("{api_base}/applications/@me"))
+        .header("Authorization", format!("Bot {}", d.bot_token))
+        .send().await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ErrorDto{error: format!("app: {e}")})))?;
+    let app_json: serde_json::Value = if app_resp.status().is_success() {
+        app_resp.json().await.unwrap_or(serde_json::json!(null))
+    } else { serde_json::json!(null) };
+    // 3) channel 접근 시도 (configured channel_id)
+    let channel_id_str = d.channel_id.clone().unwrap_or_default();
+    let channel_status = if !channel_id_str.is_empty() {
+        let ch_resp = client.get(format!("{api_base}/channels/{}", channel_id_str))
+            .header("Authorization", format!("Bot {}", d.bot_token))
+            .send().await;
+        match ch_resp {
+            Ok(r) => r.status().as_u16(),
+            Err(_) => 0,
+        }
+    } else { 0 };
+    // 4) 권한 분석
+    let permissions = app_json.get("install_params").and_then(|p| p.get("permissions")).and_then(|p| p.as_str()).unwrap_or("?");
+    let scopes = app_json.get("install_params").and_then(|p| p.get("scopes")).cloned().unwrap_or(serde_json::json!([]));
+    let guild_count = app_json.get("approximate_guild_count").and_then(|g| g.as_i64()).unwrap_or(-1);
+    let needs_reinvite = permissions == "0" || !scopes.as_array().map(|a| a.iter().any(|s| s.as_str() == Some("bot"))).unwrap_or(false);
+    let invite_url = if needs_reinvite {
+        format!("https://discord.com/oauth2/authorize?client_id={}&permissions=68608&scope=bot+applications.commands",
+            app_json.get("id").and_then(|i| i.as_str()).unwrap_or(""))
+    } else { String::new() };
+    Ok(Json(serde_json::json!({
+        "token_status": user_status.as_u16(),
+        "bot_username": user_json.get("username").cloned().unwrap_or_default(),
+        "bot_id": user_json.get("id").cloned().unwrap_or_default(),
+        "owner": app_json.get("owner").and_then(|o| o.get("username")).cloned().unwrap_or_default(),
+        "guild_count": guild_count,
+        "install_permissions": permissions,
+        "install_scopes": scopes,
+        "channel_id_configured": channel_id_str,
+        "channel_access_status": channel_status,
+        "channel_access_ok": channel_status == 200,
+        "needs_reinvite": needs_reinvite,
+        "reinvite_url": invite_url,
+        "summary": if needs_reinvite { "❌ 봇 권한 부족 — 재초대 필요 (View Channel + Send Message + Read History 최소)" } else if channel_status != 200 { "❌ channel_id 잘못 또는 봇 접근 불가" } else { "✅ 정상 — token + 권한 + channel 모두 OK" },
+    })))
 }
 
 // ── Identity 깊은 ────────────────────────────────────────

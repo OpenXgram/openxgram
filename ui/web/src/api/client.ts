@@ -156,6 +156,7 @@ const ROUTES: Record<string, Route> = {
   session_binding_add: { method: "POST", path: "/sessions/{agent_id}/channel-bindings", body: true },
   session_binding_delete: { method: "POST", path: "/sessions/{agent_id}/channel-bindings/{binding_id}" },
   notify_discord_channels: { method: "POST", path: "/notify/discord/channels", body: true },
+  notify_discord_diagnostic: { method: "GET", path: "/notify/discord/diagnostic" },
   // Identity 깊은
   identity_bip39: { method: "POST", path: "/identity/bip39", body: true },
   identity_sub_dids: { method: "GET", path: "/identity/sub-dids" },
