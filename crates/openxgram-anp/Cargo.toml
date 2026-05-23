@@ -1,0 +1,34 @@
+[package]
+name = "openxgram-anp"
+description = "ANP (Agent Network Protocol) 호환 어댑터 + did:wba resolver/client (Phase v0.8)"
+version = "0.2.0-rc.15"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/OpenXgram/openxgram"
+authors = ["OpenXgram Contributors"]
+
+# 이 crate 는 PRD 작업 룰상 워크스페이스 멤버에 추가하지 않은 채로 생성된다.
+# 워크스페이스에 편입시키려면 별도 PR 에서 ../../Cargo.toml 의
+# [workspace.members] 에 "crates/openxgram-anp" 추가 (현재는 NOT 멤버).
+# 따라서 path 의존성은 그대로 두되 버전·workspace 상속은 사용하지 않는다.
+[workspace]
+
+[dependencies]
+# openxgram-core: 향후 KST 시간 helper 통합 예정 (현재 message.rs 내부 헬퍼 사용).
+openxgram-core = { path = "../openxgram-core" }
+openxgram-did = { path = "../openxgram-did" }
+openxgram-keystore = { path = "../openxgram-keystore" }
+
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-tls", "webpki-roots"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+thiserror = "1"
+tracing = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+hex = "0.4"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+mockito = "1"

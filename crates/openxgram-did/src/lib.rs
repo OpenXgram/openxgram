@@ -19,6 +19,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+pub mod wba;
+
 /// secp256k1-pub multicodec varint prefix (0xe7 + 0x01)
 const SECP256K1_PUB_VARINT: [u8; 2] = [0xe7, 0x01];
 
