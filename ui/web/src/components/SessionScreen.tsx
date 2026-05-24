@@ -46,7 +46,19 @@ export function SessionScreen(props: { identifier: string; display: string}) {
 }
 
  let resizeObs: ResizeObserver | undefined;
- const [inputMode, setInputMode] = createSignal(false);
+ const [inputMode, setInputMode] = createSignal(true);  // 기본 ON (마스터 요청)
+ // keystroke batch — 매 키마다 HTTP request 면 병렬 race 로 글자 순서 깨짐.
+ // 50ms 안에 들어온 keystroke 모아 한 번 송신.
+ let inputBuf = "";
+ let inputTimer: number | undefined;
+ const flushInput = async () => {
+ if (!inputBuf) return;
+ const data = inputBuf; inputBuf = "";
+ try {
+ await invoke("session_input", { identifier: props.identifier, data});
+ void refresh();
+ } catch (e) { setError("input 실패: " + e); }
+ };
  onMount(() => {
  if (!containerRef) return;
  term = new Terminal({
@@ -120,13 +132,13 @@ export function SessionScreen(props: { identifier: string; display: string}) {
  } catch (er) { setError("drop text send 실패: " + er);}
  }
  });
- // 입력 모드 ON 일 때만 onData → POST /v1/gui/sessions/<id>/input (tmux send-keys -l)
- term.onData(async (data: string) => {
+ // 입력 모드 ON 일 때 onData buffer 에 모아 50ms debounce 송신.
+ // 매 keystroke 별 HTTP invoke 는 병렬 race → 스페이스/한글 조합 깨짐 (마스터 보고).
+ term.onData((data: string) => {
  if (!inputMode()) return;
- try {
- await invoke("session_input", { identifier: props.identifier, data});
- void refresh();  // 입력 즉시 새로고침 — 다음 polling 까지 기다리지 않음
- } catch (e) { setError("input 실패: " + e);}
+ inputBuf += data;
+ if (inputTimer) clearTimeout(inputTimer);
+ inputTimer = window.setTimeout(() => { void flushInput(); }, 50);
  });
  void refresh();
  // 폴링 600ms (이전 2000ms) — idle 시에도 화면 변화 빠르게.
