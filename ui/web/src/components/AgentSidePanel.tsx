@@ -534,13 +534,16 @@ function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () =
  const [busy, setBusy] = createSignal(false);
  const [testResult, setTestResult] = createSignal<string | null>(null);
  // rc.92 통합 — botId 변경 시 그 봇의 채널 list 자동 조회
- const [channelOpts] = createResource(() => ({ pl: platform(), bid: botId()}), async ({pl, bid}) => {
- if (pl !== "discord") return [];
+ // botId 가 비어있으면(=봇 미선택) fetch 자체 skip — source falsy 시 createResource fetcher 미실행
+ const [channelOpts] = createResource(
+ () => (platform() === "discord" && botId() ? { bid: botId()} : null),
+ async ({bid}) => {
  try {
- const r = await invoke<any>("discord_bot_channels", { bot_id: bid || "default"});
+ const r = await invoke<any>("discord_bot_channels", { bot_id: bid});
  return r?.channels ?? [];
  } catch { return [];}
-});
+ },
+);
  // 봇 추가 inline 폼 (Discord)
  const [showAddBot, setShowAddBot] = createSignal(false);
  const [newBotAlias, setNewBotAlias] = createSignal("");
@@ -629,15 +632,17 @@ function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () =
  <option value="web">Web</option>
  </select>
  <Show when={platform() === "discord"}>
+ <Show when={(bots() ?? []).length > 0}>
  <select value={botId()} onChange={(e) => setBotId(e.currentTarget.value)}
  style="flex:1; padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;">
- <option value="">default 봇 (notify.toml)</option>
+ <option value="">— 봇 선택 —</option>
  <For each={bots() ?? []}>
  {(b) => <option value={b.id}>{b.alias} ({b.bot_user_id?.slice(0, 8)})</option>}
  </For>
  </select>
+ </Show>
  <button type="button" class="link-btn" onClick={() => setShowAddBot(!showAddBot())}
- title="새 디스코드 봇 등록"
+ title="새 디스코드 봇 등록 (토큰 입력)"
  style="padding:4px 8px; background:var(--surface-2);">+ 봇</button>
  </Show>
  </div>
@@ -657,12 +662,23 @@ function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () =
  <button type="button" class="link-btn" onClick={() => setShowAddBot(false)} style="margin-left:4px;">취소</button>
  </div>
  </Show>
- {/* 채널 선택 — Discord 면 dropdown, 아니면 input */}
+ {/* 채널 선택 — 봇 선택 후에만 표시 (토큰 등록 → 봇 선택 → 채널 목록 자동 조회) */}
  <Show when={platform() === "discord"}>
+ <Show when={(bots() ?? []).length === 0}>
+ <div style="padding:6px 8px; font-size:11px; color:#d29922; background:rgba(210,153,34,0.1); border-radius:4px;">
+ ⚠ 등록된 봇이 없습니다. 위 <strong>"+ 봇"</strong> 을 눌러 토큰을 먼저 입력하세요.
+ </div>
+ </Show>
+ <Show when={(bots() ?? []).length > 0 && !botId()}>
+ <div style="padding:6px 8px; font-size:11px; color:var(--text-3); background:var(--surface-2); border-radius:4px;">
+ 위 dropdown 에서 봇을 선택하면 채널 목록이 자동으로 나타납니다.
+ </div>
+ </Show>
+ <Show when={botId()}>
  <Show when={(channelOpts() ?? []).length > 0}
- fallback={<input value={channelRef()} onInput={(e) => setChannelRef(e.currentTarget.value)}
- placeholder="channel_id (봇이 가입 서버 없거나 권한 부족 — 봇 재초대 필요)"
- style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />}>
+ fallback={<div style="padding:6px 8px; font-size:11px; color:#f85149; background:rgba(248,81,73,0.1); border-radius:4px;">
+ ⚠ 이 봇이 가입한 서버가 없거나 권한 부족 — Developer Portal 에서 봇을 서버에 재초대 필요.
+ </div>}>
  <select value={channelRef()} onChange={(e) => setChannelRef(e.currentTarget.value)}
  style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;">
  <option value="">— 채널 선택 —</option>
@@ -670,6 +686,7 @@ function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () =
  {(c: any) => <option value={c.channel_id}>{c.guild_name} / #{c.channel_name}</option>}
  </For>
  </select>
+ </Show>
  </Show>
  </Show>
  <Show when={platform() === "telegram"}>
@@ -713,11 +730,11 @@ function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () =
  placeholder="멘션 (선택, 비우면 모든 메시지)"
  title="채널 메시지에 이 문자열이 포함될 때만 세션으로 전달. 예: @researcher / @all"
  style="flex:1; padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
- <Show when={platform() === "discord"}>
+ <Show when={platform() === "discord" && (bots() ?? []).length > 0}>
  <select value={botId()} onChange={(e) => setBotId(e.currentTarget.value)}
- title="이 채널에 사용할 봇. default 는 채널 카드의 notify.toml 봇."
+ title="이 채널에 사용할 봇"
  style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;">
- <option value="">기본 봇 (notify.toml)</option>
+ <option value="">— 봇 선택 —</option>
  <For each={bots() ?? []}>
  {(b) => <option value={b.id}>{b.alias}</option>}
  </For>
