@@ -9,7 +9,6 @@ export type CardId =
  | "messenger"
  | "memory"
  | "external"
- | "channel"
  | "identity"
  | "autonomy"
  | "ops"
@@ -51,15 +50,6 @@ const CARDS: CardDef[] = [
  title: "외부 에이전트",
  prdName: "외부 에이전트·결제",
  oneLine: "다른 AI 시스템과의 게이트웨이 (마켓·A2A·ANP·x402)",
- implStatus: "partial",
-},
- {
- id: "channel",
- group: "value",
- icon: "",
- title: "채널",
- prdName: "인간 친화 채널",
- oneLine: "Discord·Telegram·Slack·Web — 사람과의 인박스",
  implStatus: "partial",
 },
  {
@@ -157,10 +147,6 @@ export function HomeDashboard(props: { onOpen: (id: CardId) => void}) {
  }
  case "memory": return `${s.wikiCount} 위키`;
  case "external": return `${s.externalAgents} 에이전트`;
- case "channel": {
- const n = (s.notify.discord_configured ? 1 : 0) + (s.notify.telegram_configured ? 1 : 0);
- return `${n}/4 채널`;
-}
  case "identity": return `${s.auditCount} audit`;
  case "autonomy": return `${s.autonomyCount} event`;
  case "vault": return `${s.mcpCount} MCP`;

@@ -11,7 +11,6 @@ import { LoginView} from "./components/LoginView";
 import { HomeDashboard, type CardId} from "./components/HomeDashboard";
 import { IdentityCard} from "./components/IdentityCard";
 import { VaultMcpCard} from "./components/VaultMcpCard";
-import { ChannelCard} from "./components/ChannelCard";
 import { MemoryCard} from "./components/MemoryCard";
 import { AutonomyCard} from "./components/AutonomyCard";
 import { ExternalAgentCard} from "./components/ExternalAgentCard";
@@ -30,7 +29,6 @@ type Tab =
  | "settings"
  | "card-identity"
  | "card-vault"
- | "card-channel"
  | "card-memory"
  | "card-autonomy"
  | "card-external"
@@ -91,7 +89,6 @@ function AppInner() {
  switch (id) {
  case "messenger": setTab("chat"); break;
  case "memory": setTab("card-memory"); break;
- case "channel": setTab("card-channel"); break;
  case "autonomy": setTab("card-autonomy"); break;
  case "vault": setTab("card-vault"); break;
  case "external": setTab("card-external"); break;
@@ -182,9 +179,6 @@ function AppInner() {
  </Show>
  <Show when={tab() === "card-vault"}>
  <VaultMcpCard onBack={() => setTab("home")} />
- </Show>
- <Show when={tab() === "card-channel"}>
- <ChannelCard onBack={() => setTab("home")} />
  </Show>
  <Show when={tab() === "card-memory"}>
  <MemoryCard onBack={() => setTab("home")} />

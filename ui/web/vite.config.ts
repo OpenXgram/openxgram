@@ -13,7 +13,21 @@ const BUILD_TIME = new Date().toISOString();
 //   - base "/gui/" — nginx alias /gui/ → /var/www/openxgram-gui/ 와 매칭.
 //   - "@/*" alias = src/* (api/client.ts 등 절대 경로 import).
 export default defineConfig({
-  plugins: [solid()],
+  plugins: [
+    solid(),
+    {
+      // Vite `define` 가 solid JSX transform 와 충돌해서 __APP_VERSION__ inline
+      // 치환이 안 됨. 대신 index.html head 에 직접 globalThis 주입 — App.tsx의
+      // `__APP_VERSION__` 참조가 글로벌로 resolve 되어 정상 동작.
+      name: "inject-build-globals",
+      transformIndexHtml(html) {
+        return html.replace(
+          "</head>",
+          `<script>globalThis.__APP_VERSION__=${JSON.stringify(APP_VERSION)};globalThis.__BUILD_TIME__=${JSON.stringify(BUILD_TIME)};</script></head>`,
+        );
+      },
+    },
+  ],
   base: "/gui/",
   clearScreen: false,
   define: {
@@ -22,7 +36,20 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    host: "127.0.0.1",
+    host: "0.0.0.0",
+    allowedHosts: ["server-seoul.tail0957ca.ts.net"],
+    hmr: {
+      protocol: "wss",
+      host: "server-seoul.tail0957ca.ts.net",
+      clientPort: 443,
+    },
+    proxy: {
+      "/v1": {
+        target: "http://100.101.237.9:47302",
+        changeOrigin: false,
+        ws: true,
+      },
+    },
   },
   resolve: {
     alias: {
