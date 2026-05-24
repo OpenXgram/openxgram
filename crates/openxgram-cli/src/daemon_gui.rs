@@ -3515,18 +3515,115 @@ async fn gui_autonomy_vacation_set(
     })))
 }
 
-/// UI-EXTERNAL-AGENT — 외부 디렉토리 (OpenAgentX 마켓·A2A·ANP).
+/// UI-EXTERNAL-AGENT — 외부 디렉토리 (5 테이블 종합 뷰).
+/// HomeDashboard + ExternalAgentCard 공통 진입점.
 async fn gui_external_directory(
     State(state): State<GuiServerState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let conn = db.conn();
+
+    // protocols — external_protocols 테이블에서 enabled 만
+    let protocols: Vec<serde_json::Value> = conn
+        .prepare("SELECT name, enabled, configured_at FROM external_protocols ORDER BY name")
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                Ok(serde_json::json!({
+                    "name": r.get::<_, String>(0)?,
+                    "enabled": r.get::<_, i64>(1)? != 0,
+                    "configured_at": r.get::<_, Option<String>>(2)?,
+                }))
+            })
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+
+    // my_listings — 내가 마켓에 올린 리스팅
+    let my_listings: Vec<serde_json::Value> = conn
+        .prepare("SELECT id, agent_id, marketplace, price_usdc, pricing_model, description, enabled, created_at FROM external_listings ORDER BY created_at DESC LIMIT 100")
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                Ok(serde_json::json!({
+                    "id": r.get::<_, String>(0)?,
+                    "agent_id": r.get::<_, String>(1)?,
+                    "marketplace": r.get::<_, String>(2)?,
+                    "price_usdc": r.get::<_, f64>(3)?,
+                    "pricing_model": r.get::<_, String>(4)?,
+                    "description": r.get::<_, Option<String>>(5)?,
+                    "enabled": r.get::<_, i64>(6)? != 0,
+                    "created_at": r.get::<_, String>(7)?,
+                }))
+            })
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+
+    // outbound_calls — 내가 외부로 호출한 기록
+    let outbound_calls: Vec<serde_json::Value> = conn
+        .prepare("SELECT id, to_agent, protocol, amount, status, rating, started_at, completed_at FROM external_outbound_calls ORDER BY started_at DESC LIMIT 100")
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                Ok(serde_json::json!({
+                    "id": r.get::<_, String>(0)?,
+                    "to_agent": r.get::<_, String>(1)?,
+                    "protocol": r.get::<_, String>(2)?,
+                    "amount": r.get::<_, f64>(3)?,
+                    "status": r.get::<_, String>(4)?,
+                    "rating": r.get::<_, Option<i64>>(5)?,
+                    "started_at": r.get::<_, String>(6)?,
+                    "completed_at": r.get::<_, Option<String>>(7)?,
+                }))
+            })
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+
+    // inbound_pending — 외부에서 나에게 들어온 미승인 요청
+    let inbound_pending: Vec<serde_json::Value> = conn
+        .prepare("SELECT id, from_agent, protocol, request_summary, offered_price, status, received_at FROM external_inbound_pending WHERE status='pending' ORDER BY received_at DESC LIMIT 100")
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                Ok(serde_json::json!({
+                    "id": r.get::<_, String>(0)?,
+                    "from_agent": r.get::<_, String>(1)?,
+                    "protocol": r.get::<_, String>(2)?,
+                    "request_summary": r.get::<_, Option<String>>(3)?,
+                    "offered_price": r.get::<_, Option<f64>>(4)?,
+                    "status": r.get::<_, String>(5)?,
+                    "received_at": r.get::<_, String>(6)?,
+                }))
+            })
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+
+    // reputation — 내가 거래한 외부 에이전트들의 평판
+    let reputation: Vec<serde_json::Value> = conn
+        .prepare("SELECT external_agent, avg_rating, review_count, blacklisted, last_interaction FROM external_reputation ORDER BY review_count DESC LIMIT 100")
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                Ok(serde_json::json!({
+                    "external_agent": r.get::<_, String>(0)?,
+                    "avg_rating": r.get::<_, Option<f64>>(1)?,
+                    "review_count": r.get::<_, i64>(2)?,
+                    "blacklisted": r.get::<_, i64>(3)? != 0,
+                    "last_interaction": r.get::<_, Option<String>>(4)?,
+                }))
+            })
+            .map(|it| it.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+
     Ok(Json(serde_json::json!({
-        "protocols": ["OpenAgentX (KR market)", "A2A (Google)", "ANP (Agent Network Protocol)", "x402 (HTTP 402 payment)", "Virtuals ACP"],
+        "protocols": protocols,
+        "my_listings": my_listings,
+        "outbound_calls": outbound_calls,
+        "inbound_pending": inbound_pending,
+        "reputation": reputation,
+        // 호환: 기존 GUI 가 external_agents 키 참조하므로 reputation 매핑으로 대체.
         "external_agents": [],
-        "outbound_calls": [],
-        "inbound_pending": [],
-        "note": "사양 UI-EXTERNAL-AGENT-SPEC-v1.0 작성 예정. 본 endpoint 는 책임 기반 stub.",
     })))
 }
 
