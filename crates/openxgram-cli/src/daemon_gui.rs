@@ -2759,19 +2759,20 @@ async fn gui_notify_discord_diagnostic(
         format!("https://discord.com/oauth2/authorize?client_id={}&permissions=68608&scope=bot+applications.commands",
             app_json.get("id").and_then(|i| i.as_str()).unwrap_or(""))
     } else { String::new() };
-    // summary 우선순위 — token invalid > channel_id 가 guild_id > channel 권한 > 정상
+    // summary 우선순위 — channel_id 필드는 서버(guild) ID 등록 자리로도 쓰임 (정상 설정).
+    // 채널 단위 송신은 별도 바인딩 화면에서 channel 지정 — 여기서 검증 안 함.
     let summary = if !token_valid {
         "❌ token invalid 또는 guild 가입 없음 — 봇 재초대 필요"
     } else if channel_is_actually_guild {
-        "❌ channel_id 가 guild(서버) ID 와 동일 — 메시지 보낼 채널의 ID 를 따로 입력하세요 (Discord 개발자 모드 ON → 채널 우클릭 → 'ID 복사')"
+        "✅ 봇 + 서버(guild) 등록 OK — 특정 채널 메시지 송신은 별도 바인딩 화면에서 channel 지정"
+    } else if channel_status == 200 {
+        "✅ 정상 — token + channel access 모두 OK (특정 channel 직접 등록 모드)"
     } else if channel_status == 404 {
-        "❌ channel_id 잘못 또는 봇이 그 채널 못 봄 (View Channel 권한 필요)"
+        "ℹ channel_id 가 guild 도 channel 도 아님 (또는 봇 미가입) — 봇 진입 가능한 서버 ID 또는 채널 ID 입력"
     } else if channel_status == 403 {
-        "❌ 봇이 channel 봤지만 권한 부족 (Send Messages / Read History 필요)"
-    } else if channel_status != 200 {
-        "❌ channel API 응답 비정상"
+        "⚠ channel 보긴 했지만 권한 부족 (Send Messages / Read History 필요)"
     } else {
-        "✅ 정상 — token + channel access 모두 OK"
+        "ℹ channel API 응답 비정상"
     };
     Ok(Json(serde_json::json!({
         "token_status": user_status.as_u16(),
