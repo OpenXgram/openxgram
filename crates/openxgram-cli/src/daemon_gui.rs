@@ -2508,8 +2508,19 @@ async fn gui_memory_mistakes_list(
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     let mut db = state.db.lock().await;
+    // 워커(`patterns_mistakes_extract_tick`)가 `mistakes` 테이블에 저장 — legacy
+    // `memory_mistakes` 비어 있는 게 정상. 표시는 양쪽 UNION 으로 통합.
+    // mistakes 컬럼 매핑: intended_action→title, lesson→description, "heuristic"→discovery_method
     let mut stmt = db.conn().prepare(
-        "SELECT id, title, description, discovery_method, resolved, created_at FROM memory_mistakes ORDER BY created_at DESC LIMIT 100",
+        "SELECT id, title, description, discovery_method, resolved, created_at FROM (\
+            SELECT id, intended_action AS title, lesson AS description, \
+                   'heuristic' AS discovery_method, resolved, \
+                   datetime(created_at/1000, 'unixepoch') AS created_at \
+                FROM mistakes \
+            UNION ALL \
+            SELECT id, title, description, discovery_method, resolved, created_at \
+                FROM memory_mistakes \
+        ) ORDER BY created_at DESC LIMIT 100",
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
     let rows = stmt.query_map([], |r| {
         Ok(serde_json::json!({
