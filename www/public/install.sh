@@ -16,12 +16,14 @@ REPO="OpenXgram/openxgram"
 VERSION="${OPENXGRAM_VERSION:-latest}"
 INSTALL_DIR="${OPENXGRAM_INSTALL_DIR:-}"
 DRY_RUN="0"
+FULL="0"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) VERSION="$2"; shift 2 ;;
     --install-dir) INSTALL_DIR="$2"; shift 2 ;;
     --dry-run) DRY_RUN="1"; shift 1 ;;
+    --full) FULL="1"; shift 1 ;;
     --help|-h)
       cat <<EOF
 OpenXgram installer
@@ -30,6 +32,7 @@ Options:
   --version <tag>      특정 release tag (default: latest pre-release/release)
   --install-dir <dir>  설치 위치 (default: ~/.local/bin)
   --dry-run            검증만 — 실제 설치는 하지 않음
+  --full               binary 설치 후 자동 후속: init + mcp-install + daemon-install
   --help               이 도움말
 
 Environment:
@@ -589,3 +592,26 @@ echo "  xgram --version"
 echo "  xgram init --alias <name>"
 echo "  xgram mcp-install --scope user --full --use-path-lookup    # Claude Code MCP + identity + hook"
 echo ""
+
+# --full: 후속 자동 실행 (init + mcp-install + daemon-install)
+# /dev/tty 없는 환경 (systemd 등) 자동 감지 — interactive prompt 회피.
+if [ "$FULL" = "1" ] && [ "$DRY_RUN" = "0" ]; then
+  XGRAM_BIN="$INSTALL_DIR/xgram"
+  if [ ! -x "$XGRAM_BIN" ]; then XGRAM_BIN="$(command -v xgram || true)"; fi
+  if [ -z "$XGRAM_BIN" ]; then
+    echo "⚠ --full: xgram binary 못 찾음. 위 install 단계 확인 후 수동 실행."
+    exit 0
+  fi
+  echo "==> --full: 후속 자동 설치"
+  # interactive 환경에서만 init prompt (TTY 없으면 alias 자동 = hostname)
+  if [ -t 0 ]; then
+    "$XGRAM_BIN" init || true
+  else
+    "$XGRAM_BIN" init --alias "$(hostname -s 2>/dev/null || echo node)" || true
+  fi
+  "$XGRAM_BIN" mcp-install --scope user --full --use-path-lookup || true
+  "$XGRAM_BIN" daemon-install || true
+  echo ""
+  echo "✓ --full 완료. systemd user 활성화:"
+  echo "  systemctl --user enable --now openxgram-sidecar.service"
+fi
