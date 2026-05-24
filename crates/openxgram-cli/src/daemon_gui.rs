@@ -5497,7 +5497,16 @@ pub async fn run_discord_outbound_worker(state: GuiServerState) {
                 let s = rest.split(':').next().unwrap_or("");
                 if s.is_empty() { continue; }
                 (s.to_string(), 0u32)
-            } else { continue };
+            } else {
+                // rc.104 — prefix 없는 alias 면 tmux 진리원천 동적 resolve (하드코딩 0)
+                match crate::notify::resolve_alias_to_tmux(&agent_id).await {
+                    Some(v) => v,
+                    None => {
+                        tracing::warn!(agent_id = %agent_id, "outbound: alias → tmux 매핑 실패 (skip)");
+                        continue;
+                    }
+                }
+            };
 
             let cap_url = format!("{}/api/tmux/capture?session={}&window={}&lines=400&escape=0&token={}",
                 portal_url.trim_end_matches('/'), session, idx, portal_token);

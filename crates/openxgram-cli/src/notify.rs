@@ -535,7 +535,34 @@ pub async fn run_discord_inbound_for_daemon(
     Ok(())
 }
 
-/// identifier (`portal:<session>:<idx>` 또는 `aoe:<session>:...`) 의 세션에 텍스트 주입.
+/// rc.104 — alias → tmux session 동적 매핑.
+/// `tmux list-sessions -F '#{session_name}'` 호출해서:
+///   1. 정확 일치 (session_name == alias)
+///   2. aoe wrapper 매칭 (aoe_<alias>_<id>)
+///   3. substring 매칭 (session_name.contains(alias))
+/// 첫 매칭 반환. 매번 tmux 진리원천 조회 → 재시작/id 변경 자동 대응. 하드코딩 0.
+pub async fn resolve_alias_to_tmux(alias: &str) -> Option<(String, u32)> {
+    use tokio::process::Command;
+    let out = Command::new("tmux")
+        .args(["list-sessions", "-F", "#{session_name}"])
+        .output().await.ok()?;
+    if !out.status.success() { return None;}
+    let sessions: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    if let Some(s) = sessions.iter().find(|s| s.as_str() == alias) {
+        return Some((s.clone(), 0));
+    }
+    let prefix = format!("aoe_{}_", alias);
+    if let Some(s) = sessions.iter().find(|s| s.starts_with(&prefix)) {
+        return Some((s.clone(), 0));
+    }
+    if let Some(s) = sessions.iter().find(|s| s.contains(alias)) {
+        return Some((s.clone(), 0));
+    }
+    None
+}
+
+/// identifier (`portal:<session>:<idx>` / `aoe:<session>` / prefix-less alias) 의 세션에 텍스트 주입.
 /// portal-new 의 `/api/tmux/send` 호출. peer:* 는 별도 fan-out (TODO).
 async fn dispatch_to_session(
     identifier: &str,
@@ -566,7 +593,11 @@ async fn dispatch_to_session(
     } else if identifier.starts_with("peer:") {
         bail!("dispatch: peer:* binding 은 미구현 (Phase 2)");
     } else {
-        bail!("dispatch: 알 수 없는 identifier prefix: {}", identifier);
+        // prefix 없는 alias — tmux 진리원천 조회로 동적 resolve (하드코딩 0)
+        match resolve_alias_to_tmux(identifier).await {
+            Some(v) => v,
+            None => bail!("dispatch: alias '{}' → tmux 세션 매핑 실패 (tmux list-sessions 에 일치하는 세션 없음)", identifier),
+        }
     };
     let url = format!("{}/api/tmux/send?token={}", portal_url.trim_end_matches('/'), portal_token);
     let resp = http
