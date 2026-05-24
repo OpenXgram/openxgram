@@ -541,10 +541,24 @@ function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () =
  return r?.channels ?? [];
  } catch { return [];}
 });
- // 봇 추가 inline 폼
+ // 봇 추가 inline 폼 (Discord)
  const [showAddBot, setShowAddBot] = createSignal(false);
  const [newBotAlias, setNewBotAlias] = createSignal("");
  const [newBotToken, setNewBotToken] = createSignal("");
+ // 봇 추가 inline 폼 (Telegram — single, notify.toml 저장)
+ const [showAddTg, setShowAddTg] = createSignal(false);
+ const [tgToken, setTgToken] = createSignal("");
+ async function addTgBotInline() {
+ if (!tgToken().trim()) { alert("Telegram bot token 필요 (BotFather)"); return; }
+ setBusy(true);
+ try {
+ const v = await invoke<any>("notify_telegram_validate", { token: tgToken().trim() });
+ alert("✓ 검증 통과: " + (v?.bot_username || "unknown") + "\n다음: 메시지 1개 보내고 '자동감지' 클릭 → chat_id 등록 → 저장.");
+ setShowAddTg(false);
+ // chat_id 자동감지 단계로 진행 — 본 form 닫고 사용자가 자동감지 버튼 누름.
+ } catch (e) { alert("validate 실패: " + e); }
+ finally { setBusy(false); }
+ }
  async function addBotInline() {
  if (!newBotAlias().trim() || !newBotToken().trim()) { alert("alias + token 필요"); return;}
  setBusy(true);
@@ -598,10 +612,10 @@ function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () =
  return (
  <div>
  <p style="font-size:12px; margin-bottom:8px;">
- 이 세션 (<code>{props.agentId}</code>) 의 채널 바인딩 — 메시지 양방향 + 풀 액세스. 봇 토큰은 채널 카드.
+ 이 세션 (<code>{props.agentId}</code>) 의 채널 바인딩 — 메시지 양방향 + 풀 액세스. 봇 토큰은 아래 "+ 봇" 으로 직접 등록 가능.
  </p>
- <Row label="디스코드 봇" value={props.notify?.discord_configured ? "✓ 연결됨" : "(미연결 — 좌측 채널 카드에서 등록)"} />
- <Row label="텔레그램 봇" value={props.notify?.telegram_configured ? "✓ 연결됨" : "(미연결 — 좌측 채널 카드에서 등록)"} />
+ <Row label="디스코드 봇" value={props.notify?.discord_configured ? "✓ 연결됨" : "(미연결 — 아래 '+ 봇' 으로 등록)"} />
+ <Row label="텔레그램 봇" value={props.notify?.telegram_configured ? "✓ 연결됨" : "(미연결 — 아래 '+ 봇' 으로 등록)"} />
  <hr style="margin:8px 0; opacity:0.2;" />
  <strong style="font-size:12px;">바인딩 추가</strong>
  <div style="display:flex; flex-direction:column; gap:6px; margin-top:6px;">
@@ -659,6 +673,20 @@ function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () =
  </Show>
  </Show>
  <Show when={platform() === "telegram"}>
+ <div style="display:flex; flex-direction:column; gap:6px;">
+ {/* Telegram 봇 토큰 등록 (single, notify.toml) */}
+ <button type="button" class="link-btn" onClick={() => setShowAddTg(!showAddTg())}
+ style="padding:4px 8px; background:var(--surface-2); align-self:flex-start;">+ Telegram 봇 등록 (token)</button>
+ <Show when={showAddTg()}>
+ <div style="padding:8px; background:var(--surface-2); border:1px solid var(--border); border-radius:4px;">
+ <input value={tgToken()} onInput={(e) => setTgToken(e.currentTarget.value)}
+ placeholder="Telegram Bot Token (BotFather 발급)" type="password"
+ style="width:100%; padding:4px; margin-bottom:4px; background:var(--surface); color:var(--text-1); border:1px solid var(--border); border-radius:3px; box-sizing:border-box;" />
+ <button type="button" class="link-btn" onClick={addTgBotInline} disabled={busy()}
+ style="background:#06c; color:white; padding:4px 10px; border:none; border-radius:3px;">▶ 검증 + 등록</button>
+ <button type="button" class="link-btn" onClick={() => setShowAddTg(false)} style="margin-left:4px;">취소</button>
+ </div>
+ </Show>
  <div style="display:flex; gap:4px;">
  <input value={channelRef()} onInput={(e) => setChannelRef(e.currentTarget.value)}
  placeholder="chat_id (자동감지 권장)"
@@ -671,6 +699,7 @@ function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () =
  else alert(r?.hint || "chat_id 감지 실패");
  } catch (e) { alert("실패: " + e);}
  }}>▶ 자동감지</button>
+ </div>
  </div>
  </Show>
  <Show when={platform() !== "discord" && platform() !== "telegram"}>
