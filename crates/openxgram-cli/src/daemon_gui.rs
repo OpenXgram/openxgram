@@ -2745,21 +2745,25 @@ async fn gui_notify_discord_diagnostic(
     } else { vec![] };
     let channel_is_actually_guild = guild_ids.iter().any(|g| g == &channel_id_str);
 
-    // 4) 권한 분석 — scope 에 "bot" 없으면 진짜 재초대 필요 (메시지 송신 불가).
-    //    install_permissions="0" 만으로는 재초대 필수 아님 (사용자가 후에 서버 role 통해 권한 부여 가능).
+    // 4) 권한 분석 — `install_params` 는 OAuth install URL 의 default scope/perm 표시.
+    //    봇이 실제 가입 시점에 가진 scope/perm 과 무관 → reinvite 판단 기준으로 쓰지 않음.
+    //    bot token /users/@me /users/@me/guilds 가 200 이면 token 자체 정상 → 메시지 송신 가능.
     let permissions = app_json.get("install_params").and_then(|p| p.get("permissions")).and_then(|p| p.as_str()).unwrap_or("?");
     let scopes = app_json.get("install_params").and_then(|p| p.get("scopes")).cloned().unwrap_or(serde_json::json!([]));
     let guild_count = app_json.get("approximate_guild_count").and_then(|g| g.as_i64()).unwrap_or(-1);
-    let has_bot_scope = scopes.as_array().map(|a| a.iter().any(|s| s.as_str() == Some("bot"))).unwrap_or(false);
-    let needs_reinvite = !has_bot_scope;  // bot scope 없을 때만 진짜 재초대 강제
+    let has_bot_scope_in_install_params = scopes.as_array().map(|a| a.iter().any(|s| s.as_str() == Some("bot"))).unwrap_or(false);
+    // 재초대 권장은 token 자체가 invalid 인 경우에만 강제. install_params 는 정보 차원.
+    let token_valid = user_status.as_u16() == 200 && !guild_ids.is_empty();
+    let needs_reinvite = !token_valid;
     let invite_url = if needs_reinvite {
         format!("https://discord.com/oauth2/authorize?client_id={}&permissions=68608&scope=bot+applications.commands",
             app_json.get("id").and_then(|i| i.as_str()).unwrap_or(""))
     } else { String::new() };
-    let summary = if needs_reinvite {
-        "❌ bot scope 누락 — 재초대 필수 (현재 token 으로는 메시지 송신 불가)"
+    // summary 우선순위 — token invalid > channel_id 가 guild_id > channel 권한 > 정상
+    let summary = if !token_valid {
+        "❌ token invalid 또는 guild 가입 없음 — 봇 재초대 필요"
     } else if channel_is_actually_guild {
-        "❌ channel_id 가 guild(서버) ID 와 동일 — 메시지 보낼 채널의 ID 를 따로 입력하세요 (Discord 개발자 모드 ON → 채널 우클릭 → ID 복사)"
+        "❌ channel_id 가 guild(서버) ID 와 동일 — 메시지 보낼 채널의 ID 를 따로 입력하세요 (Discord 개발자 모드 ON → 채널 우클릭 → 'ID 복사')"
     } else if channel_status == 404 {
         "❌ channel_id 잘못 또는 봇이 그 채널 못 봄 (View Channel 권한 필요)"
     } else if channel_status == 403 {
@@ -2767,7 +2771,7 @@ async fn gui_notify_discord_diagnostic(
     } else if channel_status != 200 {
         "❌ channel API 응답 비정상"
     } else {
-        "✅ 정상 — token + scope + channel access 모두 OK"
+        "✅ 정상 — token + channel access 모두 OK"
     };
     Ok(Json(serde_json::json!({
         "token_status": user_status.as_u16(),
@@ -2778,7 +2782,8 @@ async fn gui_notify_discord_diagnostic(
         "guild_ids": guild_ids,
         "install_permissions": permissions,
         "install_scopes": scopes,
-        "has_bot_scope": has_bot_scope,
+        "has_bot_scope_in_install_params": has_bot_scope_in_install_params,
+        "token_valid": token_valid,
         "channel_id_configured": channel_id_str,
         "channel_access_status": channel_status,
         "channel_access_ok": channel_status == 200,
