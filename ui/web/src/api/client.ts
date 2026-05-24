@@ -108,6 +108,9 @@ const ROUTES: Record<string, Route> = {
  memory_import_prompt: { method: "GET", path: "/memory/import/prompt-template"},
  memory_migration_import: { method: "POST", path: "/memory/migration/import", body: true},
  memory_import_bundle: { method: "POST", path: "/memory/import/bundle", body: true},
+ memory_export_session: { method: "GET", path: "/memory/export/session/{session_id}"},
+ memory_export_wiki: { method: "GET", path: "/memory/export/wiki/{id}"},
+ memory_migration_export: { method: "GET", path: "/memory/migration/export/{session_id}"},
  memory_webhook_token: { method: "GET", path: "/memory/import/webhook-token"},
  memory_webhook_rotate: { method: "POST", path: "/memory/import/webhook-token"},
  session_alias_set: { method: "POST", path: "/sessions/{identifier}/alias", body: true},
@@ -304,6 +307,8 @@ const ROUTES: Record<string, Route> = {
  // 메신저 v1.3 Step 0 — 메시지 송수신
  messages_recent: { method: "GET", path: "/messages", emptyAs: []},
  peer_send: { method: "POST", path: "/peers/{alias}/send", body: true},
+ peer_send_unsigned: { method: "POST", path: "/peers/{alias}/send-unsigned", body: true},
+ workflow_approve_run: { method: "POST", path: "/workflows/runs/{run_id}/approve", body: true},
 };
 
 /** path 템플릿 치환 + 남은 args 반환. */

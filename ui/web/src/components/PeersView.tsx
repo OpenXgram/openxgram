@@ -88,6 +88,20 @@ export function PeersView() {
  <strong>{p.alias}</strong>{" "}
  <small style="color: #666;">{fingerprint(p.public_key_hex)}</small>
  <div>{p.address}</div>
+ <div style="margin-top: 4px;">
+ <button
+ type="button"
+ style="font-size: 11px; padding: 2px 6px;"
+ onClick={async () => {
+ const body = prompt(`[디버그] '${p.alias}' 에 비서명 envelope 송신.\nbody (JSON or text):`);
+ if (!body) return;
+ try {
+ const r = await invoke<any>("peer_send_unsigned", { alias: p.alias, body});
+ alert("ok: " + JSON.stringify(r).slice(0, 200));
+ } catch (e) { alert("실패: " + e);}
+ }}
+ >🐛 비서명 송신 (debug)</button>
+ </div>
  </li>
 )}
  </For>

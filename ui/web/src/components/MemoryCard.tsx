@@ -53,6 +53,27 @@ curl -X POST "${data()?.webhook_url}" \\
  );
 }
 
+// 다른 OpenXgram 인스턴스로 이전 시 사용 — 세션 + L0~L4 + wiki 가 함께 묶인 bundle.
+function MigrationExportRow() {
+ const [sid, setSid] = createSignal("");
+ return (
+ <div style="margin-top:10px; padding:10px; background:var(--surface-2); border-radius:4px;">
+ <h4 style="margin:0 0 6px 0; font-size:13px;">마이그레이션 export — 다른 OpenXgram 인스턴스로 이전</h4>
+ <p style="font-size:11px; color:var(--text-3); margin:0 0 8px 0;">
+ 세션 ID 입력 → 그 세션의 메시지·L0~L4 메모리·관련 wiki 를 단일 JSON bundle 로 download. 받는 쪽에서 "import" 섹션에 붙여넣기.
+ </p>
+ <input type="text" placeholder="session_id (예: claude:llm:...)" value={sid()}
+ onInput={(e) => setSid(e.currentTarget.value)}
+ style="width:60%; padding:4px 6px; background:var(--surface-1); color:var(--text-1); border:1px solid var(--border); border-radius:3px; font-family:monospace; font-size:11px;" />
+ <Show when={sid().trim()}>
+ <a class="link-btn" href={`/v1/gui/memory/migration/export/${encodeURIComponent(sid())}`}
+ download={`openxgram-migration-${sid().replace(/[:/]/g, "_")}.json`}
+ style="margin-left:8px;">📦 bundle 다운로드</a>
+ </Show>
+ </div>
+ );
+}
+
 function ImportExportSection() {
  const [scan, { refetch}] = createResource<any>(async () => { try { return await invoke("memory_import_scan_paths");} catch { return null;}});
  const [prompt] = createResource<any>(async () => { try { return await invoke("memory_import_prompt");} catch { return null;}});
@@ -132,12 +153,13 @@ function ImportExportSection() {
  </section>
 
  <section class="card-section">
- <h3>내보내기 (Export) — 위치</h3>
+ <h3>내보내기 (Export) — 위치 + 마이그레이션</h3>
  <p style="font-size:12px; color:var(--text-3);">
  <strong>세션 단위 export</strong>: 메신저 사이드패널 → 세션 선택 → 우측 패널 "개요" 탭 → "export" 버튼<br />
  <strong>위키 페이지 단위 export</strong>: 메모리 카드 → 위키 페이지 목록 → 페이지 클릭 → 우상단 "export .md" 버튼<br />
  <strong>전체 백업</strong>: 운영·생존 카드 → 백업·복원 → "지금 백업" (tar.gz)
  </p>
+ <MigrationExportRow />
  </section>
  </>
  );
