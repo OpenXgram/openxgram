@@ -836,8 +836,25 @@ async fn gui_session_input(
             .danger_accept_invalid_certs(true)
             .build()
             .map_err(|e| internal(&format!("http: {e}")))?;
+        // Enter (CR/LF) 처리 — portal 의 -l literal 모드는 줄바꿈을 키로 해석 못 함.
+        // data 끝의 \r/\n 제거 + enter=true 플래그 전송.
+        let trailing_enter = body.data.ends_with('\r') || body.data.ends_with('\n');
+        let text_clean = body.data.trim_end_matches(|c: char| c == '\r' || c == '\n');
+        let mut payload = serde_json::json!({"session": session, "window": idx});
+        if !text_clean.is_empty() {
+            payload["text"] = serde_json::Value::String(text_clean.to_string());
+        }
+        if trailing_enter {
+            payload["enter"] = serde_json::Value::Bool(true);
+            // text 가 비어있으면 keys=Enter 단독 송신 (text 없이 enter 만)
+            if text_clean.is_empty() {
+                payload.as_object_mut().unwrap().remove("text");
+                payload["keys"] = serde_json::Value::String("Enter".to_string());
+                payload.as_object_mut().unwrap().remove("enter");
+            }
+        }
         let resp = client.post(&url)
-            .json(&serde_json::json!({"session": session, "window": idx, "text": body.data}))
+            .json(&payload)
             .send().await
             .map_err(|e| internal(&format!("portal send: {e}")))?;
         if !resp.status().is_success() {
