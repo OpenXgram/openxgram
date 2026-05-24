@@ -2584,7 +2584,7 @@ async fn gui_session_bindings_list(
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     let mut db = state.db.lock().await;
     let mut stmt = db.conn().prepare(
-        "SELECT id, platform, channel_ref, bot_label, mention_trigger, permission, active, created_at \
+        "SELECT id, platform, channel_ref, bot_label, mention_trigger, permission, active, created_at, bot_id \
          FROM session_channel_bindings WHERE agent_id = ?1 ORDER BY created_at DESC",
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
     let rows = stmt.query_map(rusqlite::params![agent_id], |r| {
@@ -2596,6 +2596,7 @@ async fn gui_session_bindings_list(
             "permission": r.get::<_, String>(5)?,
             "active": r.get::<_, i64>(6)? != 0,
             "created_at": r.get::<_, String>(7)?,
+            "bot_id": r.get::<_, Option<String>>(8)?,
         }))
     }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
         .filter_map(|r| r.ok()).collect();
@@ -5225,6 +5226,10 @@ struct ChannelTestBody {
     platform: String,
     channel_ref: String,
     text: String,
+    #[serde(default)]
+    bot_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
 }
 
 async fn gui_notify_channel_test(
@@ -5239,12 +5244,54 @@ async fn gui_notify_channel_test(
         .timeout(std::time::Duration::from_secs(8))
         .build()
         .map_err(|e| internal(&format!("http: {e}")))?;
+    // rc.103 — multibot-aware send: bot_id → discord_bots, fallback channel_ref → bindings → bot_id → discord_bots, 최후 notify.toml
+    let discord_token_lookup = |body_bot_id: Option<&str>, body_agent: Option<&str>, channel_ref: &str| -> Option<String> {
+        let path = state.data_dir.join("db.sqlite");
+        let mut db = openxgram_db::Db::open(openxgram_db::DbConfig { path, ..Default::default() }).ok()?;
+        let conn = db.conn();
+        // 1) 명시적 bot_id 우선
+        if let Some(bid) = body_bot_id {
+            if let Ok(t) = conn.query_row::<String, _, _>(
+                "SELECT bot_token FROM discord_bots WHERE id = ?1 AND active = 1",
+                rusqlite::params![bid], |r| r.get(0),
+            ) {
+                if !t.is_empty() { return Some(t);}
+            }
+        }
+        // 2) channel_ref(+agent) 기반 bindings 조회 → bot_id → token
+        let bot_id_opt: Option<String> = if let Some(agent) = body_agent {
+            conn.query_row(
+                "SELECT bot_id FROM session_channel_bindings WHERE platform='discord' AND channel_ref=?1 AND agent_id=?2 AND active=1 ORDER BY created_at DESC LIMIT 1",
+                rusqlite::params![channel_ref, agent], |r| r.get(0),
+            ).ok()
+        } else {
+            conn.query_row(
+                "SELECT bot_id FROM session_channel_bindings WHERE platform='discord' AND channel_ref=?1 AND active=1 ORDER BY created_at DESC LIMIT 1",
+                rusqlite::params![channel_ref], |r| r.get(0),
+            ).ok()
+        };
+        if let Some(bid) = bot_id_opt {
+            if let Ok(t) = conn.query_row::<String, _, _>(
+                "SELECT bot_token FROM discord_bots WHERE id = ?1 AND active = 1",
+                rusqlite::params![bid], |r| r.get(0),
+            ) {
+                if !t.is_empty() { return Some(t);}
+            }
+        }
+        // 3) 어떤 봇이라도 있으면 (단일 봇 시나리오) — 첫 active 봇
+        if let Ok(t) = conn.query_row::<String, _, _>(
+            "SELECT bot_token FROM discord_bots WHERE active = 1 ORDER BY created_at ASC LIMIT 1",
+            [], |r| r.get(0),
+        ) {
+            if !t.is_empty() { return Some(t);}
+        }
+        None
+    };
     match body.platform.as_str() {
         "discord" => {
-            let token = cfg.discord.as_ref()
-                .map(|d| d.bot_token.clone())
-                .filter(|t| !t.is_empty())
-                .ok_or_else(|| bad_request("Discord bot_token 미설정 — 채널 카드에서 등록"))?;
+            let token = discord_token_lookup(body.bot_id.as_deref(), body.agent_id.as_deref(), &body.channel_ref)
+                .or_else(|| cfg.discord.as_ref().map(|d| d.bot_token.clone()).filter(|t| !t.is_empty()))
+                .ok_or_else(|| bad_request("Discord bot_token 조회 실패 — 봇 등록 + 채널 바인딩이 필요합니다 (에이전트 패널 → 채널 바인딩 → '+ 봇')"))?;
             let url = format!("https://discord.com/api/v10/channels/{}/messages", body.channel_ref);
             let resp = http.post(&url)
                 .header("Authorization", format!("Bot {token}"))
@@ -5289,12 +5336,37 @@ async fn gui_notify_discord_permissions(
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     let channel_id = params.get("channel_id").cloned()
         .ok_or_else(|| bad_request("channel_id query 필요"))?;
+    let bot_id_param = params.get("bot_id").cloned();
     let cfg = crate::notify_setup::NotifyConfig::load(Some(&state.data_dir))
         .map_err(|e| internal(&format!("notify.toml load: {e}")))?;
-    let token = cfg.discord.as_ref()
-        .map(|d| d.bot_token.clone())
-        .filter(|t| !t.is_empty())
-        .ok_or_else(|| bad_request("Discord bot_token 미설정"))?;
+    // rc.103 — multibot-aware: bot_id 우선, channel_id → bindings 조회, 첫 active 봇, 최후 notify.toml fallback
+    let token_lookup = || -> Option<String> {
+        let path = state.data_dir.join("db.sqlite");
+        let mut db = openxgram_db::Db::open(openxgram_db::DbConfig { path, ..Default::default() }).ok()?;
+        let conn = db.conn();
+        if let Some(bid) = &bot_id_param {
+            if let Ok(t) = conn.query_row::<String, _, _>(
+                "SELECT bot_token FROM discord_bots WHERE id = ?1 AND active = 1",
+                rusqlite::params![bid], |r| r.get(0),
+            ) { if !t.is_empty() { return Some(t);} }
+        }
+        if let Ok(bid) = conn.query_row::<String, _, _>(
+            "SELECT bot_id FROM session_channel_bindings WHERE platform='discord' AND channel_ref=?1 AND active=1 ORDER BY created_at DESC LIMIT 1",
+            rusqlite::params![channel_id], |r| r.get(0),
+        ) {
+            if let Ok(t) = conn.query_row::<String, _, _>(
+                "SELECT bot_token FROM discord_bots WHERE id = ?1 AND active = 1",
+                rusqlite::params![bid], |r| r.get(0),
+            ) { if !t.is_empty() { return Some(t);} }
+        }
+        conn.query_row::<String, _, _>(
+            "SELECT bot_token FROM discord_bots WHERE active = 1 ORDER BY created_at ASC LIMIT 1",
+            [], |r| r.get(0),
+        ).ok().filter(|t| !t.is_empty())
+    };
+    let token = token_lookup()
+        .or_else(|| cfg.discord.as_ref().map(|d| d.bot_token.clone()).filter(|t| !t.is_empty()))
+        .ok_or_else(|| bad_request("Discord bot_token 조회 실패 — 봇 등록 필요"))?;
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()

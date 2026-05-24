@@ -516,6 +516,7 @@ interface BindingDto {
  platform: string;
  channel_ref: string;
  bot_label: string | null;
+ bot_id?: string | null;
  mention_trigger: string | null;
  permission: string;
  active: boolean;
@@ -617,6 +618,8 @@ function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () =
  platform: b.platform,
  channel_ref: b.channel_ref,
  text: `[OpenXgram test] ${new Date().toLocaleString("ko-KR")} — 바인딩 ${b.id} OK`,
+ bot_id: b.bot_id ?? undefined,
+ agent_id: props.agentId,
 });
  setTestResult(r.ok ? `✓ 전송 성공 (${b.platform}:${b.channel_ref})` : `✗ ${r.message || "실패"}`);
 } catch (e) {
