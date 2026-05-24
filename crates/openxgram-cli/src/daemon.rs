@@ -114,24 +114,7 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
         let ks = openxgram_keystore::FsKeystore::new(openxgram_core::paths::keystore_dir(dir));
         ks.load(openxgram_core::paths::MASTER_KEY_NAME, pw).ok()
     };
-    // (1) default 봇 from notify.toml
-    if let Ok(cfg) = crate::notify_setup::NotifyConfig::load(Some(&opts.data_dir)) {
-        if let Some(d) = cfg.discord {
-            if !d.bot_token.is_empty() {
-                let dir = opts.data_dir.clone();
-                let token = d.bot_token.clone();
-                let key = load_master(&opts.data_dir);
-                let handle = tokio::spawn(async move {
-                    if let Err(e) = crate::notify::run_discord_inbound_for_daemon(dir, token, key).await {
-                        tracing::warn!(error = %e, "discord default listener 종료");
-                    }
-                });
-                _discord_handles.push(handle);
-                println!("  ✓ discord listener spawned (default, notify.toml)");
-            }
-        }
-    }
-    // (2) 추가 봇들 from discord_bots 테이블
+    // (1) discord_bots 테이블 (multibot) — 우선
     let extra_bots: Vec<(String, String)> = {
         let path = opts.data_dir.join("db.sqlite");
         match openxgram_db::Db::open(openxgram_db::DbConfig { path, ..Default::default() }) {
@@ -144,6 +127,28 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
             Err(_) => Vec::new(),
         }
     };
+    // (2) notify.toml default 봇 — multibot 비어있을 때만 fallback.
+    //     multibot 의 한 봇이 같은 token 이면 spawn 중복 → Discord Gateway 4004 충돌 발생하므로 skip.
+    let multibot_tokens: std::collections::HashSet<String> =
+        extra_bots.iter().map(|(_, t)| t.clone()).collect();
+    if let Ok(cfg) = crate::notify_setup::NotifyConfig::load(Some(&opts.data_dir)) {
+        if let Some(d) = cfg.discord {
+            if !d.bot_token.is_empty() && !multibot_tokens.contains(&d.bot_token) {
+                let dir = opts.data_dir.clone();
+                let token = d.bot_token.clone();
+                let key = load_master(&opts.data_dir);
+                let handle = tokio::spawn(async move {
+                    if let Err(e) = crate::notify::run_discord_inbound_for_daemon(dir, token, key).await {
+                        tracing::warn!(error = %e, "discord default listener 종료");
+                    }
+                });
+                _discord_handles.push(handle);
+                println!("  ✓ discord listener spawned (default, notify.toml)");
+            } else if !d.bot_token.is_empty() {
+                println!("  ↩ discord default listener skip — same token already spawned via discord_bots");
+            }
+        }
+    }
     for (alias, token) in extra_bots {
         let dir = opts.data_dir.clone();
         let key = load_master(&opts.data_dir);
