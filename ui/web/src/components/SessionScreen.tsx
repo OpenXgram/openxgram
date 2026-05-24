@@ -134,11 +134,17 @@ export function SessionScreen(props: { identifier: string; display: string}) {
  });
  // 입력 모드 ON 일 때 onData buffer 에 모아 50ms debounce 송신.
  // 매 keystroke 별 HTTP invoke 는 병렬 race → 스페이스/한글 조합 깨짐 (마스터 보고).
+ // 예외: \r 또는 \n (Enter) 들어오면 timer 안 기다리고 즉시 flush — Enter 반응성.
  term.onData((data: string) => {
  if (!inputMode()) return;
  inputBuf += data;
  if (inputTimer) clearTimeout(inputTimer);
+ if (data.includes("\r") || data.includes("\n")) {
+ // Enter — 즉시 flush (debounce 안 함)
+ void flushInput();
+ } else {
  inputTimer = window.setTimeout(() => { void flushInput(); }, 50);
+ }
  });
  void refresh();
  // 폴링 600ms (이전 2000ms) — idle 시에도 화면 변화 빠르게.
