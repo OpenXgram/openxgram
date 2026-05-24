@@ -615,11 +615,8 @@ function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () =
  return (
  <div>
  <p style="font-size:12px; margin-bottom:8px;">
- 이 세션 (<code>{props.agentId}</code>) 의 채널 바인딩 — 메시지 양방향 + 풀 액세스. 봇 토큰은 아래 "+ 봇" 으로 직접 등록 가능.
+ 이 세션 (<code>{props.agentId}</code>) 의 채널 바인딩 — 메시지 양방향 + 풀 액세스. 아래 "+ 봇" 으로 토큰 등록 후 채널 선택.
  </p>
- <Row label="디스코드 봇" value={props.notify?.discord_configured ? "✓ 연결됨" : "(미연결 — 아래 '+ 봇' 으로 등록)"} />
- <Row label="텔레그램 봇" value={props.notify?.telegram_configured ? "✓ 연결됨" : "(미연결 — 아래 '+ 봇' 으로 등록)"} />
- <hr style="margin:8px 0; opacity:0.2;" />
  <strong style="font-size:12px;">바인딩 추가</strong>
  <div style="display:flex; flex-direction:column; gap:6px; margin-top:6px;">
  {/* platform + bot 선택 같은 줄 */}
@@ -1046,11 +1043,12 @@ function FilesTab(props: { peer: PeerMeta}) {
 }
 
 // ── 탭 11: 알림 (사양 §5 탭 11) ──
-function NotifyTab(props: { notify: NotifyStatus | null}) {
+function NotifyTab(_props: { notify: NotifyStatus | null}) {
  return (
  <div>
- <Row label="디스코드" value={props.notify?.discord_configured ? " 연결됨" : "(미연결)"} />
- <Row label="텔레그램" value={props.notify?.telegram_configured ? " 연결됨" : "(미연결)"} />
+ <p style="font-size:12px; color:var(--text-3); margin-bottom:8px;">
+ 알림은 채널 바인딩(채널 바인딩 탭) 을 통해 발신됩니다. 봇 등록·채널 선택은 거기서.
+ </p>
  <p class="messenger-sidepanel-hint">
  규칙 추가 (비용 한도 80%·1h 무응답·서브에이전트 3회 실패·Cron 실패) — 백엔드 notification_rules 테이블 신설 필요.
  </p>
