@@ -544,9 +544,8 @@ function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () =
  } catch { return [];}
  },
 );
- // 봇 추가 inline 폼 (Discord)
+ // 봇 추가 inline 폼 (Discord) — token 만 입력, alias 는 검증 후 자동
  const [showAddBot, setShowAddBot] = createSignal(false);
- const [newBotAlias, setNewBotAlias] = createSignal("");
  const [newBotToken, setNewBotToken] = createSignal("");
  // 봇 추가 inline 폼 (Telegram — single, notify.toml 저장)
  const [showAddTg, setShowAddTg] = createSignal(false);
@@ -563,12 +562,24 @@ function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () =
  finally { setBusy(false); }
  }
  async function addBotInline() {
- if (!newBotAlias().trim() || !newBotToken().trim()) { alert("alias + token 필요"); return;}
+ const tok = newBotToken().trim();
+ if (!tok) { alert("Discord Bot Token 필요"); return;}
  setBusy(true);
  try {
- const r = await invoke<any>("discord_bots_add", { alias: newBotAlias().trim(), bot_token: newBotToken().trim()});
- alert("✓ 봇 추가됨: " + (r.bot_username || r.alias) + "\ndaemon 재시작 후 listener 가 자동 spawn 됩니다.");
- setNewBotAlias(""); setNewBotToken(""); setShowAddBot(false);
+ // 1) token 검증 → bot_label(= bot 이름) 자동 획득 (사용자가 alias 만들 필요 없음)
+ let autoAlias = "";
+ try {
+ const v = await invoke<{bot_label: string}>("notify_discord_validate", { token: tok});
+ autoAlias = v?.bot_label || "";
+ } catch (e) {
+ alert("Token 검증 실패: " + e + "\nDeveloper Portal 에서 Reset Token 후 다시 시도.");
+ setBusy(false);
+ return;
+ }
+ // 2) 등록 (alias 자리에 검증된 bot 이름)
+ const r = await invoke<any>("discord_bots_add", { alias: autoAlias || `bot-${tok.slice(-6)}`, bot_token: tok});
+ alert("✓ 봇 등록: " + (r.bot_username || autoAlias));
+ setNewBotToken(""); setShowAddBot(false);
  await refetchBots();
  } catch (e) { alert("실패: " + e);} finally { setBusy(false);}
 }
@@ -643,18 +654,18 @@ function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () =
  style="padding:4px 8px; background:var(--surface-2);">+ 봇</button>
  </Show>
  </div>
- {/* 봇 추가 inline 폼 */}
+ {/* 봇 추가 inline 폼 — Discord Bot Token 한 칸만. 봇 이름은 등록 시 자동 획득. */}
  <Show when={showAddBot()}>
  <div style="padding:8px; background:var(--surface-2); border:1px solid var(--border); border-radius:4px;">
- <input value={newBotAlias()} onInput={(e) => setNewBotAlias(e.currentTarget.value)}
- placeholder="봇 alias (예: 내 봇 / 친구 봇)"
- style="width:100%; padding:4px; margin-bottom:4px; background:var(--surface); color:var(--text-1); border:1px solid var(--border); border-radius:3px; box-sizing:border-box;" />
+ <label style="display:block; font-size:11px; color:var(--text-3); margin-bottom:4px;">
+ 🔑 <strong>Discord Bot Token</strong> — discord.com/developers/applications → Bot → Reset Token
+ </label>
  <input value={newBotToken()} onInput={(e) => setNewBotToken(e.currentTarget.value)}
- placeholder="Discord Bot Token (자동 검증)" type="password"
- style="width:100%; padding:4px; margin-bottom:4px; background:var(--surface); color:var(--text-1); border:1px solid var(--border); border-radius:3px; box-sizing:border-box;" />
+ placeholder="MTQ4NDYx... 토큰을 여기 붙여넣기" type="password" autocomplete="off"
+ style="width:100%; padding:6px; margin-bottom:6px; background:var(--surface); color:var(--text-1); border:1px solid var(--border); border-radius:3px; box-sizing:border-box;" />
  <button type="button" class="link-btn" onClick={addBotInline} disabled={busy()}
- style="background:#238636; color:white; padding:4px 10px; border:none; border-radius:3px;">
- ▶ 봇 등록
+ style="background:#238636; color:white; padding:6px 12px; border:none; border-radius:3px;">
+ ▶ 봇 등록 (자동 검증 + 이름 획득)
  </button>
  <button type="button" class="link-btn" onClick={() => setShowAddBot(false)} style="margin-left:4px;">취소</button>
  </div>
