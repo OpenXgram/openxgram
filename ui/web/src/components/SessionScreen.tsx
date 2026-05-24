@@ -50,7 +50,9 @@ export function SessionScreen(props: { identifier: string; display: string}) {
  onMount(() => {
  if (!containerRef) return;
  term = new Terminal({
- fontSize: 12,
+ fontSize: 14,           // 12 → 14 가독성
+ lineHeight: 1.25,        // 기본 1.0 → 줄 간격 25% 확장
+ letterSpacing: 0.5,      // 기본 0 → 글자 간격 약간 (빾빽함 해소)
  fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
  theme: { background: "#0b0f1a", foreground: "#e6e6e6"},
  convertEol: true,
@@ -104,7 +106,8 @@ export function SessionScreen(props: { identifier: string; display: string}) {
  mime: f.type || "application/octet-stream",
  filename: f.name,
  });
- const marker = `📎 [attached: ${f.name} · ${(f.size/1024).toFixed(1)}KB · hash:${(r.hash||"").slice(0,12)}]\n`;
+ const hash = r.content_hash || r.hash || "";  // backend 는 content_hash 반환
+ const marker = `📎 [attached: ${f.name} · ${(f.size/1024).toFixed(1)}KB · hash:${hash.slice(0,12)}]\n`;
  await invoke("session_input", { identifier: props.identifier, data: marker});
  } catch (er) { setError("drop file 업로드 실패: " + er);}
  return;
@@ -122,10 +125,12 @@ export function SessionScreen(props: { identifier: string; display: string}) {
  if (!inputMode()) return;
  try {
  await invoke("session_input", { identifier: props.identifier, data});
+ void refresh();  // 입력 즉시 새로고침 — 다음 polling 까지 기다리지 않음
  } catch (e) { setError("input 실패: " + e);}
  });
  void refresh();
- pollTimer = window.setInterval(() => void refresh(), 2000);
+ // 폴링 600ms (이전 2000ms) — idle 시에도 화면 변화 빠르게.
+ pollTimer = window.setInterval(() => void refresh(), 600);
 });
 
  // identifier 변경 시 (다른 터미널 선택) 즉시 화면 초기화 + refresh
