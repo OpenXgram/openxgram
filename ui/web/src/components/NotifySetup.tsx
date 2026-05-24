@@ -62,7 +62,17 @@ function TelegramWizard(props: { onSaved: () => void}) {
  setError("아직 봇 으로 온 메시지가 없습니다. 1) 텔레그램에서 봇을 검색해 대화 시작 (/start) 2) 메시지 1개 보내기 3) 다시 'chat_id 자동감지' 클릭.");
  }
 } catch (e) {
- setError(String(e));
+ const msg = String(e);
+ // 409 Conflict — 다른 process (Hermes agent 등) 가 이미 같은 봇 token 으로 getUpdates polling 중.
+ if (msg.includes("409") || msg.toLowerCase().includes("conflict")) {
+ setError(
+ "⚠ 봇 토큰 충돌: 다른 process (Hermes 등) 가 이미 이 봇으로 polling 중입니다.\n" +
+ "→ chat_id 를 직접 입력하세요 (Telegram 에서 @userinfobot 검색해 본인 chat_id 확인).\n" +
+ "→ 또는 다른 polling process 먼저 중지."
+ );
+ } else {
+ setError(msg);
+ }
 } finally {
  setBusy(false);
 }

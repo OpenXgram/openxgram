@@ -88,15 +88,25 @@ export function SessionScreen(props: { identifier: string; display: string}) {
  }
  const dt = e.dataTransfer;
  if (!dt) return;
- // 파일 우선
+ // 파일 우선 — attachments endpoint 로 hash 저장 + tmux 에 마커 송신.
+ // binary/대용량 안전 처리 (이전: f.text() 만 → text 파일만 가능했음).
  if (dt.files && dt.files.length > 0) {
  const f = dt.files[0];
- const text = await f.text().catch(() => "");
- if (text) {
  try {
- await invoke("session_input", { identifier: props.identifier, data: text});
- } catch (er) { setError("drop file send 실패: " + er);}
- }
+ const buf = await f.arrayBuffer();
+ // base64 encode (Blob → FileReader 가 더 빠르지만 단순화).
+ const bytes = new Uint8Array(buf);
+ let bin = "";
+ for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+ const content_b64 = btoa(bin);
+ const r = await invoke<any>("attachment_upload", {
+ content_b64,
+ mime: f.type || "application/octet-stream",
+ filename: f.name,
+ });
+ const marker = `📎 [attached: ${f.name} · ${(f.size/1024).toFixed(1)}KB · hash:${(r.hash||"").slice(0,12)}]\n`;
+ await invoke("session_input", { identifier: props.identifier, data: marker});
+ } catch (er) { setError("drop file 업로드 실패: " + er);}
  return;
  }
  // 텍스트

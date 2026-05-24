@@ -308,6 +308,8 @@ const ROUTES: Record<string, Route> = {
  messages_recent: { method: "GET", path: "/messages", emptyAs: []},
  peer_send: { method: "POST", path: "/peers/{alias}/send", body: true},
  peer_send_unsigned: { method: "POST", path: "/peers/{alias}/send-unsigned", body: true},
+ attachment_upload: { method: "POST", path: "/attachments", body: true},
+ attachment_get: { method: "GET", path: "/attachments/{hash}"},
  workflow_approve_run: { method: "POST", path: "/workflows/runs/{run_id}/approve", body: true},
 };
 
