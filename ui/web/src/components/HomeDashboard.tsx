@@ -110,20 +110,27 @@ interface PeerDto {
 }
 
 async function fetchSummary() {
- const [peers, notify, wikiPages, mcpServers, audit, autonomyHistory, status, externalDir] = await Promise.all([
+ const [peers, sessions, notify, wikiPages, mcpServers, audit, autonomyHistory, status, externalDir] = await Promise.all([
  invoke<PeerDto[]>("peers_list").catch(() => [] as PeerDto[]),
+ invoke<any>("sessions_list").catch(() => null),
  invoke<NotifyStatus>("notify_status").catch(
  () => ({ discord_configured: false, telegram_configured: false}) as NotifyStatus,
 ),
- invoke<any[]>("wiki_list").catch(() => []),
+ invoke<any[]>("wiki_pages_list").catch(() => []),
  invoke<any[]>("vault_mcp_servers_list").catch(() => []),
  invoke<any[]>("identity_audit").catch(() => []),
  invoke<any[]>("autonomy_history").catch(() => []),
  invoke<any>("status").catch(() => null),
  invoke<any>("external_directory").catch(() => null),
  ]);
+ const sessList = (sessions?.sessions ?? []) as any[];
+ const tmuxCount = sessList.filter((s: any) => s.kind === "tmux").length;
+ const claudeCount = sessList.filter((s: any) => s.kind === "claude_project").length;
  return {
  peerCount: peers.length,
+ sessionCount: sessList.length,
+ tmuxCount,
+ claudeCount,
  notify,
  wikiCount: wikiPages.length,
  mcpCount: mcpServers.length,
@@ -141,7 +148,13 @@ export function HomeDashboard(props: { onOpen: (id: CardId) => void}) {
  const s = summary();
  if (!s) return "";
  switch (card.id) {
- case "messenger": return `${s.peerCount} peer`;
+ case "messenger": {
+ const parts: string[] = [];
+ if (s.tmuxCount) parts.push(`tmux ${s.tmuxCount}`);
+ if (s.claudeCount) parts.push(`Claude ${s.claudeCount}`);
+ if (s.peerCount) parts.push(`P2P peer ${s.peerCount}`);
+ return parts.length ? parts.join(" · ") : "세션 없음";
+ }
  case "memory": return `${s.wikiCount} 위키`;
  case "external": return `${s.externalAgents} 에이전트`;
  case "channel": {

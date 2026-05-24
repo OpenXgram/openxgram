@@ -2,7 +2,6 @@ import { createSignal, Show} from "solid-js";
 import { useI18n} from "../i18n";
 import { Messenger} from "./Messenger";
 import { SearchView} from "./SearchView";
-import { PairingGuide} from "./PairingGuide";
 
 // Chat 탭 — 메신저(친구·스레드)와 메시지 검색을 한 탭에서.
 // 디폴트 = Messenger. Search 는 상단 토글로 켠다.
@@ -14,7 +13,6 @@ export function ChatTab(props: { onJumpToSettings?: () => void} = {}) {
 
  return (
  <div>
- <PairingGuide onJumpToSettings={() => props.onJumpToSettings?.()} />
  <nav class="subnav" aria-label={t("chat.section.nav")}>
  <button
  type="button"

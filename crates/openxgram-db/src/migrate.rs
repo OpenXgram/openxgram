@@ -166,6 +166,26 @@ const MIGRATIONS: &[Migration] = &[
         name: "role_policies",
         sql: include_str!("../migrations/0031_role_policies.sql"),
     },
+    Migration {
+        version: 32,
+        name: "session_aliases",
+        sql: include_str!("../migrations/0032_session_aliases.sql"),
+    },
+    Migration {
+        version: 33,
+        name: "claude_ingest",
+        sql: include_str!("../migrations/0033_claude_ingest.sql"),
+    },
+    Migration {
+        version: 34,
+        name: "discord_bots",
+        sql: include_str!("../migrations/0034_discord_bots.sql"),
+    },
+    Migration {
+        version: 35,
+        name: "agent_capabilities",
+        sql: include_str!("../migrations/0035_agent_capabilities.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

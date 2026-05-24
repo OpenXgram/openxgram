@@ -427,19 +427,163 @@ pub async fn run_discord_inbound_for_daemon(
         Some(k) => StoreCtx::open_with_key(&data_dir, "discord-inbox", Some(k))?,
         None => StoreCtx::open_with_key(&data_dir, "discord-inbox", None)?,
     };
-    let client = DiscordGatewayClient::new(bot_token);
+    let client = DiscordGatewayClient::new(bot_token.clone());
     let mut stream: std::pin::Pin<
         Box<dyn futures_util::Stream<Item = DiscordIncomingMessage> + Send>,
     > = Box::pin(client.connect().await?);
 
-    tracing::info!("discord inbound listener: connected, draining stream");
+    let portal_url = std::env::var("XGRAM_PORTAL_URL").unwrap_or_else(|_| "http://127.0.0.1:9400".into());
+    let portal_token = std::env::var("XGRAM_PORTAL_TOKEN").unwrap_or_else(|_| "0205".into());
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    tracing::info!("discord inbound listener: connected, draining stream (rc.91 routing 활성)");
     while let Some(msg) = stream.next().await {
         let sender = format!("discord:{}", msg.author_name);
+        // (1) L0 저장
         if let Err(e) = store.append(&sender, &msg.content) {
             tracing::warn!(error = %e, "discord inbound L0 저장 실패");
         }
+
+        // (2) bindings 조회 + 매칭 세션에 dispatch (rc.91)
+        let bindings_result: rusqlite::Result<Vec<(String, Option<String>, String)>> = {
+            let conn = store.db.conn();
+            let mut stmt = match conn.prepare(
+                "SELECT agent_id, mention_trigger, permission \
+                 FROM session_channel_bindings \
+                 WHERE platform='discord' AND channel_ref = ?1 AND active = 1",
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(error = %e, "bindings SELECT prepare 실패");
+                    continue;
+                }
+            };
+            let channel_str = msg.channel_id.to_string();
+            let rows = stmt
+                .query_map([&channel_str], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, String>(2)?))
+                })
+                .and_then(|m| m.collect::<rusqlite::Result<Vec<_>>>());
+            rows
+        };
+        let bindings = match bindings_result {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(error = %e, "bindings SELECT 실패");
+                continue;
+            }
+        };
+
+        for (agent_id, mention, perm) in bindings {
+            // mention_trigger 매칭 — 비어있으면 모든 메시지, 있으면 content 에 포함된 것만
+            if let Some(m) = mention.as_deref() {
+                let m_trim = m.trim();
+                if !m_trim.is_empty() && !msg.content.contains(m_trim) {
+                    continue;
+                }
+            }
+            if perm == "read_only" {
+                continue;
+            }
+            // command 모드는 일단 prefix 체크 ('/'); reply 는 그대로
+            if perm == "command" && !msg.content.trim_start().starts_with('/') {
+                continue;
+            }
+            // (rc.91) 첨부 다운로드 — ~/.openxgram/inbox/discord/<msg_id>/<filename>
+            let mut attach_paths: Vec<String> = Vec::new();
+            if !msg.attachments.is_empty() {
+                let inbox = data_dir.join("inbox/discord").join(msg.message_id.to_string());
+                let _ = std::fs::create_dir_all(&inbox);
+                for a in &msg.attachments {
+                    let safe_name = a.filename.replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '_', "_");
+                    if safe_name.is_empty() { continue; }
+                    let dst = inbox.join(&safe_name);
+                    match http_client.get(&a.url).send().await {
+                        Ok(r) if r.status().is_success() => {
+                            if let Ok(bytes) = r.bytes().await {
+                                if std::fs::write(&dst, &bytes).is_ok() {
+                                    attach_paths.push(dst.display().to_string());
+                                    tracing::info!(file = %dst.display(), size = bytes.len(), "discord attachment 다운로드");
+                                }
+                            }
+                        }
+                        Ok(r) => tracing::warn!(status = %r.status(), url = %a.url, "attachment download HTTP 실패"),
+                        Err(e) => tracing::warn!(error = %e, url = %a.url, "attachment download 네트워크 실패"),
+                    }
+                }
+            }
+            let attach_line = if attach_paths.is_empty() {
+                String::new()
+            } else {
+                format!("\n[attachments]\n{}\n", attach_paths.join("\n"))
+            };
+            let injected = format!("\n[discord:{}] {}{}\n", msg.author_name, msg.content, attach_line);
+            if let Err(e) =
+                dispatch_to_session(&agent_id, &injected, &portal_url, &portal_token, &http_client).await
+            {
+                tracing::warn!(agent_id = %agent_id, error = %e, "discord → session dispatch 실패");
+            } else {
+                tracing::info!(agent_id = %agent_id, channel = %msg.channel_id, attachments = attach_paths.len(), "discord → session dispatched");
+            }
+        }
     }
     tracing::warn!("discord inbound stream 종료 (server disconnect)");
+    Ok(())
+}
+
+/// identifier (`portal:<session>:<idx>` 또는 `aoe:<session>:...`) 의 세션에 텍스트 주입.
+/// portal-new 의 `/api/tmux/send` 호출. peer:* 는 별도 fan-out (TODO).
+async fn dispatch_to_session(
+    identifier: &str,
+    text: &str,
+    portal_url: &str,
+    portal_token: &str,
+    http: &reqwest::Client,
+) -> Result<()> {
+    let (session, idx) = if let Some(rest) = identifier.strip_prefix("portal:") {
+        let mut parts = rest.splitn(2, ':');
+        let first = parts.next().unwrap_or("");
+        let rest2 = parts.next().unwrap_or("");
+        if first.parse::<u32>().is_ok() && !rest2.contains(':') {
+            bail!("dispatch: 옛 portal:<idx>:<id> 형식 — agent_id 재바인딩 필요");
+        }
+        let idx = rest2
+            .split(':')
+            .next()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(0);
+        (first.to_string(), idx)
+    } else if let Some(rest) = identifier.strip_prefix("aoe:") {
+        let s = rest.split(':').next().unwrap_or("");
+        if s.is_empty() {
+            bail!("dispatch: aoe identifier 에 tmux_session 없음");
+        }
+        (s.to_string(), 0u32)
+    } else if identifier.starts_with("peer:") {
+        bail!("dispatch: peer:* binding 은 미구현 (Phase 2)");
+    } else {
+        bail!("dispatch: 알 수 없는 identifier prefix: {}", identifier);
+    };
+    let url = format!("{}/api/tmux/send?token={}", portal_url.trim_end_matches('/'), portal_token);
+    let resp = http
+        .post(&url)
+        .json(&serde_json::json!({
+            "session": session,
+            "window": idx,
+            "text": text,
+            "enter": true,
+        }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        bail!("portal /api/tmux/send HTTP {}: {}", status, body);
+    }
     Ok(())
 }
 

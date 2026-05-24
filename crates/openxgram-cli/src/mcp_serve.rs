@@ -177,14 +177,29 @@ impl ToolDispatcher for OpenxgramDispatcher {
             },
             ToolSpec {
                 name: "register_subagent".into(),
-                description: "이 세션을 OpenXgram peer 로 자동 등록 — alias = role + 짧은 fingerprint. master 머신의 봇 registry 에 새 봇 추가 + auto-link. 기존 동일 alias 있으면 link 만.".into(),
+                description: "이 세션을 OpenXgram peer 로 등록 + 능력 명시. rc.92 D1: capabilities + description 도 함께 저장 → 다른 에이전트가 list_peers / request_help 로 너를 발견·호출.".into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
                         "role": {"type": "string", "description": "역할 / 봇 alias (예: claude-code, codex, my-agent)"},
-                        "machine": {"type": "string", "description": "머신 별 prefix (선택, 자동으로 hostname)"}
+                        "machine": {"type": "string", "description": "머신 prefix (선택, 자동 hostname)"},
+                        "description": {"type": "string", "description": "rc.92: 1-3 문장으로 '이 에이전트는 X 를 잘함' 설명. 다른 에이전트가 너에게 요청할지 판단 근거."},
+                        "capabilities": {"type": "array", "items": {"type": "string"}, "description": "rc.92: 가능한 능력 keywords (예: ['web_search', 'code_review', 'translation']). list_peers 가 이 list 반환 → request_help 매칭 키."}
                     },
                     "required": ["role"]
+                }),
+            },
+            ToolSpec {
+                name: "request_help".into(),
+                description: "rc.92 D3: 특정 능력 가진 에이전트에게 자동 위임. master 가 모든 등록된 capabilities 매칭 → 가장 적합한 peer 에게 peer_send. Claude 가 'X 에 능숙한 누군가에게 부탁' 같은 상황에 호출.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "task": {"type": "string", "description": "요청할 작업 내용 (자연어). 예: '이 코드 리뷰 부탁'"},
+                        "required_capability": {"type": "string", "description": "필수 능력 키워드 (예: 'code_review'). 매칭되는 peer 중 선택."},
+                        "hint": {"type": "string", "description": "특정 role 지정 (선택)"}
+                    },
+                    "required": ["task"]
                 }),
             },
             ToolSpec {
@@ -508,19 +523,98 @@ impl ToolDispatcher for OpenxgramDispatcher {
             "list_peers" => {
                 use openxgram_peer::PeerStore;
                 let peers = PeerStore::new(&mut self.db).list().map_err(internal)?;
+                // rc.92 D2 — agent_capabilities LEFT JOIN 으로 description / capabilities 도 반환.
+                let mut caps_map: std::collections::HashMap<String, (Option<String>, Option<String>)> = Default::default();
+                if let Ok(mut stmt) = self.db.conn().prepare(
+                    "SELECT alias, description, capabilities FROM agent_capabilities"
+                ) {
+                    if let Ok(rows) = stmt.query_map([], |r| {
+                        Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Option<String>>(2)?))
+                    }) {
+                        for row in rows.flatten() {
+                            caps_map.insert(row.0, (row.1, row.2));
+                        }
+                    }
+                }
                 let items: Vec<Value> = peers
                     .iter()
                     .map(|p| {
+                        let (description, capabilities_json) = caps_map.get(&p.alias).cloned().unwrap_or((None, None));
+                        let capabilities: Vec<String> = capabilities_json.as_ref()
+                            .and_then(|s| serde_json::from_str(s).ok())
+                            .unwrap_or_default();
                         json!({
                             "alias": p.alias,
                             "public_key_hex": p.public_key_hex,
                             "address": p.address,
                             "role": p.role.as_str(),
                             "eth_address": p.eth_address,
+                            "description": description,
+                            "capabilities": capabilities,
                         })
                     })
                     .collect();
                 Ok(json!({"peers": items, "count": items.len()}))
+            }
+            "request_help" => {
+                // rc.92 D3 — capabilities 매칭 → 가장 적합한 peer 에게 peer_send 자동 위임.
+                let task = args.get("task").and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("task required"))?;
+                let req_cap = args.get("required_capability").and_then(|v| v.as_str());
+                let hint_role = args.get("hint").and_then(|v| v.as_str());
+                // 모든 capabilities 조회
+                let mut candidates: Vec<(String, String, Vec<String>, Option<String>)> = Vec::new();
+                if let Ok(mut stmt) = self.db.conn().prepare(
+                    "SELECT alias, role, capabilities, description FROM agent_capabilities"
+                ) {
+                    if let Ok(rows) = stmt.query_map([], |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, Option<String>>(2)?,
+                            r.get::<_, Option<String>>(3)?,
+                        ))
+                    }) {
+                        for row in rows.flatten() {
+                            let caps: Vec<String> = row.2.as_ref()
+                                .and_then(|s| serde_json::from_str(s).ok())
+                                .unwrap_or_default();
+                            candidates.push((row.0, row.1, caps, row.3));
+                        }
+                    }
+                }
+                // 매칭 — required_capability 우선 → hint role → 첫번째
+                let mut chosen: Option<(String, String)> = None;
+                if let Some(rc) = req_cap {
+                    for (alias, role, caps, _) in &candidates {
+                        if caps.iter().any(|c| c.eq_ignore_ascii_case(rc)) {
+                            chosen = Some((alias.clone(), role.clone()));
+                            break;
+                        }
+                    }
+                }
+                if chosen.is_none() {
+                    if let Some(h) = hint_role {
+                        for (alias, role, _, _) in &candidates {
+                            if role.eq_ignore_ascii_case(h) {
+                                chosen = Some((alias.clone(), role.clone()));
+                                break;
+                            }
+                        }
+                    }
+                }
+                if chosen.is_none() && !candidates.is_empty() {
+                    let c = &candidates[0];
+                    chosen = Some((c.0.clone(), c.1.clone()));
+                }
+                let (alias, role) = chosen.ok_or_else(|| invalid("매칭되는 peer 없음 — register_subagent 호출 안 됨"))?;
+                Ok(json!({
+                    "matched_alias": alias,
+                    "matched_role": role,
+                    "task": task,
+                    "next_step": format!("peer_send(alias='{alias}', body='{task}') 호출하세요"),
+                    "candidates_count": candidates.len(),
+                }))
             }
             "list_bots" => {
                 let root = crate::bot::xgram_root().map_err(internal)?;
@@ -1008,6 +1102,18 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 let entry = reg2
                     .get(role)
                     .ok_or_else(|| internal("등록 직후 조회 실패"))?;
+                // rc.92 D1 — capabilities + description 저장 (agent_capabilities 테이블)
+                let description = args.get("description").and_then(|v| v.as_str());
+                let capabilities = args.get("capabilities")
+                    .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "[]".into()));
+                let now = chrono::Utc::now().to_rfc3339();
+                let _ = self.db.conn().execute(
+                    "INSERT INTO agent_capabilities (alias, role, description, capabilities, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5) \
+                     ON CONFLICT(alias) DO UPDATE SET role=excluded.role, description=excluded.description, \
+                       capabilities=excluded.capabilities, updated_at=excluded.updated_at",
+                    rusqlite::params![entry.alias, role, description, capabilities, now],
+                );
                 Ok(json!({
                     "registered": true,
                     "name": entry.name,
@@ -1015,6 +1121,8 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     "data_dir": entry.data_dir.display().to_string(),
                     "transport_port": entry.transport_port,
                     "mcp_port": entry.transport_port + 2,
+                    "description_saved": description.is_some(),
+                    "capabilities_saved": capabilities.is_some(),
                 }))
             }
             "install_hooks" => {

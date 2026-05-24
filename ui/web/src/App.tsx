@@ -58,6 +58,27 @@ function AppInner() {
  // 기본 = home (8 카드 대시보드). Onboarding 은 daemon 이 명시적으로 false 일 때만.
  const [tab, setTab] = createSignal<Tab>("home");
 
+ // rc.92 — 버전 변경 감지 + 팝업 + 자동 새로고침.
+ // 첫 응답을 baseline 으로 저장 → 30초 폴링 → release 다르면 changelog 와 함께 팝업.
+ const [updateInfo, setUpdateInfo] = createSignal<{from: string; to: string; title?: string; body?: string} | null>(null);
+ (() => {
+ let baseline: string | null = null;
+ const poll = async () => {
+ try {
+ const v = await invoke<any>("version_info");
+ const cur = v?.release as string | undefined;
+ if (!cur) return;
+ if (baseline === null) { baseline = cur; return; }
+ if (cur !== baseline) {
+ setUpdateInfo({from: baseline, to: cur, title: v?.changelog_latest_title, body: v?.changelog_latest_body});
+ }
+ } catch { /* daemon 잠시 down — 다음 polling */ }
+ };
+ // 초기 + 30초마다
+ setTimeout(poll, 1000);
+ setInterval(poll, 30000);
+ })();
+
  // initialized 가 false 로 확정되면 onboarding 강제. true 면 home 으로 복귀.
  createEffect(() => {
  const init = initialized();
@@ -178,6 +199,34 @@ function AppInner() {
  <OpsCard onBack={() => setTab("home")} />
  </Show>
  </main>
+ </Show>
+
+ {/* rc.92 — 버전 업데이트 팝업 (자동 새로고침) */}
+ <Show when={updateInfo()}>
+ <div style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center;">
+ <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:20px; max-width:600px; max-height:80vh; overflow:auto; box-shadow:0 10px 40px rgba(0,0,0,0.5);">
+ <h2 style="margin:0 0 8px;">🚀 OpenXgram 업데이트</h2>
+ <p style="margin:4px 0; color:var(--text-2);">
+ <code>{updateInfo()!.from}</code> → <strong style="color:var(--accent);"><code>{updateInfo()!.to}</code></strong>
+ </p>
+ <Show when={updateInfo()!.title}>
+ <h3 style="margin:12px 0 6px; font-size:14px;">{updateInfo()!.title}</h3>
+ </Show>
+ <Show when={updateInfo()!.body}>
+ <pre style="background:var(--surface-2); padding:10px; border-radius:4px; font-size:12px; white-space:pre-wrap; line-height:1.5; max-height:300px; overflow:auto;">{updateInfo()!.body}</pre>
+ </Show>
+ <div style="display:flex; gap:8px; margin-top:14px; justify-content:flex-end;">
+ <button type="button" onClick={() => setUpdateInfo(null)}
+ style="padding:8px 14px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;">
+ 나중에
+ </button>
+ <button type="button" onClick={() => { window.location.reload(); }}
+ style="padding:8px 18px; background:#238636; color:white; border:none; border-radius:4px; font-weight:bold;">
+ ▶ 지금 새로고침
+ </button>
+ </div>
+ </div>
+ </div>
  </Show>
  </div>
 );

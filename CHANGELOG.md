@@ -2,6 +2,30 @@
 
 OpenXgram 의 변경 이력. 모든 시간은 KST(Asia/Seoul). [Semantic Versioning](https://semver.org/) + BUILD 자동 증가 (CI/CD 갱신, 수동 변경 금지).
 
+## [0.2.0-rc.93] — 2026-05-23 KST (버전 알림 팝업)
+
+- UI 30초 polling 으로 daemon `/v1/gui/version` 감지 → release 다르면 모달 팝업 + changelog 표시 + "▶ 지금 새로고침" 버튼
+- backend `version_info` 가 CHANGELOG.md 최상단 entry 자동 parse → `changelog_latest_title` + `changelog_latest_body` 응답에 포함
+
+## [0.2.0-rc.92] — 2026-05-23 KST (멀티봇 + capabilities + 채널 UI 통합)
+
+**멀티 디스코드 봇**:
+- DB 0034 — `discord_bots` 테이블 + `session_channel_bindings.bot_id` FK
+- daemon 시작 시 notify.toml + 추가 봇 각각 별도 Gateway listener spawn
+- outbound worker bot_id LEFT JOIN — binding 별 다른 token 으로 채널 post
+- backend CRUD `/v1/gui/discord/bots` + token 자동 검증
+
+**agent-to-agent discovery + 역할 라우팅** (D1~D3):
+- DB 0035 — `agent_capabilities` 테이블
+- MCP `register_subagent` 에 description + capabilities[] 추가
+- MCP `list_peers` 응답에 capabilities JOIN
+- MCP `request_help` 신규 — required_capability 매칭
+
+**채널 UI 메신저 세션 중심 통합**:
+- 종합 정보 endpoint `/v1/gui/channels/summary` (모든 봇/서버/binding)
+- AgentSidePanel ChannelTab — 봇 dropdown + "+ 봇" inline + 채널 dropdown 자동 (`/v1/gui/discord/bot/channels`)
+- 권한 분리 제거 (reply 단일)
+
 ## [0.2.0-rc.36] — 2026-05-21 KST (Discord 봇 진단 endpoint + GUI)
 
 - `GET /v1/gui/notify/discord/diagnostic` — bot user + application + channel 한 번에 진단

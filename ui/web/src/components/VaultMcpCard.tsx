@@ -17,7 +17,6 @@ export function VaultMcpCard(props: { onBack: () => void}) {
  return (
  <div class="card-page">
  <Breadcrumb cardName=" 도구·Vault·MCP" onReturn={props.onBack} />
- <button class="card-page-back" onClick={props.onBack}>← 홈</button>
  <div class="card-page-head">
  <span class="icon"></span>
  <h1>도구·Vault·MCP</h1>
@@ -71,7 +70,11 @@ function McpSection() {
 }
  return (
  <section class="card-section">
- <h3> MCP 서버 — 사양 §3.2</h3>
+ <h3>내가 쓰는 MCP 서버 (consume) — 사양 §3.2</h3>
+ <p style="font-size:11px; color:var(--text-3); margin-bottom:6px;">
+ OpenXgram 에이전트가 호출하는 외부 MCP 서버 (filesystem / brave-search 등 stdio·http).
+ ⚠️ 반대 방향 ("내가 노출하는 MCP 도구" — Claude Desktop 등이 호출) 는 별도: <code>xgram mcp-serve</code> systemd unit.
+ </p>
  <div style="display:flex; gap:4px; margin-bottom:6px;">
  <input value={name()} onInput={(e) => setName(e.currentTarget.value)} placeholder="이름 (filesystem)" style="flex:1; padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
  <select value={transport()} onChange={(e) => setTransport(e.currentTarget.value)} style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;">

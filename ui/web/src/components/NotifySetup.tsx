@@ -48,11 +48,19 @@ function TelegramWizard(props: { onSaved: () => void}) {
  setError(null);
  setBusy(true);
  try {
+ if (!token().trim()) {
+ setError("먼저 봇 토큰을 입력하세요 (BotFather 에서 받은 형식 123456:ABC-...).");
+ return;
+ }
  const id = await invoke<number | null>("notify_telegram_detect_chat", {
  token: token(),
 });
- if (id !== null && id !== undefined) setChatId(String(id));
- else setError("아직 메시지가 도착하지 않았습니다 — 봇에게 /start 보낸 뒤 다시 시도");
+ if (id !== null && id !== undefined) {
+ setChatId(String(id));
+ setError(null);
+ } else {
+ setError("아직 봇 으로 온 메시지가 없습니다. 1) 텔레그램에서 봇을 검색해 대화 시작 (/start) 2) 메시지 1개 보내기 3) 다시 'chat_id 자동감지' 클릭.");
+ }
 } catch (e) {
  setError(String(e));
 } finally {
@@ -101,19 +109,31 @@ function TelegramWizard(props: { onSaved: () => void}) {
  </Show>
  </div>
 
- <Show when={botUsername()}>
+ {/* chat_id 입력·자동감지 — 토큰만 있으면 노출 (validate 없이도) */}
+ <Show when={token().trim()}>
  <div class="form-row" style="margin-top: 10px;">
- <label>{t("notify.chat_id.label")}</label>
+ <label>chat_id (자기 자신 또는 봇이 메시지 받을 곳)</label>
  <input
  type="text"
+ placeholder="예: 6565914284 — 자동 감지 권장"
  value={chatId()}
  onInput={(e) => setChatId(e.currentTarget.value)}
  />
- <p class="hint">{t("notify.detect_chat_hint")}</p>
+ <p class="hint" style="font-size:11px; line-height:1.5;">
+ <strong>자동 감지 방법:</strong><br />
+ 1) Telegram 앱에서 <strong>@{botUsername() || '봇이름'}</strong> 을 검색 후 채팅 시작<br />
+ 2) <code>/start</code> 또는 아무 메시지 1개 보내기<br />
+ 3) 아래 <strong>"chat_id 자동감지"</strong> 클릭 → 봇이 받은 메시지의 chat_id 자동 채워짐<br />
+ <em>(getUpdates API 가 마지막 update 의 chat_id 반환 — 봇과 대화 시작 후에만 작동)</em>
+ </p>
  <div class="row-actions">
- <button type="button" onClick={detect} disabled={busy()}>
- {t("notify.detect_chat")}
+ <button type="button" onClick={detect} disabled={busy()}
+ style="background:#06c; color:white; padding:8px 14px; border-radius:4px; border:none; cursor:pointer; font-weight:bold;">
+ ▶ chat_id 자동감지
  </button>
+ <Show when={chatId()}>
+ <span class="badge ok" style="margin-left:8px;">✓ {chatId()}</span>
+ </Show>
  </div>
  </div>
 

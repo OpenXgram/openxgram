@@ -48,6 +48,9 @@ interface PeerDto {
  public_key_hex: string;
  machine?: string;
  last_seen?: string;
+ // rc.92 D2 — agent_capabilities JOIN
+ description?: string | null;
+ capabilities?: string[];
 }
 
 interface NotifyStatusDto {
@@ -150,10 +153,39 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  const [peers] = createResource(fetchPeers);
  const [notifyStatus] = createResource(fetchNotifyStatus);
  // v1.3 §3.2 — 이 머신의 tmux + Claude Code projects + xgram sessions 통합.
- const [sessions] = createResource(fetchSessions);
+ const [sessions, { refetch: refetchSessions}] = createResource(fetchSessions);
  const [selected, setSelected] = createSignal<string | null>(null); // friend id (에이전트 모드)
  const [selectedThread, setSelectedThread] = createSignal<string | null>(null); // conversation_id
  const [leftMode, setLeftMode] = createSignal<LeftMode>("agent"); // L1
+ // 컬럼 너비 — drag 로 조절, localStorage 영구
+ const initialSidebar = (() => { const v = parseInt(localStorage.getItem("messenger.sidebar_w") || "240"); return isNaN(v) ? 240 : v; })();
+ const initialSidepanel = (() => { const v = parseInt(localStorage.getItem("messenger.sidepanel_w") || "320"); return isNaN(v) ? 320 : v; })();
+ const [sidebarW, setSidebarW] = createSignal(initialSidebar);
+ const [sidepanelW, setSidepanelW] = createSignal(initialSidepanel);
+ function startResize(which: "left" | "right", e: MouseEvent) {
+ e.preventDefault();
+ const startX = e.clientX;
+ const startSidebar = sidebarW();
+ const startSidepanel = sidepanelW();
+ const onMove = (ev: MouseEvent) => {
+ const dx = ev.clientX - startX;
+ if (which === "left") {
+ const w = Math.min(500, Math.max(160, startSidebar + dx));
+ setSidebarW(w);
+ } else {
+ const w = Math.min(800, Math.max(160, startSidepanel - dx));
+ setSidepanelW(w);
+ }
+ };
+ const onUp = () => {
+ window.removeEventListener("mousemove", onMove);
+ window.removeEventListener("mouseup", onUp);
+ localStorage.setItem("messenger.sidebar_w", String(sidebarW()));
+ localStorage.setItem("messenger.sidepanel_w", String(sidepanelW()));
+ };
+ window.addEventListener("mousemove", onMove);
+ window.addEventListener("mouseup", onUp);
+ }
  // L5 — Hand-off 모달
  const [handoffSource, setHandoffSource] = createSignal<MessageDto | null>(null);
  const [showRouting, setShowRouting] = createSignal(false); // V11
@@ -162,14 +194,18 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
 
  // 좌측 컨트롤
  const [sortMode, setSortMode] = createSignal<SortMode>("activity");
- const [connFilter, setConnFilter] = createSignal<ConnFilter>("connected");
+ const [connFilter, setConnFilter] = createSignal<ConnFilter>("all");
  const [collapsed, setCollapsed] = createSignal<Record<string, boolean>>({});
 
  // 3초 간격 메시지 폴링 — 활동 흐름 모니터링.
  const pollTimer = setInterval(() => {
  void refetchMessages();
 }, 3000);
- onCleanup(() => clearInterval(pollTimer));
+ // 10초 간격 세션 폴링 — 새 tmux/Claude 세션 자동 감지
+ const sessionsPollTimer = setInterval(() => {
+ void refetchSessions();
+}, 10000);
+ onCleanup(() => { clearInterval(pollTimer); clearInterval(sessionsPollTimer);});
 
  function toggleCollapse(machine: string) {
  setCollapsed((prev) => ({ ...prev, [machine]: !prev[machine]}));
@@ -209,19 +245,22 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  // sessions.machine.alias 를 머신 그룹으로 사용 — peers 의 machine 과 중복 시 같은 그룹에 추가.
  const sess = sessions();
  if (sess) {
- const m = sess.machine.alias || sess.machine.hostname || UNKNOWN_MACHINE;
- const arr = byMachine.get(m) ?? [];
+ const localMachine = sess.machine.alias || sess.machine.hostname || UNKNOWN_MACHINE;
  for (const s of sess.sessions) {
- // 연결 필터: attached/active = 연결, 그 외 = offline (간단 매핑)
  const conn = s.status === "attached" || s.status === "active";
  if (connFilter() === "connected" && !conn) continue;
  if (connFilter() === "offline" && conn) continue;
- const icon =
- s.kind === "tmux" ? "" : s.kind === "claude_project" ? "" : "";
+ // identifier "peer:<alias>:..." 면 그 alias 머신으로 분리, 아니면 local 머신.
+ let machine = localMachine;
+ if (s.identifier.startsWith("peer:")) {
+ const parts = s.identifier.split(":");
+ if (parts.length >= 2) machine = parts[1]; // peer alias 자체가 머신명
+ }
+ const arr = byMachine.get(machine) ?? [];
  arr.push({
  kind: s.kind as FriendKind,
  id: `session:${s.identifier}`,
- display: `${icon} ${s.display}`,
+ display: s.display.replace(/^\[[^\]]+\]\s*/, ""), // [zalman] prefix 제거 (이미 머신 그룹으로 분리됨)
  subtitle:
  s.kind === "tmux"
  ? `tmux · ${s.windows ?? 0} win · ${s.attached ? "attached" : "detached"}`
@@ -229,9 +268,9 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  ? `Claude Code · ${s.last_active_at ? new Date(s.last_active_at).toLocaleString() : "—"}`
  : "xgram session",
  sessionMeta: s,
-});
-}
- byMachine.set(m, arr);
+ });
+ byMachine.set(machine, arr);
+ }
 }
 
  // 정렬
@@ -297,10 +336,17 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  groups().flatMap((g) => g.friends),
 );
 
+ // 직전 selectedFriend 캐시 — sessions/peers 폴링 시 일시적으로 friends 가 비었을 때
+ // sidepanel 이 사라지는 깜빡임을 막기 위함.
+ let lastSelectedFriend: Friend | null = null;
  const selectedFriend = createMemo(() => {
  const id = selected();
- if (!id) return null;
- return friends().find((f) => f.id === id) ?? null;
+ if (!id) { lastSelectedFriend = null; return null;}
+ const found = friends().find((f) => f.id === id);
+ if (found) { lastSelectedFriend = found; return found;}
+ // 일시적으로 못 찾으면 캐시 사용 (sessions polling 중)
+ if (lastSelectedFriend && lastSelectedFriend.id === id) return lastSelectedFriend;
+ return null;
 });
 
  // 스레드 모드 (L1) — messages 를 conversation_id 별 그룹화
@@ -329,9 +375,20 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  return list;
 });
 
+ const hasSidepanel = () =>
+ leftMode() === "agent" &&
+ !!selectedFriend() &&
+ (selectedFriend()!.kind === "peer" ||
+ selectedFriend()!.kind === "tmux" ||
+ selectedFriend()!.kind === "claude_project" ||
+ selectedFriend()!.kind === "xgram_session");
+ const gridCols = () => hasSidepanel()
+ ? `${sidebarW()}px 5px minmax(0, 1fr) 5px ${sidepanelW()}px`
+ : `${sidebarW()}px 5px minmax(0, 1fr)`;
  return (
  <div
- class={selectedFriend() ? "messenger-shell messenger-shell-3" : "messenger-shell messenger-shell-2"}
+ class="messenger-shell"
+ style={{ "grid-template-columns": gridCols()}}
  >
  {/* 좌: 머신×세션 트리 + 스레드 모드 (Tier 1 + L1) */}
  <aside class="messenger-sidebar">
@@ -350,7 +407,7 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  class={leftMode() === "thread" ? "active" : ""}
  onClick={() => setLeftMode("thread")}
  style="flex:1;"
- title={`conversation_id 별 스레드 (${threads().length})`}
+ title={`스레드 — 같은 conversation_id 의 메시지 묶음 (대화 단위). 에이전트 모드(누가)와 다름. 메시지 송수신 시작하면 자동 생성. 현재 ${threads().length}건`}
  >
  스레드·{threads().length}
  </button>
@@ -359,9 +416,9 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  class={leftMode() === "workflow" ? "active" : ""}
  onClick={() => setLeftMode("workflow")}
  style="flex:1;"
- title="UI-MESSENGER-SPEC v1.4 §20 — 오케스트레이션 워크플로 (W-1~W-10)"
+ title="오케스트레이션 — W-1~W-10 워크플로 정의·실행·조율 (web_search·llm_call·email step). 사양 UI-MESSENGER-SPEC v1.4 §20"
  >
- 워크플로
+ 오케스트레이션
  </button>
  </div>
  {/* L1b — 액션 (RoutingRule + Whitelist) 2 버튼 */}
@@ -437,48 +494,148 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  <div class="messenger-machine-group">
  <div
  class="messenger-machine-header"
- onClick={() => toggleCollapse(g.machine)}
- style="cursor:pointer;"
+ style="cursor:pointer; display:flex; align-items:center; gap:6px;"
  >
+ <span onClick={() => toggleCollapse(g.machine)} style="flex:1;">
  <span style="margin-right:4px;">
  {isCollapsed() ? "▶" : "▼"}
  </span>
- {g.machine || "(unknown)"}{" "}
+ {(g.machine || "(unknown)").replace(/\.c\.[a-z0-9-]+\.internal$/, " (GCP)").replace(/\.tail[a-z0-9]+\.ts\.net$/, " (Tailscale)")}{" "}
  <span style="font-weight:400; color:var(--text-3); font-size:12px;">
- ({g.friends.length} · {g.connected} 연결)
+ {(() => {
+ const t = g.friends.filter(f => f.kind === "tmux").length;
+ const att = g.friends.filter(f => f.kind === "tmux" && f.sessionMeta?.attached).length;
+ const c = g.friends.filter(f => f.kind === "claude_project").length;
+ const p = g.friends.filter(f => f.kind === "peer").length;
+ const parts: string[] = [];
+ if (t > 0) parts.push(`tmux ${att}/${t} 접속 (local)`);
+ if (c > 0) parts.push(`Claude Code ${c} (local)`);
+ if (p > 0) parts.push(`P2P peer ${g.connected}/${p} 연결`);
+ return `(${parts.join(" · ") || g.friends.length})`;
+ })()}
  </span>
+ </span>
+ <button class="link-btn" title="이 머신 sessions 즉시 새로고침 (자동 10초)"
+ style="font-size:11px; padding:2px 6px;"
+ onClick={(e) => { e.stopPropagation(); refetchSessions();}}>↻</button>
  </div>
  <Show when={!isCollapsed()}>
+ {(() => {
+ // 사용자 의도 기준 4그룹. tmux raw attached/detached 구분 폐기.
+ type Sub = { key: string; label: string; items: Friend[]};
+ const subs: Sub[] = [
+ { key: "portal", label: "터미널 (포털 등록)", items: []},
+ { key: "claude-active", label: "Claude Code · 최근 24h", items: []},
+ { key: "claude-old", label: "Claude Code · 오래됨", items: []},
+ { key: "peer", label: "다른 머신 (peer)", items: []},
+ { key: "channel", label: "채널 (Discord/Telegram)", items: []},
+ { key: "other", label: "기타", items: []},
+ ];
+ for (const f of g.friends) {
+ const id = f.id || "";
+ // portal:* (옛 portal 등록 터미널) + aoe:* (AoE 세션) + tmux:* (portal 없는 머신 fallback)
+ if (id.startsWith("portal:") || id.startsWith("aoe:") || f.kind === "tmux") {
+ subs[0].items.push(f);
+ } else if (f.kind === "claude_project") {
+ const la = f.sessionMeta?.last_active_at;
+ const recent = la && (Date.now() - new Date(la).getTime()) < 86400_000;
+ (recent ? subs[1] : subs[2]).items.push(f);
+ } else if (f.kind === "peer") {
+ subs[3].items.push(f);
+ } else if (f.kind === "discord" || f.kind === "telegram") {
+ subs[4].items.push(f);
+ } else {
+ subs[5].items.push(f);
+ }
+ }
+ return (
+ <For each={subs.filter(s => s.items.length > 0)}>
+ {(sub) => {
+ const subKey = `${g.machine}::${sub.key}`;
+ // default: 터미널 (포털 등록) 만 펼침, 나머지는 접힘. 사용자 클릭하면 명시값 유지.
+ const subCollapsed = () => {
+ const v = collapsed()[subKey];
+ if (v !== undefined) return v;
+ return sub.key !== "portal";
+ };
+ return (
+ <div>
+ <div
+ onClick={() => setCollapsed(p => ({...p, [subKey]: !p[subKey]}))}
+ style="cursor:pointer; padding:5px 12px 5px 18px; font-size:11px; color:var(--text-3); display:flex; align-items:center; gap:4px; background:rgba(255,255,255,0.02); border-top:1px solid var(--border);"
+ >
+ <span>{subCollapsed() ? "▸" : "▾"}</span>
+ <span style="flex:1;">{sub.label}</span>
+ <span style="opacity:0.7;">{sub.items.length}</span>
+ </div>
+ <Show when={!subCollapsed()}>
  <ul style="margin:0; padding:0;">
- <For each={g.friends}>
+ <For each={sub.items}>
  {(f) => (
  <li
- class={
- selected() === f.id
- ? "messenger-friend selected"
- : "messenger-friend"
-}
+ class={selected() === f.id ? "messenger-friend selected" : "messenger-friend"}
  onClick={() => setSelected(f.id)}
  >
- <span class={`messenger-friend-icon kind-${f.kind}`}>
- {f.kind === "peer"
- ? ""
- : f.kind === "discord"
- ? "D"
- : "T"}
+ {(() => {
+ // 종류별 아이콘 + 색
+ const kindInfo: Record<string, { icon: string; color: string; bg: string; label: string}> = {
+ peer: { icon: "P", color: "#fff", bg: "#7b61ff", label: "Peer"},
+ tmux: { icon: "$", color: "#fff", bg: "#d4a017", label: "tmux"},
+ claude_project: { icon: "C", color: "#fff", bg: "#06c", label: "Claude Code"},
+ xgram_session: { icon: "X", color: "#fff", bg: "#5a9", label: "xgram"},
+ discord: { icon: "D", color: "#fff", bg: "#5865F2", label: "Discord"},
+ telegram: { icon: "t", color: "#fff", bg: "#26A5E4", label: "Telegram"},
+ };
+ const info = kindInfo[f.kind] || { icon: "?", color: "#fff", bg: "#555", label: f.kind};
+ // 상태별 dot 색
+ let dotColor = "#666"; let dotTitle = "비활성";
+ if (f.kind === "tmux") {
+ if (f.sessionMeta?.attached) { dotColor = "#4caf50"; dotTitle = "attached (사용자 접속 중)";}
+ else { dotColor = "#d4a017"; dotTitle = "detached (백그라운드 실행 중)";}
+ } else if (f.kind === "claude_project") {
+ const la = f.sessionMeta?.last_active_at;
+ if (la && (Date.now() - new Date(la).getTime()) < 86400_000) {
+ dotColor = "#06c"; dotTitle = "최근 24h 활동";
+ } else { dotColor = "#666"; dotTitle = "오래된 활동";}
+ } else if (f.kind === "peer") {
+ const ls = f.meta?.last_seen;
+ if (ls && (Date.now() - new Date(ls).getTime()) < 3600_000) {
+ dotColor = "#4caf50"; dotTitle = "최근 1h 연결";
+ }
+ } else if (f.kind === "discord" || f.kind === "telegram") {
+ dotColor = "#06c"; dotTitle = "채널 (항상 enable)";
+ }
+ return (
+ <>
+ <span
+ class="messenger-friend-icon"
+ title={info.label}
+ style={`background:${info.bg}; color:${info.color}; width:18px; height:18px; border-radius:3px; display:inline-flex; align-items:center; justify-content:center; font-size:11px; font-weight:bold; margin-right:6px;`}
+ >
+ {info.icon}
  </span>
  <span
- title={isConnected(f) ? "연결됨" : "오프라인"}
- style={`display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; background:${isConnected(f) ? "#4caf50" : "#666"};`}
+ title={dotTitle}
+ style={`display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; background:${dotColor};`}
  />
  <span class="messenger-friend-text">
- <span class="messenger-friend-name" style={isConnected(f) ? "" : "opacity:0.55;"}>{f.display}</span>
- <span class="messenger-friend-sub">{f.subtitle}{isConnected(f) ? "" : " · 오프라인"}</span>
+ <span class="messenger-friend-name">{f.display}</span>
+ <span class="messenger-friend-sub">{f.subtitle}</span>
  </span>
+ </>
+ );
+ })()}
  </li>
-)}
+ )}
  </For>
  </ul>
+ </Show>
+ </div>
+ );
+ }}
+ </For>
+ );
+ })()}
  </Show>
  </div>
 );
@@ -537,6 +694,9 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  </div>
  </Show>
  </aside>
+
+ {/* Resizer 1: sidebar ↔ thread */}
+ <div class="messenger-resizer" title="드래그: 좌측 너비 조절" onMouseDown={(e) => startResize("left", e)} />
 
  {/* 중: 대화 — 에이전트 모드 (friend 선택) or 스레드 모드 (conv_id 선택) */}
  <main class="messenger-thread">
@@ -696,6 +856,10 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  </Show>
  </main>
 
+ {/* Resizer 2 + 우측 사이드 패널 — sidepanel 있을 때만 */}
+ <Show when={hasSidepanel()}>
+ <div class="messenger-resizer" title="드래그: 우측 너비 조절" onMouseDown={(e) => startResize("right", e)} />
+ </Show>
  {/* 우: 12 탭 사이드 패널 (사양 §5 — peer 또는 session friend 선택 시) */}
  <Show
  when={
@@ -707,23 +871,21 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  selectedFriend()!.kind === "xgram_session")
 }
  >
- {() => {
- const f = selectedFriend()!;
- // session friend → 합성 PeerMeta 로 변환 (탭 UI 재사용).
- const synthPeer = f.meta ?? {
+ <AgentSidePanel
+ peer={(() => {
+ const f = selectedFriend();
+ if (!f) return { alias: "", address: "", public_key_hex: ""} as any;
+ const machineAlias = sessions()?.machine?.alias?.replace(/\.c\.[a-z0-9-]+\.internal$/, " (GCP)").replace(/\.tail[a-z0-9]+\.ts\.net$/, " (Tailscale)") || sessions()?.machine?.hostname;
+ return f.meta ?? {
  alias: f.display,
  address: f.sessionMeta?.identifier ?? "",
  public_key_hex: "",
- machine: undefined,
+ machine: machineAlias,
  last_seen: f.sessionMeta?.last_active_at ?? undefined,
-};
- return (
- <AgentSidePanel
- peer={synthPeer}
+ };
+ })()}
  onJumpToSettings={() => props.onJumpToSettings?.()}
  />
-);
-}}
  </Show>
 
  {/* L5 — Hand-off 모달 (메시지 옆 ↗ 버튼 클릭 시) */}

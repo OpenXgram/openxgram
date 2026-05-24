@@ -97,6 +97,20 @@ const ROUTES: Record<string, Route> = {
  machine_info: { method: "GET", path: "/machine"},
  // Messenger v1.3 §4.3 (S5) — 세션 라이브 터미널 출력
  session_screen: { method: "GET", path: "/sessions/{identifier}/screen"},
+ session_input: { method: "POST", path: "/sessions/{identifier}/input", body: true},
+ session_aliases: { method: "GET", path: "/sessions/aliases"},
+ memory_l0_list: { method: "GET", path: "/memory/l0"},
+ memory_l0_save: { method: "POST", path: "/memory/l0", body: true},
+ memory_stats: { method: "GET", path: "/memory/stats"},
+ memory_extract_now: { method: "POST", path: "/memory/extract-now"},
+ memory_import_scan_paths: { method: "GET", path: "/memory/import/scan-paths"},
+ memory_import_desktop: { method: "POST", path: "/memory/import/desktop", body: true},
+ memory_import_prompt: { method: "GET", path: "/memory/import/prompt-template"},
+ memory_migration_import: { method: "POST", path: "/memory/migration/import", body: true},
+ memory_import_bundle: { method: "POST", path: "/memory/import/bundle", body: true},
+ memory_webhook_token: { method: "GET", path: "/memory/import/webhook-token"},
+ memory_webhook_rotate: { method: "POST", path: "/memory/import/webhook-token"},
+ session_alias_set: { method: "POST", path: "/sessions/{identifier}/alias", body: true},
  // Messenger v1.3 §7.1·§7.3 — 헤더 통합 승인 큐 (L6 + V4)
  approvals: { method: "GET", path: "/approvals"},
  // Messenger v1.3 §2.4 + M-3 + L4 — 마스터+서브 지갑 (HD 영구 점유)
@@ -164,7 +178,9 @@ const ROUTES: Record<string, Route> = {
  ops_diagnostic: { method: "GET", path: "/ops/diagnostic"},
  ops_machines: { method: "GET", path: "/ops/machines"},
  ops_backup_status: { method: "GET", path: "/ops/backup-status"},
+ ops_backup_now: { method: "POST", path: "/ops/backup-now"},
  ops_update_check: { method: "GET", path: "/ops/update-check"},
+ ops_update_apply: { method: "POST", path: "/ops/update-apply"},
  external_outbound_calls: { method: "GET", path: "/external/outbound-calls"},
  external_inbound_pending: { method: "GET", path: "/external/inbound-pending"},
  external_inbound_approve: { method: "POST", path: "/external/inbound/{id}/approve", body: true},
@@ -252,6 +268,7 @@ const ROUTES: Record<string, Route> = {
  path: "/notify/telegram/validate",
  body: true,
 },
+ notify_telegram_detect_chat_saved: { method: "POST", path: "/notify/telegram/detect_chat_saved"},
  notify_telegram_detect_chat: {
  method: "POST",
  path: "/notify/telegram/detect_chat",
@@ -262,6 +279,16 @@ const ROUTES: Record<string, Route> = {
  path: "/notify/telegram/save",
  body: true,
 },
+ // rc.91 — 채널 테스트 + 권한 진단 + 초대 URL
+ notify_channel_test: { method: "POST", path: "/notify/channel/test", body: true},
+ notify_discord_permissions: { method: "GET", path: "/notify/discord/permissions"},
+ notify_discord_invite_url: { method: "GET", path: "/notify/discord/invite_url"},
+ // rc.92 — 멀티 디스코드 봇
+ discord_bots_list: { method: "GET", path: "/discord/bots", emptyAs: []},
+ discord_bots_add: { method: "POST", path: "/discord/bots", body: true},
+ discord_bots_delete: { method: "POST", path: "/discord/bots/{id}"},
+ channels_summary: { method: "GET", path: "/channels/summary"},
+ discord_bot_channels: { method: "GET", path: "/discord/bot/channels"},
 
  // Schedule
  schedule_list: { method: "GET", path: "/schedule", emptyAs: []},

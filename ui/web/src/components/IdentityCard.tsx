@@ -82,7 +82,6 @@ export function IdentityCard(props: { onBack: () => void}) {
  return (
  <div class="card-page">
  <Breadcrumb cardName=" 신원" onReturn={props.onBack} />
- <button class="card-page-back" onClick={props.onBack}>← 홈</button>
  <div class="card-page-head">
  <span class="icon"></span>
  <h1>신원</h1>

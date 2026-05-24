@@ -64,6 +64,9 @@ pub struct PeerDto {
     pub role: String,
     pub created_at: String,
     pub last_seen: Option<String>,
+    /// rc.92 D2 — agent_capabilities JOIN
+    pub description: Option<String>,
+    pub capabilities: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -197,6 +200,7 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         data_dir: Arc::new(data_dir),
         db: Arc::new(Mutex::new(db)),
     };
+    let state_clone = state.clone();
 
     let app = Router::new()
         .route("/v1/gui/health", get(gui_health))
@@ -206,6 +210,28 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // 메신저 v1.3 §3.2 — 머신×세션 통합 detector (M-1).
         .route("/v1/gui/sessions", get(gui_sessions))
         .route("/v1/gui/sessions/{identifier}/screen", get(gui_session_screen))
+        .route("/v1/gui/sessions/{identifier}/input", post(gui_session_input))
+        // UI-MEMORY-SPEC v1.1 §K7 / §1.2 — L0 raw API + 5층 stats
+        .route("/v1/gui/memory/l0", post(gui_memory_l0_save).get(gui_memory_l0_list))
+        .route("/v1/gui/memory/stats", get(gui_memory_stats))
+        .route("/v1/gui/memory/extract-now", post(gui_memory_extract_now))
+        // (a) export — 세션 messages 묶음 → .md / .jsonl
+        .route("/v1/gui/memory/export/session/{session_id}", get(gui_memory_export_session))
+        .route("/v1/gui/memory/export/wiki/{id}", get(gui_memory_export_wiki))
+        // (b) Claude Desktop import — local conv DB scan
+        .route("/v1/gui/memory/import/scan-paths", get(gui_memory_import_scan_paths))
+        .route("/v1/gui/memory/import/desktop", post(gui_memory_import_desktop))
+        // (c) session 마이그레이션 — zip export/import
+        .route("/v1/gui/memory/migration/export/{session_id}", get(gui_memory_migration_export))
+        .route("/v1/gui/memory/migration/import", post(gui_memory_migration_import))
+        // import 프롬프트 안내 — LLM 에 넘기는 표준 prompt
+        .route("/v1/gui/memory/import/prompt-template", get(gui_memory_import_prompt))
+        // import bundle — 5층 다종 항목 (message/episode/wiki_fact/pattern/mistake) 한번에 적재
+        .route("/v1/gui/memory/import/bundle", post(gui_memory_import_bundle))
+        // webhook (URL 안 token, no Bearer) — LLM 이 직접 push
+        .route("/v1/gui/memory/import/webhook-token", get(gui_memory_webhook_token).post(gui_memory_webhook_rotate))
+        .route("/v1/gui/sessions/aliases", get(gui_session_aliases_list))
+        .route("/v1/gui/sessions/{identifier}/alias", post(gui_session_alias_set))
         .route("/v1/gui/machine", get(gui_machine_info))
         // UI-MESSENGER-SPEC v1.3 §7.1·§7.3 — 헤더 🔔 통합 승인 큐 (L6 차등 만료 + V4).
         .route("/v1/gui/approvals", get(gui_approvals))
@@ -293,7 +319,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/ops/diagnostic", get(gui_ops_diagnostic))
         .route("/v1/gui/ops/machines", get(gui_ops_machines))
         .route("/v1/gui/ops/backup-status", get(gui_ops_backup_status))
+        .route("/v1/gui/ops/backup-now", post(gui_ops_backup_now))
         .route("/v1/gui/ops/update-check", get(gui_ops_update_check))
+        .route("/v1/gui/ops/update-apply", post(gui_ops_update_apply))
         .route("/v1/gui/external/outbound-calls", get(gui_external_outbound))
         .route("/v1/gui/external/inbound-pending", get(gui_external_inbound))
         .route("/v1/gui/external/inbound/{id}/approve", post(gui_external_inbound_approve))
@@ -337,6 +365,17 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
             post(gui_notify_discord_guilds),
         )
         .route("/v1/gui/notify/discord/save", post(gui_notify_discord_save))
+        // rc.91 — 바인딩 테스트 (▶ 테스트 버튼) + 봇 권한 진단 + 초대 URL
+        .route("/v1/gui/notify/channel/test", post(gui_notify_channel_test))
+        .route("/v1/gui/notify/discord/permissions", get(gui_notify_discord_permissions))
+        .route("/v1/gui/notify/discord/invite_url", get(gui_notify_discord_invite_url))
+        // rc.92 — 멀티 디스코드 봇 (채널·세션 별 다른 봇)
+        .route("/v1/gui/discord/bots", get(gui_discord_bots_list).post(gui_discord_bots_add))
+        .route("/v1/gui/discord/bots/{id}", post(gui_discord_bots_delete))
+        // rc.92 — 모든 봇·채널·바인딩 종합 정보 (채널 카드 메인)
+        .route("/v1/gui/channels/summary", get(gui_channels_summary))
+        // rc.92 — 특정 봇의 가입 서버 채널 list (세션 중심 통합용)
+        .route("/v1/gui/discord/bot/channels", get(gui_discord_bot_channels))
         // Telegram 마법사 — token 검증 → chat_id 자동 감지 → 저장+테스트.
         .route(
             "/v1/gui/notify/telegram/validate",
@@ -345,6 +384,11 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route(
             "/v1/gui/notify/telegram/detect_chat",
             post(gui_notify_telegram_detect_chat),
+        )
+        // 저장된 봇 토큰으로 chat_id 자동감지 (no body 필요)
+        .route(
+            "/v1/gui/notify/telegram/detect_chat_saved",
+            post(gui_notify_telegram_detect_chat_saved),
         )
         .route(
             "/v1/gui/notify/telegram/save",
@@ -366,6 +410,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // register/users 테이블·JWT 모두 폐기 (multi-user X — 사이드카는 1 사람용).
         .route("/v1/auth/unlock", post(auth_unlock))
         .route("/v1/auth/check", get(auth_check))
+        // 외부 LLM 직접 push — URL 안 token 으로 인증 (Bearer 없음)
+        .route("/v1/webhook/memory/{token}", post(webhook_memory_ingest))
         // Web GUI 정적 자산 — xgram 바이너리에 임베드 (PRD-OpenXgram v1.3 §4.8).
         // nginx 외부 호스팅 불필요. 외부 노출은 Tailscale Funnel 또는 reverse proxy 위임.
         .route("/gui", get(crate::ui_assets::gui_root))
@@ -385,6 +431,13 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
             tracing::error!(error = %e, "daemon-gui server stopped");
         }
     });
+
+    // rc.91 — Discord/Telegram outbound auto-watch worker (30s polling)
+    let state_for_worker = state_clone.clone();
+    tokio::spawn(async move {
+        run_discord_outbound_worker(state_for_worker).await;
+    });
+    println!("  ✓ discord/telegram outbound worker spawned (30s polling)");
 
     Ok(())
 }
@@ -472,6 +525,22 @@ async fn gui_peers(
 ) -> Result<Json<Vec<PeerDto>>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     let mut db = state.db.lock().await;
+    // rc.92 — agent_capabilities map 별도 prefetch (PeerStore 사용 후 두 번째 borrow 위해 미리)
+    let mut caps_map: std::collections::HashMap<String, (Option<String>, Vec<String>)> = Default::default();
+    if let Ok(mut stmt) = db.conn().prepare(
+        "SELECT alias, description, capabilities FROM agent_capabilities"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Option<String>>(2)?))
+        }) {
+            for row in rows.flatten() {
+                let caps: Vec<String> = row.2.as_ref()
+                    .and_then(|s| serde_json::from_str(s).ok())
+                    .unwrap_or_default();
+                caps_map.insert(row.0, (row.1, caps));
+            }
+        }
+    }
     let mut store = PeerStore::new(&mut db);
     let rows = store.list().map_err(|e| {
         (
@@ -483,14 +552,19 @@ async fn gui_peers(
     })?;
     let dtos: Vec<PeerDto> = rows
         .into_iter()
-        .map(|p| PeerDto {
-            id: p.id,
-            alias: p.alias,
-            address: p.address,
-            public_key_hex: p.public_key_hex,
-            role: p.role.as_str().to_string(),
-            created_at: p.created_at.to_rfc3339(),
-            last_seen: p.last_seen.map(|t| t.to_rfc3339()),
+        .map(|p| {
+            let (description, capabilities) = caps_map.get(&p.alias).cloned().unwrap_or((None, vec![]));
+            PeerDto {
+                id: p.id,
+                alias: p.alias,
+                address: p.address,
+                public_key_hex: p.public_key_hex,
+                role: p.role.as_str().to_string(),
+                created_at: p.created_at.to_rfc3339(),
+                last_seen: p.last_seen.map(|t| t.to_rfc3339()),
+                description,
+                capabilities,
+            }
         })
         .collect();
     Ok(Json(dtos))
@@ -503,7 +577,105 @@ async fn gui_sessions(
     headers: HeaderMap,
 ) -> Result<Json<crate::daemon_gui_sessions::SessionsDto>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    Ok(Json(crate::daemon_gui_sessions::collect_sessions()))
+    let mut dto = crate::daemon_gui_sessions::collect_sessions();
+
+    // S8 cross-machine fan-out — peers 테이블 의 http:// peer 들에게서 sessions 받아 merge
+    // (실패는 silent, 3초 timeout, 토큰 동봉)
+    let peer_targets: Vec<(String, String)> = {
+        let mut db = state.db.lock().await;
+        let mut stmt_o = db.conn().prepare("SELECT alias, address FROM peers WHERE address LIKE 'http%'");
+        match stmt_o {
+            Ok(ref mut stmt) => stmt.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            }).map(|it| it.flatten().collect::<Vec<_>>()).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        }
+    };
+    if !peer_targets.is_empty() {
+        // 각 peer 의 daemon 에 unlock 해서 그 머신의 토큰 받기 (같은 keystore env password 가정).
+        let local_pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").unwrap_or_default();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(3))
+            .build().ok();
+        if let Some(http) = client {
+            for (alias, address) in peer_targets {
+                let base = address.trim_end_matches('/');
+                // 1) peer 에 unlock → peer 의 session_token
+                let unlock_resp = http.post(format!("{base}/v1/auth/unlock"))
+                    .json(&serde_json::json!({"password": local_pw}))
+                    .send().await;
+                let peer_token: String = match unlock_resp {
+                    Ok(r) => match r.json::<serde_json::Value>().await {
+                        Ok(v) => v.get("session_token").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+                        Err(_) => String::new(),
+                    },
+                    Err(_) => String::new(),
+                };
+                if peer_token.is_empty() { continue; }
+                // 2) peer sessions 호출
+                let url = format!("{base}/v1/gui/sessions");
+                let resp = http.get(&url)
+                    .header("Authorization", format!("Bearer {peer_token}"))
+                    .send().await;
+                if let Ok(r) = resp {
+                    if let Ok(remote_json) = r.json::<serde_json::Value>().await {
+                        let remote_arr = remote_json.get("sessions").and_then(|s| s.as_array()).cloned().unwrap_or_default();
+                        for item in remote_arr {
+                            // 최소 필드만 가져와서 DetectedSession 직접 구성
+                            let identifier = item.get("identifier").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let display = item.get("display").and_then(|v| v.as_str()).unwrap_or("?").to_string();
+                            let kind_str = item.get("kind").and_then(|v| v.as_str()).unwrap_or("tmux");
+                            let status_str = item.get("status").and_then(|v| v.as_str()).unwrap_or("detached");
+                            let attached = item.get("attached").and_then(|v| v.as_bool());
+                            let windows = item.get("windows").and_then(|v| v.as_u64()).map(|n| n as u32);
+                            let last_active = item.get("last_active_at").and_then(|v| v.as_str()).map(String::from);
+                            let created = item.get("created_at").and_then(|v| v.as_str()).map(String::from);
+                            let kind = match kind_str {
+                                "tmux" => crate::daemon_gui_sessions::SessionKind::Tmux,
+                                "claude_project" => crate::daemon_gui_sessions::SessionKind::ClaudeProject,
+                                _ => crate::daemon_gui_sessions::SessionKind::XgramSession,
+                            };
+                            let status = match status_str {
+                                "attached" => crate::daemon_gui_sessions::SessionStatus::Attached,
+                                "active" => crate::daemon_gui_sessions::SessionStatus::Active,
+                                _ => crate::daemon_gui_sessions::SessionStatus::Detached,
+                            };
+                            dto.sessions.push(crate::daemon_gui_sessions::DetectedSession {
+                                kind,
+                                identifier: format!("peer:{}:{}", alias, identifier),
+                                display: format!("[{}] {}", alias, display),
+                                status,
+                                windows,
+                                attached,
+                                created_at: created,
+                                last_active_at: last_active,
+                                agent_id: None,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 사용자 부여 display_name override (DB v32 session_aliases)
+    let mut db = state.db.lock().await;
+    if let Ok(mut stmt) = db.conn().prepare(
+        "SELECT identifier, display_name FROM session_aliases",
+    ) {
+        if let Ok(it) = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        }) {
+            use std::collections::HashMap;
+            let aliases: HashMap<String, String> = it.flatten().collect();
+            for s in dto.sessions.iter_mut() {
+                if let Some(name) = aliases.get(&s.identifier) {
+                    s.display = name.clone();
+                }
+            }
+        }
+    }
+    Ok(Json(dto))
 }
 
 /// `GET /v1/gui/sessions/{identifier}/screen` — 세션 라이브 출력 (UI-MESSENGER-SPEC §4.3 S5).
@@ -514,7 +686,1039 @@ async fn gui_session_screen(
     Path(identifier): Path<String>,
 ) -> Result<Json<crate::daemon_gui_sessions::SessionScreenDto>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
+    // peer:<alias>:<inner-id> 형태면 해당 peer 의 daemon 에 fan-out
+    if let Some(rest) = identifier.strip_prefix("peer:") {
+        if let Some(idx) = rest.find(':') {
+            let alias = &rest[..idx];
+            let inner = &rest[idx + 1..];
+            // peer address 조회
+            let address: String = {
+                let mut db = state.db.lock().await;
+                db.conn().query_row(
+                    "SELECT address FROM peers WHERE alias = ?1",
+                    rusqlite::params![alias],
+                    |r| r.get(0),
+                ).unwrap_or_default()
+            };
+            if !address.is_empty() && address.starts_with("http") {
+                let local_pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").unwrap_or_default();
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(5))
+                    .build()
+                    .map_err(|e| internal(&format!("http: {e}")))?;
+                let base = address.trim_end_matches('/');
+                // peer 의 unlock → token
+                let unlock = client.post(format!("{base}/v1/auth/unlock"))
+                    .json(&serde_json::json!({"password": local_pw}))
+                    .send().await
+                    .map_err(|e| internal(&format!("peer unlock: {e}")))?;
+                let token = unlock.json::<serde_json::Value>().await.ok()
+                    .and_then(|v| v.get("session_token").and_then(|t| t.as_str()).map(String::from))
+                    .unwrap_or_default();
+                if token.is_empty() {
+                    return Err(internal(&format!("peer {alias} unlock failed")));
+                }
+                // peer screen
+                let resp = client.get(format!("{base}/v1/gui/sessions/{}/screen", urlencoding::encode(inner)))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .send().await
+                    .map_err(|e| internal(&format!("peer screen: {e}")))?;
+                let v: serde_json::Value = resp.json().await
+                    .map_err(|e| internal(&format!("peer screen json: {e}")))?;
+                let kind_str = v.get("kind").and_then(|x| x.as_str()).unwrap_or("tmux");
+                let kind = match kind_str {
+                    "tmux" => crate::daemon_gui_sessions::SessionKind::Tmux,
+                    "claude_project" => crate::daemon_gui_sessions::SessionKind::ClaudeProject,
+                    _ => crate::daemon_gui_sessions::SessionKind::XgramSession,
+                };
+                let dto = crate::daemon_gui_sessions::SessionScreenDto {
+                    identifier: v.get("identifier").and_then(|x| x.as_str()).unwrap_or(inner).into(),
+                    kind,
+                    display: v.get("display").and_then(|x| x.as_str()).unwrap_or("?").into(),
+                    content: v.get("content").and_then(|x| x.as_str()).unwrap_or("").into(),
+                    lines: v.get("lines").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
+                    source_note: format!("[via peer {alias}] {}", v.get("source_note").and_then(|x| x.as_str()).unwrap_or("")),
+                    fetched_at: v.get("fetched_at").and_then(|x| x.as_str()).unwrap_or("").into(),
+                };
+                return Ok(Json(dto));
+            }
+            return Err(internal(&format!("peer {alias} has no http address")));
+        }
+    }
     Ok(Json(crate::daemon_gui_sessions::capture_session(&identifier)))
+}
+
+#[derive(serde::Deserialize)]
+struct SessionInputBody {
+    /// 사용자가 친 raw 키 스트림 (예: "ls\n", "\u{0003}" = Ctrl-C).
+    data: String,
+}
+
+/// `POST /v1/gui/sessions/:identifier/input` — tmux send-keys 로 입력 주입.
+/// identifier 가 "tmux:<name>" 또는 "<name>" 이면 tmux send-keys -l.
+async fn gui_session_input(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(identifier): Path<String>,
+    Json(body): Json<SessionInputBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+
+    // ── (1) peer fan-out ──────────────────────────────────────────
+    if let Some(rest) = identifier.strip_prefix("peer:") {
+        if let Some(idx) = rest.find(':') {
+            let alias = &rest[..idx];
+            let inner = &rest[idx + 1..];
+            let address: String = {
+                let mut db = state.db.lock().await;
+                db.conn().query_row(
+                    "SELECT address FROM peers WHERE alias = ?1",
+                    rusqlite::params![alias],
+                    |r| r.get(0),
+                ).unwrap_or_default()
+            };
+            if !address.is_empty() && address.starts_with("http") {
+                let local_pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").unwrap_or_default();
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(5))
+                    .build()
+                    .map_err(|e| internal(&format!("http: {e}")))?;
+                let base = address.trim_end_matches('/');
+                let unlock = client.post(format!("{base}/v1/auth/unlock"))
+                    .json(&serde_json::json!({"password": local_pw}))
+                    .send().await
+                    .map_err(|e| internal(&format!("peer unlock: {e}")))?;
+                let token = unlock.json::<serde_json::Value>().await.ok()
+                    .and_then(|v| v.get("session_token").and_then(|t| t.as_str()).map(String::from))
+                    .unwrap_or_default();
+                if token.is_empty() {
+                    return Err(internal(&format!("peer {alias} unlock failed")));
+                }
+                let resp = client.post(format!("{base}/v1/gui/sessions/{}/input", urlencoding::encode(inner)))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .json(&serde_json::json!({"data": body.data}))
+                    .send().await
+                    .map_err(|e| internal(&format!("peer input: {e}")))?;
+                if !resp.status().is_success() {
+                    let s = resp.status();
+                    let t = resp.text().await.unwrap_or_default();
+                    return Err(bad_request(&format!("peer input HTTP {s}: {t}")));
+                }
+                return Ok(Json(serde_json::json!({"ok": true, "via": format!("peer:{alias}"), "bytes_sent": body.data.len()})));
+            }
+            return Err(internal(&format!("peer {alias} has no http address")));
+        }
+    }
+
+    // ── (2) portal:<tmuxSession>:<idx> + aoe:<tmuxSession>:... → portal-new /api/tmux/send ──
+    let portal_target: Option<(String, u32)> = if let Some(rest) = identifier.strip_prefix("portal:") {
+        let mut parts = rest.splitn(2, ':');
+        let first = parts.next().unwrap_or("");
+        let rest2 = parts.next().unwrap_or("");
+        if first.parse::<u32>().is_ok() && !rest2.contains(':') {
+            None // 옛 형식 fallback — tmux 직접
+        } else {
+            let idx = rest2.split(':').next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+            Some((first.to_string(), idx))
+        }
+    } else if let Some(rest) = identifier.strip_prefix("aoe:") {
+        let tmux_session = rest.split(':').next().unwrap_or("");
+        if tmux_session.is_empty() { None } else { Some((tmux_session.to_string(), 0)) }
+    } else {
+        None
+    };
+    if let Some((session, idx)) = portal_target {
+        let url_base = std::env::var("XGRAM_PORTAL_URL").unwrap_or_else(|_| "https://portal-zalman.starian.us".into());
+        let token = std::env::var("XGRAM_PORTAL_TOKEN").unwrap_or_else(|_| "0205".into());
+        let url = format!("{}/api/tmux/send?token={}", url_base.trim_end_matches('/'), token);
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .danger_accept_invalid_certs(true)
+            .build()
+            .map_err(|e| internal(&format!("http: {e}")))?;
+        let resp = client.post(&url)
+            .json(&serde_json::json!({"session": session, "window": idx, "text": body.data}))
+            .send().await
+            .map_err(|e| internal(&format!("portal send: {e}")))?;
+        if !resp.status().is_success() {
+            let s = resp.status();
+            let t = resp.text().await.unwrap_or_default();
+            return Err(bad_request(&format!("portal send HTTP {s}: {t}")));
+        }
+        return Ok(Json(serde_json::json!({"ok": true, "via": format!("portal:{session}:{idx}"), "bytes_sent": body.data.len()})));
+    }
+
+    // ── (3) local tmux fallback (tmux:<name>) ─────────────────────
+    let target = identifier
+        .strip_prefix("tmux:")
+        .unwrap_or(&identifier)
+        .to_string();
+    if target.is_empty() {
+        return Err(bad_request("empty identifier"));
+    }
+    let data = body.data.clone();
+    let result = tokio::task::spawn_blocking(move || -> std::io::Result<std::process::Output> {
+        std::process::Command::new("tmux")
+            .arg("send-keys")
+            .arg("-t")
+            .arg(&target)
+            .arg("-l")
+            .arg(&data)
+            .output()
+    })
+    .await
+    .map_err(|e| internal(&format!("spawn: {e}")))?
+    .map_err(|e| internal(&format!("tmux: {e}")))?;
+    if !result.status.success() {
+        let stderr = String::from_utf8_lossy(&result.stderr).to_string();
+        return Err(bad_request(&format!("tmux send-keys: {stderr}")));
+    }
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "bytes_sent": body.data.len()
+    })))
+}
+
+/// `POST /v1/gui/memory/l0` — L0 raw 메시지 저장 (UI-MEMORY-SPEC §K7).
+/// 메신저·채널·외부 카드가 호출하는 공식 write path.
+#[derive(serde::Deserialize)]
+struct L0SaveBody {
+    session_id: String,
+    sender: String,
+    body: String,
+    #[serde(default = "default_l0_signature")]
+    signature: String,
+    conversation_id: Option<String>,
+    /// metadata schema (§K20): source, kind, channel, etc.
+    metadata: Option<serde_json::Value>,
+}
+fn default_l0_signature() -> String { "gui-l0".into() }
+
+async fn gui_memory_l0_save(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<L0SaveBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    if body.body.trim().is_empty() {
+        return Err(bad_request("body must be non-empty"));
+    }
+    if body.session_id.trim().is_empty() {
+        return Err(bad_request("session_id required"));
+    }
+    let mut db = state.db.lock().await;
+    let result = crate::save_l0::save_l0_message(&mut db, crate::save_l0::L0SaveInput {
+        id: None,
+        session_id: &body.session_id,
+        session_title: None,
+        sender: &body.sender,
+        body: &body.body,
+        signature: &body.signature,
+        timestamp: None,
+        parent_message_id: None,
+        conversation_id: body.conversation_id.as_deref(),
+        source: "gui_l0_endpoint",
+        extra_metadata: body.metadata.clone(),
+    }).map_err(|e| internal(&format!("L0 save: {e}")))?;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "id": result.id,
+        "conversation_id": result.conversation_id,
+        "saved_at": result.timestamp,
+        "inserted": result.inserted
+    })))
+}
+
+/// `GET /v1/gui/memory/l0?limit=50&q=...` — L0 raw 메시지 최근/검색.
+async fn gui_memory_l0_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let limit: i64 = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50).min(500);
+    let search = q.get("q").cloned();
+    let mut db = state.db.lock().await;
+    let (sql, has_q): (&str, bool) = match &search {
+        Some(_) => (
+            "SELECT id, session_id, sender, body, signature, timestamp, conversation_id, metadata \
+             FROM messages WHERE body LIKE ?1 ORDER BY timestamp DESC LIMIT ?2",
+            true,
+        ),
+        None => (
+            "SELECT id, session_id, sender, body, signature, timestamp, conversation_id, metadata \
+             FROM messages ORDER BY timestamp DESC LIMIT ?1",
+            false,
+        ),
+    };
+    let mut stmt = db.conn().prepare(sql).map_err(|e| internal(&format!("db: {e}")))?;
+    let rows: Vec<serde_json::Value> = if has_q {
+        let pat = format!("%{}%", search.as_ref().unwrap());
+        stmt.query_map(rusqlite::params![pat, limit], row_to_l0).and_then(|it| Ok(it.filter_map(|r| r.ok()).collect()))
+    } else {
+        stmt.query_map(rusqlite::params![limit], row_to_l0).and_then(|it| Ok(it.filter_map(|r| r.ok()).collect()))
+    }.map_err(|e| internal(&format!("db: {e}")))?;
+    Ok(Json(rows))
+}
+
+fn row_to_l0(r: &rusqlite::Row) -> rusqlite::Result<serde_json::Value> {
+    Ok(serde_json::json!({
+        "id": r.get::<_, String>(0)?,
+        "session_id": r.get::<_, String>(1)?,
+        "sender": r.get::<_, String>(2)?,
+        "body": r.get::<_, String>(3)?,
+        "signature": r.get::<_, String>(4)?,
+        "timestamp": r.get::<_, String>(5)?,
+        "conversation_id": r.get::<_, Option<String>>(6)?,
+        "metadata": r.get::<_, String>(7).unwrap_or_default(),
+    }))
+}
+
+/// `GET /v1/gui/memory/stats` — 5층 메모리 카운트 + 최근 활동.
+async fn gui_memory_stats(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let conn = db.conn();
+    fn count(conn: &rusqlite::Connection, sql: &str) -> i64 {
+        conn.query_row(sql, [], |r| r.get(0)).unwrap_or(0)
+    }
+    let l0 = count(conn, "SELECT COUNT(*) FROM messages");
+    let l1 = count(conn, "SELECT COUNT(*) FROM episodes");
+    let l2 = count(conn, "SELECT COUNT(*) FROM wiki_pages");
+    let l3 = count(conn, "SELECT COUNT(*) FROM memory_patterns") + count(conn, "SELECT COUNT(*) FROM patterns");
+    let l4 = count(conn, "SELECT COUNT(*) FROM traits");
+    let mistakes = count(conn, "SELECT COUNT(*) FROM mistakes");
+    let last_l0: Option<String> = conn.query_row(
+        "SELECT MAX(timestamp) FROM messages", [], |r| r.get(0)
+    ).ok();
+    let last_l1: Option<String> = conn.query_row(
+        "SELECT MAX(created_at) FROM episodes", [], |r| r.get(0)
+    ).ok();
+    let sessions = count(conn, "SELECT COUNT(*) FROM sessions");
+    let claude_ingested = count(conn, "SELECT IFNULL(SUM(msg_count),0) FROM claude_ingest_state");
+    Ok(Json(serde_json::json!({
+        "layers": {
+            "L0_raw_messages": {"count": l0, "last_at": last_l0},
+            "L1_episodes": {"count": l1, "last_at": last_l1},
+            "L2_wiki_pages": {"count": l2},
+            "L3_patterns": {"count": l3},
+            "L4_traits": {"count": l4},
+        },
+        "extras": {
+            "mistakes": mistakes,
+            "sessions": sessions,
+            "claude_ingested": claude_ingested,
+        },
+        "spec_ref": "UI-MEMORY-SPEC v1.1 §1.1 (L0~L4 5층)"
+    })))
+}
+
+/// `GET /v1/gui/memory/export/session/:session_id?format=md|jsonl` — 세션 메시지 묶음 다운로드.
+async fn gui_memory_export_session(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<axum::response::Response, (StatusCode, Json<ErrorDto>)> {
+    use axum::response::IntoResponse;
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let format = q.get("format").cloned().unwrap_or_else(|| "md".into());
+    let mut db = state.db.lock().await;
+    let title: String = db.conn().query_row(
+        "SELECT title FROM sessions WHERE id = ?1",
+        rusqlite::params![&session_id],
+        |r| r.get(0)
+    ).unwrap_or_else(|_| session_id.clone());
+    let mut stmt = db.conn().prepare(
+        "SELECT sender, body, timestamp FROM messages WHERE session_id = ?1 ORDER BY timestamp"
+    ).map_err(|e| internal(&format!("db: {e}")))?;
+    let rows: Vec<(String, String, String)> = stmt.query_map(rusqlite::params![&session_id], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+    }).map_err(|e| internal(&format!("db: {e}")))?.filter_map(|r| r.ok()).collect();
+    let body = if format == "jsonl" {
+        rows.iter().map(|(s,b,t)| serde_json::json!({"sender":s,"body":b,"timestamp":t}).to_string()).collect::<Vec<_>>().join("\n")
+    } else {
+        let mut s = format!("# {}\n\n_세션 id: `{}` · 메시지 {} 건 · OpenXgram export_\n\n", title, session_id, rows.len());
+        for (sender, body, ts) in &rows {
+            s.push_str(&format!("## {} · {}\n\n{}\n\n---\n\n", sender, ts, body));
+        }
+        s
+    };
+    let ext = if format == "jsonl" { "jsonl" } else { "md" };
+    let mime = if format == "jsonl" { "application/x-ndjson" } else { "text/markdown" };
+    let safe = title.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
+    Ok((
+        StatusCode::OK,
+        [
+            ("content-type", mime),
+            ("content-disposition", &*format!("attachment; filename=\"{}.{}\"", safe.chars().take(60).collect::<String>(), ext)),
+        ],
+        body,
+    ).into_response())
+}
+
+async fn gui_memory_export_wiki(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<axum::response::Response, (StatusCode, Json<ErrorDto>)> {
+    use axum::response::IntoResponse;
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let (title, body): (String, String) = db.conn().query_row(
+        "SELECT title, body FROM wiki_pages WHERE id = ?1",
+        rusqlite::params![&id],
+        |r| Ok((r.get::<_,String>(0)?, r.get::<_,String>(1)?))
+    ).map_err(|_| bad_request("page not found"))?;
+    let safe = title.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
+    Ok((
+        StatusCode::OK,
+        [
+            ("content-type", "text/markdown"),
+            ("content-disposition", &*format!("attachment; filename=\"{}.md\"", safe.chars().take(60).collect::<String>())),
+        ],
+        format!("# {}\n\n{}", title, body),
+    ).into_response())
+}
+
+/// `GET /v1/gui/memory/import/scan-paths` — Claude Desktop/Cursor 등 데스크탑 앱 conv 경로 자동 탐지.
+async fn gui_memory_import_scan_paths(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let home = std::env::var("HOME").unwrap_or_default();
+    let userprofile = std::env::var("USERPROFILE").unwrap_or_default();
+    let candidates = vec![
+        ("Claude Code CLI", format!("{home}/.claude/projects")),
+        ("Claude Desktop (Mac)", format!("{home}/Library/Application Support/Claude")),
+        ("Claude Desktop (Linux)", format!("{home}/.config/Claude")),
+        ("Claude Desktop (Win)", format!("{userprofile}/AppData/Roaming/Claude")),
+        ("Cursor (Mac)", format!("{home}/Library/Application Support/Cursor/User")),
+        ("Cursor (Linux)", format!("{home}/.config/Cursor/User")),
+        ("Cursor (Win)", format!("{userprofile}/AppData/Roaming/Cursor/User")),
+        ("Continue", format!("{home}/.continue")),
+        ("Aider", format!("{home}/.aider.input.history")),
+    ];
+    let mut found = Vec::new();
+    for (name, path) in candidates {
+        let p = std::path::PathBuf::from(&path);
+        let exists = p.exists();
+        let mut file_count = 0_i64;
+        if exists && p.is_dir() {
+            if let Ok(rd) = std::fs::read_dir(&p) {
+                file_count = rd.count() as i64;
+            }
+        }
+        found.push(serde_json::json!({
+            "name": name,
+            "path": path,
+            "exists": exists,
+            "file_count": file_count
+        }));
+    }
+    Ok(Json(serde_json::json!({
+        "candidates": found,
+        "note": "exists=true 인 경로는 import/desktop endpoint 로 ingest 가능. Claude Code CLI 는 이미 자동 ingest 중 (60s tick)."
+    })))
+}
+
+#[derive(serde::Deserialize)]
+struct DesktopImportBody {
+    path: String,
+}
+async fn gui_memory_import_desktop(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<DesktopImportBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    // 안전: ~/.claude / ~/Library 같은 known prefix 만 허용 (path traversal 방지)
+    let allowed = ["/.claude/", "/Library/Application Support/Claude", "/.config/Claude",
+        "/AppData/Roaming/Claude", "/.continue/", "/Library/Application Support/Cursor",
+        "/.config/Cursor", "/AppData/Roaming/Cursor"];
+    if !allowed.iter().any(|a| body.path.contains(a)) {
+        return Err(bad_request("path not in allowed desktop-app prefixes"));
+    }
+    let p = std::path::PathBuf::from(&body.path);
+    if !p.exists() {
+        return Err(bad_request("path does not exist"));
+    }
+    // 단순 구현: 폴더 안의 모든 .jsonl / .json 파일을 messages 로 흡수 (sender=path filename)
+    let mut total = 0_i64;
+    let mut db = state.db.lock().await;
+    if let Ok(rd) = std::fs::read_dir(&p) {
+        for e in rd.flatten() {
+            let path = e.path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
+            if !name.ends_with(".jsonl") && !name.ends_with(".json") { continue; }
+            let content = match std::fs::read_to_string(&path) { Ok(c) => c, Err(_) => continue };
+            for (idx, line) in content.lines().enumerate() {
+                if line.trim().is_empty() { continue; }
+                let id = format!("dt-{}-{}", name.chars().take(40).collect::<String>(), idx);
+                let session_id = format!("desktop:{}", name);
+                let now = chrono::Utc::now().to_rfc3339();
+                let body_str = line.chars().take(4000).collect::<String>();
+                let r = crate::save_l0::save_l0_message(&mut db, crate::save_l0::L0SaveInput {
+                    id: Some(id),
+                    session_id: &session_id,
+                    session_title: Some(&name),
+                    sender: "desktop-import",
+                    body: &body_str,
+                    signature: "desktop-import",
+                    timestamp: Some(&now),
+                    parent_message_id: None,
+                    conversation_id: None,
+                    source: "desktop_import",
+                    extra_metadata: None,
+                });
+                if let Ok(res) = r { if res.inserted { total += 1; } }
+            }
+        }
+    }
+    Ok(Json(serde_json::json!({"ok": true, "messages_imported": total, "source": body.path})))
+}
+
+/// `POST /v1/gui/memory/import/bundle` — 5층 다종 items 한 번에 적재.
+async fn gui_memory_import_bundle(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(bundle): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    process_import_bundle(&state, bundle).await
+}
+
+/// 핵심 ingest 로직 — webhook + bundle endpoint 공유.
+async fn process_import_bundle(
+    state: &GuiServerState,
+    bundle: serde_json::Value,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    let items = bundle.get("items").and_then(|v| v.as_array())
+        .ok_or_else(|| bad_request("missing items array"))?;
+    let session_title = bundle.get("session_title").and_then(|v| v.as_str()).unwrap_or("imported");
+    let source_app = bundle.get("source_app").and_then(|v| v.as_str()).unwrap_or("external");
+    let now = chrono::Utc::now().to_rfc3339();
+    // session_id 가 bundle 에 있으면 그걸로 (특정 터미널·세션에 직접 적재).
+    // 없으면 새 import 세션 생성.
+    let session_id = bundle.get("session_id").and_then(|v| v.as_str()).map(String::from)
+        .unwrap_or_else(|| format!("import:{}:{}",
+            source_app.chars().filter(|c| c.is_alphanumeric()).take(20).collect::<String>(),
+            chrono::Utc::now().timestamp_millis()));
+    let mut counts = std::collections::HashMap::new();
+    let mut db = state.db.lock().await;
+    let _ = db.conn().execute(
+        "INSERT OR IGNORE INTO sessions (id, title, participants, created_at, last_active, home_machine) \
+         VALUES (?1, ?2, '[\"W\",\"imported\"]', ?3, ?3, 'server-seoul')",
+        rusqlite::params![session_id, session_title, now],
+    );
+    for it in items {
+        let itype = it.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        match itype {
+            "message" => {
+                let sender = it.get("sender").and_then(|v| v.as_str()).unwrap_or("imported");
+                let body = it.get("body").and_then(|v| v.as_str()).unwrap_or("");
+                if body.is_empty() { continue; }
+                let ts = it.get("timestamp").and_then(|v| v.as_str()).unwrap_or(&now);
+                let r = crate::save_l0::save_l0_message(&mut db, crate::save_l0::L0SaveInput {
+                    id: None,
+                    session_id: &session_id,
+                    session_title: Some(session_title),
+                    sender,
+                    body,
+                    signature: "import",
+                    timestamp: Some(ts),
+                    parent_message_id: None,
+                    conversation_id: None,
+                    source: "import_bundle",
+                    extra_metadata: Some(serde_json::json!({"app": source_app})),
+                });
+                if let Ok(res) = r { if res.inserted { *counts.entry("messages").or_insert(0) += 1; } }
+            }
+            "episode" => {
+                let title = it.get("title").and_then(|v| v.as_str()).unwrap_or("(no title)");
+                let summary = it.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+                let started = it.get("started_at").and_then(|v| v.as_str()).unwrap_or(&now);
+                let ended = it.get("ended_at").and_then(|v| v.as_str()).unwrap_or(&now);
+                let id = uuid::Uuid::new_v4().to_string();
+                if db.conn().execute(
+                    "INSERT OR IGNORE INTO episodes (id, session_id, title, summary, started_at, ended_at, created_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    rusqlite::params![id, session_id, title, summary, started, ended, now],
+                ).unwrap_or(0) > 0 { *counts.entry("episodes").or_insert(0) += 1; }
+            }
+            "wiki_fact" => {
+                let page_id = it.get("page_id").and_then(|v| v.as_str()).map(String::from)
+                    .unwrap_or_else(|| format!("import-{}", &uuid::Uuid::new_v4().to_string()[..8]));
+                let title = it.get("title").and_then(|v| v.as_str()).unwrap_or(&page_id);
+                let ptype = it.get("page_type").and_then(|v| v.as_str()).unwrap_or("concept");
+                let content = it.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                use sha2::{Digest, Sha256};
+                let hash = format!("{:x}", Sha256::digest(content.as_bytes()));
+                let ts_int = chrono::Utc::now().timestamp();
+                if db.conn().execute(
+                    "INSERT OR IGNORE INTO wiki_pages (id, title, body, page_type, file_path, content_hash, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                    rusqlite::params![page_id, title, content, ptype,
+                        format!("wiki/{}/{}.md", ptype, page_id), hash, ts_int],
+                ).unwrap_or(0) > 0 { *counts.entry("wiki_pages").or_insert(0) += 1; }
+            }
+            "pattern" => {
+                let ptype = it.get("pattern_type").and_then(|v| v.as_str()).unwrap_or("behavior");
+                let desc = it.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                if desc.is_empty() { continue; }
+                let conf = it.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.7);
+                let id = format!("import-{}", &uuid::Uuid::new_v4().to_string()[..16]);
+                if db.conn().execute(
+                    "INSERT OR IGNORE INTO memory_patterns (id, pattern_type, description, confidence, source, examples, created_at) \
+                     VALUES (?1, ?2, ?3, ?4, 'import-llm', '[]', ?5)",
+                    rusqlite::params![id, ptype, desc, conf, now],
+                ).unwrap_or(0) > 0 { *counts.entry("patterns").or_insert(0) += 1; }
+            }
+            "mistake" => {
+                let intended = it.get("intended_action").and_then(|v| v.as_str()).unwrap_or("?");
+                let outcome = it.get("actual_outcome").and_then(|v| v.as_str()).unwrap_or("?");
+                let reason = it.get("failure_reason").and_then(|v| v.as_str()).unwrap_or("?");
+                let lesson = it.get("lesson").and_then(|v| v.as_str()).unwrap_or("?");
+                let severity = it.get("severity").and_then(|v| v.as_i64()).unwrap_or(5).clamp(1, 10);
+                let id = format!("import-{}", &uuid::Uuid::new_v4().to_string()[..16]);
+                let ts_ms = chrono::Utc::now().timestamp_millis();
+                if db.conn().execute(
+                    "INSERT OR IGNORE INTO mistakes (id, session_id, occurred_at, intended_action, actual_outcome, failure_reason, lesson, severity, embedding_hash, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?3, ?3)",
+                    rusqlite::params![id, session_id, ts_ms, intended, outcome, reason, lesson, severity, &id],
+                ).unwrap_or(0) > 0 { *counts.entry("mistakes").or_insert(0) += 1; }
+            }
+            _ => {}
+        }
+    }
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "session_id": session_id,
+        "items_processed": items.len(),
+        "inserted": counts,
+        "source_app": source_app
+    })))
+}
+
+/// `POST /v1/webhook/memory/:token` — Bearer 없이 URL token 으로 인증.
+async fn webhook_memory_ingest(
+    State(state): State<GuiServerState>,
+    Path(token): Path<String>,
+    Json(bundle): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    let expected: String = {
+        let mut db = state.db.lock().await;
+        db.conn().query_row(
+            "SELECT value FROM identity_settings WHERE key = 'webhook_token_memory'",
+            [], |r| r.get(0)
+        ).unwrap_or_default()
+    };
+    if expected.is_empty() || token != expected {
+        return Err((StatusCode::UNAUTHORIZED, Json(ErrorDto {
+            error: "invalid webhook token — generate at /v1/gui/memory/import/webhook-token".into()
+        })));
+    }
+    process_import_bundle(&state, bundle).await
+}
+
+/// `GET /v1/gui/memory/import/webhook-token` — 현재 token 조회 (Bearer 필요).
+async fn gui_memory_webhook_token(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let token: String = {
+        let mut db = state.db.lock().await;
+        db.conn().query_row(
+            "SELECT value FROM identity_settings WHERE key = 'webhook_token_memory'",
+            [], |r| r.get(0)
+        ).unwrap_or_default()
+    };
+    let base = "https://server-seoul.tail0957ca.ts.net";
+    Ok(Json(serde_json::json!({
+        "token": token,
+        "exists": !token.is_empty(),
+        "webhook_url": if token.is_empty() { String::new() } else { format!("{}/v1/webhook/memory/{}", base, token) },
+        "rotate_endpoint": "POST /v1/gui/memory/import/webhook-token"
+    })))
+}
+
+/// `POST /v1/gui/memory/import/webhook-token` — 새 token 발급/회전.
+async fn gui_memory_webhook_rotate(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use sha2::{Digest, Sha256};
+    let raw = format!("{}-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0), uuid::Uuid::new_v4());
+    let token = format!("{:x}", Sha256::digest(raw.as_bytes()));
+    let token = &token[..32]; // 32 hex chars
+    let mut db = state.db.lock().await;
+    let _ = db.conn().execute(
+        "INSERT INTO identity_settings(key,value,updated_at) VALUES('webhook_token_memory', ?1, datetime('now')) \
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        rusqlite::params![token],
+    );
+    let base = "https://server-seoul.tail0957ca.ts.net";
+    Ok(Json(serde_json::json!({
+        "token": token,
+        "webhook_url": format!("{}/v1/webhook/memory/{}", base, token),
+        "note": "이 URL 을 LLM 에 주면 Bearer 없이 직접 push 가능"
+    })))
+}
+
+/// `GET /v1/gui/memory/import/prompt-template` — LLM 에 던질 표준 import 프롬프트 안내.
+async fn gui_memory_import_prompt(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let base = "https://server-seoul.tail0957ca.ts.net";
+
+    let prompt = format!(r####"# OpenXgram 메모리 Import 프롬프트
+
+당신은 외부 LLM(Claude Desktop / ChatGPT / Cursor / Gemini 등)입니다.
+사용자의 OpenXgram 메모리(5층 = L0 raw / L1 episodes / L2 wiki / L3 patterns / L4 traits)에 기록할 컨텍스트를 추출·변환해 주세요.
+
+---
+
+## 1. 무엇을 추출할 것
+
+다음 5 종류 중 해당하는 항목을 JSON 객체로 정리:
+
+| 종류 | 내용 | OpenXgram 레이어 | 추출 기준 |
+|---|---|---|---|
+| **message** | 사용자/에이전트가 한 발화·응답 | L0 raw | 모든 의미 있는 대화 |
+| **episode** | 한 작업 흐름 요약 (5~50 메시지 묶음) | L1 episode | 시작·끝 명확한 작업 단위 |
+| **wiki_fact** | 영구적인 사실·개념·정의 (위키 페이지로 격상) | L2 wiki | "X는 Y다", 정의·설명 |
+| **pattern** | 사용자 반복 행동·선호·습관·규칙 | L3 pattern | "사용자는 항상 ~", "~를 선호" |
+| **mistake** | 발생한 실수·버그·잘못된 결정 + 교훈 | mistakes | "잘못해서", "버그", "다음엔 ~" |
+
+---
+
+## 2. 출력 형식 (JSON bundle — 단일 객체)
+
+```json
+{{
+  "openxgram_import_version": 1,
+  "source_app": "Claude Desktop|Cursor|ChatGPT|Gemini|기타",
+  "exported_at": "2026-05-22T12:00:00Z",
+  "session_title": "한 줄 요약 — 무엇에 대한 컨텍스트인가",
+  "items": [
+    {{
+      "type": "message",
+      "sender": "user|assistant|<name>",
+      "body": "메시지 본문 그대로",
+      "timestamp": "2026-05-22T11:55:00Z"
+    }},
+    {{
+      "type": "episode",
+      "title": "OpenAgentX 결제 흐름 설계",
+      "summary": "x402 + USDC 통합 결정. fixed/auction/matching/chain 4모드 확정.",
+      "started_at": "2026-05-22T11:00:00Z",
+      "ended_at": "2026-05-22T11:50:00Z",
+      "source_messages": [0, 1, 2, 3]
+    }},
+    {{
+      "type": "wiki_fact",
+      "page_id": "openagentx-payment-modes",
+      "title": "OpenAgentX 4가지 결제 모드",
+      "page_type": "concept",
+      "content": "# OpenAgentX 결제 모드\n\n## 1. fixed\n... (마크다운)"
+    }},
+    {{
+      "type": "pattern",
+      "pattern_type": "preference",
+      "description": "사용자는 한국어로 답변을 받기 선호. 영어 응답이 와도 한글로 재요청.",
+      "confidence": 0.9
+    }},
+    {{
+      "type": "mistake",
+      "intended_action": "rc.58 배포",
+      "actual_outcome": "daemon 이 SSH 끊기면서 죽음",
+      "failure_reason": "env var XGRAM_KEYSTORE_PASSWORD 가 tmux 세션 안에서만 설정됨",
+      "lesson": "~/.openxgram/daemon.env 파일에 영구 저장. 재시작 스크립트는 source 후 실행",
+      "severity": 6
+    }}
+  ]
+}}
+```
+
+---
+
+## 3. 전송 채널 (4 가지 — 사용자 환경에 맞춰 선택)
+
+### 채널 A — HTTP API (가장 일반)
+```bash
+TOKEN="<OpenXgram 잠금해제 토큰 — GUI 카드에서 복사>"
+curl -X POST "{base}/v1/gui/memory/import/bundle" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  --data-binary @bundle.json
+```
+
+### 채널 B — Webhook (LLM 직접 push, 토큰 in URL)
+```bash
+curl -X POST "{base}/v1/webhook/memory/<WEBHOOK_TOKEN>" \
+  -H "Content-Type: application/json" \
+  --data-binary @bundle.json
+```
+WEBHOOK_TOKEN 은 GUI → 메모리 → 가져오기 탭에서 발급 (URL 한 번 발급 후 영구).
+
+### 채널 C — Peer 메시지 (다른 OpenXgram 인스턴스로)
+```bash
+xgram peer send --alias <peer-alias> --body "$(cat bundle.json)" --metadata kind=memory-import
+```
+받는 peer 측에서 자동 ingest.
+
+### 채널 D — MCP 도구 (Claude Desktop / Cursor / Continue 안에서 직접)
+`xgram mcp-serve` 가 노출하는 MCP 도구 `memory_import_bundle` 호출:
+```
+"이 대화 전체를 OpenXgram 메모리에 import 해 주세요"
+→ Claude Desktop 이 자동으로 memory_import_bundle({{...bundle...}}) MCP 호출
+```
+사용자가 OpenXgram 을 Claude Desktop / Cursor 에 MCP 로 등록한 경우 (`xgram init` 자동) — 가장 자연스러움.
+
+---
+
+## 4. 데스크탑 앱별 export 가이드 (출처 데이터 빼는 법)
+
+| 앱 | 방법 |
+|---|---|
+| **Claude Desktop** | 대화 좌상단 ⋮ → "Export conversation" → .json |
+| **Claude Code CLI** | OpenXgram daemon 이 자동 ingest 중 (`~/.claude/projects/*.jsonl`) — 별도 export 불필요 |
+| **Cursor** | Cmd+Shift+P → "Export Chat as JSON" |
+| **ChatGPT** | 설정 → Data controls → Export data → ZIP → conversations.json |
+| **Gemini** | google takeout → Bard → conversations.json |
+
+---
+
+## 5. 검증
+
+import 후 다음 URL 에서 확인:
+- 메모리 카드 → L0 raw 메시지 탭 (검색 가능)
+- 메모리 카드 → L2 위키 페이지 탭 (page_id 로 찾기)
+- 자율 행동 카드 → Reflection 즉시 실행 → L1 episodes 자동 추출 / L3 patterns 갱신
+"####, base = base);
+
+    Ok(Json(serde_json::json!({
+        "title": "OpenXgram memory import — 완전 프롬프트 (v2)",
+        "prompt": prompt,
+        "channels": {
+            "api": format!("{}/v1/gui/memory/import/bundle (Bearer auth)", base),
+            "webhook": format!("{}/v1/webhook/memory/<WEBHOOK_TOKEN> (token in URL)", base),
+            "peer": "xgram peer send --alias <peer> --metadata kind=memory-import",
+            "mcp": "xgram mcp-serve → tool: memory_import_bundle (Claude Desktop / Cursor)"
+        },
+        "extract_kinds": ["message", "episode", "wiki_fact", "pattern", "mistake"],
+        "spec_ref": "UI-MEMORY-SPEC v1.1 §K7 + 5층 (L0~L4)"
+    })))
+}
+
+/// `GET /v1/gui/memory/migration/export/:session_id` — sessions/messages 묶음 zip 다운로드.
+async fn gui_memory_migration_export(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+) -> Result<axum::response::Response, (StatusCode, Json<ErrorDto>)> {
+    use axum::response::IntoResponse;
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let session_row: serde_json::Value = db.conn().query_row(
+        "SELECT id, title, participants, created_at, last_active, home_machine FROM sessions WHERE id = ?1",
+        rusqlite::params![&session_id],
+        |r| Ok(serde_json::json!({
+            "id": r.get::<_, String>(0)?,
+            "title": r.get::<_, String>(1)?,
+            "participants": r.get::<_, String>(2)?,
+            "created_at": r.get::<_, String>(3)?,
+            "last_active": r.get::<_, String>(4)?,
+            "home_machine": r.get::<_, String>(5)?,
+        }))
+    ).map_err(|_| bad_request("session not found"))?;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, sender, body, signature, timestamp, conversation_id FROM messages WHERE session_id = ?1 ORDER BY timestamp"
+    ).map_err(|e| internal(&format!("db: {e}")))?;
+    let messages: Vec<serde_json::Value> = stmt.query_map(rusqlite::params![&session_id], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_, String>(0)?,
+            "sender": r.get::<_, String>(1)?,
+            "body": r.get::<_, String>(2)?,
+            "signature": r.get::<_, String>(3)?,
+            "timestamp": r.get::<_, String>(4)?,
+            "conversation_id": r.get::<_, Option<String>>(5)?,
+        }))
+    }).map_err(|e| internal(&format!("db: {e}")))?.filter_map(|r| r.ok()).collect();
+    let bundle = serde_json::json!({
+        "openxgram_export_version": 1,
+        "exported_at": chrono::Utc::now().to_rfc3339(),
+        "session": session_row,
+        "messages": messages
+    });
+    let safe = session_id.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
+    Ok((
+        StatusCode::OK,
+        [
+            ("content-type", "application/json"),
+            ("content-disposition", &*format!("attachment; filename=\"session-{}.json\"", safe.chars().take(60).collect::<String>())),
+        ],
+        bundle.to_string(),
+    ).into_response())
+}
+
+#[derive(serde::Deserialize)]
+struct MigrationImportBody {
+    bundle: serde_json::Value,
+}
+async fn gui_memory_migration_import(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<MigrationImportBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let session = body.bundle.get("session").ok_or_else(|| bad_request("missing session"))?;
+    let messages = body.bundle.get("messages").and_then(|m| m.as_array())
+        .ok_or_else(|| bad_request("missing messages array"))?;
+    let session_id = session.get("id").and_then(|v| v.as_str())
+        .ok_or_else(|| bad_request("missing session.id"))?;
+    let title = session.get("title").and_then(|v| v.as_str()).unwrap_or(session_id);
+    let participants = session.get("participants").and_then(|v| v.as_str()).unwrap_or("[]");
+    let now = chrono::Utc::now().to_rfc3339();
+    let home = session.get("home_machine").and_then(|v| v.as_str()).unwrap_or("imported");
+    let mut db = state.db.lock().await;
+    let _ = db.conn().execute(
+        "INSERT OR IGNORE INTO sessions (id, title, participants, created_at, last_active, home_machine) \
+         VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
+        rusqlite::params![session_id, title, participants, now, home],
+    );
+    let mut imported = 0;
+    for m in messages {
+        let id = match m.get("id").and_then(|v| v.as_str()) { Some(s) => s.to_string(), None => continue };
+        let sender = m.get("sender").and_then(|v| v.as_str()).unwrap_or("imported");
+        let mbody = m.get("body").and_then(|v| v.as_str()).unwrap_or("");
+        let sig = m.get("signature").and_then(|v| v.as_str()).unwrap_or("migration");
+        let ts = m.get("timestamp").and_then(|v| v.as_str()).unwrap_or(&now);
+        let conv = m.get("conversation_id").and_then(|v| v.as_str()).unwrap_or(session_id);
+        let r = crate::save_l0::save_l0_message(&mut db, crate::save_l0::L0SaveInput {
+            id: Some(id),
+            session_id,
+            session_title: Some(title),
+            sender,
+            body: mbody,
+            signature: sig,
+            timestamp: Some(ts),
+            parent_message_id: None,
+            conversation_id: Some(conv),
+            source: "migration_import",
+            extra_metadata: None,
+        });
+        if let Ok(res) = r { if res.inserted { imported += 1; } }
+    }
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "session_id": session_id,
+        "messages_imported": imported,
+        "total_in_bundle": messages.len()
+    })))
+}
+
+/// `POST /v1/gui/memory/extract-now` — patterns + mistakes 휴리스틱 즉시 실행.
+async fn gui_memory_extract_now(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let pre_patterns: i64 = {
+        let mut db = state.db.lock().await;
+        db.conn().query_row("SELECT COUNT(*) FROM memory_patterns", [], |r| r.get(0)).unwrap_or(0)
+    };
+    let pre_mistakes: i64 = {
+        let mut db = state.db.lock().await;
+        db.conn().query_row("SELECT COUNT(*) FROM mistakes", [], |r| r.get(0)).unwrap_or(0)
+    };
+    if let Err(e) = crate::daemon_workers::run_patterns_mistakes_extract(&state.db).await {
+        return Err(internal(&format!("extract: {e}")));
+    }
+    let post_patterns: i64 = {
+        let mut db = state.db.lock().await;
+        db.conn().query_row("SELECT COUNT(*) FROM memory_patterns", [], |r| r.get(0)).unwrap_or(0)
+    };
+    let post_mistakes: i64 = {
+        let mut db = state.db.lock().await;
+        db.conn().query_row("SELECT COUNT(*) FROM mistakes", [], |r| r.get(0)).unwrap_or(0)
+    };
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "patterns_added": post_patterns - pre_patterns,
+        "mistakes_added": post_mistakes - pre_mistakes,
+        "patterns_total": post_patterns,
+        "mistakes_total": post_mistakes,
+    })))
+}
+
+/// `GET /v1/gui/sessions/aliases` — 사용자 부여 display_name 전체 (identifier → display_name).
+async fn gui_session_aliases_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut map = serde_json::Map::new();
+    if let Ok(mut stmt) = db.conn().prepare(
+        "SELECT identifier, display_name, note, updated_at FROM session_aliases",
+    ) {
+        if let Ok(it) = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        }) {
+            for (id, name, note, updated) in it.flatten() {
+                map.insert(id, serde_json::json!({
+                    "display_name": name,
+                    "note": note,
+                    "updated_at": updated,
+                }));
+            }
+        }
+    }
+    Ok(Json(serde_json::Value::Object(map)))
+}
+
+#[derive(serde::Deserialize)]
+struct SessionAliasBody {
+    display_name: String,
+    note: Option<String>,
+}
+/// `POST /v1/gui/sessions/:identifier/alias` — display_name 저장.
+async fn gui_session_alias_set(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(identifier): Path<String>,
+    Json(body): Json<SessionAliasBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let name = body.display_name.trim().to_string();
+    if name.is_empty() || name.len() > 64 {
+        return Err(bad_request("display_name must be 1..=64 chars"));
+    }
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO session_aliases(identifier,display_name,note,updated_at) \
+         VALUES(?1,?2,?3,datetime('now')) \
+         ON CONFLICT(identifier) DO UPDATE SET \
+           display_name=excluded.display_name, \
+           note=excluded.note, \
+           updated_at=excluded.updated_at",
+        rusqlite::params![identifier, name, body.note],
+    ).map_err(|e| internal(&format!("db: {e}")))?;
+    Ok(Json(serde_json::json!({"ok": true, "identifier": identifier, "display_name": name})))
 }
 
 /// `GET /v1/gui/approvals` — 통합 승인 큐 (UI-MESSENGER-SPEC v1.3 §7.1, §7.3, V4).
@@ -1377,6 +2581,8 @@ pub struct SessionBindingBody {
     #[serde(default)] pub bot_label: Option<String>,
     #[serde(default)] pub mention_trigger: Option<String>,
     #[serde(default)] pub permission: Option<String>,
+    /// rc.92 — discord_bots.id (NULL 이면 default notify.toml 봇 사용)
+    #[serde(default)] pub bot_id: Option<String>,
 }
 
 async fn gui_session_binding_add(
@@ -1392,15 +2598,16 @@ async fn gui_session_binding_add(
     let mut db = state.db.lock().await;
     db.conn().execute(
         "INSERT INTO session_channel_bindings \
-            (id, agent_id, platform, channel_ref, bot_label, mention_trigger, permission, active, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8)",
+            (id, agent_id, platform, channel_ref, bot_label, mention_trigger, permission, active, created_at, bot_id) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9)",
         rusqlite::params![
             id, agent_id, body.platform, body.channel_ref,
             body.bot_label, body.mention_trigger,
             body.permission.unwrap_or_else(|| "reply".into()), now,
+            body.bot_id,
         ],
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("insert: {e}")})))?;
-    Ok(Json(serde_json::json!({"id": id, "agent_id": agent_id, "ok": true})))
+    Ok(Json(serde_json::json!({"id": id, "agent_id": agent_id, "bot_id": body.bot_id, "ok": true})))
 }
 
 async fn gui_session_binding_delete(
@@ -1836,14 +3043,67 @@ async fn gui_reflection_now(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    let now = chrono::Utc::now().to_rfc3339();
+    let started = chrono::Utc::now().to_rfc3339();
+    // 실제 reflection 실행 — openxgram_memory::reflect_all + derive_traits_from_patterns
+    let data_dir = state.data_dir.as_ref().clone();
+    let pre_counts = {
+        let mut db = state.db.lock().await;
+        let conn = db.conn();
+        let wiki: i64 = conn
+            .query_row("SELECT COUNT(*) FROM wiki_pages", [], |r| r.get(0))
+            .unwrap_or(0);
+        let patterns: i64 = conn
+            .query_row("SELECT COUNT(*) FROM memory_patterns", [], |r| r.get(0))
+            .unwrap_or(0);
+        (wiki, patterns)
+    };
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        use openxgram_db::{Db, DbConfig};
+        let mut db = Db::open(DbConfig {
+            path: data_dir.join("db.sqlite"),
+            ..Default::default()
+        })?;
+        openxgram_memory::reflect_all(&mut db)?;
+        openxgram_memory::derive_traits_from_patterns(&mut db)?;
+        Ok(())
+    })
+    .await;
+    let (success, summary) = match result {
+        Ok(Ok(())) => (true, "reflection_pass 완료".to_string()),
+        Ok(Err(e)) => (false, format!("reflection 실패: {e}")),
+        Err(e) => (false, format!("join 실패: {e}")),
+    };
+    let finished = chrono::Utc::now().to_rfc3339();
     let mut db = state.db.lock().await;
-    db.conn().execute(
+    let conn = db.conn();
+    let post_wiki: i64 = conn
+        .query_row("SELECT COUNT(*) FROM wiki_pages", [], |r| r.get(0))
+        .unwrap_or(0);
+    let post_patterns: i64 = conn
+        .query_row("SELECT COUNT(*) FROM memory_patterns", [], |r| r.get(0))
+        .unwrap_or(0);
+    let new_pages = post_wiki - pre_counts.0;
+    let patterns_found = post_patterns - pre_counts.1;
+    let _ = conn.execute(
         "INSERT INTO reflection_runs (started_at, finished_at, success, summary, new_pages, patterns_found) \
-         VALUES (?1, ?1, 1, ?2, 0, 0)",
-        rusqlite::params![now, "수동 reflection 실행 (M-14 nightly placeholder)"],
-    ).ok();
-    Ok(Json(serde_json::json!({"started_at": now, "note": "M-14 reflection worker 는 Phase 2"})))
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![
+            started,
+            finished,
+            if success { 1_i64 } else { 0 },
+            summary,
+            new_pages,
+            patterns_found
+        ],
+    );
+    Ok(Json(serde_json::json!({
+        "started_at": started,
+        "finished_at": finished,
+        "success": success,
+        "summary": summary,
+        "new_pages": new_pages,
+        "patterns_found": patterns_found
+    })))
 }
 
 // ── Memory M-2 merge + M-10 edit lock ─────────────────
@@ -2647,9 +3907,50 @@ async fn gui_ops_backup_status(
         "backup_dir": backup_dir.display().to_string(),
         "count": entries.len(),
         "last_at": last_at,
-        "next_scheduled": null,
+        "next_scheduled": "daily 03:00 (자동 cron)",
         "backup_files": entries,
-        "note": "백업 명령: xgram backup create. BIP39 마스터 키 필요. (Phase 2: 자동 스케줄)"
+        "note": "수동 백업: POST /v1/gui/ops/backup-now. 자동: 매일 03:00 cron."
+    })))
+}
+
+/// `POST /v1/gui/ops/backup-now` — 즉시 백업 (~/.openxgram/db.sqlite + keystore → backup/<ts>.tar.gz).
+async fn gui_ops_backup_now(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let data_dir = state.data_dir.as_ref().clone();
+    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let backup_dir = data_dir.join("backup");
+    let _ = std::fs::create_dir_all(&backup_dir);
+    let out = backup_dir.join(format!("backup-{ts}.tar.gz"));
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(String, u64)> {
+        let f = std::fs::File::create(&out)?;
+        let enc = flate2::write::GzEncoder::new(f, flate2::Compression::default());
+        let mut tar = tar::Builder::new(enc);
+        for name in ["db.sqlite", "keystore", "notify.toml", "install_manifest.json"] {
+            let p = data_dir.join(name);
+            if p.exists() {
+                if p.is_dir() {
+                    tar.append_dir_all(name, &p)?;
+                } else {
+                    let mut f = std::fs::File::open(&p)?;
+                    tar.append_file(name, &mut f)?;
+                }
+            }
+        }
+        tar.finish()?;
+        let size = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
+        Ok((out.display().to_string(), size))
+    })
+    .await
+    .map_err(|e| internal(&format!("backup join: {e}")))?
+    .map_err(|e| internal(&format!("backup: {e}")))?;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "file": result.0,
+        "size_bytes": result.1,
+        "created_at": ts
     })))
 }
 
@@ -2677,6 +3978,62 @@ async fn gui_ops_update_check(
         "channel": "stable",
         "up_to_date": latest_tag.as_ref().map(|t| t.trim_start_matches('v')) == current_release.as_deref(),
         "update_url": "https://github.com/OpenXgram/openxgram/releases/latest"
+    })))
+}
+
+/// `POST /v1/gui/ops/update-apply` — GitHub release asset 다운로드 + binary 교체 (재시작 필요).
+async fn gui_ops_update_apply(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let client = reqwest::Client::builder()
+        .user_agent("openxgram-daemon")
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| internal(&format!("http: {e}")))?;
+    let rel: serde_json::Value = client
+        .get("https://api.github.com/repos/OpenXgram/openxgram/releases/latest")
+        .send().await.map_err(|e| internal(&format!("latest fetch: {e}")))?
+        .json().await.map_err(|e| internal(&format!("json: {e}")))?;
+    let tag = rel.get("tag_name").and_then(|t| t.as_str()).unwrap_or("").to_string();
+    if tag.is_empty() {
+        return Err(internal("no tag in release"));
+    }
+    // Linux x86_64 asset 찾기
+    let arch_substr = if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
+        "linux-x86_64"
+    } else if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        "darwin-aarch64"
+    } else {
+        return Err(internal("unsupported platform for auto-update"));
+    };
+    let url = rel.get("assets").and_then(|a| a.as_array())
+        .and_then(|arr| arr.iter().find(|a| a.get("name").and_then(|n| n.as_str()).map(|n| n.contains(arch_substr)).unwrap_or(false)))
+        .and_then(|a| a.get("browser_download_url").and_then(|u| u.as_str()).map(String::from));
+    let url = match url {
+        Some(u) => u,
+        None => return Err(internal(&format!("no {arch_substr} asset in {tag}"))),
+    };
+    let bin_bytes = client.get(&url).send().await
+        .map_err(|e| internal(&format!("dl: {e}")))?
+        .bytes().await
+        .map_err(|e| internal(&format!("dl body: {e}")))?;
+    // /tmp 저장 → binary 교체는 사용자/systemd 수동
+    let staged = std::path::PathBuf::from("/tmp")
+        .join(format!("xgram-{}", tag.trim_start_matches('v')));
+    std::fs::write(&staged, &bin_bytes).map_err(|e| internal(&format!("write: {e}")))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755));
+    }
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "tag": tag,
+        "staged_at": staged.display().to_string(),
+        "size_bytes": bin_bytes.len(),
+        "next_step": format!("mv {} /home/llm/.local/bin/xgram && systemctl restart xgram-daemon", staged.display())
     })))
 }
 
@@ -2830,6 +4187,8 @@ async fn gui_peer_add(
         role: p.role.as_str().to_string(),
         created_at: p.created_at.to_rfc3339(),
         last_seen: p.last_seen.map(|t| t.to_rfc3339()),
+        description: None,
+        capabilities: vec![],
     }))
 }
 
@@ -3031,10 +4390,28 @@ async fn gui_peer_send(
         None,
         &body.body,
         &pw,
-        body.conversation_id,
+        body.conversation_id.clone(),
     )
     .await
     .map_err(|e| internal(&format!("peer_send: {e}")))?;
+    // L0 자동 저장 — outbound 메시지도 messages 테이블에 기록 (audit + reflection)
+    {
+        let session_id = format!("peer:{}", alias);
+        let mut db = state.db.lock().await;
+        let _ = crate::save_l0::save_l0_message(&mut db, crate::save_l0::L0SaveInput {
+            id: None,
+            session_id: &session_id,
+            session_title: Some(&format!("Peer · {}", alias)),
+            sender: "me",
+            body: &body.body,
+            signature: "outbound-signed",
+            timestamp: None,
+            parent_message_id: None,
+            conversation_id: body.conversation_id.as_deref(),
+            source: "messenger_outbound",
+            extra_metadata: Some(serde_json::json!({"peer_alias": alias})),
+        });
+    }
     // UI-MESSENGER-SPEC v1.3 S6 — LLM 토큰비 + x402 결제 합산.
     // 정확 cost: model + tokens_in + tokens_out 제공 시 정밀, 미제공 시 length proxy.
     let llm_micro: i64 = match (body.model.as_deref(), body.tokens_in, body.tokens_out) {
@@ -3219,6 +4596,28 @@ async fn gui_notify_telegram_detect_chat(
         .await
         .map_err(|e| internal(&format!("telegram detect_chat: {e}")))?;
     Ok(Json(chat))
+}
+
+/// `POST /v1/gui/notify/telegram/detect_chat_saved` — notify.toml 의 저장된 봇 토큰으로 chat_id 자동감지.
+async fn gui_notify_telegram_detect_chat_saved(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let config = crate::notify_setup::NotifyConfig::load(Some(state.data_dir.as_ref()))
+        .map_err(|e| internal(&format!("notify cfg load: {e}")))?;
+    let tg = config.telegram.ok_or_else(|| bad_request("텔레그램 봇 미등록. 채널 카드 → 채널 등록에서 봇 토큰 먼저 설정"))?;
+    let api_base = crate::notify_setup::telegram_api_base();
+    let chat = crate::notify_setup::telegram_detect_chat_id(&api_base, &tg.bot_token, 1)
+        .await
+        .map_err(|e| internal(&format!("telegram detect_chat: {e}")))?;
+    Ok(Json(serde_json::json!({
+        "chat_id": chat,
+        "found": chat.is_some(),
+        "hint": if chat.is_none() {
+            "텔레그램 봇에게 메시지를 1개 보낸 뒤 다시 시도 (getUpdates 가 마지막 update 만 반환)"
+        } else { "" }
+    })))
 }
 
 async fn gui_notify_telegram_save(
@@ -3653,4 +5052,585 @@ async fn agent_inject(
         session_id: session.id,
         conversation_id: msg.conversation_id,
     }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// rc.91 — Discord/Telegram 채널 ▶ 테스트 + 권한 진단 + 초대 URL
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct ChannelTestBody {
+    platform: String,
+    channel_ref: String,
+    text: String,
+}
+
+async fn gui_notify_channel_test(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<ChannelTestBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let cfg = crate::notify_setup::NotifyConfig::load(Some(&state.data_dir))
+        .map_err(|e| internal(&format!("notify.toml load: {e}")))?;
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| internal(&format!("http: {e}")))?;
+    match body.platform.as_str() {
+        "discord" => {
+            let token = cfg.discord.as_ref()
+                .map(|d| d.bot_token.clone())
+                .filter(|t| !t.is_empty())
+                .ok_or_else(|| bad_request("Discord bot_token 미설정 — 채널 카드에서 등록"))?;
+            let url = format!("https://discord.com/api/v10/channels/{}/messages", body.channel_ref);
+            let resp = http.post(&url)
+                .header("Authorization", format!("Bot {token}"))
+                .json(&serde_json::json!({"content": body.text}))
+                .send().await
+                .map_err(|e| internal(&format!("discord post: {e}")))?;
+            let status = resp.status();
+            let rb = resp.text().await.unwrap_or_default();
+            if status.is_success() {
+                Ok(Json(serde_json::json!({"ok": true, "message": format!("Discord {} 전송 OK", body.channel_ref)})))
+            } else {
+                Ok(Json(serde_json::json!({"ok": false, "message": format!("Discord HTTP {}: {}", status, rb)})))
+            }
+        }
+        "telegram" => {
+            let token = cfg.telegram.as_ref()
+                .map(|t| t.bot_token.clone())
+                .filter(|t| !t.is_empty())
+                .ok_or_else(|| bad_request("Telegram bot_token 미설정"))?;
+            let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+            let resp = http.post(&url)
+                .json(&serde_json::json!({"chat_id": body.channel_ref, "text": body.text}))
+                .send().await
+                .map_err(|e| internal(&format!("telegram send: {e}")))?;
+            let status = resp.status();
+            let rb = resp.text().await.unwrap_or_default();
+            if status.is_success() {
+                Ok(Json(serde_json::json!({"ok": true, "message": format!("Telegram {} 전송 OK", body.channel_ref)})))
+            } else {
+                Ok(Json(serde_json::json!({"ok": false, "message": format!("Telegram HTTP {}: {}", status, rb)})))
+            }
+        }
+        other => Err(bad_request(&format!("platform 미지원: {other}"))),
+    }
+}
+
+async fn gui_notify_discord_permissions(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let channel_id = params.get("channel_id").cloned()
+        .ok_or_else(|| bad_request("channel_id query 필요"))?;
+    let cfg = crate::notify_setup::NotifyConfig::load(Some(&state.data_dir))
+        .map_err(|e| internal(&format!("notify.toml load: {e}")))?;
+    let token = cfg.discord.as_ref()
+        .map(|d| d.bot_token.clone())
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| bad_request("Discord bot_token 미설정"))?;
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| internal(&format!("http: {e}")))?;
+    let ch_resp = http.get(&format!("https://discord.com/api/v10/channels/{}", channel_id))
+        .header("Authorization", format!("Bot {token}"))
+        .send().await
+        .map_err(|e| internal(&format!("channel get: {e}")))?;
+    let ch_status = ch_resp.status();
+    if !ch_status.is_success() {
+        let rb = ch_resp.text().await.unwrap_or_default();
+        return Ok(Json(serde_json::json!({
+            "ok": false,
+            "message": format!("채널 조회 실패 HTTP {}: {}", ch_status, rb),
+            "hint": "봇이 채널에 초대되어 있는지 확인 — invite URL 사용"
+        })));
+    }
+    let ch_json: serde_json::Value = ch_resp.json().await.unwrap_or_default();
+    let guild_id = ch_json.get("guild_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let ch_name = ch_json.get("name").and_then(|v| v.as_str()).unwrap_or("?").to_string();
+    let me_resp = http.get("https://discord.com/api/v10/users/@me")
+        .header("Authorization", format!("Bot {token}"))
+        .send().await
+        .map_err(|e| internal(&format!("me: {e}")))?;
+    let me_json: serde_json::Value = me_resp.json().await.unwrap_or_default();
+    let bot_id = me_json.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let mut roles: Vec<String> = vec![];
+    if !guild_id.is_empty() && !bot_id.is_empty() {
+        let mem_url = format!("https://discord.com/api/v10/guilds/{}/members/{}", guild_id, bot_id);
+        if let Ok(r) = http.get(&mem_url)
+            .header("Authorization", format!("Bot {token}"))
+            .send().await {
+            if let Ok(j) = r.json::<serde_json::Value>().await {
+                if let Some(rs) = j.get("roles").and_then(|v| v.as_array()) {
+                    roles = rs.iter().filter_map(|r| r.as_str().map(String::from)).collect();
+                }
+            }
+        }
+    }
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "channel_id": channel_id,
+        "channel_name": ch_name,
+        "guild_id": guild_id,
+        "bot_id": bot_id,
+        "bot_roles": roles,
+        "hint": if roles.is_empty() { "봇 역할 없음 — invite URL 로 재초대" } else { "권한 확인됨" }
+    })))
+}
+
+async fn gui_notify_discord_invite_url(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let cfg = crate::notify_setup::NotifyConfig::load(Some(&state.data_dir))
+        .map_err(|e| internal(&format!("notify.toml load: {e}")))?;
+    let token = cfg.discord.as_ref()
+        .map(|d| d.bot_token.clone())
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| bad_request("Discord bot_token 미설정"))?;
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| internal(&format!("http: {e}")))?;
+    let me_resp = http.get("https://discord.com/api/v10/users/@me")
+        .header("Authorization", format!("Bot {token}"))
+        .send().await
+        .map_err(|e| internal(&format!("me: {e}")))?;
+    let me_json: serde_json::Value = me_resp.json().await.unwrap_or_default();
+    let bot_id = me_json.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if bot_id.is_empty() { return Err(bad_request("bot id 조회 실패 — token 잘못됨")); }
+    // VIEW_CHANNEL + SEND_MESSAGES + READ_MSG_HISTORY + ATTACH_FILES + EMBED_LINKS + EXT_EMOJIS + ADD_REACTIONS + MANAGE_MESSAGES + MENTION_EVERYONE
+    let perms: u64 = 1024 + 2048 + 65536 + 32768 + 16384 + 262144 + 64 + 8192 + 131072;
+    let url = format!(
+        "https://discord.com/api/oauth2/authorize?client_id={}&permissions={}&scope=bot%20applications.commands",
+        bot_id, perms
+    );
+    Ok(Json(serde_json::json!({"invite_url": url, "bot_id": bot_id, "permissions": perms})))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// rc.91 outbound worker — 30초마다 binding 의 세션 pane capture diff → 채널 post
+// ─────────────────────────────────────────────────────────────────────────────
+pub async fn run_discord_outbound_worker(state: GuiServerState) {
+    use std::collections::HashMap;
+    let mut last_caps: HashMap<String, String> = HashMap::new();
+    let portal_url = std::env::var("XGRAM_PORTAL_URL").unwrap_or_else(|_| "http://127.0.0.1:9400".into());
+    let portal_token = std::env::var("XGRAM_PORTAL_TOKEN").unwrap_or_else(|_| "0205".into());
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+    interval.tick().await;
+    tracing::info!("discord/telegram outbound worker started (30s polling)");
+    loop {
+        interval.tick().await;
+        // rc.92 — binding 의 bot_id 와 함께 조회. discord_bots LEFT JOIN.
+        let bindings: Vec<(String, String, String, Option<String>)> = {
+            let mut db = state.db.lock().await;
+            let v: Result<Vec<_>, rusqlite::Error> = db.conn().prepare(
+                "SELECT b.agent_id, b.platform, b.channel_ref, db.bot_token \
+                 FROM session_channel_bindings b \
+                 LEFT JOIN discord_bots db ON b.bot_id = db.id AND db.active = 1 \
+                 WHERE b.platform IN ('discord','telegram') AND b.active = 1 AND b.permission != 'read_only'"
+            ).and_then(|mut s| {
+                s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?)))
+                 .and_then(|m| m.collect())
+            });
+            v.unwrap_or_default()
+        };
+        if bindings.is_empty() { continue; }
+        let cfg = match crate::notify_setup::NotifyConfig::load(Some(&state.data_dir)) { Ok(c) => c, Err(_) => continue };
+        let default_discord_tok = cfg.discord.as_ref().map(|d| d.bot_token.clone()).filter(|t| !t.is_empty());
+        let telegram_tok = cfg.telegram.as_ref().map(|t| t.bot_token.clone()).filter(|t| !t.is_empty());
+
+        for (agent_id, platform, channel_ref, binding_bot_tok) in bindings {
+            let (session, idx) = if let Some(rest) = agent_id.strip_prefix("portal:") {
+                let mut parts = rest.splitn(2, ':');
+                let first = parts.next().unwrap_or("");
+                let rest2 = parts.next().unwrap_or("");
+                if first.parse::<u32>().is_ok() && !rest2.contains(':') { continue; }
+                let i = rest2.split(':').next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+                (first.to_string(), i)
+            } else if let Some(rest) = agent_id.strip_prefix("aoe:") {
+                let s = rest.split(':').next().unwrap_or("");
+                if s.is_empty() { continue; }
+                (s.to_string(), 0u32)
+            } else { continue };
+
+            let cap_url = format!("{}/api/tmux/capture?session={}&window={}&lines=400&escape=0&token={}",
+                portal_url.trim_end_matches('/'), session, idx, portal_token);
+            let cap = match http.get(&cap_url).send().await {
+                Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok()
+                    .and_then(|v| v.get("text").and_then(|t| t.as_str()).map(String::from))
+                    .unwrap_or_default(),
+                _ => continue,
+            };
+            let key = format!("{}::{}", platform, agent_id);
+            let last = last_caps.get(&key).cloned().unwrap_or_default();
+            if cap == last { continue; }
+            let new_part: String = if last.is_empty() {
+                String::new()
+            } else if cap.starts_with(&last) {
+                cap[last.len()..].to_string()
+            } else {
+                let needle: String = last.chars().rev().take(80).collect::<String>().chars().rev().collect();
+                cap.rfind(&needle).map(|i| cap[i + needle.len()..].to_string()).unwrap_or_default()
+            };
+            last_caps.insert(key, cap);
+            let trimmed = new_part.trim();
+            if trimmed.is_empty() || trimmed.len() < 10 { continue; }
+            let max = if platform == "discord" { 1800 } else { 3800 };
+            let payload = if trimmed.len() > max {
+                format!("...(truncated)...\n{}", &trimmed[trimmed.len() - max..])
+            } else { trimmed.to_string() };
+            match platform.as_str() {
+                "discord" => {
+                    // binding 의 bot_token 우선, 없으면 default (notify.toml)
+                    let tok_owned = binding_bot_tok.clone().or_else(|| default_discord_tok.clone());
+                    let Some(tok) = tok_owned else { continue };
+                    let url = format!("https://discord.com/api/v10/channels/{}/messages", channel_ref);
+                    let _ = http.post(&url)
+                        .header("Authorization", format!("Bot {}", tok))
+                        .json(&serde_json::json!({"content": format!("```\n{}\n```", payload)}))
+                        .send().await;
+                }
+                "telegram" => {
+                    let Some(tok) = &telegram_tok else { continue };
+                    let url = format!("https://api.telegram.org/bot{}/sendMessage", tok);
+                    let _ = http.post(&url)
+                        .json(&serde_json::json!({"chat_id": channel_ref, "text": payload}))
+                        .send().await;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// rc.92 — 멀티 디스코드 봇 CRUD
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct DiscordBotDto {
+    id: String,
+    alias: String,
+    bot_user_id: Option<String>,
+    owner: Option<String>,
+    active: bool,
+    created_at: String,
+    /// token 은 클라이언트에 노출 안 함 (보안). prefix 만.
+    token_prefix: String,
+}
+
+async fn gui_discord_bots_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<DiscordBotDto>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let rows: rusqlite::Result<Vec<DiscordBotDto>> = db.conn().prepare(
+        "SELECT id, alias, bot_user_id, owner, active, created_at, bot_token \
+         FROM discord_bots ORDER BY created_at DESC"
+    ).and_then(|mut s| {
+        s.query_map([], |r| {
+            let token: String = r.get(6)?;
+            let prefix: String = token.chars().take(12).collect::<String>() + "...";
+            Ok(DiscordBotDto {
+                id: r.get(0)?,
+                alias: r.get(1)?,
+                bot_user_id: r.get(2)?,
+                owner: r.get(3)?,
+                active: r.get::<_, i64>(4)? != 0,
+                created_at: r.get(5)?,
+                token_prefix: prefix,
+            })
+        }).and_then(|m| m.collect())
+    });
+    Ok(Json(rows.unwrap_or_default()))
+}
+
+#[derive(serde::Deserialize)]
+struct DiscordBotAddBody {
+    alias: String,
+    bot_token: String,
+    owner: Option<String>,
+}
+
+async fn gui_discord_bots_add(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<DiscordBotAddBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    if body.alias.trim().is_empty() || body.bot_token.trim().is_empty() {
+        return Err(bad_request("alias + bot_token 필요"));
+    }
+    // 토큰으로 봇 검증 (bot_user_id 추출)
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| internal(&format!("http: {e}")))?;
+    let me_resp = http.get("https://discord.com/api/v10/users/@me")
+        .header("Authorization", format!("Bot {}", body.bot_token.trim()))
+        .send().await
+        .map_err(|e| internal(&format!("validate: {e}")))?;
+    let me_status = me_resp.status();
+    let me_json: serde_json::Value = me_resp.json().await.unwrap_or_default();
+    if !me_status.is_success() {
+        return Err(bad_request(&format!("token 검증 실패 HTTP {}: {}", me_status, me_json)));
+    }
+    let bot_user_id = me_json.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let bot_username = me_json.get("username").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    use sha2::{Digest, Sha256};
+    let id = format!("{:x}", Sha256::digest(format!("{}{}", body.alias, body.bot_token).as_bytes()))[..20].to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO discord_bots (id, alias, bot_token, bot_user_id, owner, active, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6) \
+         ON CONFLICT(alias) DO UPDATE SET bot_token=excluded.bot_token, bot_user_id=excluded.bot_user_id, owner=excluded.owner",
+        rusqlite::params![id, body.alias.trim(), body.bot_token.trim(), bot_user_id, body.owner.unwrap_or_else(|| "self".into()), now],
+    ).map_err(|e| internal(&format!("insert: {e}")))?;
+    Ok(Json(serde_json::json!({
+        "id": id,
+        "alias": body.alias,
+        "bot_user_id": bot_user_id,
+        "bot_username": bot_username,
+        "ok": true,
+        "note": "daemon restart 후 listener 가 새 봇으로 spawn 됩니다"
+    })))
+}
+
+async fn gui_discord_bots_delete(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    db.conn().execute("DELETE FROM discord_bots WHERE id = ?1", rusqlite::params![id])
+        .map_err(|e| internal(&format!("delete: {e}")))?;
+    Ok(Json(serde_json::json!({"ok": true, "id": id})))
+}
+
+// rc.92 — 특정 봇의 가입 서버 + text channel 자동 조회 (UI dropdown 용)
+async fn gui_discord_bot_channels(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let bot_id_opt = params.get("bot_id").cloned();
+    // bot_id 없으면 default (notify.toml)
+    let token: String = if let Some(bid) = bot_id_opt.as_ref() {
+        if bid.is_empty() || bid == "default" {
+            crate::notify_setup::NotifyConfig::load(Some(&state.data_dir))
+                .ok().and_then(|c| c.discord.map(|d| d.bot_token))
+                .filter(|t| !t.is_empty())
+                .ok_or_else(|| bad_request("default discord bot 미등록"))?
+        } else {
+            let mut db = state.db.lock().await;
+            db.conn().query_row(
+                "SELECT bot_token FROM discord_bots WHERE id = ?1 AND active = 1",
+                rusqlite::params![bid], |r| r.get::<_, String>(0)
+            ).map_err(|_| bad_request("bot_id 미존재"))?
+        }
+    } else {
+        crate::notify_setup::NotifyConfig::load(Some(&state.data_dir))
+            .ok().and_then(|c| c.discord.map(|d| d.bot_token))
+            .filter(|t| !t.is_empty())
+            .ok_or_else(|| bad_request("discord bot token 미설정"))?
+    };
+    let http = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build()
+        .map_err(|e| internal(&format!("http: {e}")))?;
+    // guilds 조회
+    let guilds: Vec<serde_json::Value> = match http.get("https://discord.com/api/v10/users/@me/guilds")
+        .header("Authorization", format!("Bot {token}"))
+        .send().await {
+        Ok(r) if r.status().is_success() => r.json::<Vec<serde_json::Value>>().await.unwrap_or_default(),
+        _ => vec![],
+    };
+    // 각 guild 의 channel list
+    let mut all_channels: Vec<serde_json::Value> = Vec::new();
+    for g in &guilds {
+        let gid = g.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let gname = g.get("name").and_then(|v| v.as_str()).unwrap_or("?").to_string();
+        if gid.is_empty() { continue; }
+        if let Ok(r) = http.get(&format!("https://discord.com/api/v10/guilds/{}/channels", gid))
+            .header("Authorization", format!("Bot {token}"))
+            .send().await {
+            if let Ok(arr) = r.json::<Vec<serde_json::Value>>().await {
+                for ch in arr {
+                    if ch.get("type").and_then(|v| v.as_i64()) == Some(0) {  // GUILD_TEXT
+                        all_channels.push(serde_json::json!({
+                            "guild_id": gid,
+                            "guild_name": gname,
+                            "channel_id": ch.get("id"),
+                            "channel_name": ch.get("name"),
+                        }));
+                    }
+                }
+            }
+        }
+    }
+    Ok(Json(serde_json::json!({
+        "guilds_count": guilds.len(),
+        "channels": all_channels,
+    })))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// rc.92 — 채널 카드 종합 정보 (모든 봇 + 가입 서버 + 채널 + binding 통계)
+// ─────────────────────────────────────────────────────────────────────────────
+async fn gui_channels_summary(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let cfg = crate::notify_setup::NotifyConfig::load(Some(&state.data_dir))
+        .map_err(|e| internal(&format!("notify.toml load: {e}")))?;
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| internal(&format!("http: {e}")))?;
+
+    // 1) 모든 디스코드 봇 (default + extra) 수집
+    let mut all_discord_bots: Vec<(String, String, String)> = Vec::new(); // (source, alias, token)
+    if let Some(d) = cfg.discord.as_ref() {
+        if !d.bot_token.is_empty() {
+            all_discord_bots.push(("default(notify.toml)".into(), "default".into(), d.bot_token.clone()));
+        }
+    }
+    let mut db = state.db.lock().await;
+    if let Ok(mut stmt) = db.conn().prepare(
+        "SELECT alias, bot_token FROM discord_bots WHERE active = 1"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+            for row in rows.flatten() {
+                all_discord_bots.push(("discord_bots".into(), row.0, row.1));
+            }
+        }
+    }
+
+    // 2) bindings stats (per platform)
+    let mut binding_stats: std::collections::HashMap<String, i64> = Default::default();
+    if let Ok(mut stmt) = db.conn().prepare(
+        "SELECT platform, COUNT(*) FROM session_channel_bindings WHERE active = 1 GROUP BY platform"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))) {
+            for row in rows.flatten() {
+                binding_stats.insert(row.0, row.1);
+            }
+        }
+    }
+    let bindings_per_channel: Vec<(String, String, i64)> = {
+        if let Ok(mut stmt) = db.conn().prepare(
+            "SELECT platform, channel_ref, COUNT(*) FROM session_channel_bindings WHERE active = 1 GROUP BY platform, channel_ref"
+        ) {
+            stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)))
+                .and_then(|m| m.collect()).unwrap_or_default()
+        } else { vec![] }
+    };
+    drop(db);
+
+    // 3) 각 디스코드 봇의 상세 정보 — bot user, guilds
+    let mut discord_bots_info: Vec<serde_json::Value> = Vec::new();
+    for (source, alias, token) in &all_discord_bots {
+        let mut bot_username = String::new();
+        let mut bot_id = String::new();
+        let mut guilds: Vec<serde_json::Value> = vec![];
+        let mut error: Option<String> = None;
+        // /users/@me
+        match http.get("https://discord.com/api/v10/users/@me")
+            .header("Authorization", format!("Bot {token}"))
+            .send().await {
+            Ok(r) if r.status().is_success() => {
+                if let Ok(j) = r.json::<serde_json::Value>().await {
+                    bot_username = j.get("username").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    bot_id = j.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                }
+            }
+            Ok(r) => error = Some(format!("HTTP {}", r.status())),
+            Err(e) => error = Some(format!("network: {e}")),
+        }
+        // /users/@me/guilds
+        if !bot_id.is_empty() {
+            if let Ok(r) = http.get("https://discord.com/api/v10/users/@me/guilds")
+                .header("Authorization", format!("Bot {token}"))
+                .send().await {
+                if let Ok(arr) = r.json::<Vec<serde_json::Value>>().await {
+                    for g in arr {
+                        guilds.push(serde_json::json!({
+                            "id": g.get("id"),
+                            "name": g.get("name"),
+                            "owner": g.get("owner"),
+                        }));
+                    }
+                }
+            }
+        }
+        discord_bots_info.push(serde_json::json!({
+            "source": source,
+            "alias": alias,
+            "bot_username": bot_username,
+            "bot_id": bot_id,
+            "token_prefix": token.chars().take(16).collect::<String>(),
+            "guilds": guilds,
+            "guilds_count": guilds.len(),
+            "error": error,
+        }));
+    }
+
+    // 4) Telegram 봇 정보
+    let mut telegram_info: Option<serde_json::Value> = None;
+    if let Some(t) = cfg.telegram.as_ref() {
+        if !t.bot_token.is_empty() {
+            let mut bot_username = String::new();
+            let mut bot_id: i64 = 0;
+            let mut error: Option<String> = None;
+            match http.get(&format!("https://api.telegram.org/bot{}/getMe", t.bot_token))
+                .send().await {
+                Ok(r) if r.status().is_success() => {
+                    if let Ok(j) = r.json::<serde_json::Value>().await {
+                        if let Some(res) = j.get("result") {
+                            bot_username = res.get("username").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            bot_id = res.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+                        }
+                    }
+                }
+                Ok(r) => error = Some(format!("HTTP {}", r.status())),
+                Err(e) => error = Some(format!("network: {e}")),
+            }
+            telegram_info = Some(serde_json::json!({
+                "bot_username": bot_username,
+                "bot_id": bot_id,
+                "token_prefix": t.bot_token.chars().take(12).collect::<String>(),
+                "error": error,
+            }));
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "discord": {
+            "bots_count": discord_bots_info.len(),
+            "bots": discord_bots_info,
+        },
+        "telegram": telegram_info,
+        "bindings": {
+            "stats_per_platform": binding_stats,
+            "stats_per_channel": bindings_per_channel.iter().map(|(p, c, n)| serde_json::json!({
+                "platform": p, "channel_ref": c, "count": n
+            })).collect::<Vec<_>>(),
+        },
+    })))
 }

@@ -11,6 +11,9 @@ interface PeerMeta {
  public_key_hex: string;
  machine?: string;
  last_seen?: string;
+ // rc.92 D2 — capabilities
+ description?: string | null;
+ capabilities?: string[];
 }
 
 interface NotifyStatus {
@@ -39,7 +42,7 @@ const TABS: { id: TabId; label: string; icon: string}[] = [
  { id: "channel", label: "채널 바인딩", icon: ""},
  { id: "status", label: "상태·리소스", icon: ""},
  { id: "history", label: "히스토리", icon: ""},
- { id: "export", label: "내보내기", icon: ""},
+ { id: "export", label: "가져오기·내보내기", icon: ""},
  { id: "wallet", label: "지갑·결제", icon: ""},
  { id: "tokens", label: "토큰", icon: ""},
  { id: "cron", label: "Cron", icon: ""},
@@ -133,12 +136,298 @@ export function AgentSidePanel(props: {
 );
 }
 
+// ── 세션 import: 이 터미널 session 으로 직접 적재 ─────────────────
+function SessionImportSection(props: { sessionId: string}) {
+ const [text, setText] = createSignal("");
+ const [busy, setBusy] = createSignal(false);
+ const [result, setResult] = createSignal<string | null>(null);
+ const [promptVisible, setPromptVisible] = createSignal(false);
+ const [channel, setChannel] = createSignal<"paste" | "webhook" | "api" | "mcp">("paste");
+ const [webhookData, setWebhookData] = createSignal<any>(null);
+
+ async function ensureWebhook() {
+ try {
+ let d = await invoke<any>("memory_webhook_token");
+ if (!d?.exists) d = await invoke<any>("memory_webhook_rotate");
+ setWebhookData(d);
+ } catch (e) { alert("webhook 발급 실패: " + e);}
+ }
+
+ // 채널-특화 단일 프롬프트 (Bearer 토큰 자동, webhook URL 자동 발급)
+ const [bearerToken, setBearerToken] = createSignal<string>("");
+ const buildPrompt = async (): Promise<string> => {
+ const base = window.location.origin;
+ const sid = props.sessionId;
+ const ch = channel();
+ // bearer 토큰: localStorage 의 session_token 또는 unlock 다시 해서 받기
+ let bearer = bearerToken();
+ if (!bearer && ch === "api") {
+ bearer = localStorage.getItem("xgram_session_token") || "";
+ if (!bearer) bearer = "<로그인 후 GUI 의 localStorage xgram_session_token 복사>";
+ setBearerToken(bearer);
+ }
+ // webhook URL: 자동 발급
+ let webhookUrl = "";
+ if (ch === "webhook") {
+ if (!webhookData()) await ensureWebhook();
+ webhookUrl = webhookData()?.webhook_url || "";
+ }
+ const head = `# OpenXgram 메모리 가져오기 — 이 세션 (${sid}) 으로 import
+
+당신은 외부 LLM 입니다. 현재 우리가 진행 중인 이 대화의 핵심을 OpenXgram 메모리로 보내야 합니다.
+
+## 1. 무엇을 추출
+
+5종 항목 중 해당하는 것들을 정리:
+- **message**: 모든 의미 있는 발화·응답
+- **episode**: 한 작업 흐름 요약
+- **wiki_fact**: 영구 사실/정의 (위키 페이지로 격상)
+- **pattern**: 사용자 반복 행동·선호·규칙
+- **mistake**: 실수 + 교훈
+
+## 2. 출력 형식 (JSON 단일 객체, session_id 는 그대로 유지)
+
+\`\`\`json
+{
+  "openxgram_import_version": 1,
+  "source_app": "Claude Desktop / ChatGPT / Cursor / Gemini / 기타",
+  "session_id": "${sid}",
+  "session_title": "한 줄 요약",
+  "items": [
+    {"type":"message","sender":"user","body":"...","timestamp":"2026-05-22T10:00:00Z"},
+    {"type":"wiki_fact","page_id":"some-id","title":"제목","page_type":"concept","content":"# 제목\\n본문"},
+    {"type":"pattern","pattern_type":"preference","description":"사용자는 ...","confidence":0.9},
+    {"type":"mistake","intended_action":"...","actual_outcome":"...","failure_reason":"...","lesson":"...","severity":5}
+  ]
+}
+\`\`\`
+
+## 3. 보내는 방법 (선택: ${ch})
+
+`;
+ let body = "";
+ if (ch === "paste") {
+ body = `위 JSON 을 그대로 W님께 답장으로 출력하세요. W님이 OpenXgram → 메신저 → 사이드패널 → 내보내기 탭 → textarea 에 붙여넣고 "이 세션에 import" 클릭.`;
+ } else if (ch === "webhook") {
+ body = `다음 webhook URL 로 직접 POST 하세요 (Bearer 인증 없음, URL 자체가 토큰):
+
+\`\`\`bash
+curl -X POST "${webhookUrl}" \\
+  -H "Content-Type: application/json" \\
+  -d '<<위 JSON 그대로>>'
+\`\`\`
+
+당신이 도구 (예: \`fetch\`/\`shell\`) 를 가지고 있으면 직접 실행하세요. 없으면 사용자가 위 명령을 실행해 줄 수 있도록 출력만 하세요.`;
+ } else if (ch === "api") {
+ body = `다음 curl 로 POST 하세요 (Bearer 토큰 포함):
+
+\`\`\`bash
+curl -X POST "${base}/v1/gui/memory/import/bundle" \\
+  -H "Authorization: Bearer ${bearer}" \\
+  -H "Content-Type: application/json" \\
+  -d '<<위 JSON 그대로>>'
+\`\`\`
+
+⚠️ Bearer 토큰은 W님 개인 세션 토큰 — 외부에 노출 금지.`;
+ } else if (ch === "mcp") {
+ body = `Claude Desktop / Cursor 에 OpenXgram MCP 가 등록되어 있으면 직접 도구 호출:
+
+\`\`\`
+memory_import_bundle({
+  openxgram_import_version: 1,
+  session_id: "${sid}",
+  session_title: "...",
+  items: [...]
+})
+\`\`\`
+
+MCP 등록 안 됐으면 \`xgram init\` 자동 통합 후 Claude Desktop 재시작.`;
+ }
+ return head + body + `
+
+---
+
+이제 지금까지의 이 대화 전체를 분석해서 위 JSON 형식으로 정리한 뒤, **위 "보내는 방법" 그대로 실행 또는 출력**해 주세요.`;
+ };
+
+ async function copyPrompt() {
+ try {
+ const p = await buildPrompt();
+ await navigator.clipboard.writeText(p);
+ alert("프롬프트 복사됨 — 외부 LLM 채팅창에 붙여넣기");
+ } catch (e) { alert("실패: " + e);}
+ }
+ async function showPrompt() {
+ setPromptVisible(true);
+ const p = await buildPrompt();
+ (document.getElementById(`prompt-preview-${props.sessionId.replace(/[^a-z0-9]/gi,'')}`) as HTMLElement | null)
+ ?.replaceChildren(document.createTextNode(p));
+ }
+
+ async function doImport() {
+ const raw = text().trim();
+ if (!raw) return;
+ setBusy(true);
+ try {
+ // 자동 감지: JSON bundle 이면 그대로, 아니면 한 줄 = 한 메시지 (jsonl) 또는 markdown
+ let bundle: any;
+ if (raw.startsWith("{")) {
+ bundle = JSON.parse(raw);
+ // session_id override → 이 터미널로 적재
+ bundle.session_id = props.sessionId;
+ if (!bundle.items) bundle.items = [];
+ } else if (raw.includes('"sender"')) {
+ // jsonl
+ const items = raw.split('\n').filter(l => l.trim()).map(l => {
+ const m = JSON.parse(l);
+ return { type: "message", sender: m.sender || "imported", body: m.body || m.content || l,
+ timestamp: m.timestamp || new Date().toISOString()};
+ });
+ bundle = { session_id: props.sessionId, source_app: "manual-paste", items};
+ } else {
+ // plain text → 한 메시지로
+ bundle = {
+ session_id: props.sessionId,
+ source_app: "manual-paste",
+ items: [{ type: "message", sender: "imported", body: raw, timestamp: new Date().toISOString()}]
+ };
+ }
+ const r = await invoke<any>("memory_import_bundle", bundle);
+ setResult(`✓ ${r.items_processed ?? 0} 항목 적재, messages ${r.inserted?.messages ?? 0}, wiki ${r.inserted?.wiki_pages ?? 0}, patterns ${r.inserted?.patterns ?? 0}, episodes ${r.inserted?.episodes ?? 0}, mistakes ${r.inserted?.mistakes ?? 0}`);
+ setText("");
+ } catch (e) { setResult("실패: " + String(e));}
+ finally { setBusy(false);}
+ }
+ return (
+ <section style="margin-top:14px; padding-top:10px; border-top:1px solid var(--border);">
+ <strong style="font-size:13px;">가져오기 (Import → 이 세션)</strong>
+ <p style="font-size:11px; color:var(--text-3); margin:4px 0;">
+ <strong>이 세션</strong> ({props.sessionId.slice(0,30)}) 으로 외부 LLM 의 대화·메모리를 적재.
+ </p>
+
+ {/* 1단계 — 채널 선택 */}
+ <div style="margin-top:8px;">
+ <div style="font-size:11px; color:var(--text-3); margin-bottom:4px;">1) 외부 LLM 이 어떻게 보낼지 선택:</div>
+ <div style="display:flex; gap:4px; flex-wrap:wrap;">
+ <button class={"link-btn " + (channel() === "paste" ? "active" : "")}
+ onClick={() => setChannel("paste")} style="font-size:11px;">A) 결과 붙여넣기</button>
+ <button class={"link-btn " + (channel() === "webhook" ? "active" : "")}
+ onClick={async () => { setChannel("webhook"); if (!webhookData()) await ensureWebhook();}}
+ style="font-size:11px;">B) Webhook</button>
+ <button class={"link-btn " + (channel() === "api" ? "active" : "")}
+ onClick={() => setChannel("api")} style="font-size:11px;">C) API curl</button>
+ <button class={"link-btn " + (channel() === "mcp" ? "active" : "")}
+ onClick={() => setChannel("mcp")} style="font-size:11px;">D) MCP (Claude Desktop)</button>
+ </div>
+ </div>
+
+ {/* 2단계 — 단일 통합 프롬프트 (채널·토큰·URL 모두 포함) */}
+ <div style="margin-top:10px;">
+ <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; color:var(--text-3);">
+ <span>2) 선택한 채널 ({channel()}) 까지 포함된 통합 프롬프트:</span>
+ <div>
+ <button class="link-btn" onClick={() => promptVisible() ? setPromptVisible(false) : showPrompt()} style="font-size:11px;">
+ {promptVisible() ? "접기" : "보기"}
+ </button>
+ <button class="link-btn" style="font-size:11px; margin-left:4px; background:#06c; color:white;"
+ onClick={copyPrompt}>
+ 📋 통합 프롬프트 복사
+ </button>
+ </div>
+ </div>
+ <Show when={promptVisible()}>
+ <pre id={`prompt-preview-${props.sessionId.replace(/[^a-z0-9]/gi,'')}`} style="margin-top:6px; padding:8px; background:var(--surface-2); border-radius:4px; font-size:10px; max-height:240px; overflow:auto; white-space:pre-wrap; line-height:1.4;">(로딩 중...)</pre>
+ </Show>
+ </div>
+
+ {/* 3단계 — 채널별 가이드 */}
+ <div style="margin-top:10px;">
+ <Show when={channel() === "paste"}>
+ <div style="font-size:11px; color:var(--text-3); margin-bottom:4px;">3) LLM 응답 JSON 을 아래에 붙여넣고 import:</div>
+ <textarea
+ value={text()}
+ onInput={(e) => setText(e.currentTarget.value)}
+ placeholder='{"openxgram_import_version":1, "session_id":"...", "items":[...]}'
+ rows={6}
+ style="width:100%; padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px; font-family:monospace; font-size:11px; box-sizing:border-box;"
+ />
+ <div style="display:flex; gap:6px; margin-top:4px;">
+ <button class="link-btn" onClick={doImport} disabled={busy() || !text().trim()}
+ style="background:#06c; color:white;">{busy() ? "import 중…" : "이 세션에 import"}</button>
+ <button class="link-btn" onClick={() => { setText(""); setResult(null);}}>지우기</button>
+ </div>
+ </Show>
+ <Show when={channel() === "webhook"}>
+ <Show when={webhookData()?.webhook_url} fallback={
+ <button class="link-btn" onClick={ensureWebhook}>+ Webhook URL 발급</button>
+ }>
+ <div style="font-size:11px; color:var(--text-3);">3) 이 URL 을 LLM 에 알려주면 직접 push 가능 (Bearer 없이):</div>
+ <div style="background:var(--surface-2); padding:8px; border-radius:4px; margin:4px 0; font-family:monospace; font-size:10px; word-break:break-all;">{webhookData()?.webhook_url}</div>
+ <button class="link-btn" onClick={() => { navigator.clipboard.writeText(webhookData()?.webhook_url ?? ""); alert("URL 복사됨");}}>📋 URL 복사</button>
+ </Show>
+ </Show>
+ <Show when={channel() === "api"}>
+ <div style="font-size:11px; color:var(--text-3); margin-bottom:4px;">3) LLM 또는 스크립트가 다음 curl 실행 (Bearer 토큰 필요):</div>
+ <pre style="background:var(--surface-2); padding:8px; border-radius:4px; font-size:10px; white-space:pre-wrap; word-break:break-all;">{`curl -X POST "${window.location.origin}/v1/gui/memory/import/bundle" \\
+  -H "Authorization: Bearer <SESSION_TOKEN>" \\
+  -H "Content-Type: application/json" \\
+  --data-binary @bundle.json`}</pre>
+ </Show>
+ <Show when={channel() === "mcp"}>
+ <div style="font-size:11px; color:var(--text-3);">3) Claude Desktop / Cursor 에 OpenXgram MCP 등록되어 있으면, LLM 이 직접 호출:</div>
+ <pre style="background:var(--surface-2); padding:8px; border-radius:4px; font-size:10px;">{`memory_import_bundle({\n  openxgram_import_version: 1,\n  session_id: "${props.sessionId}",\n  items: [...]\n})`}</pre>
+ <p style="font-size:10px; color:var(--text-3);">MCP 등록: <code>xgram init</code> 자동 통합 — Claude Desktop 의 mcp.json 에 openxgram 추가.</p>
+ </Show>
+ </div>
+
+ <Show when={result()}>
+ <div style="margin-top:8px; padding:6px; background:var(--surface-2); border-radius:4px; font-size:11px;">{result()}</div>
+ </Show>
+ </section>
+ );
+}
+
 // ── 탭 1: 개요 (L2 4-tuple) ─────────────────────────────────────
 function Overview(props: { peer: PeerMeta}) {
+ // identifier = peer.address (tmux 면 "tmux:name", peer 면 alias).
+ const identifier = () => props.peer.address || props.peer.alias;
+ const [aliases, { refetch}] = createResource<any>(async () => {
+ try { return await invoke("session_aliases");} catch { return {};}
+ });
+ const currentDisplay = () => aliases()?.[identifier()]?.display_name ?? props.peer.alias;
+ const [editing, setEditing] = createSignal(false);
+ const [draft, setDraft] = createSignal("");
+ async function save() {
+ const name = draft().trim();
+ if (!name) { alert("이름은 비울 수 없음"); return;}
+ try {
+ await invoke("session_alias_set", { identifier: identifier(), display_name: name});
+ await refetch();
+ setEditing(false);
+ } catch (e) { alert("저장 실패: " + e);}
+ }
  return (
  <div>
  <Row label="alias" value={props.peer.alias} />
- <Row label="display_name" value={props.peer.alias} />
+ <div style="display:flex; align-items:center; gap:8px; padding:4px 0; border-bottom:1px solid var(--border);">
+ <span style="min-width:80px; font-size:12px; color:var(--text-3);">display_name</span>
+ <Show when={!editing()} fallback={
+ <>
+ <input
+ value={draft()}
+ onInput={(e) => setDraft(e.currentTarget.value)}
+ maxlength="64"
+ style="flex:1; padding:4px 6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:3px; font-size:12px;"
+ onKeyDown={(e) => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false);}}
+ />
+ <button class="link-btn" onClick={save} style="font-size:11px;">저장</button>
+ <button class="link-btn" onClick={() => setEditing(false)} style="font-size:11px;">취소</button>
+ </>
+ }>
+ <span style="flex:1; font-size:12px;">{currentDisplay()}</span>
+ <button class="link-btn" onClick={() => { setDraft(currentDisplay()); setEditing(true);}} style="font-size:11px;">편집</button>
+ </Show>
+ </div>
  <Row label="machine" value={props.peer.machine || "(unknown)"} />
  <Row
  label="address"
@@ -147,8 +436,11 @@ function Overview(props: { peer: PeerMeta}) {
  />
  <Row label="public_key" value={fingerprint(props.peer.public_key_hex)} mono />
  <Row label="last_seen" value={props.peer.last_seen || "한 번도 본 적 없음"} />
+ <p class="messenger-sidepanel-hint" style="margin-top:10px;">
+ 가져오기·내보내기는 우측 사이드패널 <strong>"가져오기·내보내기"</strong> 탭에서.
+ </p>
  <p class="messenger-sidepanel-hint">
- ULID Agent ID·display_name 편집·세션 마이그레이션 등은 Tier 4+.
+ display_name 은 DB v32 session_aliases 에 영구 저장. 사이드바에도 자동 반영 (다음 sessions poll 후).
  </p>
  </div>
 );
@@ -177,6 +469,25 @@ function RoleTab(props: { peer: PeerMeta; onJumpToSettings: () => void}) {
  <div>
  <Row label="현재 역할" value="researcher (기본)" />
  <Row label="오케스트레이션" value="워커" />
+ {/* rc.92 D2 — capabilities 표시 */}
+ <Show when={props.peer.description}>
+ <Row label="설명" value={props.peer.description!} />
+ </Show>
+ <Show when={(props.peer.capabilities?.length ?? 0) > 0}>
+ <div style="padding:4px 0; border-bottom:1px dashed var(--border);">
+ <span style="font-size:11px; color:var(--text-3); display:block; margin-bottom:3px;">capabilities</span>
+ <div style="display:flex; flex-wrap:wrap; gap:4px;">
+ <For each={props.peer.capabilities}>
+ {(c) => <span style="font-size:11px; padding:1px 6px; background:var(--surface-2); border-radius:8px;">{c}</span>}
+ </For>
+ </div>
+ </div>
+ </Show>
+ <Show when={!props.peer.description && (props.peer.capabilities?.length ?? 0) === 0}>
+ <p style="font-size:11px; color:var(--text-3); padding:4px 0;">
+ 💡 capabilities 미등록 — 이 세션 Claude pane 에서 <code>register_subagent(role, description, capabilities)</code> 호출하면 자동 표시됩니다.
+ </p>
+ </Show>
  <hr style="margin:10px 0; opacity:0.2;" />
  <strong style="font-size:12px;">L3 + V1 — 역할별 auto_respond 마스터 정책</strong>
  <p class="messenger-sidepanel-hint">
@@ -213,13 +524,39 @@ function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () =
  const [bindings, { refetch}] = createResource(() => props.agentId, async (aid) => {
  try { return await invoke<BindingDto[]>("session_bindings_list", { agent_id: aid});} catch { return [];}
 });
- const [platform, setPlatform] = createSignal("telegram");
+ const [bots, { refetch: refetchBots}] = createResource<any[]>(async () => {
+ try { return await invoke<any[]>("discord_bots_list");} catch { return [];}
+});
+ const [platform, setPlatform] = createSignal("discord");
  const [channelRef, setChannelRef] = createSignal("");
  const [mention, setMention] = createSignal("");
- const [perm, setPerm] = createSignal("reply");
+ const [botId, setBotId] = createSignal("");
  const [busy, setBusy] = createSignal(false);
+ const [testResult, setTestResult] = createSignal<string | null>(null);
+ // rc.92 통합 — botId 변경 시 그 봇의 채널 list 자동 조회
+ const [channelOpts] = createResource(() => ({ pl: platform(), bid: botId()}), async ({pl, bid}) => {
+ if (pl !== "discord") return [];
+ try {
+ const r = await invoke<any>("discord_bot_channels", { bot_id: bid || "default"});
+ return r?.channels ?? [];
+ } catch { return [];}
+});
+ // 봇 추가 inline 폼
+ const [showAddBot, setShowAddBot] = createSignal(false);
+ const [newBotAlias, setNewBotAlias] = createSignal("");
+ const [newBotToken, setNewBotToken] = createSignal("");
+ async function addBotInline() {
+ if (!newBotAlias().trim() || !newBotToken().trim()) { alert("alias + token 필요"); return;}
+ setBusy(true);
+ try {
+ const r = await invoke<any>("discord_bots_add", { alias: newBotAlias().trim(), bot_token: newBotToken().trim()});
+ alert("✓ 봇 추가됨: " + (r.bot_username || r.alias) + "\ndaemon 재시작 후 listener 가 자동 spawn 됩니다.");
+ setNewBotAlias(""); setNewBotToken(""); setShowAddBot(false);
+ await refetchBots();
+ } catch (e) { alert("실패: " + e);} finally { setBusy(false);}
+}
  async function add() {
- if (!channelRef()) return;
+ if (!channelRef()) { alert("channel_id 또는 chat_id 입력 필요"); return; }
  setBusy(true);
  try {
  await invoke("session_binding_add", {
@@ -227,29 +564,49 @@ function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () =
  platform: platform(),
  channel_ref: channelRef(),
  mention_trigger: mention(),
- permission: perm(),
+ permission: "reply",
+ bot_id: botId() || null,
 });
  setChannelRef("");
+ setMention("");
+ setBotId("");
  await refetch();
-} finally { setBusy(false);}
+} catch (e) { alert("저장 실패: " + e); } finally { setBusy(false);}
 }
  async function del(id: string) {
+ if (!confirm("이 바인딩 삭제?")) return;
  setBusy(true);
  try {
  await invoke("session_binding_delete", { agent_id: props.agentId, binding_id: id});
  await refetch();
 } finally { setBusy(false);}
 }
+ async function testChannel(b: BindingDto) {
+ setTestResult(null);
+ setBusy(true);
+ try {
+ const r = await invoke<{ok: boolean; message?: string}>("notify_channel_test", {
+ platform: b.platform,
+ channel_ref: b.channel_ref,
+ text: `[OpenXgram test] ${new Date().toLocaleString("ko-KR")} — 바인딩 ${b.id} OK`,
+});
+ setTestResult(r.ok ? `✓ 전송 성공 (${b.platform}:${b.channel_ref})` : `✗ ${r.message || "실패"}`);
+} catch (e) {
+ setTestResult(`✗ ${e}`);
+} finally { setBusy(false);}
+}
  return (
  <div>
  <p style="font-size:12px; margin-bottom:8px;">
- 이 세션 (<code>{props.agentId}</code>) 이 응답할 채널. 봇 토큰은 채널 카드 마스터 (안티패턴 1).
+ 이 세션 (<code>{props.agentId}</code>) 의 채널 바인딩 — 메시지 양방향 + 풀 액세스. 봇 토큰은 채널 카드.
  </p>
- <Row label="디스코드 봇" value={props.notify?.discord_configured ? " 연결됨" : "(미연결 — 채널 카드)"} />
- <Row label="텔레그램 봇" value={props.notify?.telegram_configured ? " 연결됨" : "(미연결 — 채널 카드)"} />
+ <Row label="디스코드 봇" value={props.notify?.discord_configured ? "✓ 연결됨" : "(미연결 — 좌측 채널 카드에서 등록)"} />
+ <Row label="텔레그램 봇" value={props.notify?.telegram_configured ? "✓ 연결됨" : "(미연결 — 좌측 채널 카드에서 등록)"} />
  <hr style="margin:8px 0; opacity:0.2;" />
  <strong style="font-size:12px;">바인딩 추가</strong>
- <div style="display:flex; gap:4px; margin-top:6px; flex-wrap:wrap;">
+ <div style="display:flex; flex-direction:column; gap:6px; margin-top:6px;">
+ {/* platform + bot 선택 같은 줄 */}
+ <div style="display:flex; gap:4px; flex-wrap:wrap;">
  <select value={platform()} onChange={(e) => setPlatform(e.currentTarget.value)}
  style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;">
  <option value="discord">Discord</option>
@@ -257,33 +614,115 @@ function ChannelTab(props: { notify: NotifyStatus | null; onJumpToSettings: () =
  <option value="slack">Slack</option>
  <option value="web">Web</option>
  </select>
- <input value={channelRef()} onInput={(e) => setChannelRef(e.currentTarget.value)}
- placeholder={platform() === "discord" ? "channel_id" : platform() === "telegram" ? "chat_id" : "channel"}
- style="flex:1; min-width:120px; padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
- </div>
- <div style="display:flex; gap:4px; margin-top:4px; flex-wrap:wrap;">
- <input value={mention()} onInput={(e) => setMention(e.currentTarget.value)}
- placeholder="멘션 (@researcher)"
- style="flex:1; padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
- <select value={perm()} onChange={(e) => setPerm(e.currentTarget.value)}
- style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;">
- <option value="reply">답글</option>
- <option value="read_only">읽기만</option>
- <option value="command">명령</option>
+ <Show when={platform() === "discord"}>
+ <select value={botId()} onChange={(e) => setBotId(e.currentTarget.value)}
+ style="flex:1; padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;">
+ <option value="">default 봇 (notify.toml)</option>
+ <For each={bots() ?? []}>
+ {(b) => <option value={b.id}>{b.alias} ({b.bot_user_id?.slice(0, 8)})</option>}
+ </For>
  </select>
- <button class="link-btn" onClick={add} disabled={busy()}>+ 추가</button>
+ <button type="button" class="link-btn" onClick={() => setShowAddBot(!showAddBot())}
+ title="새 디스코드 봇 등록"
+ style="padding:4px 8px; background:var(--surface-2);">+ 봇</button>
+ </Show>
  </div>
+ {/* 봇 추가 inline 폼 */}
+ <Show when={showAddBot()}>
+ <div style="padding:8px; background:var(--surface-2); border:1px solid var(--border); border-radius:4px;">
+ <input value={newBotAlias()} onInput={(e) => setNewBotAlias(e.currentTarget.value)}
+ placeholder="봇 alias (예: 내 봇 / 친구 봇)"
+ style="width:100%; padding:4px; margin-bottom:4px; background:var(--surface); color:var(--text-1); border:1px solid var(--border); border-radius:3px; box-sizing:border-box;" />
+ <input value={newBotToken()} onInput={(e) => setNewBotToken(e.currentTarget.value)}
+ placeholder="Discord Bot Token (자동 검증)" type="password"
+ style="width:100%; padding:4px; margin-bottom:4px; background:var(--surface); color:var(--text-1); border:1px solid var(--border); border-radius:3px; box-sizing:border-box;" />
+ <button type="button" class="link-btn" onClick={addBotInline} disabled={busy()}
+ style="background:#238636; color:white; padding:4px 10px; border:none; border-radius:3px;">
+ ▶ 봇 등록
+ </button>
+ <button type="button" class="link-btn" onClick={() => setShowAddBot(false)} style="margin-left:4px;">취소</button>
+ </div>
+ </Show>
+ {/* 채널 선택 — Discord 면 dropdown, 아니면 input */}
+ <Show when={platform() === "discord"}>
+ <Show when={(channelOpts() ?? []).length > 0}
+ fallback={<input value={channelRef()} onInput={(e) => setChannelRef(e.currentTarget.value)}
+ placeholder="channel_id (봇이 가입 서버 없거나 권한 부족 — 봇 재초대 필요)"
+ style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />}>
+ <select value={channelRef()} onChange={(e) => setChannelRef(e.currentTarget.value)}
+ style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;">
+ <option value="">— 채널 선택 —</option>
+ <For each={channelOpts() ?? []}>
+ {(c: any) => <option value={c.channel_id}>{c.guild_name} / #{c.channel_name}</option>}
+ </For>
+ </select>
+ </Show>
+ </Show>
+ <Show when={platform() === "telegram"}>
+ <div style="display:flex; gap:4px;">
+ <input value={channelRef()} onInput={(e) => setChannelRef(e.currentTarget.value)}
+ placeholder="chat_id (자동감지 권장)"
+ style="flex:1; padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+ <button class="link-btn" style="background:#06c; color:white; padding:4px 8px; white-space:nowrap;"
+ onClick={async () => {
+ try {
+ const r = await invoke<any>("notify_telegram_detect_chat_saved");
+ if (r?.found && r?.chat_id) setChannelRef(String(r.chat_id));
+ else alert(r?.hint || "chat_id 감지 실패");
+ } catch (e) { alert("실패: " + e);}
+ }}>▶ 자동감지</button>
+ </div>
+ </Show>
+ <Show when={platform() !== "discord" && platform() !== "telegram"}>
+ <input value={channelRef()} onInput={(e) => setChannelRef(e.currentTarget.value)}
+ placeholder="channel"
+ style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+ </Show>
+ </div>
+ <div style="display:flex; gap:4px; margin-top:6px; flex-wrap:wrap;">
+ <input value={mention()} onInput={(e) => setMention(e.currentTarget.value)}
+ placeholder="멘션 (선택, 비우면 모든 메시지)"
+ title="채널 메시지에 이 문자열이 포함될 때만 세션으로 전달. 예: @researcher / @all"
+ style="flex:1; padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+ <Show when={platform() === "discord"}>
+ <select value={botId()} onChange={(e) => setBotId(e.currentTarget.value)}
+ title="이 채널에 사용할 봇. default 는 채널 카드의 notify.toml 봇."
+ style="padding:4px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;">
+ <option value="">기본 봇 (notify.toml)</option>
+ <For each={bots() ?? []}>
+ {(b) => <option value={b.id}>{b.alias}</option>}
+ </For>
+ </select>
+ </Show>
+ <button class="link-btn" onClick={add} disabled={busy()}
+ style="background:#238636; color:white; padding:4px 10px; border:none; border-radius:4px;">
+ ▶ 바인딩 저장
+ </button>
+ </div>
+ <p style="font-size:11px; color:var(--text-3); margin-top:4px;">
+ 💡 바인딩 = 채널 ↔ 세션 양방향. 채널 메시지는 세션 pane 으로, 세션 응답은 채널로 자동 reply.
+ </p>
  <hr style="margin:8px 0; opacity:0.2;" />
  <strong style="font-size:12px;">활성 바인딩 ({bindings()?.length ?? 0})</strong>
+ <Show when={testResult()}>
+ <div style={`margin-top:4px; padding:4px 8px; font-size:11px; border-radius:4px; background:${testResult()!.startsWith("✓") ? "rgba(35,134,54,0.2)" : "rgba(220,53,69,0.2)"};`}>
+ {testResult()}
+ </div>
+ </Show>
  <For each={bindings() ?? []}>
  {(b) => (
- <div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--border); font-size:12px;">
- <div>
- <strong>{b.platform}</strong> · <code>{b.channel_ref}</code>
- {b.mention_trigger ? <span style="color:var(--text-3);"> · {b.mention_trigger}</span> : null}
- <span style="color:var(--text-3);"> · {b.permission}</span>
+ <div style="padding:6px; border-bottom:1px solid var(--border); font-size:12px;">
+ <div style="display:flex; justify-content:space-between; align-items:center; gap:4px;">
+ <div style="flex:1; min-width:0;">
+ <strong>{b.platform}</strong> · <code style="word-break:break-all;">{b.channel_ref}</code>
+ {b.mention_trigger ? <span style="color:var(--text-3);"> · 멘션: <code>{b.mention_trigger}</code></span> : <span style="color:var(--text-3);"> · 모든 메시지</span>}
  </div>
- <button class="link-btn" onClick={() => del(b.id)} disabled={busy()}>삭제</button>
+ <button class="link-btn" onClick={() => testChannel(b)} disabled={busy()}
+ title="이 채널에 테스트 메시지 전송"
+ style="padding:2px 8px;">▶ 테스트</button>
+ <button class="link-btn" onClick={() => del(b.id)} disabled={busy()}
+ style="padding:2px 8px; color:#f85149;">삭제</button>
+ </div>
  </div>
 )}
  </For>
@@ -472,43 +911,29 @@ function HistoryTab(props: { peer: PeerMeta}) {
 );
 }
 
-// ── 탭 6: 내보내기 (사양 §5 탭 6) — 클라이언트 측 ──
+// ── 탭 6: 가져오기·내보내기 (사양 §5 탭 6) — 서버 export API + import bundle ──
 function ExportTab(props: { peer: PeerMeta}) {
- const [fmt, setFmt] = createSignal<"md" | "json" | "txt">("md");
- async function doExport() {
- const msgs = await fetchMessages();
- const filtered = msgs.filter((m) => m.sender === props.peer.alias);
- let body = "";
- if (fmt() === "json") {
- body = JSON.stringify(filtered, null, 2);
-} else if (fmt() === "md") {
- body = filtered
- .map((m) => `**${m.sender}** _(${m.timestamp})_\n${m.body}\n`)
- .join("\n---\n");
-} else {
- body = filtered.map((m) => `[${m.timestamp}] ${m.sender}: ${m.body}`).join("\n");
-}
- const blob = new Blob([body], { type: "text/plain"});
- const url = URL.createObjectURL(blob);
- const a = document.createElement("a");
- a.href = url;
- a.download = `${props.peer.alias}-export.${fmt() === "md" ? "md" : fmt() === "json" ? "json" : "txt"}`;
- a.click();
- URL.revokeObjectURL(url);
-}
+ const identifier = () => props.peer.address || props.peer.alias;
+ const safe = () => identifier().slice(0, 40);
  return (
  <div>
- <div style="display:flex; gap:6px; margin-bottom:8px;">
- <label><input type="radio" name="fmt" checked={fmt() === "md"} onChange={() => setFmt("md")} /> Markdown</label>
- <label><input type="radio" name="fmt" checked={fmt() === "json"} onChange={() => setFmt("json")} /> JSON</label>
- <label><input type="radio" name="fmt" checked={fmt() === "txt"} onChange={() => setFmt("txt")} /> Text</label>
- </div>
- <button class="link-btn" type="button" onClick={doExport}> 다운로드</button>
- <p class="messenger-sidepanel-hint">
- 시스템 프롬프트·도구 호출 raw 포함 토글, 이어가기 프롬프트 생성 (사양 §5 탭 6) — 백엔드 export API 확장 시.
+ <section style="margin-bottom:12px;">
+ <strong style="font-size:13px;">내보내기 (이 세션)</strong>
+ <p style="font-size:11px; color:var(--text-3); margin:4px 0;">
+ messages 테이블에 적재된 모든 메시지 다운로드 (Claude Code .jsonl 자동 ingest 포함).
  </p>
+ <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
+ <a class="link-btn" href={`/v1/gui/memory/export/session/${encodeURIComponent(identifier())}?format=md`}
+ download={`session-${safe()}.md`} style="text-decoration:none;">.md</a>
+ <a class="link-btn" href={`/v1/gui/memory/export/session/${encodeURIComponent(identifier())}?format=jsonl`}
+ download={`session-${safe()}.jsonl`} style="text-decoration:none;">.jsonl</a>
+ <a class="link-btn" href={`/v1/gui/memory/migration/export/${encodeURIComponent(identifier())}`}
+ download={`migration-${safe()}.json`} style="text-decoration:none;">migration .json</a>
  </div>
-);
+ </section>
+ <SessionImportSection sessionId={identifier()} />
+ </div>
+ );
 }
 
 // ── 탭 8: 토큰 (사양 §5 탭 8, S6 합산) ──

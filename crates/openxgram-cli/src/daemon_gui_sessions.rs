@@ -84,10 +84,11 @@ fn detect_tmux() -> Vec<DetectedSession> {
         let created = parts[3].parse::<i64>().ok().and_then(|ts| {
             chrono::DateTime::from_timestamp(ts, 0).map(|dt| dt.to_rfc3339())
         });
+        // session 자체
         sessions.push(DetectedSession {
             kind: SessionKind::Tmux,
             identifier: format!("tmux:{name}"),
-            display: name,
+            display: name.clone(),
             status: if attached {
                 SessionStatus::Attached
             } else {
@@ -95,25 +96,209 @@ fn detect_tmux() -> Vec<DetectedSession> {
             },
             windows: Some(windows),
             attached: Some(attached),
-            created_at: created,
+            created_at: created.clone(),
             last_active_at: None,
             agent_id: None,
         });
+        // tmux windows 도 별개 entry 로 enumerate (starian-portal 같이 windows 가 = 사용자가 보는 터미널)
+        if windows > 1 {
+            let win_out = Command::new("tmux")
+                .args(["list-windows", "-t", &name, "-F", "#{window_index}|#{window_name}|#{window_active}"])
+                .output();
+            if let Ok(wo) = win_out {
+                if wo.status.success() {
+                    let ws = String::from_utf8_lossy(&wo.stdout);
+                    for wl in ws.lines() {
+                        let wp: Vec<&str> = wl.splitn(3, '|').collect();
+                        if wp.len() < 3 { continue; }
+                        let idx = wp[0];
+                        let wname = wp[1];
+                        let active = wp[2] != "0";
+                        sessions.push(DetectedSession {
+                            kind: SessionKind::Tmux,
+                            identifier: format!("tmux:{name}:{idx}"),
+                            display: format!("{name} / {wname}"),
+                            status: if active { SessionStatus::Active } else { SessionStatus::Detached },
+                            windows: Some(1),
+                            attached: Some(active && attached),
+                            created_at: created.clone(),
+                            last_active_at: None,
+                            agent_id: None,
+                        });
+                    }
+                }
+            }
+        }
     }
     sessions
+}
+
+/// starian-portal API — 두 endpoint fetch 해서 sessions 통합.
+///   1. `/api/terminals`     → identifier `portal:<tmuxSession>:<tmuxIndex>` (rc.89~)
+///   2. `/api/aoe/sessions`  → identifier `aoe:<tmuxSession>:<aoe_id>:<title>` (rc.89~)
+///
+/// 둘 다 capture 시 portal-new `/api/tmux/capture?session=<tmuxSession>&window=<idx>` 호출.
+fn detect_starian_portal() -> Vec<DetectedSession> {
+    let url_base = portal_url_base();
+    let token = portal_token();
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .danger_accept_invalid_certs(true)
+        .build() {
+        Ok(c) => c,
+        Err(_) => return vec![],
+    };
+    let mut out: Vec<DetectedSession> = Vec::new();
+    // (1) /api/terminals — tmuxSession + tmuxIndex 사용
+    let terms_url = format!("{}/api/terminals?token={}", url_base, token);
+    if let Ok(resp) = client.get(&terms_url).send() {
+        if resp.status().is_success() {
+            if let Ok(v) = resp.json::<serde_json::Value>() {
+                if let Some(terms) = v.get("terminals").and_then(|t| t.as_array()) {
+                    for t in terms.iter() {
+                        let id = t.get("id").and_then(|x| x.as_str()).unwrap_or("?");
+                        let name = t.get("name").and_then(|x| x.as_str()).unwrap_or(id);
+                        let origin = t.get("origin").and_then(|x| x.as_str()).unwrap_or("");
+                        let path = t.get("path").and_then(|x| x.as_str()).unwrap_or("");
+                        let group = t.get("group").and_then(|x| x.as_str()).unwrap_or("");
+                        let tmux_session = t.get("tmuxSession").and_then(|x| x.as_str()).unwrap_or("starian");
+                        let tmux_index = t.get("tmuxIndex").and_then(|x| x.as_u64()).unwrap_or(0);
+                        out.push(DetectedSession {
+                            kind: SessionKind::Tmux,
+                            identifier: format!("portal:{}:{}", tmux_session, tmux_index),
+                            display: format!("{} [{}]", name, origin),
+                            status: SessionStatus::Detached,
+                            windows: Some(1),
+                            attached: None,
+                            created_at: None,
+                            last_active_at: Some(format!("id:{} · group:{} · path:{}", id, group, path)),
+                            agent_id: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    // (2) /api/aoe/sessions
+    let aoe_url = format!("{}/api/aoe/sessions?token={}", url_base, token);
+    if let Ok(resp) = client.get(&aoe_url).send() {
+        if resp.status().is_success() {
+            if let Ok(v) = resp.json::<serde_json::Value>() {
+                if v.get("available").and_then(|b| b.as_bool()).unwrap_or(false) {
+                    if let Some(sess) = v.get("sessions").and_then(|s| s.as_array()) {
+                        for s in sess {
+                            let id = s.get("id").and_then(|x| x.as_str()).unwrap_or("?");
+                            let title = s.get("title").and_then(|x| x.as_str()).unwrap_or(id);
+                            let project_path = s.get("project_path").and_then(|x| x.as_str()).unwrap_or("");
+                            let status = s.get("status").and_then(|x| x.as_str()).unwrap_or("");
+                            let alive = s.get("tmux_alive").and_then(|b| b.as_bool()).unwrap_or(false);
+                            let tmux_name = s.get("tmux_session_name").and_then(|x| x.as_str()).unwrap_or("");
+                            // identifier 에 tmux session 직접 인코딩 — 그 tmux:0 캡쳐로 화면 보임.
+                            out.push(DetectedSession {
+                                kind: SessionKind::Tmux,
+                                identifier: format!("aoe:{}:{}:{}", tmux_name, id, title),
+                                display: format!("aoe·{} [{}]", title, status),
+                                status: if alive { SessionStatus::Active } else { SessionStatus::Detached },
+                                windows: Some(1),
+                                attached: None,
+                                created_at: s.get("created_at").and_then(|x| x.as_str()).map(String::from),
+                                last_active_at: Some(format!("tmux:{} · path:{}", tmux_name, project_path)),
+                                agent_id: None,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+fn portal_url_base() -> String {
+    std::env::var("XGRAM_PORTAL_URL")
+        .unwrap_or_else(|_| "https://portal-zalman.starian.us".into())
+        .trim_end_matches('/').to_string()
+}
+
+fn portal_token() -> String {
+    std::env::var("XGRAM_PORTAL_TOKEN").unwrap_or_else(|_| "0205".into())
+}
+
+/// portal capture — `/api/tmux/capture?session=<S>&window=<idx>` (rc.89~).
+/// session 명시 시 그 tmux 세션의 window 캡쳐. None 이면 default starian session.
+pub fn capture_portal_session(session: Option<&str>, idx: u32) -> Result<String, String> {
+    let mut url = format!("{}/api/tmux/capture?window={}&lines=200&escape=1&token={}",
+        portal_url_base(), idx, portal_token());
+    if let Some(s) = session {
+        if !s.is_empty() {
+            url.push_str(&format!("&session={}", urlencode(s)));
+        }
+    }
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .danger_accept_invalid_certs(true)
+        .build()
+        .map_err(|e| format!("http: {e}"))?;
+    let resp = client.get(&url).send().map_err(|e| format!("send: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("portal HTTP {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| format!("json: {e}"))?;
+    Ok(v.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string())
+}
+
+/// 옛 API 호환 — default session, idx only.
+pub fn capture_portal(idx: u32) -> Result<String, String> {
+    capture_portal_session(None, idx)
+}
+
+/// AoE 세션 캡쳐 — identifier 의 tmux_session_name 사용. portal 의 새 session 파라미터로 호출.
+pub fn capture_aoe(rest: &str) -> Result<String, String> {
+    // rest 형식: `<tmux_session_name>:<aoe_id>:<title>`
+    let tmux_session = rest.split(':').next().unwrap_or("");
+    if tmux_session.is_empty() {
+        return Err("aoe identifier 에 tmux_session_name 없음 (rc.88 cache?). 새로고침 필요.".into());
+    }
+    capture_portal_session(Some(tmux_session), 0)
+}
+
+fn urlencode(s: &str) -> String {
+    s.chars().map(|c| match c {
+        'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
+        _ => format!("%{:02X}", c as u32),
+    }).collect()
 }
 
 /// `~/.claude/projects/<encoded-path>/*.jsonl` — 각 디렉토리가 Claude Code 프로젝트.
 /// 가장 최근 .jsonl 의 mtime 을 last_active 로 사용.
 fn detect_claude_projects() -> Vec<DetectedSession> {
-    let Some(home) = std::env::var_os("HOME") else {
-        return vec![];
-    };
-    let projects_dir: PathBuf = [home, ".claude/projects".into()].iter().collect();
-    let Ok(read) = std::fs::read_dir(&projects_dir) else {
-        return vec![];
-    };
     let mut out = Vec::new();
+    // WSL 환경에서 Windows side claude projects 도 스캔 (W가 Windows 직접 Claude Code 실행하는 경우).
+    // XGRAM_EXTRA_CLAUDE_DIRS env 로 추가 dir 콜론구분 (예: /mnt/c/Users/User/.claude/projects)
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(home) = std::env::var_os("HOME") {
+        let p: PathBuf = [home, ".claude/projects".into()].iter().collect();
+        dirs.push(p);
+    }
+    if let Ok(extra) = std::env::var("XGRAM_EXTRA_CLAUDE_DIRS") {
+        for s in extra.split(':') {
+            let p = PathBuf::from(s.trim());
+            if !p.as_os_str().is_empty() { dirs.push(p); }
+        }
+    }
+    // WSL 자동 감지 — /mnt/c/Users/*/.claude/projects 가 있으면 추가
+    if let Ok(c_users) = std::fs::read_dir("/mnt/c/Users") {
+        for u in c_users.flatten() {
+            let p = u.path().join(".claude/projects");
+            if p.exists() {
+                dirs.push(p);
+            }
+        }
+    }
+    for projects_dir in dirs {
+    let Ok(read) = std::fs::read_dir(&projects_dir) else {
+        continue;
+    };
     for entry in read.flatten() {
         let Ok(ft) = entry.file_type() else { continue };
         if !ft.is_dir() {
@@ -178,6 +363,7 @@ fn detect_claude_projects() -> Vec<DetectedSession> {
             agent_id: None,
         });
     }
+    } // for projects_dir in dirs
     // 최근 활동 순 정렬
     out.sort_by(|a, b| b.last_active_at.cmp(&a.last_active_at));
     out
@@ -278,11 +464,24 @@ fn detect_processes() -> Vec<DetectedSession> {
     sessions
 }
 
-/// 통합: 머신 + 세션들. xgram session 은 후속 (DB query needed).
+/// 통합: 머신 + 세션들.
+/// 정책: 사용자 의도 기준만 노출.
+///   - portal-new 가 등록한 터미널 (portal:*, aoe:*) — 사용자가 직접 만든 것
+///   - Claude Code project history (claude:*) — 사용자가 한 번이라도 그 폴더에서 claude 실행함
+///   - peer/process (peer:*, proc:*) — 네트워크/시스템 메타
+/// raw tmux:* 는 제외 — system jobs (xgramd 등) 노이즈 차단. portal 등록한 것만 의미 있음.
+/// portal-new 가 없는 머신만 fallback 으로 raw tmux 보임.
 pub fn collect_sessions() -> SessionsDto {
     let machine = detect_machine();
-    let mut sessions = detect_tmux();
+    let mut sessions = Vec::new();
+    let portal = detect_starian_portal();
+    let had_portal = !portal.is_empty();
+    sessions.extend(portal);
     sessions.extend(detect_claude_projects());
+    // fallback: portal 없으면 raw tmux 로 polyfill
+    if !had_portal {
+        sessions.extend(detect_tmux());
+    }
     sessions.extend(detect_processes());
     SessionsDto { machine, sessions }
 }
@@ -523,21 +722,63 @@ pub struct RoutingRuleDto {
     pub active: bool,
 }
 
-/// V12 — 3-layer version (release / GUI / daemon).
+/// V12 — 3-layer version (release / GUI / daemon) + rc.92 changelog 최근 entry.
 #[derive(Debug, Serialize)]
 pub struct VersionInfoDto {
     pub release: String,
     pub daemon: String,
     pub spec_doc: String,
     pub prd_doc: String,
+    /// rc.92 — CHANGELOG.md 의 latest version block (UI 팝업 표시).
+    pub changelog_latest_title: Option<String>,
+    pub changelog_latest_body: Option<String>,
+}
+
+/// CHANGELOG.md 의 최상단 `## [버전] — ...` block 1개 추출.
+fn extract_latest_changelog() -> (Option<String>, Option<String>) {
+    let candidates = [
+        std::path::PathBuf::from("CHANGELOG.md"),
+        std::path::PathBuf::from("/home/pasia/projects/openxgram/CHANGELOG.md"),
+        std::path::PathBuf::from("/home/llm/projects/starian-set/openxgram/CHANGELOG.md"),
+    ];
+    let mut content = String::new();
+    for p in &candidates {
+        if let Ok(s) = std::fs::read_to_string(p) {
+            content = s;
+            break;
+        }
+    }
+    if content.is_empty() { return (None, None); }
+    // first `## [` 부터 다음 `## [` 또는 EOF 까지.
+    let lines: Vec<&str> = content.lines().collect();
+    let mut start: Option<usize> = None;
+    let mut end: Option<usize> = None;
+    for (i, line) in lines.iter().enumerate() {
+        if line.starts_with("## [") {
+            if start.is_none() {
+                start = Some(i);
+            } else {
+                end = Some(i);
+                break;
+            }
+        }
+    }
+    let start = match start { Some(s) => s, None => return (None, None) };
+    let end = end.unwrap_or(lines.len());
+    let title = lines[start].trim_start_matches("## ").to_string();
+    let body: String = lines[(start+1)..end].iter().copied().collect::<Vec<_>>().join("\n").trim().to_string();
+    (Some(title), Some(body))
 }
 
 pub fn version_info() -> VersionInfoDto {
+    let (title, body) = extract_latest_changelog();
     VersionInfoDto {
         release: env!("CARGO_PKG_VERSION").to_string(),
         daemon: env!("CARGO_PKG_VERSION").to_string(),
         spec_doc: "UI-MESSENGER-SPEC v1.3".to_string(),
         prd_doc: "PRD-OpenXgram v1.4".to_string(),
+        changelog_latest_title: title,
+        changelog_latest_body: body,
     }
 }
 
@@ -616,7 +857,43 @@ pub fn default_approval_policy() -> ApprovalPolicy {
 
 /// `GET /v1/gui/sessions/{identifier}/screen` 의 핵심 로직.
 pub fn capture_session(identifier: &str) -> SessionScreenDto {
-    let (kind, content, source_note) = if let Some(name) = identifier.strip_prefix("tmux:") {
+    let (kind, content, source_note) = if let Some(rest) = identifier.strip_prefix("portal:") {
+        // 새 형식 (rc.89+): portal:<tmuxSession>:<tmuxIndex>
+        // 옛 형식 (rc.88):  portal:<idx>:<id>   ← idx 가 숫자면 옛 형식, 아니면 새 형식
+        let mut parts = rest.splitn(2, ':');
+        let first = parts.next().unwrap_or("0");
+        let rest2 = parts.next().unwrap_or("");
+        let (session_opt, idx) = if first.parse::<u32>().is_ok() && !rest2.contains(':') {
+            // 옛 형식 fallback — first 가 숫자 + 두 번째에 ':' 없음
+            (None, first.parse::<u32>().unwrap_or(0))
+        } else {
+            // 새 형식 — first = session 명, rest2 = window index
+            let idx = rest2.split(':').next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+            (Some(first), idx)
+        };
+        match capture_portal_session(session_opt, idx) {
+            Ok(s) => (
+                SessionKind::Tmux,
+                s,
+                format!("portal capture session={} window={}", session_opt.unwrap_or("(default)"), idx),
+            ),
+            Err(e) => (
+                SessionKind::Tmux,
+                format!("\x1b[31mportal 캡처 실패: {e}\n→ portal-zalman.starian.us 에서 직접 보기, 또는 XGRAM_PORTAL_URL/TOKEN env 확인\x1b[0m"),
+                "error".into(),
+            ),
+        }
+    } else if let Some(rest) = identifier.strip_prefix("aoe:") {
+        // aoe:<id>:<title> 형식
+        match capture_aoe(rest) {
+            Ok(s) => (SessionKind::Tmux, s, format!("aoe session {rest}")),
+            Err(e) => (
+                SessionKind::Tmux,
+                format!("\x1b[31mAoE 캡처 실패: {e}\x1b[0m"),
+                "error".into(),
+            ),
+        }
+    } else if let Some(name) = identifier.strip_prefix("tmux:") {
         match capture_tmux(name) {
             Ok(s) => (
                 SessionKind::Tmux,

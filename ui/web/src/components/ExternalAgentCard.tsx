@@ -25,7 +25,6 @@ export function ExternalAgentCard(props: { onBack: () => void}) {
  return (
  <div class="card-page">
  <Breadcrumb cardName=" 외부 에이전트" onReturn={props.onBack} />
- <button class="card-page-back" onClick={props.onBack}>← 홈</button>
  <div class="card-page-head">
  <span class="icon"></span>
  <h1>외부 에이전트</h1>

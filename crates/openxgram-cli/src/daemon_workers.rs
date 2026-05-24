@@ -21,7 +21,434 @@ fn open_db(data_dir: &std::path::Path) -> anyhow::Result<Arc<Mutex<Db>>> {
 /// 모든 worker 를 daemon main task pool 에 spawn. data_dir 로 별 DB 핸들 open.
 pub fn spawn_all_from_dir(data_dir: PathBuf) -> anyhow::Result<()> {
     let db = open_db(&data_dir)?;
-    spawn_all(db);
+    spawn_all_with_data_dir(db, data_dir);
+    Ok(())
+}
+
+pub fn spawn_all_with_data_dir(db: Arc<Mutex<Db>>, data_dir: PathBuf) {
+    spawn_all(db.clone());
+    // Claude Code .jsonl → messages 자동 ingestion (60s 주기)
+    let db_ci = db.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            if let Err(e) = claude_ingest_tick(&db_ci).await {
+                tracing::warn!("claude_ingest tick: {e}");
+            }
+        }
+    });
+    // L3 patterns + mistakes 휴리스틱 추출 (10분 주기)
+    let db_p = db.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(600)).await;
+            if let Err(e) = patterns_mistakes_extract_tick(&db_p).await {
+                tracing::warn!("patterns_mistakes tick: {e}");
+            }
+        }
+    });
+    // 일일 백업 cron — 매 1시간 체크해서 마지막 백업이 24h 초과면 새로 만듬
+    let dd = data_dir.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+            if let Err(e) = daily_backup_tick(&dd).await {
+                tracing::warn!("daily backup tick: {e}");
+            }
+        }
+    });
+    // SelfTrigger fire worker — 30s 마다 messages 테이블 스캔, event_pattern 매칭 시 fire
+    let db_st = db.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            if let Err(e) = self_trigger_fire_tick(&db_st).await {
+                tracing::warn!("self_trigger fire tick: {e}");
+            }
+        }
+    });
+}
+
+/// L0 messages 를 스캔해서 키워드 기반으로 patterns/mistakes 자동 등록.
+/// 사양 UI-MEMORY-SPEC §K10 P1 (휴리스틱 매칭) 구현.
+pub async fn run_patterns_mistakes_extract(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
+    patterns_mistakes_extract_tick(db).await
+}
+async fn patterns_mistakes_extract_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
+    // 24h 새 메시지만 스캔, 이미 처리된 메시지는 metadata 에 source_msg 로 추적
+    let since = (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
+    let messages: Vec<(String, String, String, String)> = {
+        let mut guard = db.lock().await;
+        let conn = guard.conn();
+        let mut stmt = match conn.prepare(
+            "SELECT id, session_id, sender, body FROM messages \
+             WHERE timestamp >= ?1 AND LENGTH(body) >= 100 LIMIT 500",
+        ) {
+            Ok(s) => s,
+            Err(_) => return Ok(()),
+        };
+        let it = stmt.query_map(rusqlite::params![since], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })?;
+        it.flatten().collect()
+    };
+
+    if messages.is_empty() { return Ok(()); }
+
+    // 키워드 정의
+    let pattern_keywords = [
+        ("규칙", "behavior"),
+        ("패턴", "behavior"),
+        ("원칙", "behavior"),
+        ("선호", "preference"),
+        ("preference", "preference"),
+        ("habit", "behavior"),
+        ("convention", "behavior"),
+        ("정책", "behavior"),
+    ];
+    let mistake_keywords = ["실수", "버그", "잘못", "에러", "fix", "오류", "수정해야", "고치", "안 됨", "broken"];
+
+    let mut new_patterns = 0;
+    let mut new_mistakes = 0;
+
+    for (msg_id, session_id, _sender, body) in messages {
+        let body_lower = body.to_lowercase();
+        let body_first_200 = if body.len() > 200 {
+            // 첫 200글자에서 keyword 매칭 — UTF-8 안전 경계 (char 단위)
+            let mut idx = 200;
+            while !body.is_char_boundary(idx) && idx > 0 { idx -= 1; }
+            body[..idx].to_string()
+        } else {
+            body.clone()
+        };
+
+        // pattern 매칭
+        for (kw, ptype) in &pattern_keywords {
+            if body_lower.contains(kw) || body.contains(kw) {
+                let pattern_id = format!("h-{}-{}", &msg_id[..8.min(msg_id.len())], kw);
+                let mut guard = db.lock().await;
+                let conn = guard.conn();
+                let r = conn.execute(
+                    "INSERT OR IGNORE INTO memory_patterns (id, pattern_type, description, confidence, source, examples, created_at) \
+                     VALUES (?1, ?2, ?3, 0.5, 'ai-heuristic', ?4, ?5)",
+                    rusqlite::params![
+                        pattern_id,
+                        ptype,
+                        format!("[{}] {}", kw, body_first_200.replace('\n', " ").chars().take(150).collect::<String>()),
+                        serde_json::json!([{"msg_id": msg_id}]).to_string(),
+                        chrono::Utc::now().to_rfc3339()
+                    ],
+                );
+                if r.unwrap_or(0) > 0 { new_patterns += 1; }
+                break;
+            }
+        }
+
+        // mistake 매칭
+        for kw in &mistake_keywords {
+            if body_lower.contains(kw) || body.contains(kw) {
+                let mistake_id = format!("h-{}-{}", &msg_id[..8.min(msg_id.len())], kw);
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                let mut guard = db.lock().await;
+                let conn = guard.conn();
+                let r = conn.execute(
+                    "INSERT OR IGNORE INTO mistakes (id, session_id, occurred_at, intended_action, actual_outcome, failure_reason, lesson, severity, embedding_hash, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 5, ?8, ?3, ?3)",
+                    rusqlite::params![
+                        mistake_id,
+                        session_id,
+                        now_ms,
+                        format!("[추출: {}]", kw),
+                        body_first_200.replace('\n', " ").chars().take(200).collect::<String>(),
+                        format!("키워드 '{}' 매칭으로 자동 추출 (휴리스틱)", kw),
+                        "추후 사용자 review 필요 (편집 가능)",
+                        format!("h-{}", &msg_id[..16.min(msg_id.len())])
+                    ],
+                );
+                if r.unwrap_or(0) > 0 { new_mistakes += 1; }
+                break;
+            }
+        }
+    }
+
+    if new_patterns + new_mistakes > 0 {
+        tracing::info!(patterns = new_patterns, mistakes = new_mistakes, "heuristic extract");
+    }
+    Ok(())
+}
+
+/// Claude Code 의 ~/.claude/projects/**/*.jsonl 을 읽어 OpenXgram messages 에 삽입.
+/// 각 파일별 last_offset 추적해서 새 라인만 처리.
+async fn claude_ingest_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
+    let home = match std::env::var("HOME") {
+        Ok(h) => std::path::PathBuf::from(h),
+        Err(_) => return Ok(()),
+    };
+    let projects_dir = home.join(".claude").join("projects");
+    if !projects_dir.exists() { return Ok(()); }
+
+    // .jsonl 파일 전체 수집 (재귀)
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(top_entries) = std::fs::read_dir(&projects_dir) {
+        for top in top_entries.flatten() {
+            let p = top.path();
+            if p.is_dir() {
+                if let Ok(sub_entries) = std::fs::read_dir(&p) {
+                    for e in sub_entries.flatten() {
+                        let f = e.path();
+                        if f.extension().map(|x| x == "jsonl").unwrap_or(false) {
+                            files.push(f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if files.is_empty() { return Ok(()); }
+
+    let mut total_ingested = 0usize;
+    for file in files {
+        let path_str = file.display().to_string();
+        let size = match std::fs::metadata(&file) { Ok(m) => m.len(), Err(_) => continue };
+
+        // 현재 offset 조회
+        let last_offset: u64 = {
+            let mut guard = db.lock().await;
+            guard.conn().query_row(
+                "SELECT last_offset FROM claude_ingest_state WHERE file_path = ?1",
+                rusqlite::params![path_str],
+                |r| r.get::<_, i64>(0).map(|v| v as u64),
+            ).unwrap_or(0)
+        };
+
+        if size <= last_offset { continue; }
+
+        // 새 라인 읽기
+        let new_content = match read_from_offset(&file, last_offset) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        // 디렉터리 이름 → session title 추출 (-home-llm-projects-wgolf → wgolf)
+        let dir_name = file.parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let proj_name = dir_name.split('-').last().unwrap_or(dir_name);
+        let session_uuid = file.file_stem().and_then(|s| s.to_str()).unwrap_or("?");
+        let db_session_id = format!("claude:{}:{}", proj_name, session_uuid);
+        let session_title = format!("Claude Code · {} · {}", proj_name, &session_uuid[..8.min(session_uuid.len())]);
+        let machine = "server-seoul";
+        let now_str = chrono::Utc::now().to_rfc3339();
+
+        let mut inserted = 0usize;
+        let mut new_offset = last_offset;
+
+        for line in new_content.lines() {
+            new_offset += line.len() as u64 + 1; // +1 for newline
+            if line.is_empty() { continue; }
+            let v: serde_json::Value = match serde_json::from_str(line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let msg_type = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            if msg_type != "user" && msg_type != "assistant" { continue; }
+            let role = v.pointer("/message/role").and_then(|r| r.as_str()).unwrap_or(msg_type);
+            let content_val = v.pointer("/message/content");
+            let body = match content_val {
+                Some(serde_json::Value::String(s)) => s.clone(),
+                Some(serde_json::Value::Array(arr)) => {
+                    let mut s = String::new();
+                    for item in arr {
+                        if let Some(t) = item.get("text").and_then(|t| t.as_str()) {
+                            s.push_str(t);
+                            s.push('\n');
+                        }
+                    }
+                    s.trim().to_string()
+                }
+                _ => continue,
+            };
+            if body.is_empty() { continue; }
+            let timestamp = v.get("timestamp").and_then(|t| t.as_str()).unwrap_or(&now_str).to_string();
+            let uuid = v.get("uuid").and_then(|u| u.as_str()).unwrap_or(&timestamp).to_string();
+            let parent = v.get("parentUuid").and_then(|p| p.as_str()).map(String::from);
+
+            let mut guard = db.lock().await;
+            // canonical write path
+            let r = crate::save_l0::save_l0_message(&mut *guard, crate::save_l0::L0SaveInput {
+                id: Some(uuid),
+                session_id: &db_session_id,
+                session_title: Some(&session_title),
+                sender: role,
+                body: &body,
+                signature: "claude-ingest",
+                timestamp: Some(&timestamp),
+                parent_message_id: parent.as_deref(),
+                conversation_id: None,
+                source: "claude_ingest",
+                extra_metadata: Some(serde_json::json!({"file": path_str})),
+            });
+            if let Ok(res) = r { if res.inserted { inserted += 1; } }
+        }
+
+        // offset 갱신
+        let mut guard = db.lock().await;
+        let _ = guard.conn().execute(
+            "INSERT INTO claude_ingest_state (file_path, last_offset, session_db_id, last_seen_at, msg_count) \
+             VALUES (?1, ?2, ?3, datetime('now'), ?4) \
+             ON CONFLICT(file_path) DO UPDATE SET \
+               last_offset = excluded.last_offset, \
+               session_db_id = excluded.session_db_id, \
+               last_seen_at = excluded.last_seen_at, \
+               msg_count = msg_count + excluded.msg_count",
+            rusqlite::params![path_str, new_offset as i64, db_session_id, inserted as i64],
+        );
+        total_ingested += inserted;
+    }
+
+    if total_ingested > 0 {
+        tracing::info!(count = total_ingested, "claude_ingest: messages inserted");
+    }
+    Ok(())
+}
+
+fn read_from_offset(path: &std::path::Path, offset: u64) -> std::io::Result<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path)?;
+    f.seek(SeekFrom::Start(offset))?;
+    let mut s = String::new();
+    f.read_to_string(&mut s)?;
+    Ok(s)
+}
+
+async fn daily_backup_tick(data_dir: &std::path::Path) -> anyhow::Result<()> {
+    let backup_dir = data_dir.join("backup");
+    let _ = std::fs::create_dir_all(&backup_dir);
+    // 가장 최근 backup 파일 mtime 확인
+    let need = match std::fs::read_dir(&backup_dir).ok().and_then(|d| {
+        d.filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("backup-"))
+            .filter_map(|e| e.metadata().ok().and_then(|m| m.modified().ok()))
+            .max()
+    }) {
+        Some(mtime) => mtime.elapsed().map(|d| d.as_secs() > 86_400).unwrap_or(true),
+        None => true,
+    };
+    if !need { return Ok(()); }
+    let data_dir = data_dir.to_path_buf();
+    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let ts = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+        let out = data_dir.join("backup").join(format!("backup-{ts}.tar.gz"));
+        let f = std::fs::File::create(&out)?;
+        let enc = flate2::write::GzEncoder::new(f, flate2::Compression::default());
+        let mut tar = tar::Builder::new(enc);
+        for name in ["db.sqlite", "keystore", "notify.toml", "install_manifest.json"] {
+            let p = data_dir.join(name);
+            if p.exists() {
+                if p.is_dir() {
+                    tar.append_dir_all(name, &p)?;
+                } else {
+                    let mut fp = std::fs::File::open(&p)?;
+                    tar.append_file(name, &mut fp)?;
+                }
+            }
+        }
+        tar.finish()?;
+        tracing::info!(out=%out.display(), "daily backup created");
+        Ok(())
+    })
+    .await??;
+    Ok(())
+}
+
+async fn self_trigger_fire_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
+    // 활성 SelfTrigger 규칙 로드
+    let triggers: Vec<(String, String, String, String)> = {
+        let mut guard = db.lock().await;
+        let conn = guard.conn();
+        let mut stmt = match conn.prepare(
+            "SELECT id, event_pattern, target_agent, action FROM self_triggers WHERE active=1",
+        ) {
+            Ok(s) => s,
+            Err(_) => return Ok(()),
+        };
+        let it = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })?;
+        it.flatten().collect()
+    };
+    if triggers.is_empty() { return Ok(()); }
+    // 직전 30초 새 메시지 가져와서 pattern 매칭
+    let since = (chrono::Utc::now() - chrono::Duration::seconds(35)).to_rfc3339();
+    let messages: Vec<(String, String, String)> = {
+        let mut guard = db.lock().await;
+        let conn = guard.conn();
+        let mut stmt = match conn.prepare(
+            "SELECT msg_ulid, body, created_at FROM messages WHERE created_at >= ?1 LIMIT 100",
+        ) {
+            Ok(s) => s,
+            Err(_) => return Ok(()),
+        };
+        let it = stmt.query_map(rusqlite::params![since], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        it.flatten().collect()
+    };
+    if messages.is_empty() { return Ok(()); }
+    let mut fired = 0;
+    for (trig_id, pattern, target, action) in &triggers {
+        for (msg_ulid, body, _) in &messages {
+            // 간단 매칭: pattern 이 body 의 substring 이면 fire (또는 ":new_message" 같은 special)
+            let matched = pattern.is_empty()
+                || body.contains(pattern)
+                || pattern == "*"
+                || (pattern.contains(':') && body.contains(pattern.split(':').last().unwrap_or("")));
+            if matched {
+                // outbound_queue 에 action 메시지 enqueue (target_agent 가 다른 머신이면)
+                let now = chrono::Utc::now().to_rfc3339();
+                let action_body = serde_json::json!({
+                    "trigger_id": trig_id,
+                    "trigger_pattern": pattern,
+                    "matched_msg": msg_ulid,
+                    "action": action,
+                }).to_string();
+                let mut guard = db.lock().await;
+                let conn = guard.conn();
+                // fire_count 증가 + last_fired_at 갱신
+                let _ = conn.execute(
+                    "UPDATE self_triggers SET fire_count = fire_count + 1, last_fired_at = ?1 WHERE id = ?2",
+                    rusqlite::params![now, trig_id],
+                );
+                // outbound_queue 에 enqueue (target_alias = target_agent)
+                let new_ulid = format!("st-{}", &msg_ulid[..std::cmp::min(8, msg_ulid.len())]);
+                let _ = conn.execute(
+                    "INSERT OR IGNORE INTO outbound_queue (msg_ulid, target_machine, target_alias, body, attempts, enqueued_at) \
+                     VALUES (?1, ?2, ?3, ?4, 0, ?5)",
+                    rusqlite::params![new_ulid, target, target, action_body, now],
+                );
+                fired += 1;
+                break;
+            }
+        }
+    }
+    if fired > 0 {
+        tracing::info!(count = fired, "self_triggers fired");
+    }
     Ok(())
 }
 

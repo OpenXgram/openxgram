@@ -554,10 +554,29 @@ input:focus-visible {
   background: #0f0f0f;
 }
 .messenger-shell-2 {
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: 240px minmax(0, 1fr);
 }
 .messenger-shell-3 {
-  grid-template-columns: 280px minmax(0, 1fr) 360px;
+  grid-template-columns: 240px minmax(0, 1fr) 320px;
+}
+/* 컬럼 사이 drag 리사이저 (5px 너비, hover 시 표시) */
+.messenger-resizer {
+  background: transparent;
+  cursor: col-resize;
+  position: relative;
+  z-index: 5;
+  user-select: none;
+}
+.messenger-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0; left: 2px; right: 2px;
+  background: #2a2a2a;
+  transition: background 0.15s;
+}
+.messenger-resizer:hover::before,
+.messenger-resizer:active::before {
+  background: #06c;
 }
 .messenger-thread {
   overflow: auto;
@@ -570,19 +589,26 @@ input:focus-visible {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  min-width: 280px;
-  max-width: 600px;
-  overflow: auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 .messenger-sidepanel {
   border-left: 1px solid #2a2a2a;
   background: #161616;
-  min-width: 360px;
-  max-width: 600px;
-  overflow: auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
   display: flex;
   flex-direction: row;
+  word-break: break-all;
 }
+.messenger-sidepanel * { min-width: 0; max-width: 100%; }
+.messenger-sidepanel .mono,
+.messenger-sidepanel code { word-break: break-all; overflow-wrap: anywhere; }
+.messenger-sidebar { min-width: 0; max-width: 100%; }
 .messenger-sidebar-mode button {
   white-space: nowrap;
   font-size: 12px;
@@ -1024,12 +1050,17 @@ input:focus-visible {
    각 카드 = 정체성 헤더 + 4~5 구역 (사양의 §3) + 고급 메뉴.
    ───────────────────────────────────────────────────────────────────── */
 .card-page {
-  max-width: none;       /* 전체 화면 채움 */
+  max-width: 100%;
   width: 100%;
   margin: 0;
   padding: 20px 24px 40px;
   color: var(--text-1);
+  box-sizing: border-box;
+  overflow-x: hidden;
 }
+.card-page input, .card-page textarea, .card-page select { max-width: 100%; box-sizing: border-box;}
+.card-page .card-section { max-width: 100%; box-sizing: border-box; overflow-x: auto;}
+.card-page pre, .card-page code { max-width: 100%; overflow-x: auto; word-break: break-word;}
 .card-page .card-section table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .card-page .card-section table th, .card-page .card-section table td {
   padding: 6px 8px;

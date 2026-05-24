@@ -10,6 +10,8 @@ async function fetchDiag(): Promise<any> { try { return await invoke("ops_diagno
 async function fetchMachines(): Promise<any> { try { return await invoke("ops_machines");} catch (e) { return { error: String(e)};}}
 async function fetchBackup(): Promise<any> { try { return await invoke("ops_backup_status");} catch (e) { return { error: String(e)};}}
 async function fetchUpdate(): Promise<any> { try { return await invoke("ops_update_check");} catch (e) { return { error: String(e)};}}
+async function backupNow(): Promise<any> { return await invoke("ops_backup_now");}
+async function updateApply(): Promise<any> { return await invoke("ops_update_apply");}
 
 export function OpsCard(props: { onBack: () => void}) {
  const [health] = createResource(fetchHealth);
@@ -21,7 +23,6 @@ export function OpsCard(props: { onBack: () => void}) {
  return (
  <div class="card-page">
  <Breadcrumb cardName=" 운영·생존" onReturn={props.onBack} />
- <button class="card-page-back" onClick={props.onBack}>← 홈</button>
  <div class="card-page-head">
  <span class="icon"></span>
  <h1>운영·생존</h1>
@@ -81,7 +82,11 @@ export function OpsCard(props: { onBack: () => void}) {
  <div class="card-section-row"><span class="label">최신 여부</span><span class="value">{upd()?.up_to_date ? " 최신" : " 업데이트 가능"}</span></div>
  <div class="card-section-row"><span class="label">채널</span><span class="value">{upd()?.channel}</span></div>
  <Show when={!upd()?.up_to_date && upd()?.update_url}>
- <a href={upd()?.update_url} target="_blank" style="color:#06c; font-size:12px;">→ 업데이트 다운로드</a>
+ <a href={upd()?.update_url} target="_blank" style="color:#06c; font-size:12px;">→ 수동 다운로드</a>
+ <button class="link-btn" style="margin-left:10px;" onClick={async () => {
+ if (!confirm("최신 binary 를 /tmp 에 staging 합니다. 적용은 sudo mv + 재시작 필요.")) return;
+ try { const r = await updateApply(); alert("다운로드 완료\n" + JSON.stringify(r, null, 2));} catch (e) { alert("실패: " + e);}
+ }}>지금 업데이트 다운로드</button>
  </Show>
  </Show>
  </section>
@@ -93,6 +98,9 @@ export function OpsCard(props: { onBack: () => void}) {
  <div class="card-section-row"><span class="label">백업 파일</span><span class="value">{backup()?.count} 개</span></div>
  <div class="card-section-row"><span class="label">마지막</span><span class="value">{backup()?.last_at || "—"}</span></div>
  <p style="font-size:11px; color:var(--text-3);">{backup()?.note}</p>
+ <button class="link-btn" onClick={async () => {
+ try { const r = await backupNow(); alert("백업 완료\n" + JSON.stringify(r, null, 2)); refBackup();} catch (e) { alert("실패: " + e);}
+ }}>지금 백업</button>
  <For each={backup()?.backup_files ?? []}>
  {(f: any) => <div style="font-size:11px;"> {f.name}</div>}
  </For>

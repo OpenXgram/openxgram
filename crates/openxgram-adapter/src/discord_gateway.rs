@@ -39,34 +39,44 @@ pub enum GatewayError {
 
 pub type Result<T> = std::result::Result<T, GatewayError>;
 
+/// Discord 첨부 파일 1건 메타.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscordAttachment {
+    pub url: String,
+    pub filename: String,
+    pub size: u64,
+    pub content_type: Option<String>,
+}
+
 /// Discord 채널에서 받은 메시지 1건.
-///
-/// 봇·시스템 메시지는 stream 단계에서 필터링된다 (사용자 텍스트만).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscordIncomingMessage {
     pub message_id: u64,
     pub channel_id: u64,
-    /// guild (서버) 소속 메시지면 Some, DM 이면 None.
     pub guild_id: Option<u64>,
     pub author_id: u64,
     pub author_name: String,
     pub content: String,
-    /// KST (Asia/Seoul, +09:00) 기준 timestamp — 마스터 절대 규칙.
     pub timestamp_kst: DateTime<FixedOffset>,
+    /// rc.91 — 첨부 파일 (옵션, content 비어있어도 attachments 만 있으면 전달).
+    pub attachments: Vec<DiscordAttachment>,
 }
 
 impl DiscordIncomingMessage {
-    /// twilight `MessageCreate` 이벤트 → 도메인 타입.
-    /// 봇이 보낸 메시지는 `None` 으로 필터링.
     pub fn from_event(ev: &MessageCreate) -> Option<Self> {
         if ev.author.bot {
             return None;
         }
-        if ev.content.is_empty() {
-            // 첨부·embed 만 있는 메시지는 PRD-NOTIFY-DISCORD-GW (이번 PR) 대상 외.
+        let attachments: Vec<DiscordAttachment> = ev.attachments.iter().map(|a| DiscordAttachment {
+            url: a.url.clone(),
+            filename: a.filename.clone(),
+            size: a.size as u64,
+            content_type: a.content_type.clone(),
+        }).collect();
+        // 빈 content + 첨부 없음 → skip. 첨부만 있어도 통과 (rc.91).
+        if ev.content.is_empty() && attachments.is_empty() {
             return None;
         }
-        // twilight Timestamp::as_micros() i64 → DateTime<Utc> → KST.
         let utc_micros = ev.timestamp.as_micros();
         let utc: DateTime<Utc> = Utc
             .timestamp_micros(utc_micros)
@@ -81,6 +91,7 @@ impl DiscordIncomingMessage {
             author_name: ev.author.name.clone(),
             content: ev.content.clone(),
             timestamp_kst: utc.with_timezone(&offset),
+            attachments,
         })
     }
 }

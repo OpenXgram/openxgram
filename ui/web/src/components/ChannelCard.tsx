@@ -32,7 +32,6 @@ export function ChannelCard(props: { onBack: () => void}) {
  return (
  <div class="card-page">
  <Breadcrumb cardName=" 채널" onReturn={props.onBack} />
- <button class="card-page-back" onClick={props.onBack}>← 홈</button>
  <div class="card-page-head">
  <span class="icon"></span>
  <h1>채널</h1>
@@ -42,12 +41,12 @@ export function ChannelCard(props: { onBack: () => void}) {
  Discord·Telegram·Slack·카카오·WhatsApp·Web — 사람 중심 인박스 + 봇 라이프사이클 + 사람별 정책
  </div>
 
- <nav style="display:flex; gap:4px; margin-bottom:14px;">
- <button class={"link-btn " + (tab() === "inbox" ? "active" : "")} onClick={() => setTab("inbox")}> 인박스</button>
- <button class={"link-btn " + (tab() === "person" ? "active" : "")} onClick={() => setTab("person")}> 사람</button>
- <button class={"link-btn " + (tab() === "register" ? "active" : "")} onClick={() => setTab("register")}> 채널 등록</button>
- <button class={"link-btn " + (tab() === "routing" ? "active" : "")} onClick={() => setTab("routing")}> 라우팅</button>
- <button class={"link-btn " + (tab() === "moderation" ? "active" : "")} onClick={() => setTab("moderation")}> 모더레이션</button>
+ <nav style="display:flex; gap:4px; margin-bottom:14px; position:relative; z-index:5;">
+ <button type="button" class={"link-btn " + (tab() === "inbox" ? "active" : "")} onClick={() => setTab("inbox")} style="position:relative; z-index:5;"> 인박스</button>
+ <button type="button" class={"link-btn " + (tab() === "person" ? "active" : "")} onClick={() => setTab("person")} style="position:relative; z-index:5;"> 사람</button>
+ <button type="button" class={"link-btn " + (tab() === "register" ? "active" : "")} onClick={() => setTab("register")} style="position:relative; z-index:5;"> 채널 등록</button>
+ <button type="button" class={"link-btn " + (tab() === "routing" ? "active" : "")} onClick={() => setTab("routing")} style="position:relative; z-index:5;"> 라우팅</button>
+ <button type="button" class={"link-btn " + (tab() === "moderation" ? "active" : "")} onClick={() => setTab("moderation")} style="position:relative; z-index:5;"> 모더레이션</button>
  </nav>
 
  <Show when={tab() === "inbox"}>
@@ -75,6 +74,7 @@ export function ChannelCard(props: { onBack: () => void}) {
  </Show>
 
  <Show when={tab() === "register"}>
+ <ChannelsSummarySection />
  <section class="card-section">
  <h3> 채널 등록 — 사양 §3.3 (M-1 M-2 M-3)</h3>
  <p class="placeholder-note">
@@ -82,6 +82,7 @@ export function ChannelCard(props: { onBack: () => void}) {
  </p>
  <NotifySetup />
  </section>
+ <MultiBotsSection />
  <DiscordDiagnosticSection />
  </Show>
 
@@ -155,6 +156,153 @@ function ModerationSection() {
 )}</For>
  </section>
  </>
+);
+}
+
+// rc.92 — 채널 카드 상단 종합 정보 (모든 봇 + 가입 서버 + binding 통계).
+function ChannelsSummarySection() {
+ const [s, { refetch}] = createResource<any>(async () => {
+ try { return await invoke<any>("channels_summary");} catch (e) { return { error: String(e)};}
+});
+ return (
+ <section class="card-section">
+ <h3> 연결된 봇 · 채널 종합 정보</h3>
+ <button type="button" class="link-btn" onClick={() => refetch()} style="margin-bottom:8px;">↻ 새로고침</button>
+ <Show when={s()?.error}>
+ <div style="color:#f85149; font-size:12px;">에러: {s()?.error}</div>
+ </Show>
+ <Show when={s() && !s()?.error}>
+ {/* Discord 봇 카드들 */}
+ <strong style="font-size:13px; display:block; margin:8px 0 6px;">📨 Discord 봇 ({s()?.discord?.bots_count ?? 0})</strong>
+ <Show when={(s()?.discord?.bots ?? []).length === 0}>
+ <div style="font-size:12px; color:var(--text-3); padding:4px 0;">등록된 디스코드 봇 없음. 아래 wizard 에서 추가.</div>
+ </Show>
+ <For each={s()?.discord?.bots ?? []}>
+ {(b: any) => (
+ <div style="padding:10px; margin-bottom:6px; background:var(--surface-2); border:1px solid var(--border); border-radius:6px;">
+ <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+ <div>
+ <strong style="font-size:13px;">{b.bot_username || b.alias || "?"}</strong>
+ <span style="font-size:11px; color:var(--text-3); margin-left:6px;">{b.source}</span>
+ </div>
+ <span style="font-size:11px; color:var(--text-3);">id=<code>{b.bot_id}</code></span>
+ </div>
+ <Show when={b.error}>
+ <div style="font-size:11px; color:#f85149;">⚠️ {b.error}</div>
+ </Show>
+ <div style="font-size:11px; color:var(--text-3);">token=<code>{b.token_prefix}...</code> · 가입 서버 <strong>{b.guilds_count}</strong>개</div>
+ <Show when={(b.guilds ?? []).length > 0}>
+ <div style="margin-top:4px;">
+ <For each={b.guilds}>
+ {(g: any) => (
+ <div style="font-size:11px; padding:3px 8px; margin:2px 0; background:var(--surface); border-radius:3px;">
+ <strong>{g.name}</strong> <code style="color:var(--text-3);">{g.id}</code>
+ {g.owner ? <span style="margin-left:6px; color:#d29922;">(owner)</span> : null}
+ </div>
+ )}
+ </For>
+ </div>
+ </Show>
+ </div>
+ )}
+ </For>
+ {/* Telegram 봇 */}
+ <strong style="font-size:13px; display:block; margin:10px 0 6px;">✈️ Telegram 봇</strong>
+ <Show when={!s()?.telegram}>
+ <div style="font-size:12px; color:var(--text-3); padding:4px 0;">Telegram 봇 미등록.</div>
+ </Show>
+ <Show when={s()?.telegram}>
+ <div style="padding:10px; background:var(--surface-2); border:1px solid var(--border); border-radius:6px;">
+ <strong style="font-size:13px;">@{s()?.telegram?.bot_username}</strong>
+ <span style="font-size:11px; color:var(--text-3); margin-left:6px;">id={s()?.telegram?.bot_id}</span>
+ <Show when={s()?.telegram?.error}>
+ <div style="font-size:11px; color:#f85149;">⚠️ {s()?.telegram?.error}</div>
+ </Show>
+ <div style="font-size:11px; color:var(--text-3);">token=<code>{s()?.telegram?.token_prefix}...</code></div>
+ </div>
+ </Show>
+ {/* 바인딩 통계 */}
+ <strong style="font-size:13px; display:block; margin:10px 0 6px;">🔗 채널 바인딩 ({Object.values(s()?.bindings?.stats_per_platform ?? {}).reduce((a: number, b: any) => a + (b as number), 0)})</strong>
+ <Show when={(s()?.bindings?.stats_per_channel ?? []).length === 0}>
+ <div style="font-size:12px; color:var(--text-3); padding:4px 0;">등록된 바인딩 없음. AgentSidePanel 의 채널 바인딩 탭에서 추가.</div>
+ </Show>
+ <For each={s()?.bindings?.stats_per_channel ?? []}>
+ {(bc: any) => (
+ <div style="font-size:11px; padding:4px 8px; margin:2px 0; background:var(--surface-2); border-radius:3px;">
+ <strong>{bc.platform}</strong> · <code>{bc.channel_ref}</code> · {bc.count} 바인딩
+ </div>
+ )}
+ </For>
+ </Show>
+ </section>
+ );
+}
+
+// rc.92 — 멀티 디스코드 봇 관리 (채널·세션별 다른 봇 연결).
+function MultiBotsSection() {
+ const [bots, { refetch}] = createResource<any[]>(async () => {
+ try { return await invoke<any[]>("discord_bots_list");} catch { return [];}
+});
+ const [alias, setAlias] = createSignal("");
+ const [token, setToken] = createSignal("");
+ const [busy, setBusy] = createSignal(false);
+ const [msg, setMsg] = createSignal<string | null>(null);
+ async function add() {
+ if (!alias().trim() || !token().trim()) { alert("alias + bot token 필요"); return;}
+ setBusy(true); setMsg(null);
+ try {
+ const r = await invoke<any>("discord_bots_add", { alias: alias().trim(), bot_token: token().trim()});
+ setMsg("✓ 추가됨: " + (r.bot_username || r.alias) + " (id=" + r.id + "). daemon 재시작 시 listener 자동 spawn.");
+ setAlias(""); setToken("");
+ await refetch();
+} catch (e) { setMsg("✗ " + e);} finally { setBusy(false);}
+}
+ async function del(id: string) {
+ if (!confirm("이 봇 삭제? (bindings 의 bot_id 가 NULL 되어 default 봇 사용)")) return;
+ setBusy(true);
+ try { await invoke("discord_bots_delete", { id}); await refetch();} finally { setBusy(false);}
+}
+ return (
+ <section class="card-section">
+ <h3> 멀티 디스코드 봇 — 채널·세션별 다른 봇 연결</h3>
+ <p style="font-size:12px; color:var(--text-3); margin-bottom:8px;">
+ default 봇 (위 notify.toml) 외에 추가로 여러 봇 등록. 바인딩 시 봇 선택. 다른 메이커 봇 공존 가능.
+ </p>
+ <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:8px;">
+ <div style="display:flex; flex-direction:column; gap:3px;">
+ <label style="font-size:11px; color:var(--text-3);">봇 alias (표시명)</label>
+ <input value={alias()} onInput={(e) => setAlias(e.currentTarget.value)} placeholder="예: 내 봇 / 친구 봇 / 마케팅 봇"
+ style="padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+ </div>
+ <div style="display:flex; flex-direction:column; gap:3px;">
+ <label style="font-size:11px; color:var(--text-3);">Discord Bot Token (Developer Portal 에서 Reset Token 으로 발급)</label>
+ <input value={token()} onInput={(e) => setToken(e.currentTarget.value)} placeholder="MTQ4NDYx..." type="password"
+ style="padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+ </div>
+ <button type="button" class="link-btn" onClick={add} disabled={busy()}
+ style="background:#238636; color:white; padding:8px 14px; border:none; border-radius:4px; align-self:flex-start;">
+ ▶ 봇 추가 (token 자동 검증)
+ </button>
+ </div>
+ <Show when={msg()}>
+ <div style={`padding:6px 10px; font-size:11px; border-radius:4px; background:${msg()!.startsWith("✓") ? "rgba(35,134,54,0.2)" : "rgba(220,53,69,0.2)"};`}>{msg()}</div>
+ </Show>
+ <strong style="font-size:12px; display:block; margin-top:10px;">등록된 봇 ({bots()?.length ?? 0})</strong>
+ <For each={bots() ?? []}>
+ {(b) => (
+ <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border); font-size:12px;">
+ <div style="flex:1; min-width:0;">
+ <strong>{b.alias}</strong>
+ <span style="color:var(--text-3); margin-left:6px;">id=<code>{b.id}</code> · bot_user_id=<code>{b.bot_user_id || "?"}</code> · {b.token_prefix}</span>
+ </div>
+ <button type="button" class="link-btn" onClick={() => del(b.id)} disabled={busy()} style="color:#f85149;">삭제</button>
+ </div>
+)}
+ </For>
+ <p class="hint" style="font-size:11px; color:var(--text-3); margin-top:8px;">
+ 💡 새 봇 추가 후 daemon 재시작 필요 (listener spawn). 봇 등록 시 token 자동 검증 (Discord users/@me).
+ </p>
+ </section>
 );
 }
 

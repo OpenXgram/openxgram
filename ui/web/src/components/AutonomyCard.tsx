@@ -16,7 +16,6 @@ export function AutonomyCard(props: { onBack: () => void}) {
  return (
  <div class="card-page">
  <Breadcrumb cardName="자율 행동" onReturn={props.onBack} />
- <button class="card-page-back" onClick={props.onBack}>← 홈</button>
  <div class="card-page-head">
  <span class="icon"></span>
  <h1>자율 행동</h1>
