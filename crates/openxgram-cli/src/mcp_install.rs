@@ -204,11 +204,20 @@ fn generate_context_block(data_dir: &Path) -> Result<String> {
     s.push_str("- `recall_messages(query, k?)` — 과거 메시지 벡터 검색 (sqlite-vec KNN)\n");
     s.push_str("- `list_sessions` — 세션 목록\n");
     s.push_str("- `list_memories_by_kind(kind)` — L2 facts/decisions/references/rules\n");
+    s.push_str("- `send_to_discord(content, channel?, bot_id?)` — Discord 채널로 발신 (agent-push)\n");
+    s.push_str("- `send_to_telegram(content, chat_id?)` — Telegram 으로 발신\n");
     s.push_str("- `vault_*` — 자격증명 (XGRAM_KEYSTORE_PASSWORD env 필요)\n");
     s.push_str("\n### 사용 패턴\n\n");
     s.push_str("- 세션 시작 시 `recv_messages` 한 번 호출해 받은 메시지 확인 권장\n");
     s.push_str("- 다른 에이전트 호출 시 먼저 `list_peers` 로 사용 가능한 alias 확인\n");
-    s.push_str("- 과거 대화 회상 시 `recall_messages` (벡터 검색)\n\n");
+    s.push_str("- 과거 대화 회상 시 `recall_messages` (벡터 검색)\n");
+    s.push_str("\n### ⚠️ 자동 echo 룰 (필수)\n\n");
+    s.push_str("**`[Discord:user]` 또는 `[Telegram:user]` prefix 가 보이는 inbound 메시지를 받으면**:\n");
+    s.push_str("1. 답변을 작성한 직후\n");
+    s.push_str("2. **반드시** `send_to_discord(content=답변, channel=<inbound 채널 id>)` 호출 (또는 send_to_telegram)\n");
+    s.push_str("3. 사용자는 Discord/Telegram 을 메인 UI 로 사용. 터미널 응답만으로는 못 봄.\n\n");
+    s.push_str("채널 id 는 binding 의 `channel_ref` 필드 — 모르면 `list_sessions` 또는 DB 의 `session_channel_bindings` 조회.\n\n");
+    s.push_str("자세한 가이드는 `@~/oxg.md` 참조 (install 시 자동 설치됨).\n\n");
     s.push_str(CLAUDE_MD_END);
     Ok(s)
 }
