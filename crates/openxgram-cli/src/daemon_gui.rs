@@ -432,12 +432,10 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         }
     });
 
-    // rc.91 — Discord/Telegram outbound auto-watch worker (30s polling)
-    let state_for_worker = state_clone.clone();
-    tokio::spawn(async move {
-        run_discord_outbound_worker(state_for_worker).await;
-    });
-    println!("  ✓ discord/telegram outbound worker spawned (30s polling)");
+    // rc.112 — outbound polling worker 폐기. 에이전트가 명시적으로
+    // openxgram.send_to_discord / openxgram.send_to_telegram MCP 도구 호출
+    // (agent-push 패턴). capture diff 알고리즘의 본질적 한계 (status bar / dynamic
+    // prompt / echo loop) 우회.
 
     Ok(())
 }
@@ -5448,178 +5446,9 @@ async fn gui_notify_discord_invite_url(
     Ok(Json(serde_json::json!({"invite_url": url, "bot_id": bot_id, "permissions": perms})))
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// rc.91 outbound worker — 30초마다 binding 의 세션 pane capture diff → 채널 post
-// ─────────────────────────────────────────────────────────────────────────────
-pub async fn run_discord_outbound_worker(state: GuiServerState) {
-    use std::collections::HashMap;
-    let mut last_caps: HashMap<String, String> = HashMap::new();
-    let portal_url = std::env::var("XGRAM_PORTAL_URL").unwrap_or_else(|_| "http://127.0.0.1:9400".into());
-    let portal_token = std::env::var("XGRAM_PORTAL_TOKEN").unwrap_or_else(|_| "0205".into());
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .danger_accept_invalid_certs(true)
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
-    interval.tick().await;
-    tracing::info!("discord/telegram outbound worker started (30s polling)");
-    loop {
-        interval.tick().await;
-        // rc.92 — binding 의 bot_id 와 함께 조회. discord_bots LEFT JOIN.
-        let bindings: Vec<(String, String, String, Option<String>)> = {
-            let mut db = state.db.lock().await;
-            let v: Result<Vec<_>, rusqlite::Error> = db.conn().prepare(
-                "SELECT b.agent_id, b.platform, b.channel_ref, db.bot_token \
-                 FROM session_channel_bindings b \
-                 LEFT JOIN discord_bots db ON b.bot_id = db.id AND db.active = 1 \
-                 WHERE b.platform IN ('discord','telegram') AND b.active = 1 AND b.permission != 'read_only'"
-            ).and_then(|mut s| {
-                s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?)))
-                 .and_then(|m| m.collect())
-            });
-            v.unwrap_or_default()
-        };
-        if bindings.is_empty() { continue; }
-        let cfg = match crate::notify_setup::NotifyConfig::load(Some(&state.data_dir)) { Ok(c) => c, Err(_) => continue };
-        let default_discord_tok = cfg.discord.as_ref().map(|d| d.bot_token.clone()).filter(|t| !t.is_empty());
-        let telegram_tok = cfg.telegram.as_ref().map(|t| t.bot_token.clone()).filter(|t| !t.is_empty());
-
-        for (agent_id, platform, channel_ref, binding_bot_tok) in bindings {
-            let (session, idx) = if let Some(rest) = agent_id.strip_prefix("portal:") {
-                let mut parts = rest.splitn(2, ':');
-                let first = parts.next().unwrap_or("");
-                let rest2 = parts.next().unwrap_or("");
-                if first.parse::<u32>().is_ok() && !rest2.contains(':') { continue; }
-                let i = rest2.split(':').next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-                (first.to_string(), i)
-            } else if let Some(rest) = agent_id.strip_prefix("aoe:") {
-                let s = rest.split(':').next().unwrap_or("");
-                if s.is_empty() { continue; }
-                (s.to_string(), 0u32)
-            } else {
-                // rc.104 — prefix 없는 alias 면 tmux 진리원천 동적 resolve (하드코딩 0)
-                match crate::notify::resolve_alias_to_tmux(&agent_id).await {
-                    Some(v) => v,
-                    None => {
-                        tracing::warn!(agent_id = %agent_id, "outbound: alias → tmux 매핑 실패 (skip)");
-                        continue;
-                    }
-                }
-            };
-
-            let cap_url = format!("{}/api/tmux/capture?session={}&window={}&lines=400&escape=0&token={}",
-                portal_url.trim_end_matches('/'), session, idx, portal_token);
-            let cap = match http.get(&cap_url).send().await {
-                Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok()
-                    .and_then(|v| v.get("text").and_then(|t| t.as_str()).map(String::from))
-                    .unwrap_or_default(),
-                Ok(r) => {
-                    tracing::warn!(agent_id = %agent_id, session = %session, status = %r.status(), "outbound: portal capture HTTP 실패 (skip)");
-                    continue;
-                }
-                Err(e) => {
-                    tracing::warn!(agent_id = %agent_id, session = %session, error = %e, "outbound: portal capture 요청 실패 (skip)");
-                    continue;
-                }
-            };
-            tracing::debug!(agent_id = %agent_id, session = %session, cap_len = cap.len(), "outbound: capture OK");
-            let key = format!("{}::{}", platform, agent_id);
-            let last = last_caps.get(&key).cloned().unwrap_or_default();
-            if cap == last {
-                tracing::debug!(agent_id = %agent_id, "outbound: cap == last, skip");
-                continue;
-            }
-            tracing::info!(agent_id = %agent_id, cap_len = cap.len(), last_len = last.len(), "outbound: cap diff 감지");
-            // rc.109 — line-level diff. cap 안의 새 line 만 추출.
-            //   - last 빈 문자열: 첫 poll, base 만 저장 후 skip
-            //   - cap == last: skip (위에서 이미 처리)
-            //   - 그 외: cap 의 line 중 last 에 없는 것 만 새로움으로 push
-            //     (cursor 깜빡임, prompt 미세 변동 등 noise 자동 무시)
-            // rc.111 — line-level diff + inbound prefix filter (echo loop 방지)
-            let new_part: String = if last.is_empty() {
-                String::new()
-            } else {
-                let last_lines: std::collections::HashSet<String> = last.lines().map(|s| s.trim_end().to_string()).collect();
-                let new_lines: Vec<&str> = cap.lines()
-                    .filter(|l| {
-                        let trimmed = l.trim_end();
-                        if trimmed.is_empty() { return false;}
-                        if last_lines.contains(trimmed) { return false;}
-                        // inbound 메시지 (`[Discord:user]` / `[Telegram:user]`) 자체는 outbound 에서 제외
-                        let lt = trimmed.trim_start();
-                        if lt.starts_with("[Discord:") || lt.starts_with("[Telegram:") { return false;}
-                        true
-                    })
-                    .collect();
-                new_lines.join("\n")
-            };
-            last_caps.insert(key, cap);
-            let trimmed = new_part.trim();
-            if trimmed.is_empty() || trimmed.len() < 10 {
-                tracing::info!(agent_id = %agent_id, new_part_len = new_part.len(), trimmed_len = trimmed.len(), "outbound: new_part 너무 짧음, skip");
-                continue;
-            }
-            tracing::info!(agent_id = %agent_id, len = trimmed.len(), "outbound: dispatch 준비");
-            // rc.106 — 글자수 제한 제거. 줄바꿈 그대로. Discord 코드블록 길이 초과 시 .txt 첨부.
-            let payload = trimmed.to_string();
-            match platform.as_str() {
-                "discord" => {
-                    // bot_token: binding.bot_id → discord_bots 조회 (LEFT JOIN 결과) →
-                    //           없으면 첫 active 봇 fallback → 그래도 없으면 notify.toml legacy
-                    let tok_owned = binding_bot_tok.clone()
-                        .or_else(|| {
-                            let path = state.data_dir.join("db.sqlite");
-                            openxgram_db::Db::open(openxgram_db::DbConfig { path, ..Default::default() }).ok()
-                                .and_then(|mut db| db.conn().query_row::<String, _, _>(
-                                    "SELECT bot_token FROM discord_bots WHERE active=1 ORDER BY created_at ASC LIMIT 1",
-                                    [], |r| r.get(0)
-                                ).ok())
-                                .filter(|t: &String| !t.is_empty())
-                        })
-                        .or_else(|| default_discord_tok.clone());
-                    let Some(tok) = tok_owned else {
-                        tracing::warn!(agent_id = %agent_id, "outbound discord: bot token 조회 실패 (skip)");
-                        continue;
-                    };
-                    let url = format!("https://discord.com/api/v10/channels/{}/messages", channel_ref);
-                    // Discord 메시지 본문 한도(2000자) - 코드블록 wrapper 여유 = 1900자 안전선.
-                    // 초과 시 .txt 첨부 (multipart). 줄바꿈은 file content 안에 그대로 유지.
-                    let wrapped = format!("```\n{}\n```", payload);
-                    if wrapped.len() <= 1900 {
-                        match http.post(&url)
-                            .header("Authorization", format!("Bot {}", tok))
-                            .json(&serde_json::json!({"content": wrapped}))
-                            .send().await {
-                            Ok(r) if r.status().is_success() => tracing::info!(agent_id = %agent_id, len = wrapped.len(), "outbound discord: push OK"),
-                            Ok(r) => tracing::warn!(agent_id = %agent_id, status = %r.status(), body = %r.text().await.unwrap_or_default(), "outbound discord: HTTP 실패"),
-                            Err(e) => tracing::warn!(agent_id = %agent_id, error = %e, "outbound discord: 요청 실패"),
-                        }
-                    } else {
-                        let filename = format!("terminal-{}.txt", chrono::Utc::now().format("%H%M%S"));
-                        let form = reqwest::multipart::Form::new()
-                            .text("payload_json", serde_json::json!({"content": format!("📎 터미널 출력 {} 자", payload.chars().count())}).to_string())
-                            .part("files[0]", reqwest::multipart::Part::bytes(payload.into_bytes())
-                                .file_name(filename)
-                                .mime_str("text/plain; charset=utf-8").unwrap_or_else(|_| reqwest::multipart::Part::text("").mime_str("text/plain").unwrap()));
-                        let _ = http.post(&url)
-                            .header("Authorization", format!("Bot {}", tok))
-                            .multipart(form)
-                            .send().await;
-                    }
-                }
-                "telegram" => {
-                    let Some(tok) = &telegram_tok else { continue };
-                    let url = format!("https://api.telegram.org/bot{}/sendMessage", tok);
-                    let _ = http.post(&url)
-                        .json(&serde_json::json!({"chat_id": channel_ref, "text": payload}))
-                        .send().await;
-                }
-                _ => {}
-            }
-        }
-    }
-}
+// outbound polling worker 폐기 (rc.112). agent-push 모델로 전환:
+//   openxgram.send_to_discord(content, channel?, bot_id?) MCP 도구 사용.
+//   send_to_telegram 도 동일 패턴.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // rc.92 — 멀티 디스코드 봇 CRUD

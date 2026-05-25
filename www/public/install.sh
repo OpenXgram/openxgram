@@ -363,6 +363,35 @@ if [ "$PREBUILT_OK" = "1" ]; then
       echo "    (mcp-install 실패 — 수동: xgram mcp-install --scope user --full --use-path-lookup)"
   fi
 
+  # OpenXgram LLM 가이드 (~/oxg.md) — 모든 LLM 에이전트 (Claude Code / Cursor /
+  # Aider / Continue / Gemini CLI ...) 가 동일하게 참조하는 오케스트레이션 가이드.
+  # 전역 CLAUDE.md 에 `@~/oxg.md` reference 한 줄 추가 (idempotent).
+  echo ""
+  echo "==> OpenXgram LLM 가이드 (~/oxg.md) 설치"
+  OXG_MD="$HOME/oxg.md"
+  OXG_RAW="https://raw.githubusercontent.com/OpenXgram/openxgram/main/docs/oxg.md"
+  if curl -fsSL "$OXG_RAW" -o "${OXG_MD}.new" 2>/dev/null && [ -s "${OXG_MD}.new" ]; then
+    mv "${OXG_MD}.new" "$OXG_MD"
+    echo "    ✓ ~/oxg.md 설치/갱신"
+  else
+    rm -f "${OXG_MD}.new" 2>/dev/null
+    echo "    (~/oxg.md fetch 실패 — github 접근 가능한지 확인. 수동: curl -fsSL $OXG_RAW -o $OXG_MD)"
+  fi
+
+  GLOBAL_CLAUDE_MD="$HOME/.claude/CLAUDE.md"
+  mkdir -p "$(dirname "$GLOBAL_CLAUDE_MD")"
+  touch "$GLOBAL_CLAUDE_MD"
+  if ! grep -q "@~/oxg.md\|@$HOME/oxg.md" "$GLOBAL_CLAUDE_MD" 2>/dev/null; then
+    {
+      printf '\n'
+      printf '# OpenXgram LLM 가이드 (auto-injected by install.sh) — peer 통신·발신·오케스트레이션\n'
+      printf '@~/oxg.md\n'
+    } >> "$GLOBAL_CLAUDE_MD"
+    echo "    ✓ 전역 CLAUDE.md 에 @~/oxg.md reference 추가"
+  else
+    echo "    ✓ 전역 CLAUDE.md reference 이미 존재 (skip)"
+  fi
+
   # 6.2 — upgrade flow: 옛 daemon/agent 버전 감지 → SIGTERM → 재시작.
   # 메시지 손실 0: SIGTERM 시 daemon 의 graceful shutdown 핸들러가 in-flight envelope 를 commit 후 종료.
   # SQLite WAL 도 fsync 보장.

@@ -957,21 +957,64 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 }))
             }
             "send_to_discord" => {
-                let pw = self.require_vault()?.to_string();
+                // rc.112 — 두 가지 모드 지원:
+                //   1) bot token mode: args.channel (Discord channel_id) → discord_bots 테이블 lookup
+                //      → POST /channels/{id}/messages (multibot 우선, args.bot_id 또는 첫 active 봇)
+                //   2) webhook mode: args.webhook_url 또는 vault notify.discord.webhook_url (legacy)
                 let content = args
                     .get("content")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| invalid("missing 'content'"))?
                     .to_string();
+                // bot mode 우선 — channel 인자가 있을 때
+                if let Some(channel_id) = args.get("channel").and_then(|v| v.as_str()).map(|s| s.to_string()) {
+                    let bot_id_param = args.get("bot_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    // discord_bots lookup
+                    let tok: Option<String> = {
+                        let conn = self.db.conn();
+                        let from_param = bot_id_param.as_deref().and_then(|bid| {
+                            conn.query_row::<String, _, _>(
+                                "SELECT bot_token FROM discord_bots WHERE id = ?1 AND active = 1",
+                                rusqlite::params![bid], |r| r.get(0)
+                            ).ok().filter(|t: &String| !t.is_empty())
+                        });
+                        from_param.or_else(|| conn.query_row::<String, _, _>(
+                            "SELECT bot_token FROM discord_bots WHERE active=1 ORDER BY created_at ASC LIMIT 1",
+                            [], |r| r.get(0)
+                        ).ok().filter(|t: &String| !t.is_empty()))
+                    };
+                    let tok = tok.ok_or_else(|| invalid("Discord bot 미등록 — GUI 의 에이전트 패널 → 채널 바인딩 → '+ 봇' 으로 등록"))?;
+                    let url = format!("https://discord.com/api/v10/channels/{}/messages", channel_id);
+                    let body_str = serde_json::to_string(&json!({"content": content})).unwrap();
+                    let auth = format!("Bot {}", tok);
+                    let (status, err_body): (u16, String) =
+                        std::thread::spawn(move || -> Result<(u16, String), String> {
+                            let resp = reqwest::blocking::Client::new()
+                                .post(&url)
+                                .header("authorization", auth)
+                                .header("content-type", "application/json")
+                                .body(body_str)
+                                .send()
+                                .map_err(|e| format!("Discord POST: {e}"))?;
+                            let s = resp.status().as_u16();
+                            let t = if (200..300).contains(&s) { String::new() } else { resp.text().unwrap_or_default() };
+                            Ok((s, t))
+                        }).join().map_err(|_| internal("HTTP thread panic"))?.map_err(internal)?;
+                    if !(200..300).contains(&status) {
+                        return Err(invalid(&format!("Discord channel HTTP {status}: {err_body}")));
+                    }
+                    return Ok(json!({"sent": true, "mode": "bot", "status": status, "channel": channel_id, "content_len": content.len()}));
+                }
+                // webhook mode (legacy)
+                let pw = self.require_vault()?.to_string();
                 let webhook = if let Some(w) = args.get("webhook_url").and_then(|v| v.as_str()) {
                     w.to_string()
                 } else {
                     let bytes = VaultStore::new(&mut self.db)
                         .get("notify.discord.webhook_url", &pw)
-                        .map_err(|_| invalid("notify.discord.webhook_url vault 에 없음 — 먼저 connect_discord 또는 create_project_category"))?;
+                        .map_err(|_| invalid("Discord 발신 path 없음. 옵션: (1) args.channel 지정(bot mode) (2) args.webhook_url 지정 (3) vault notify.discord.webhook_url 등록"))?;
                     String::from_utf8(bytes).map_err(|e| internal(format!("vault utf8: {e}")))?
                 };
-
                 let body_str = serde_json::to_string(&json!({"content": content})).unwrap();
                 let webhook_clone = webhook.clone();
                 let (status, err_body): (u16, String) =
@@ -983,22 +1026,13 @@ impl ToolDispatcher for OpenxgramDispatcher {
                             .send()
                             .map_err(|e| format!("Discord POST: {e}"))?;
                         let s = resp.status().as_u16();
-                        let t = if (200..300).contains(&s) {
-                            String::new()
-                        } else {
-                            resp.text().unwrap_or_default()
-                        };
+                        let t = if (200..300).contains(&s) { String::new() } else { resp.text().unwrap_or_default() };
                         Ok((s, t))
-                    })
-                    .join()
-                    .map_err(|_| internal("HTTP thread panic"))?
-                    .map_err(internal)?;
+                    }).join().map_err(|_| internal("HTTP thread panic"))?.map_err(internal)?;
                 if !(200..300).contains(&status) {
-                    return Err(invalid(&format!(
-                        "Discord webhook 응답 HTTP {status}: {err_body}"
-                    )));
+                    return Err(invalid(&format!("Discord webhook HTTP {status}: {err_body}")));
                 }
-                Ok(json!({"sent": true, "status": status, "content_len": content.len()}))
+                Ok(json!({"sent": true, "mode": "webhook", "status": status, "content_len": content.len()}))
             }
             "send_to_telegram" => {
                 let pw = self.require_vault()?.to_string();
