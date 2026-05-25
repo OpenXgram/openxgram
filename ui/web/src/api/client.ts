@@ -180,6 +180,7 @@ const ROUTES: Record<string, Route> = {
  agents_list: { method: "GET", path: "/agents"},
  agents_register: { method: "POST", path: "/agents", body: true},
  agents_delete: { method: "POST", path: "/agents/{alias}"},
+ agents_auto_detect: { method: "POST", path: "/agents/auto-detect", body: true},
  notify_discord_channels: { method: "POST", path: "/notify/discord/channels", body: true},
  notify_discord_diagnostic: { method: "GET", path: "/notify/discord/diagnostic"},
  ops_diagnostic: { method: "GET", path: "/ops/diagnostic"},

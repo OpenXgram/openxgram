@@ -301,6 +301,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
                get(gui_agents_list).post(gui_agents_register))
         .route("/v1/gui/agents/{alias}",
                post(gui_agents_delete))
+        // rc.125 — 자동 감지 (alias 의 cwd CLAUDE.md + .mcp.json)
+        .route("/v1/gui/agents/auto-detect",
+               post(gui_agents_auto_detect))
         // Discord 봇이 가입한 guild 의 channel 목록 (세션 바인딩 시 사용자가 선택)
         .route("/v1/gui/notify/discord/channels", post(gui_notify_discord_channels))
         // Discord 봇 진단 — token + permission + guild + channel 한 번에
@@ -2678,6 +2681,15 @@ struct AgentRegisterBody {
     #[serde(default)] project_path: Option<String>,
     #[serde(default)] group_name: Option<String>,
     #[serde(default)] messenger_enabled: bool,
+    // rc.125 — 자유 orchestration role (enum 아님) + 특수 지침
+    #[serde(default)] orchestration_role: Option<String>,
+    #[serde(default)] special_instructions: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct AgentAutoDetectBody {
+    alias: String,
+    #[serde(default)] project_path_hint: Option<String>,
 }
 
 async fn gui_agents_list(
@@ -2688,7 +2700,7 @@ async fn gui_agents_list(
     let mut db = state.db.lock().await;
     let mut stmt = db.conn().prepare(
         "SELECT alias, role, description, capabilities, tool_list, project_path, \
-                group_name, messenger_enabled, updated_at \
+                group_name, messenger_enabled, orchestration_role, special_instructions, updated_at \
          FROM agent_capabilities ORDER BY messenger_enabled DESC, alias ASC",
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
     let rows = stmt.query_map([], |r| {
@@ -2701,7 +2713,9 @@ async fn gui_agents_list(
             "project_path": r.get::<_, Option<String>>(5)?,
             "group_name": r.get::<_, Option<String>>(6)?,
             "messenger_enabled": r.get::<_, i64>(7)? != 0,
-            "updated_at": r.get::<_, String>(8)?,
+            "orchestration_role": r.get::<_, Option<String>>(8)?,
+            "special_instructions": r.get::<_, Option<String>>(9)?,
+            "updated_at": r.get::<_, String>(10)?,
         }))
     }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
         .filter_map(|r| r.ok()).collect();
@@ -2718,8 +2732,8 @@ async fn gui_agents_register(
     let mut db = state.db.lock().await;
     db.conn().execute(
         "INSERT INTO agent_capabilities \
-            (alias, role, description, capabilities, tool_list, project_path, group_name, messenger_enabled, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
+            (alias, role, description, capabilities, tool_list, project_path, group_name, messenger_enabled, orchestration_role, special_instructions, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
          ON CONFLICT(alias) DO UPDATE SET \
             role = COALESCE(excluded.role, role), \
             description = COALESCE(excluded.description, description), \
@@ -2728,13 +2742,77 @@ async fn gui_agents_register(
             project_path = COALESCE(excluded.project_path, project_path), \
             group_name = COALESCE(excluded.group_name, group_name), \
             messenger_enabled = excluded.messenger_enabled, \
+            orchestration_role = COALESCE(excluded.orchestration_role, orchestration_role), \
+            special_instructions = COALESCE(excluded.special_instructions, special_instructions), \
             updated_at = excluded.updated_at",
         rusqlite::params![
             body.alias, body.role, body.description, body.capabilities, body.tool_list,
-            body.project_path, body.group_name, body.messenger_enabled as i64, now,
+            body.project_path, body.group_name, body.messenger_enabled as i64,
+            body.orchestration_role, body.special_instructions, now,
         ],
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("upsert: {e}")})))?;
     Ok(Json(serde_json::json!({"ok": true, "alias": body.alias})))
+}
+
+// rc.125 — 자동 감지: 해당 alias 의 cwd 에서 CLAUDE.md 첫 부분 + .mcp.json 읽기.
+// portal /api/terminals 가져오면 좋지만 일단 hint 받음 또는 tmux 의 default-path 사용.
+async fn gui_agents_auto_detect(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<AgentAutoDetectBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    // 1) project_path 결정: hint 우선, 없으면 tmux session 의 default-path
+    let project_path: String = if let Some(p) = body.project_path_hint.as_ref().filter(|s| !s.is_empty()) {
+        p.clone()
+    } else {
+        // alias → tmux session → default-path
+        let session = match crate::notify::resolve_alias_to_tmux(&body.alias).await {
+            Some((s, _)) => s,
+            None => return Ok(Json(serde_json::json!({
+                "ok": false,
+                "error": "tmux session not found for alias",
+                "alias": body.alias,
+            }))),
+        };
+        let out = tokio::process::Command::new("tmux")
+            .args(["display-message", "-p", "-t", &session, "#{pane_current_path}"])
+            .output().await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("tmux: {e}")})))?;
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if s.is_empty() {
+            return Ok(Json(serde_json::json!({"ok": false, "error": "cwd 추출 실패", "alias": body.alias})));
+        }
+        s
+    };
+    // 2) CLAUDE.md 첫 4KB 읽어 role/description 추출
+    let claude_md_path = std::path::Path::new(&project_path).join("CLAUDE.md");
+    let (description, tool_list_json): (Option<String>, Option<String>) = if claude_md_path.exists() {
+        let content = std::fs::read_to_string(&claude_md_path).unwrap_or_default();
+        let head: String = content.chars().take(4000).collect();
+        // 간단 추출: # heading 라인 + 첫 2~3 줄
+        let first_lines: Vec<&str> = head.lines().take(20).collect();
+        let desc = first_lines.join("\n");
+        (Some(desc), None)
+    } else { (None, None) };
+    // 3) .mcp.json 읽어 tool_list 추출
+    let mcp_path = std::path::Path::new(&project_path).join(".mcp.json");
+    let tool_list = if mcp_path.exists() {
+        std::fs::read_to_string(&mcp_path).ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v.get("mcpServers").map(|servers| {
+                servers.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()).unwrap_or_default()
+            }))
+            .map(|v| serde_json::to_string(&v).unwrap_or_default())
+            .or(tool_list_json)
+    } else { tool_list_json };
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "alias": body.alias,
+        "project_path": project_path,
+        "description": description,
+        "tool_list": tool_list,
+    })))
 }
 
 async fn gui_agents_delete(
@@ -5869,3 +5947,4 @@ async fn gui_channels_summary(
         },
     })))
 }
+// rc.122 trigger marker

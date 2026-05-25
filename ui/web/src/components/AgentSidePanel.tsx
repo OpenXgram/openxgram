@@ -522,8 +522,13 @@ interface AgentCapDto {
  alias: string;
  role: string | null;
  description: string | null;
+ capabilities: string | null;
+ tool_list: string | null;
+ project_path: string | null;
  group_name: string | null;
  messenger_enabled: boolean;
+ orchestration_role: string | null;
+ special_instructions: string | null;
 }
 function MessengerRegisterTab(props: { peer: PeerMeta}) {
  const alias = () => props.peer.alias;
@@ -531,9 +536,19 @@ function MessengerRegisterTab(props: { peer: PeerMeta}) {
  try { return await invoke<AgentCapDto[]>("agents_list");} catch { return [];}
 });
  const current = () => (agents() ?? []).find((a) => a.alias === alias()) || null;
+ // 기존 등록된 orchestration_role 목록 (autocomplete 용)
+ const existingOrchRoles = () => {
+ const set = new Set<string>();
+ (agents() ?? []).forEach((a) => { if (a.orchestration_role) set.add(a.orchestration_role);});
+ return Array.from(set);
+};
  const [role, setRole] = createSignal("");
  const [description, setDescription] = createSignal("");
  const [groupName, setGroupName] = createSignal("");
+ const [orchRole, setOrchRole] = createSignal("");
+ const [specialInst, setSpecialInst] = createSignal("");
+ const [toolListJson, setToolListJson] = createSignal("");
+ const [projectPath, setProjectPath] = createSignal("");
  const [msg, setMsg] = createSignal<string | null>(null);
  const [busy, setBusy] = createSignal(false);
 
@@ -542,8 +557,25 @@ function MessengerRegisterTab(props: { peer: PeerMeta}) {
  const c = current();
  if (c) {
  setRole(c.role || ""); setDescription(c.description || ""); setGroupName(c.group_name || "");
+ setOrchRole(c.orchestration_role || ""); setSpecialInst(c.special_instructions || "");
+ setToolListJson(c.tool_list || ""); setProjectPath(c.project_path || "");
  }
  });
+
+ async function autoDetect() {
+ setBusy(true); setMsg("🔍 감지 중...");
+ try {
+ const r = await invoke<any>("agents_auto_detect", { alias: alias()});
+ if (r?.ok) {
+ if (r.description) setDescription(r.description);
+ if (r.tool_list) setToolListJson(r.tool_list);
+ if (r.project_path) setProjectPath(r.project_path);
+ setMsg(`✓ 자동 감지 완료 (${r.project_path || "?"})`);
+ } else {
+ setMsg(`✗ ${r?.error || "감지 실패"}`);
+ }
+} catch (e) { setMsg(`✗ ${e}`);} finally { setBusy(false);}
+}
 
  async function save(enabled: boolean) {
  setBusy(true); setMsg(null);
@@ -553,6 +585,10 @@ function MessengerRegisterTab(props: { peer: PeerMeta}) {
  role: role().trim() || null,
  description: description().trim() || null,
  group_name: groupName().trim() || null,
+ orchestration_role: orchRole().trim() || null,
+ special_instructions: specialInst().trim() || null,
+ tool_list: toolListJson().trim() || null,
+ project_path: projectPath().trim() || null,
  messenger_enabled: enabled,
 });
  setMsg(`✓ 저장 (messenger_enabled=${enabled})`);
@@ -577,9 +613,19 @@ function MessengerRegisterTab(props: { peer: PeerMeta}) {
  </div>
  </Show>
  <div style="display:flex; flex-direction:column; gap:6px;">
- <label style="font-size:11px; color:var(--text-3);">역할 (role)</label>
+ <button class="link-btn" disabled={busy()} onClick={autoDetect}
+ style="background:#3a4a6a; color:white; padding:6px 14px; border:none; border-radius:4px; align-self:flex-start;">
+ 🔍 자동 감지 (CLAUDE.md + .mcp.json)
+ </button>
+ <label style="font-size:11px; color:var(--text-3);">역할 (role) — 짧은 직책</label>
  <input value={role()} onInput={(e) => setRole(e.currentTarget.value)}
  placeholder="예: PRD 작성, Rust 코어 구현, 테스트·검증" style="padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+ <label style="font-size:11px; color:var(--text-3);">오케스트레이션 역할 (자유 입력, 기존 list autocomplete)</label>
+ <input value={orchRole()} onInput={(e) => setOrchRole(e.currentTarget.value)} list="orch-roles-list"
+ placeholder="예: coordinator / worker / reviewer / researcher / specialist:rust ..." style="padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+ <datalist id="orch-roles-list">
+ <For each={existingOrchRoles()}>{(r) => <option value={r} />}</For>
+ </datalist>
  <label style="font-size:11px; color:var(--text-3);">설명 (다른 에이전트에게 소개 메시지)</label>
  <textarea value={description()} onInput={(e) => setDescription(e.currentTarget.value)}
  placeholder="1~3 문장 — 이 에이전트가 무엇을 잘하는지" rows={3}
@@ -587,6 +633,18 @@ function MessengerRegisterTab(props: { peer: PeerMeta}) {
  <label style="font-size:11px; color:var(--text-3);">그룹 (선택, peer_send fan-out 단위)</label>
  <input value={groupName()} onInput={(e) => setGroupName(e.currentTarget.value)}
  placeholder="예: prd-team / dev-team / portal-team" style="padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+ <label style="font-size:11px; color:var(--text-3);">특수 지침 (선택)</label>
+ <textarea value={specialInst()} onInput={(e) => setSpecialInst(e.currentTarget.value)}
+ placeholder="예외 처리, 보안 룰, 특별 행동 양식 등" rows={2}
+ style="padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px; font-family:inherit;" />
+ <Show when={projectPath()}>
+ <label style="font-size:11px; color:var(--text-3);">프로젝트 경로 (자동 감지됨)</label>
+ <code style="font-size:10px; padding:4px 6px; background:var(--surface-2); border-radius:3px;">{projectPath()}</code>
+ </Show>
+ <Show when={toolListJson()}>
+ <label style="font-size:11px; color:var(--text-3);">MCP 도구 (자동 감지됨, read-only)</label>
+ <code style="font-size:10px; padding:4px 6px; background:var(--surface-2); border-radius:3px; word-break:break-all;">{toolListJson()}</code>
+ </Show>
  <div style="display:flex; gap:6px; margin-top:4px;">
  <button class="link-btn" disabled={busy()} onClick={() => save(true)}
  style="background:#238636; color:white; padding:6px 14px; border:none; border-radius:4px;">
@@ -598,7 +656,7 @@ function MessengerRegisterTab(props: { peer: PeerMeta}) {
  </button>
  </div>
  <Show when={msg()}>
- <div style={`padding:6px 10px; font-size:11px; border-radius:4px; background:${msg()!.startsWith("✓") ? "rgba(35,134,54,0.2)" : "rgba(220,53,69,0.2)"};`}>{msg()}</div>
+ <div style={`padding:6px 10px; font-size:11px; border-radius:4px; background:${msg()!.startsWith("✓") || msg()!.startsWith("🔍") ? "rgba(35,134,54,0.2)" : "rgba(220,53,69,0.2)"};`}>{msg()}</div>
  </Show>
  </div>
  </div>
