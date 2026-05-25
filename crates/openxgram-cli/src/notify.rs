@@ -543,20 +543,27 @@ pub async fn run_discord_inbound_for_daemon(
 /// 첫 매칭 반환. 매번 tmux 진리원천 조회 → 재시작/id 변경 자동 대응. 하드코딩 0.
 pub async fn resolve_alias_to_tmux(alias: &str) -> Option<(String, u32)> {
     use tokio::process::Command;
+    // 입력 정규화 — GUI suffix ("starianset [aoe-window]", "name (xxx)") 제거.
+    // 모든 GUI 명명 변종 흡수, sanitize 후 매칭.
+    let cleaned = alias
+        .split(" [").next().unwrap_or(alias)
+        .split(" (").next().unwrap_or(alias)
+        .trim();
+    if cleaned.is_empty() { return None;}
     let out = Command::new("tmux")
         .args(["list-sessions", "-F", "#{session_name}"])
         .output().await.ok()?;
     if !out.status.success() { return None;}
     let sessions: Vec<String> = String::from_utf8_lossy(&out.stdout)
         .lines().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-    if let Some(s) = sessions.iter().find(|s| s.as_str() == alias) {
+    if let Some(s) = sessions.iter().find(|s| s.as_str() == cleaned) {
         return Some((s.clone(), 0));
     }
-    let prefix = format!("aoe_{}_", alias);
+    let prefix = format!("aoe_{}_", cleaned);
     if let Some(s) = sessions.iter().find(|s| s.starts_with(&prefix)) {
         return Some((s.clone(), 0));
     }
-    if let Some(s) = sessions.iter().find(|s| s.contains(alias)) {
+    if let Some(s) = sessions.iter().find(|s| s.contains(cleaned)) {
         return Some((s.clone(), 0));
     }
     None
