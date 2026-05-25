@@ -21,10 +21,17 @@ AGENTS.md 등에서 `@~/oxg.md` 로 reference 하세요.
 
 ## 1. Peer 통신 (다른 에이전트와 소통)
 
-### 누가 있는가
+### 누가 있는가 (동적 lookup)
 ```text
-openxgram.list_peers           → [{alias, address, last_seen}, ...]
+openxgram.list_peers
+→ [{alias, address, role, description, capabilities, eth_address, ...}, ...]
 ```
+정적 list 가 어디에도 박혀있지 않음 — 매 세션 이 호출로 실시간 조회.
+새 peer 가 join 하면 즉시 보임 (별도 inject/refresh 명령 불필요).
+
+각 peer 의 `role` / `description` / `capabilities` 는 그 peer 가 직접 등록
+(`register_subagent` MCP 또는 `xgram peer register`). 따라서 어떤 머신/환경
+에서든 일관된 정보가 보임 — 진정한 분산 신원.
 
 ### 보내기
 ```text
@@ -125,6 +132,21 @@ openxgram.list_memories_by_kind(kind)
 ---
 
 ## 5. 오케스트레이션 패턴
+
+### 5.0 role 기반 위임 (권장)
+```text
+1) openxgram.list_peers  → 각 peer 의 role/description 확인
+2) 사용자 의도 → role 매핑 (예: "PRD 갱신" → role="prd-author" 또는 description 매칭)
+3) 매칭된 peer alias 로 peer_send
+4) 답 대기 → recv_messages
+
+예시 매핑 (OpenXgram 의 표준 role, 실제로는 list_peers 결과 우선):
+- "PRD 작성·갱신"  → Pip
+- "Rust 코어 구현"  → Eno
+- "테스트·검증"     → Qua
+- "외부 라이브러리 리서치" → Res
+```
+role 은 자유 텍스트. 자연어 의미 매칭으로 충분.
 
 ### 5.1 단순 위임
 ```text

@@ -187,37 +187,16 @@ fn generate_context_block(data_dir: &Path) -> Result<String> {
     let peer_count = peer_count_quiet(data_dir);
 
     let mut s = String::new();
+    // rc.116 — marker block 단순화. 신원 핵심만. MCP 도구·자동 echo 룰·오케스트레이션·
+    // peer 정보 모두 ~/oxg.md (전역 단일 진리원천) 로 통합. install.sh 가 자동 setup.
+    let _ = peer_count;  // 정적 inject 안 함 — list_peers 가 동적 lookup
     s.push_str(CLAUDE_MD_BEGIN);
     s.push_str("\n\n## OpenXgram Identity (이 프로젝트)\n\n");
     s.push_str(&format!("- **alias**: `{}`\n", manifest.machine.alias));
     s.push_str(&format!("- **address**: `{}`\n", master.address));
     s.push_str(&format!("- **data_dir**: `{}`\n", data_dir.display()));
-    s.push_str(&format!(
-        "- **linked peers**: {} (자세히 `openxgram.list_peers`)\n",
-        peer_count
-    ));
-    s.push_str("\n### 사용 가능한 MCP 도구 (`openxgram.*`)\n\n");
-    s.push_str("- `whoami` — 이 프로젝트의 신원 확인\n");
-    s.push_str("- `list_peers` — 메시지 보낼 수 있는 상대\n");
-    s.push_str("- `peer_send(alias, body)` — 다른 에이전트한테 메시지\n");
-    s.push_str("- `recv_messages(limit?, since_rfc3339?, sender?)` — 내 inbox (시간 내림차순)\n");
-    s.push_str("- `recall_messages(query, k?)` — 과거 메시지 벡터 검색 (sqlite-vec KNN)\n");
-    s.push_str("- `list_sessions` — 세션 목록\n");
-    s.push_str("- `list_memories_by_kind(kind)` — L2 facts/decisions/references/rules\n");
-    s.push_str("- `send_to_discord(content, channel?, bot_id?)` — Discord 채널로 발신 (agent-push)\n");
-    s.push_str("- `send_to_telegram(content, chat_id?)` — Telegram 으로 발신\n");
-    s.push_str("- `vault_*` — 자격증명 (XGRAM_KEYSTORE_PASSWORD env 필요)\n");
-    s.push_str("\n### 사용 패턴\n\n");
-    s.push_str("- 세션 시작 시 `recv_messages` 한 번 호출해 받은 메시지 확인 권장\n");
-    s.push_str("- 다른 에이전트 호출 시 먼저 `list_peers` 로 사용 가능한 alias 확인\n");
-    s.push_str("- 과거 대화 회상 시 `recall_messages` (벡터 검색)\n");
-    s.push_str("\n### ⚠️ 자동 echo 룰 (필수)\n\n");
-    s.push_str("**`[Discord:user]` 또는 `[Telegram:user]` prefix 가 보이는 inbound 메시지를 받으면**:\n");
-    s.push_str("1. 답변을 작성한 직후\n");
-    s.push_str("2. **반드시** `send_to_discord(content=답변, channel=<inbound 채널 id>)` 호출 (또는 send_to_telegram)\n");
-    s.push_str("3. 사용자는 Discord/Telegram 을 메인 UI 로 사용. 터미널 응답만으로는 못 봄.\n\n");
-    s.push_str("채널 id 는 binding 의 `channel_ref` 필드 — 모르면 `list_sessions` 또는 DB 의 `session_channel_bindings` 조회.\n\n");
-    s.push_str("자세한 가이드는 `@~/oxg.md` 참조 (install 시 자동 설치됨).\n\n");
+    s.push_str("\n전체 가이드 (peer 통신·발신·오케스트레이션·자동 echo 룰): `@~/oxg.md`\n");
+    s.push_str("Peer 목록은 동적 — `openxgram.list_peers` 호출 시 role/description/capabilities 함께 반환.\n\n");
     s.push_str(CLAUDE_MD_END);
     Ok(s)
 }
