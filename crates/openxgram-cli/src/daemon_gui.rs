@@ -295,6 +295,12 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
                get(gui_session_bindings_list).post(gui_session_binding_add))
         .route("/v1/gui/sessions/{agent_id}/channel-bindings/{binding_id}",
                post(gui_session_binding_delete))
+        // rc.122 — 에이전트 메신저 등록 (외부 채널 바인딩과 별개, 필수)
+        // GET: 등록된 모든 에이전트 (messenger_enabled 포함). POST: 등록/갱신 upsert.
+        .route("/v1/gui/agents",
+               get(gui_agents_list).post(gui_agents_register))
+        .route("/v1/gui/agents/{alias}",
+               post(gui_agents_delete))
         // Discord 봇이 가입한 guild 의 channel 목록 (세션 바인딩 시 사용자가 선택)
         .route("/v1/gui/notify/discord/channels", post(gui_notify_discord_channels))
         // Discord 봇 진단 — token + permission + guild + channel 한 번에
@@ -2658,6 +2664,91 @@ async fn gui_session_binding_delete(
         rusqlite::params![binding_id, agent_id],
     ).ok();
     Ok(Json(serde_json::json!({"deleted": binding_id})))
+}
+
+// rc.122 — 에이전트 메신저 등록 (agent_capabilities 직접 CRUD)
+// 외부 채널 바인딩과 별개. 모든 협업 에이전트의 필수 등록 path.
+#[derive(serde::Deserialize)]
+struct AgentRegisterBody {
+    alias: String,
+    #[serde(default)] role: Option<String>,
+    #[serde(default)] description: Option<String>,
+    #[serde(default)] capabilities: Option<String>,
+    #[serde(default)] tool_list: Option<String>,
+    #[serde(default)] project_path: Option<String>,
+    #[serde(default)] group_name: Option<String>,
+    #[serde(default)] messenger_enabled: bool,
+}
+
+async fn gui_agents_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT alias, role, description, capabilities, tool_list, project_path, \
+                group_name, messenger_enabled, updated_at \
+         FROM agent_capabilities ORDER BY messenger_enabled DESC, alias ASC",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map([], |r| {
+        Ok(serde_json::json!({
+            "alias": r.get::<_, String>(0)?,
+            "role": r.get::<_, Option<String>>(1)?,
+            "description": r.get::<_, Option<String>>(2)?,
+            "capabilities": r.get::<_, Option<String>>(3)?,
+            "tool_list": r.get::<_, Option<String>>(4)?,
+            "project_path": r.get::<_, Option<String>>(5)?,
+            "group_name": r.get::<_, Option<String>>(6)?,
+            "messenger_enabled": r.get::<_, i64>(7)? != 0,
+            "updated_at": r.get::<_, String>(8)?,
+        }))
+    }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+async fn gui_agents_register(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<AgentRegisterBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO agent_capabilities \
+            (alias, role, description, capabilities, tool_list, project_path, group_name, messenger_enabled, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
+         ON CONFLICT(alias) DO UPDATE SET \
+            role = COALESCE(excluded.role, role), \
+            description = COALESCE(excluded.description, description), \
+            capabilities = COALESCE(excluded.capabilities, capabilities), \
+            tool_list = COALESCE(excluded.tool_list, tool_list), \
+            project_path = COALESCE(excluded.project_path, project_path), \
+            group_name = COALESCE(excluded.group_name, group_name), \
+            messenger_enabled = excluded.messenger_enabled, \
+            updated_at = excluded.updated_at",
+        rusqlite::params![
+            body.alias, body.role, body.description, body.capabilities, body.tool_list,
+            body.project_path, body.group_name, body.messenger_enabled as i64, now,
+        ],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("upsert: {e}")})))?;
+    Ok(Json(serde_json::json!({"ok": true, "alias": body.alias})))
+}
+
+async fn gui_agents_delete(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "DELETE FROM agent_capabilities WHERE alias = ?1",
+        rusqlite::params![alias],
+    ).ok();
+    Ok(Json(serde_json::json!({"deleted": alias})))
 }
 
 #[derive(Debug, Deserialize)]

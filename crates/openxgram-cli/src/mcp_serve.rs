@@ -651,6 +651,55 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| invalid("missing 'body'"))?
                     .to_string();
+                // rc.122 — group fan-out 먼저 검사. alias 가 agent_capabilities.group_name 과
+                // 일치하면 그 group 의 모든 messenger_enabled 멤버에게 fan-out.
+                let group_members: Vec<String> = {
+                    let conn = self.db.conn();
+                    conn.prepare(
+                        "SELECT alias FROM agent_capabilities WHERE group_name = ?1 AND messenger_enabled = 1"
+                    ).ok().and_then(|mut stmt| {
+                        stmt.query_map(rusqlite::params![&alias], |r| r.get::<_, String>(0)).ok()
+                            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                    }).unwrap_or_default()
+                };
+                if !group_members.is_empty() {
+                    use openxgram_manifest::InstallManifest;
+                    let manifest_path = openxgram_core::paths::manifest_path(&self.data_dir);
+                    let from_alias = InstallManifest::read(&manifest_path)
+                        .map(|m| m.machine.alias.clone())
+                        .unwrap_or_else(|_| "anon".to_string());
+                    let injected = format!("[Group:{}] ⮕ {}", alias, body);
+                    let handle = tokio::runtime::Handle::current();
+                    let members_clone = group_members.clone();
+                    let injected_clone = injected.clone();
+                    let delivered: Vec<String> = handle.block_on(async move {
+                        let mut ok = vec![];
+                        for m in members_clone {
+                            if let Some((session, idx)) = crate::notify::resolve_alias_to_tmux(&m).await {
+                                let target = format!("{}:{}", session, idx);
+                                let wrapped = format!("\x1b[200~{}\x1b[201~", injected_clone);
+                                if tokio::process::Command::new("tmux")
+                                    .args(["send-keys", "-t", &target, "-l", &wrapped])
+                                    .output().await.is_ok() {
+                                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                                    let _ = tokio::process::Command::new("tmux")
+                                        .args(["send-keys", "-t", &target, "Enter"])
+                                        .output().await;
+                                    ok.push(m);
+                                }
+                            }
+                        }
+                        ok
+                    });
+                    return Ok(json!({
+                        "sent": true,
+                        "via": "group_fanout",
+                        "group": alias,
+                        "from": from_alias,
+                        "delivered": delivered,
+                        "members": group_members,
+                    }));
+                }
                 // rc.120 — local binding session 우선 처리.
                 // alias 가 본 머신 session_channel_bindings 의 agent_id 와 일치하면
                 // peer transport(vault/HTTP/XMTP) 우회 + 직접 그 tmux 세션의
