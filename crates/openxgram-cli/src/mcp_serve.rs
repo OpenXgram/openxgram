@@ -641,7 +641,6 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 Ok(json!({"bots": items, "count": items.len()}))
             }
             "peer_send" => {
-                let pw = self.require_vault()?.to_string();
                 let alias = args
                     .get("alias")
                     .and_then(|v| v.as_str())
@@ -652,6 +651,54 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| invalid("missing 'body'"))?
                     .to_string();
+                // rc.120 — local binding session 우선 처리.
+                // alias 가 본 머신 session_channel_bindings 의 agent_id 와 일치하면
+                // peer transport(vault/HTTP/XMTP) 우회 + 직접 그 tmux 세션의
+                // chat input 에 bracket-paste dispatch. Discord 무관 자율 대화.
+                let is_local_binding = self.db.conn().query_row::<i64, _, _>(
+                    "SELECT COUNT(*) FROM session_channel_bindings WHERE agent_id = ?1 AND active = 1",
+                    rusqlite::params![&alias],
+                    |r| r.get(0),
+                ).unwrap_or(0) > 0;
+                if is_local_binding {
+                    // self alias (from)
+                    use openxgram_manifest::InstallManifest;
+                    let manifest_path = openxgram_core::paths::manifest_path(&self.data_dir);
+                    let from_alias = InstallManifest::read(&manifest_path)
+                        .map(|m| m.machine.alias.clone())
+                        .unwrap_or_else(|_| "anon".to_string());
+                    let injected = format!("[Peer:{}] ⮕ {}", from_alias, body);
+                    let handle = tokio::runtime::Handle::current();
+                    let alias_clone = alias.clone();
+                    let result = handle.block_on(async move {
+                        let (session, idx) = crate::notify::resolve_alias_to_tmux(&alias_clone).await
+                            .ok_or_else(|| format!("alias '{}' → tmux 매핑 실패", alias_clone))?;
+                        let target = format!("{}:{}", session, idx);
+                        let wrapped = format!("\x1b[200~{}\x1b[201~", injected);
+                        let out = tokio::process::Command::new("tmux")
+                            .args(["send-keys", "-t", &target, "-l", &wrapped])
+                            .output().await.map_err(|e| format!("tmux paste: {}", e))?;
+                        if !out.status.success() {
+                            return Err(format!("tmux paste 실패: {}", String::from_utf8_lossy(&out.stderr)));
+                        }
+                        let out2 = tokio::process::Command::new("tmux")
+                            .args(["send-keys", "-t", &target, "Enter"])
+                            .output().await.map_err(|e| format!("tmux Enter: {}", e))?;
+                        if !out2.status.success() {
+                            return Err(format!("tmux Enter 실패: {}", String::from_utf8_lossy(&out2.stderr)));
+                        }
+                        Ok::<_, String>(session)
+                    }).map_err(internal)?;
+                    return Ok(json!({
+                        "sent": true,
+                        "alias": alias,
+                        "via": "local_binding",
+                        "tmux_session": result,
+                        "from": from_alias,
+                    }));
+                }
+                // 외부 peer (다른 머신) — 기존 transport path
+                let pw = self.require_vault()?.to_string();
                 let conv = args
                     .get("conversation_id")
                     .and_then(|v| v.as_str())
@@ -663,7 +710,7 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         &data_dir, &alias, None, &body, &pw, conv,
                     ))
                     .map_err(|e| internal(e))?;
-                Ok(json!({"sent": true, "alias": alias}))
+                Ok(json!({"sent": true, "alias": alias, "via": "remote_peer"}))
             }
             "whoami" => {
                 use openxgram_manifest::InstallManifest;
