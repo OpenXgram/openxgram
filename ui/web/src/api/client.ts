@@ -181,6 +181,9 @@ const ROUTES: Record<string, Route> = {
  agents_register: { method: "POST", path: "/agents", body: true},
  agents_delete: { method: "POST", path: "/agents/{alias}"},
  agents_auto_detect: { method: "POST", path: "/agents/auto-detect", body: true},
+ // rc.129 — 지침 파일 (cwd/AGENT.md) inline 편집
+ agents_instructions_get: { method: "GET", path: "/agents/instructions"},
+ agents_instructions_save: { method: "POST", path: "/agents/instructions", body: true},
  // rc.126 — 워크플로우 오케스트레이션 (UI-MESSENGER-SPEC §20 W-1~W-10, backend 기존)
  workflows_list: { method: "GET", path: "/workflows"},
  workflow_upsert: { method: "POST", path: "/workflows", body: true},

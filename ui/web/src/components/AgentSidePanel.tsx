@@ -532,6 +532,35 @@ function MessengerRegisterTab(props: { peer: PeerMeta; onJumpToSettings: () => v
 });
  // 통합: 기존 RoleTab 의 role policies (L3 + V1 마스터 정책) view
  const [policies] = createResource(fetchRolePolicies);
+ // rc.129 — cwd/AGENT.md inline 편집
+ const [instContent, setInstContent] = createSignal("");
+ const [instFile, setInstFile] = createSignal("");
+ const [instExists, setInstExists] = createSignal(false);
+ const [instBusy, setInstBusy] = createSignal(false);
+ const [instMsg, setInstMsg] = createSignal<string | null>(null);
+ async function loadInstructions() {
+ try {
+ const r = await invoke<any>("agents_instructions_get", { alias: alias()});
+ if (r?.ok) {
+ setInstContent(r.content || "");
+ setInstFile(r.file || "");
+ setInstExists(!!r.exists);
+ }
+} catch (e) { /* silent */}
+}
+ createEffect(() => { alias(); loadInstructions();});
+ async function saveInstructions() {
+ setInstBusy(true); setInstMsg(null);
+ try {
+ const r = await invoke<any>("agents_instructions_save", {
+ alias: alias(), content: instContent(),
+});
+ setInstMsg(`✓ 저장: ${r?.file} (${r?.bytes} bytes)`);
+ setInstExists(true);
+ // 저장 후 auto-detect 재실행 → 폼 새 내용 반영
+ await autoDetect();
+} catch (e) { setInstMsg(`✗ ${e}`);} finally { setInstBusy(false);}
+}
  const current = () => (agents() ?? []).find((a) => a.alias === alias()) || null;
  // 기존 등록된 orchestration_role 목록 (autocomplete 용)
  const existingOrchRoles = () => {
@@ -656,6 +685,28 @@ function MessengerRegisterTab(props: { peer: PeerMeta; onJumpToSettings: () => v
  <div style={`padding:6px 10px; font-size:11px; border-radius:4px; background:${msg()!.startsWith("✓") || msg()!.startsWith("🔍") ? "rgba(35,134,54,0.2)" : "rgba(220,53,69,0.2)"};`}>{msg()}</div>
  </Show>
  </div>
+
+ {/* rc.129 — 지침 파일 (cwd/AGENT.md) inline 편집 */}
+ <hr style="margin:14px 0 8px; opacity:0.2;" />
+ <strong style="font-size:12px;">📝 지침 직접 편집 <code style="font-size:10px;">{instFile() || "AGENT.md"}</code></strong>
+ <p class="messenger-sidepanel-hint" style="margin:4px 0;">
+ 이 에이전트의 역할·규칙을 마크다운으로 작성. 저장 시 cwd/AGENT.md 갱신 + 자동 감지 재실행 (위 폼 갱신).
+ {!instExists() && <span style="color:#d29922;"> (아직 파일 없음 — 저장 시 생성)</span>}
+ </p>
+ <textarea value={instContent()} onInput={(e) => setInstContent(e.currentTarget.value)} rows={10}
+ placeholder={`# 에이전트 정체성\\n\\nrole: ...\\ndescription: ...\\ncapabilities: [...]\\n\\n## 특수 지침\\n...`}
+ style="padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px; font-family:monospace; font-size:11px; width:100%; box-sizing:border-box;" />
+ <div style="display:flex; gap:6px; margin-top:4px;">
+ <button class="link-btn" disabled={instBusy()} onClick={saveInstructions}
+ style="background:#238636; color:white; padding:6px 14px; border:none; border-radius:4px;">
+ 💾 저장 (cwd/AGENT.md)
+ </button>
+ <button class="link-btn" disabled={instBusy()} onClick={loadInstructions}
+ style="padding:6px 14px;">↻ 다시 불러오기</button>
+ </div>
+ <Show when={instMsg()}>
+ <div style={`padding:6px 10px; font-size:11px; border-radius:4px; margin-top:4px; background:${instMsg()!.startsWith("✓") ? "rgba(35,134,54,0.2)" : "rgba(220,53,69,0.2)"};`}>{instMsg()}</div>
+ </Show>
 
  {/* L3 + V1 — 역할별 auto_respond 마스터 정책 (기존 RoleTab 통합) */}
  <hr style="margin:14px 0 8px; opacity:0.2;" />

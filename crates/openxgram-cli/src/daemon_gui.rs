@@ -304,6 +304,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // rc.125 — 자동 감지 (alias 의 cwd CLAUDE.md + .mcp.json)
         .route("/v1/gui/agents/auto-detect",
                post(gui_agents_auto_detect))
+        // rc.129 — 지침 파일 (cwd/AGENT.md) inline 편집
+        .route("/v1/gui/agents/instructions",
+               get(gui_agents_instructions_get).post(gui_agents_instructions_save))
         // Discord 봇이 가입한 guild 의 channel 목록 (세션 바인딩 시 사용자가 선택)
         .route("/v1/gui/notify/discord/channels", post(gui_notify_discord_channels))
         // Discord 봇 진단 — token + permission + guild + channel 한 번에
@@ -2754,8 +2757,75 @@ async fn gui_agents_register(
     Ok(Json(serde_json::json!({"ok": true, "alias": body.alias})))
 }
 
-// rc.125 — 자동 감지: 해당 alias 의 cwd 에서 CLAUDE.md 첫 부분 + .mcp.json 읽기.
-// portal /api/terminals 가져오면 좋지만 일단 hint 받음 또는 tmux 의 default-path 사용.
+// rc.129 — alias 의 cwd 추출 helper (tmux pane_current_path)
+async fn resolve_alias_cwd(alias: &str, hint: Option<&str>) -> Result<String, String> {
+    if let Some(p) = hint.filter(|s| !s.is_empty()) { return Ok(p.to_string());}
+    let session = crate::notify::resolve_alias_to_tmux(alias).await
+        .ok_or_else(|| format!("tmux session not found for alias '{}'", alias))?.0;
+    let out = tokio::process::Command::new("tmux")
+        .args(["display-message", "-p", "-t", &session, "#{pane_current_path}"])
+        .output().await.map_err(|e| format!("tmux: {}", e))?;
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() { Err("cwd 추출 실패".to_string()) } else { Ok(s) }
+}
+
+// rc.129 — 지침 파일 (cwd/AGENT.md) inline 편집 endpoint.
+#[derive(serde::Deserialize)]
+struct AgentInstructionsBody {
+    alias: String,
+    content: String,
+    #[serde(default)] project_path_hint: Option<String>,
+}
+
+async fn gui_agents_instructions_get(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let alias = params.get("alias").cloned()
+        .ok_or_else(|| bad_request("alias query 필요"))?;
+    let cwd = match resolve_alias_cwd(&alias, params.get("project_path_hint").map(|s| s.as_str())).await {
+        Ok(p) => p,
+        Err(e) => return Ok(Json(serde_json::json!({"ok": false, "error": e}))),
+    };
+    let agent_md = std::path::Path::new(&cwd).join("AGENT.md");
+    let content = if agent_md.exists() {
+        std::fs::read_to_string(&agent_md).unwrap_or_default()
+    } else { String::new() };
+    Ok(Json(serde_json::json!({
+        "ok": true, "alias": alias, "project_path": cwd,
+        "file": agent_md.display().to_string(),
+        "exists": agent_md.exists(),
+        "content": content,
+    })))
+}
+
+async fn gui_agents_instructions_save(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<AgentInstructionsBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let cwd = match resolve_alias_cwd(&body.alias, body.project_path_hint.as_deref()).await {
+        Ok(p) => p,
+        Err(e) => return Ok(Json(serde_json::json!({"ok": false, "error": e}))),
+    };
+    let agent_md = std::path::Path::new(&cwd).join("AGENT.md");
+    // atomic write: tmp + rename
+    let tmp = agent_md.with_extension("md.new");
+    std::fs::write(&tmp, &body.content)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("write: {e}")})))?;
+    std::fs::rename(&tmp, &agent_md)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("rename: {e}")})))?;
+    Ok(Json(serde_json::json!({
+        "ok": true, "alias": body.alias, "file": agent_md.display().to_string(),
+        "bytes": body.content.len(),
+    })))
+}
+
+// rc.125 — 자동 감지: 해당 alias 의 cwd 에서 AGENT.md → CLAUDE.md 우선순위로 읽기 + .mcp.json.
+// rc.129: AGENT.md 우선 (메신저 등록 탭에서 inline 편집한 파일).
 async fn gui_agents_auto_detect(
     State(state): State<GuiServerState>,
     headers: HeaderMap,
@@ -2785,16 +2855,20 @@ async fn gui_agents_auto_detect(
         }
         s
     };
-    // 2) CLAUDE.md 첫 4KB 읽어 role/description 추출
+    // rc.129 — 2) AGENT.md 우선 (메신저 등록 탭 inline 편집 파일) → CLAUDE.md fallback
+    let agent_md_path = std::path::Path::new(&project_path).join("AGENT.md");
     let claude_md_path = std::path::Path::new(&project_path).join("CLAUDE.md");
-    let (description, tool_list_json): (Option<String>, Option<String>) = if claude_md_path.exists() {
-        let content = std::fs::read_to_string(&claude_md_path).unwrap_or_default();
-        let head: String = content.chars().take(4000).collect();
-        // 간단 추출: # heading 라인 + 첫 2~3 줄
-        let first_lines: Vec<&str> = head.lines().take(20).collect();
-        let desc = first_lines.join("\n");
-        (Some(desc), None)
-    } else { (None, None) };
+    let (description, tool_list_json): (Option<String>, Option<String>) =
+        if agent_md_path.exists() {
+            let content = std::fs::read_to_string(&agent_md_path).unwrap_or_default();
+            (Some(content), None)
+        } else if claude_md_path.exists() {
+            let content = std::fs::read_to_string(&claude_md_path).unwrap_or_default();
+            let head: String = content.chars().take(4000).collect();
+            let first_lines: Vec<&str> = head.lines().take(20).collect();
+            let desc = first_lines.join("\n");
+            (Some(desc), None)
+        } else { (None, None) };
     // 3) .mcp.json 읽어 tool_list 추출
     let mcp_path = std::path::Path::new(&project_path).join(".mcp.json");
     let tool_list = if mcp_path.exists() {
