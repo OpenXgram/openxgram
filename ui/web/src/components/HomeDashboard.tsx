@@ -7,6 +7,7 @@ import { invoke} from "@/api/client";
 
 export type CardId =
  | "messenger"
+ | "agents-messenger"
  | "memory"
  | "external"
  | "identity"
@@ -32,6 +33,15 @@ const CARDS: CardDef[] = [
  title: "메신저",
  prdName: "에이전트간 메신저",
  oneLine: "모든 대화의 라이브 무대 + 사용자 개입",
+ implStatus: "ready",
+},
+ {
+ id: "agents-messenger",
+ group: "value",
+ icon: "",
+ title: "에이전트 등록",
+ prdName: "에이전트 메신저 등록",
+ oneLine: "LLM↔LLM 협업 단위. role/그룹 정의 → 자동 소개",
  implStatus: "ready",
 },
  {
