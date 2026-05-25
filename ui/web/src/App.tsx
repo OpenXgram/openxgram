@@ -15,7 +15,6 @@ import { MemoryCard} from "./components/MemoryCard";
 import { AutonomyCard} from "./components/AutonomyCard";
 import { ExternalAgentCard} from "./components/ExternalAgentCard";
 import { OpsCard} from "./components/OpsCard";
-import { WorkflowsCard} from "./components/WorkflowsCard";
 import { ApprovalQueueBell} from "./components/ApprovalQueueBell";
 import { GlobalSearchModal} from "./components/GlobalSearchModal";
 
@@ -33,8 +32,7 @@ type Tab =
  | "card-memory"
  | "card-autonomy"
  | "card-external"
- | "card-ops"
- | "card-workflows";
+ | "card-ops";
 
 async function checkInitialized(): Promise<boolean> {
  try {
@@ -90,7 +88,6 @@ function AppInner() {
  function openCard(id: CardId) {
  switch (id) {
  case "messenger": setTab("chat"); break;
- case "workflows": setTab("card-workflows"); break;
  case "memory": setTab("card-memory"); break;
  case "autonomy": setTab("card-autonomy"); break;
  case "vault": setTab("card-vault"); break;
@@ -194,9 +191,6 @@ function AppInner() {
  </Show>
  <Show when={tab() === "card-ops"}>
  <OpsCard onBack={() => setTab("home")} />
- </Show>
- <Show when={tab() === "card-workflows"}>
- <WorkflowsCard onBack={() => setTab("home")} />
  </Show>
  </main>
  </Show>
