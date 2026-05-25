@@ -521,7 +521,11 @@ pub async fn run_discord_inbound_for_daemon(
             } else {
                 format!("\n[attachments]\n{}\n", attach_paths.join("\n"))
             };
-            let injected = format!("\n[Discord:{}]\n{}{}\n", msg.author_name, msg.content, attach_line);
+            // rc.113 — Claude Code 같은 chat-input 환경에서 LF 가 Enter=submit 으로 해석되어
+            // multi-line Discord 메시지가 여러 chat message 로 분리되는 문제 해결.
+            // 본문 안 LF 를 visual marker ⏎ 로 치환 → 단일 line + enter 1번 = 1 submit.
+            let raw = format!("[Discord:{}] ➤ {}{}", msg.author_name, msg.content, attach_line);
+            let injected = raw.replace('\n', " ⏎ ").replace('\r', " ");
             if let Err(e) =
                 dispatch_to_session(&agent_id, &injected, &portal_url, &portal_token, &http_client).await
             {

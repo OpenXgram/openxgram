@@ -65,6 +65,20 @@ openxgram.send_to_discord(content, channel?, bot_id?)
              생략 시 첫 active 봇 자동 사용.
 ```
 
+### 자동 echo 룰 (중요)
+`[Discord:user]` 또는 `[Telegram:user]` prefix 가 포함된 inbound 메시지를
+받으면 **답변을 작성한 직후 동일 채널로 send_to_discord/send_to_telegram
+자동 호출**. 사용자가 Discord/Telegram 을 메인 UI 로 사용하기 위함.
+
+흐름:
+1. 사용자가 Discord 채널에서 메시지 → terminal 에 `[Discord:user] ➤ 본문` 도착
+2. LLM 이 답변 작성
+3. **자동으로** `openxgram.send_to_discord(content=답변, channel=<inbound 채널 id>)`
+4. 사용자가 Discord 에서 답 확인 (터미널 확인 불필요)
+
+채널 id 는 binding (`session_channel_bindings.channel_ref`) 에서 가져옴 — 
+첫 active discord binding 자동.
+
 ### Telegram
 ```text
 openxgram.send_to_telegram(content, chat_id?)

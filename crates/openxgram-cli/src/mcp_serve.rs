@@ -204,12 +204,17 @@ impl ToolDispatcher for OpenxgramDispatcher {
             },
             ToolSpec {
                 name: "send_to_discord".into(),
-                description: "Discord 채널로 메시지 push (LLM 의 자연어 응답을 Discord 로). vault 의 notify.discord.webhook_url 사용. 양방향 흐름의 outbound 절반.".into(),
+                description: "Discord 채널로 메시지 push (agent-push outbound). 두 모드: \
+                              (1) bot mode — channel(channel_id) 명시. discord_bots 테이블의 봇 token 사용. \
+                              (2) webhook mode — webhook_url 명시 또는 vault notify.discord.webhook_url 사용. \
+                              [Discord:user] inbound 받은 후 답변할 때 이 도구로 동일 채널에 자동 echo 권장.".into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
                         "content": {"type": "string", "description": "보낼 내용"},
-                        "webhook_url": {"type": "string", "description": "특정 채널의 webhook (생략 시 vault 의 기본값)"}
+                        "channel": {"type": "string", "description": "Discord channel_id (bot mode). 예: 1505791143307247678"},
+                        "bot_id": {"type": "string", "description": "discord_bots.id (선택). 생략 시 첫 active 봇 자동"},
+                        "webhook_url": {"type": "string", "description": "webhook mode (legacy). 생략 시 vault 기본값"}
                     },
                     "required": ["content"]
                 }),
