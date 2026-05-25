@@ -7,6 +7,7 @@ import { invoke} from "@/api/client";
 
 export type CardId =
  | "messenger"
+ | "workflows"
  | "memory"
  | "external"
  | "identity"
@@ -32,6 +33,15 @@ const CARDS: CardDef[] = [
  title: "메신저",
  prdName: "에이전트간 메신저",
  oneLine: "모든 대화의 라이브 무대 + 사용자 개입",
+ implStatus: "ready",
+},
+ {
+ id: "workflows",
+ group: "value",
+ icon: "",
+ title: "오케스트레이션",
+ prdName: "워크플로우 / 오케스트레이션",
+ oneLine: "여러 에이전트 sequential/parallel/DAG 구성 + 실행 + monitoring",
  implStatus: "ready",
 },
  {
