@@ -542,13 +542,23 @@ function MessengerRegisterTab(props: { peer: PeerMeta; onJumpToSettings: () => v
  try {
  const r = await invoke<any>("agents_instructions_get", { alias: alias()});
  if (r?.ok) {
- setInstContent(r.content || "");
+ let c = r.content || "";
+ // rc.130 — 빈 파일 이면 placeholder template 자동 채움
+ if (!c.trim()) {
+ c = `# ${alias()}\n\n## 역할\n(예: PRD 작성, Rust 코어 구현, 테스트·검증)\n\n## 능력\n- ...\n- ...\n\n## 특수 지침\n(예외 처리, 보안 룰, 특별 행동 양식 등)\n`;
+ }
+ setInstContent(c);
  setInstFile(r.file || "");
  setInstExists(!!r.exists);
  }
 } catch (e) { /* silent */}
 }
- createEffect(() => { alias(); loadInstructions();});
+ createEffect(() => {
+ alias();
+ loadInstructions();
+ // rc.130 — 진입 시 auto-detect 자동 호출 (수동 버튼 클릭 불필요)
+ autoDetect();
+});
  async function saveInstructions() {
  setInstBusy(true); setInstMsg(null);
  try {
@@ -652,10 +662,10 @@ function MessengerRegisterTab(props: { peer: PeerMeta; onJumpToSettings: () => v
  <datalist id="orch-roles-list">
  <For each={existingOrchRoles()}>{(r) => <option value={r} />}</For>
  </datalist>
- <label style="font-size:11px; color:var(--text-3);">설명 (다른 에이전트에게 소개 메시지)</label>
- <textarea value={description()} onInput={(e) => setDescription(e.currentTarget.value)}
- placeholder="1~3 문장 — 이 에이전트가 무엇을 잘하는지" rows={3}
- style="padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px; font-family:inherit;" />
+ {/* rc.130 — description 폼 제거. AGENT.md 의 내용이 자동으로 description 으로 사용됨 (아래 \"지침 직접 편집\" 섹션). */}
+ <p style="font-size:11px; color:var(--text-3); padding:4px 6px; background:var(--surface-2); border-radius:4px; margin:0;">
+ 💡 <strong>설명</strong>은 아래 <strong>📝 지침 직접 편집</strong> (cwd/AGENT.md) 의 내용이 자동 사용됨.
+ </p>
  <label style="font-size:11px; color:var(--text-3);">그룹 (선택, peer_send fan-out 단위)</label>
  <input value={groupName()} onInput={(e) => setGroupName(e.currentTarget.value)}
  placeholder="예: prd-team / dev-team / portal-team" style="padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />

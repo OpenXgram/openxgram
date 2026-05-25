@@ -2818,9 +2818,33 @@ async fn gui_agents_instructions_save(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("write: {e}")})))?;
     std::fs::rename(&tmp, &agent_md)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("rename: {e}")})))?;
+    // rc.130 — CLAUDE.md 끝에 @AGENT.md reference 자동 추가 (idempotent).
+    // LLM 이 cwd/CLAUDE.md 읽으면 AGENT.md 도 자동으로 같이 읽음 (Claude Code @ syntax).
+    let claude_md = std::path::Path::new(&cwd).join("CLAUDE.md");
+    let existing = std::fs::read_to_string(&claude_md).unwrap_or_default();
+    let claude_ref_added = if !existing.contains("@AGENT.md") && !existing.contains("@./AGENT.md") {
+        let mut new_content = existing.clone();
+        if !new_content.is_empty() && !new_content.ends_with('\n') { new_content.push('\n');}
+        new_content.push_str("\n# OpenXgram 에이전트 지침 (auto-injected by 메신저 등록 탭)\n");
+        new_content.push_str("@AGENT.md\n");
+        std::fs::write(&claude_md, new_content).ok();
+        true
+    } else { false };
+    // description 자동 update: agent_capabilities 의 description 을 AGENT.md 첫 4KB 로
+    {
+        let mut db = state.db.lock().await;
+        let head: String = body.content.chars().take(4000).collect();
+        let now = chrono::Utc::now().to_rfc3339();
+        db.conn().execute(
+            "INSERT INTO agent_capabilities (alias, role, description, updated_at) VALUES (?1, 'binding', ?2, ?3) \
+             ON CONFLICT(alias) DO UPDATE SET description = ?2, updated_at = ?3",
+            rusqlite::params![body.alias, head, now],
+        ).ok();
+    }
     Ok(Json(serde_json::json!({
         "ok": true, "alias": body.alias, "file": agent_md.display().to_string(),
         "bytes": body.content.len(),
+        "claude_md_ref_added": claude_ref_added,
     })))
 }
 
@@ -2855,10 +2879,10 @@ async fn gui_agents_auto_detect(
         }
         s
     };
-    // rc.129 — 2) AGENT.md 우선 (메신저 등록 탭 inline 편집 파일) → CLAUDE.md fallback
+    // rc.129/130 — 2) AGENT.md 우선 (메신저 등록 탭 inline 편집 파일) → CLAUDE.md fallback
     let agent_md_path = std::path::Path::new(&project_path).join("AGENT.md");
     let claude_md_path = std::path::Path::new(&project_path).join("CLAUDE.md");
-    let (description, tool_list_json): (Option<String>, Option<String>) =
+    let (description, _tool_list_json): (Option<String>, Option<String>) =
         if agent_md_path.exists() {
             let content = std::fs::read_to_string(&agent_md_path).unwrap_or_default();
             (Some(content), None)
@@ -2869,6 +2893,23 @@ async fn gui_agents_auto_detect(
             let desc = first_lines.join("\n");
             (Some(desc), None)
         } else { (None, None) };
+    // rc.130 — skills 디렉토리 list 추출 (.claude/skills/ + skills/)
+    let mut skills: Vec<String> = vec![];
+    for skill_dir in [".claude/skills", "skills"] {
+        let dir = std::path::Path::new(&project_path).join(skill_dir);
+        if dir.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    if let Some(name) = entry.file_name().to_str() {
+                        skills.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    let tool_list_json = if !skills.is_empty() {
+        Some(serde_json::to_string(&skills).unwrap_or_default())
+    } else { None };
     // 3) .mcp.json 읽어 tool_list 추출
     let mcp_path = std::path::Path::new(&project_path).join(".mcp.json");
     let tool_list = if mcp_path.exists() {
