@@ -5536,6 +5536,7 @@ pub async fn run_discord_outbound_worker(state: GuiServerState) {
             //   - cap == last: skip (위에서 이미 처리)
             //   - 그 외: cap 의 line 중 last 에 없는 것 만 새로움으로 push
             //     (cursor 깜빡임, prompt 미세 변동 등 noise 자동 무시)
+            // rc.111 — line-level diff + inbound prefix filter (echo loop 방지)
             let new_part: String = if last.is_empty() {
                 String::new()
             } else {
@@ -5543,7 +5544,12 @@ pub async fn run_discord_outbound_worker(state: GuiServerState) {
                 let new_lines: Vec<&str> = cap.lines()
                     .filter(|l| {
                         let trimmed = l.trim_end();
-                        !trimmed.is_empty() && !last_lines.contains(trimmed)
+                        if trimmed.is_empty() { return false;}
+                        if last_lines.contains(trimmed) { return false;}
+                        // inbound 메시지 (`[Discord:user]` / `[Telegram:user]`) 자체는 outbound 에서 제외
+                        let lt = trimmed.trim_start();
+                        if lt.starts_with("[Discord:") || lt.starts_with("[Telegram:") { return false;}
+                        true
                     })
                     .collect();
                 new_lines.join("\n")
@@ -5581,10 +5587,14 @@ pub async fn run_discord_outbound_worker(state: GuiServerState) {
                     // 초과 시 .txt 첨부 (multipart). 줄바꿈은 file content 안에 그대로 유지.
                     let wrapped = format!("```\n{}\n```", payload);
                     if wrapped.len() <= 1900 {
-                        let _ = http.post(&url)
+                        match http.post(&url)
                             .header("Authorization", format!("Bot {}", tok))
                             .json(&serde_json::json!({"content": wrapped}))
-                            .send().await;
+                            .send().await {
+                            Ok(r) if r.status().is_success() => tracing::info!(agent_id = %agent_id, len = wrapped.len(), "outbound discord: push OK"),
+                            Ok(r) => tracing::warn!(agent_id = %agent_id, status = %r.status(), body = %r.text().await.unwrap_or_default(), "outbound discord: HTTP 실패"),
+                            Err(e) => tracing::warn!(agent_id = %agent_id, error = %e, "outbound discord: 요청 실패"),
+                        }
                     } else {
                         let filename = format!("terminal-{}.txt", chrono::Utc::now().format("%H%M%S"));
                         let form = reqwest::multipart::Form::new()
