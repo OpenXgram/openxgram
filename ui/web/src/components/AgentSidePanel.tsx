@@ -1,4 +1,4 @@
-import { createResource, createSignal, For, Show} from "solid-js";
+import { createEffect, createResource, createSignal, For, Show} from "solid-js";
 import { invoke} from "@/api/client";
 
 // UI-MESSENGER-SPEC v1.3 §5 — 우측 12 탭 (S3 세로 사이드).
@@ -24,6 +24,7 @@ interface NotifyStatus {
 type TabId =
  | "overview"
  | "role"
+ | "messenger"
  | "channel"
  | "status"
  | "history"
@@ -39,6 +40,7 @@ type TabId =
 const TABS: { id: TabId; label: string; icon: string}[] = [
  { id: "overview", label: "개요", icon: ""},
  { id: "role", label: "역할", icon: ""},
+ { id: "messenger", label: "메신저 등록", icon: ""},
  { id: "channel", label: "채널 바인딩", icon: ""},
  { id: "status", label: "상태·리소스", icon: ""},
  { id: "history", label: "히스토리", icon: ""},
@@ -100,6 +102,9 @@ export function AgentSidePanel(props: {
  </Show>
  <Show when={tab() === "role"}>
  <RoleTab peer={props.peer} onJumpToSettings={props.onJumpToSettings} />
+ </Show>
+ <Show when={tab() === "messenger"}>
+ <MessengerRegisterTab peer={props.peer} />
  </Show>
  <Show when={tab() === "channel"}>
  <ChannelTab notify={notify()} onJumpToSettings={props.onJumpToSettings} agentId={props.peer.alias} />
@@ -506,6 +511,96 @@ function RoleTab(props: { peer: PeerMeta; onJumpToSettings: () => void}) {
  <button class="link-btn" type="button" onClick={props.onJumpToSettings} style="margin-top:10px;">
  자율 행동 카드 (마스터 편집)
  </button>
+ </div>
+);
+}
+
+// ── 탭 (메신저 등록) — 이 세션의 LLM 을 OpenXgram 메신저 에이전트로 등록.
+// 외부 채널 바인딩(Discord/Telegram)과 별개. messenger_enabled=true 면 다른 peer 의
+// list_peers 응답에 자동 노출 + group_name 으로 peer_send fan-out 대상.
+interface AgentCapDto {
+ alias: string;
+ role: string | null;
+ description: string | null;
+ group_name: string | null;
+ messenger_enabled: boolean;
+}
+function MessengerRegisterTab(props: { peer: PeerMeta}) {
+ const alias = () => props.peer.alias;
+ const [agents, { refetch}] = createResource<AgentCapDto[]>(async () => {
+ try { return await invoke<AgentCapDto[]>("agents_list");} catch { return [];}
+});
+ const current = () => (agents() ?? []).find((a) => a.alias === alias()) || null;
+ const [role, setRole] = createSignal("");
+ const [description, setDescription] = createSignal("");
+ const [groupName, setGroupName] = createSignal("");
+ const [msg, setMsg] = createSignal<string | null>(null);
+ const [busy, setBusy] = createSignal(false);
+
+ // 현재 등록 상태 로드되면 입력 필드 채움
+ createEffect(() => {
+ const c = current();
+ if (c) {
+ setRole(c.role || ""); setDescription(c.description || ""); setGroupName(c.group_name || "");
+ }
+ });
+
+ async function save(enabled: boolean) {
+ setBusy(true); setMsg(null);
+ try {
+ await invoke("agents_register", {
+ alias: alias(),
+ role: role().trim() || null,
+ description: description().trim() || null,
+ group_name: groupName().trim() || null,
+ messenger_enabled: enabled,
+});
+ setMsg(`✓ 저장 (messenger_enabled=${enabled})`);
+ await refetch();
+} catch (e) { setMsg(`✗ ${e}`);} finally { setBusy(false);}
+}
+
+ return (
+ <div>
+ <p style="font-size:12px; color:var(--text-3); margin-bottom:10px;">
+ 이 세션(<code>{alias()}</code>) 을 OpenXgram 메신저 에이전트로 등록.<br />
+ 등록 후 다른 LLM 이 <code>openxgram.list_peers</code> 호출 시 자동으로 이 에이전트를 인지.
+ group 지정 시 <code>peer_send(alias=group)</code> 으로 한 번에 fan-out.
+ </p>
+ <Show when={current()?.messenger_enabled} fallback={
+ <div style="padding:6px 10px; font-size:11px; background:rgba(220,53,69,0.15); border-radius:4px; margin-bottom:8px;">
+ ⚠ 미등록 또는 비활성 상태 — 다른 peer 에게 안 보임
+ </div>
+ }>
+ <div style="padding:6px 10px; font-size:11px; background:rgba(35,134,54,0.2); border-radius:4px; margin-bottom:8px;">
+ ✓ 메신저 활성 — 다른 peer 의 list_peers 에 노출 중
+ </div>
+ </Show>
+ <div style="display:flex; flex-direction:column; gap:6px;">
+ <label style="font-size:11px; color:var(--text-3);">역할 (role)</label>
+ <input value={role()} onInput={(e) => setRole(e.currentTarget.value)}
+ placeholder="예: PRD 작성, Rust 코어 구현, 테스트·검증" style="padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+ <label style="font-size:11px; color:var(--text-3);">설명 (다른 에이전트에게 소개 메시지)</label>
+ <textarea value={description()} onInput={(e) => setDescription(e.currentTarget.value)}
+ placeholder="1~3 문장 — 이 에이전트가 무엇을 잘하는지" rows={3}
+ style="padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px; font-family:inherit;" />
+ <label style="font-size:11px; color:var(--text-3);">그룹 (선택, peer_send fan-out 단위)</label>
+ <input value={groupName()} onInput={(e) => setGroupName(e.currentTarget.value)}
+ placeholder="예: prd-team / dev-team / portal-team" style="padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+ <div style="display:flex; gap:6px; margin-top:4px;">
+ <button class="link-btn" disabled={busy()} onClick={() => save(true)}
+ style="background:#238636; color:white; padding:6px 14px; border:none; border-radius:4px;">
+ ▶ 저장 + 메신저 활성
+ </button>
+ <button class="link-btn" disabled={busy()} onClick={() => save(false)}
+ style="background:var(--surface-2); color:var(--text-1); padding:6px 14px; border:1px solid var(--border); border-radius:4px;">
+ 저장만 (비활성)
+ </button>
+ </div>
+ <Show when={msg()}>
+ <div style={`padding:6px 10px; font-size:11px; border-radius:4px; background:${msg()!.startsWith("✓") ? "rgba(35,134,54,0.2)" : "rgba(220,53,69,0.2)"};`}>{msg()}</div>
+ </Show>
+ </div>
  </div>
 );
 }
