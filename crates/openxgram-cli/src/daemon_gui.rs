@@ -5531,13 +5531,22 @@ pub async fn run_discord_outbound_worker(state: GuiServerState) {
                 continue;
             }
             tracing::info!(agent_id = %agent_id, cap_len = cap.len(), last_len = last.len(), "outbound: cap diff 감지");
+            // rc.109 — line-level diff. cap 안의 새 line 만 추출.
+            //   - last 빈 문자열: 첫 poll, base 만 저장 후 skip
+            //   - cap == last: skip (위에서 이미 처리)
+            //   - 그 외: cap 의 line 중 last 에 없는 것 만 새로움으로 push
+            //     (cursor 깜빡임, prompt 미세 변동 등 noise 자동 무시)
             let new_part: String = if last.is_empty() {
                 String::new()
-            } else if cap.starts_with(&last) {
-                cap[last.len()..].to_string()
             } else {
-                let needle: String = last.chars().rev().take(80).collect::<String>().chars().rev().collect();
-                cap.rfind(&needle).map(|i| cap[i + needle.len()..].to_string()).unwrap_or_default()
+                let last_lines: std::collections::HashSet<String> = last.lines().map(|s| s.trim_end().to_string()).collect();
+                let new_lines: Vec<&str> = cap.lines()
+                    .filter(|l| {
+                        let trimmed = l.trim_end();
+                        !trimmed.is_empty() && !last_lines.contains(trimmed)
+                    })
+                    .collect();
+                new_lines.join("\n")
             };
             last_caps.insert(key, cap);
             let trimmed = new_part.trim();
