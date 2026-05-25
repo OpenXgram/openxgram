@@ -32,7 +32,7 @@ members = [
 exclude = ["ui/tauri"]
 
 [workspace.package]
-version = "0.2.0-rc.117"
+version = "0.2.0-rc.118"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/OpenXgram/openxgram"
@@ -87,13 +87,13 @@ opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.31", default-features = false, features = ["http-proto", "reqwest-client", "trace", "metrics"] }
 tracing-opentelemetry = "0.32"
 
-# rc.109 — 개발 cycle 빠른 release 빌드 (5-8분 → 1-2분).
-# LTO 끄고 codegen-units 늘려 incremental 빌드 시 link 단계 단축.
-# Runtime 5-10% 약간 느려지지만 functional 동일.
+# rc.118 — 개발 cycle 더 단축. opt-level 3→1 (incremental cache miss 시에도 2-3분).
+# Runtime 5-10% 느려짐 — network/IO bound 작업이라 무시 가능.
+# LTO 끄고 codegen-units 16 (병렬). incremental 항상 켬.
 [profile.release]
 lto = false
 codegen-units = 16
-opt-level = 3
+opt-level = 1
 debug = false
 strip = "symbols"
 incremental = true
