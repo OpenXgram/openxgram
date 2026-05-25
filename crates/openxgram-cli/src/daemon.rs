@@ -29,6 +29,12 @@ pub struct DaemonOpts {
 }
 
 pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
+    // rc.117 — daemon 첫 시작 시 ~/oxg.md + 전역 CLAUDE.md @~/oxg.md reference 자동 setup.
+    // install.sh / cargo build / 무관하게 OpenXgram 깔리는 순간 자동 setup. idempotent.
+    if let Err(e) = crate::mcp_install::setup_oxg_md() {
+        tracing::warn!(error = %e, "oxg.md setup 실패 — 수동: xgram identity inject");
+    }
+
     let bind = if let Some(addr) = opts.bind_addr {
         addr
     } else if opts.tailscale {
