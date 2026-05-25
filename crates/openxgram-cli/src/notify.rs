@@ -521,7 +521,7 @@ pub async fn run_discord_inbound_for_daemon(
             } else {
                 format!("\n[attachments]\n{}\n", attach_paths.join("\n"))
             };
-            let injected = format!("\n[discord:{}] {}{}\n", msg.author_name, msg.content, attach_line);
+            let injected = format!("\n[Discord:{}]\n{}{}\n", msg.author_name, msg.content, attach_line);
             if let Err(e) =
                 dispatch_to_session(&agent_id, &injected, &portal_url, &portal_token, &http_client).await
             {

@@ -5514,11 +5514,23 @@ pub async fn run_discord_outbound_worker(state: GuiServerState) {
                 Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok()
                     .and_then(|v| v.get("text").and_then(|t| t.as_str()).map(String::from))
                     .unwrap_or_default(),
-                _ => continue,
+                Ok(r) => {
+                    tracing::warn!(agent_id = %agent_id, session = %session, status = %r.status(), "outbound: portal capture HTTP 실패 (skip)");
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!(agent_id = %agent_id, session = %session, error = %e, "outbound: portal capture 요청 실패 (skip)");
+                    continue;
+                }
             };
+            tracing::debug!(agent_id = %agent_id, session = %session, cap_len = cap.len(), "outbound: capture OK");
             let key = format!("{}::{}", platform, agent_id);
             let last = last_caps.get(&key).cloned().unwrap_or_default();
-            if cap == last { continue; }
+            if cap == last {
+                tracing::debug!(agent_id = %agent_id, "outbound: cap == last, skip");
+                continue;
+            }
+            tracing::info!(agent_id = %agent_id, cap_len = cap.len(), last_len = last.len(), "outbound: cap diff 감지");
             let new_part: String = if last.is_empty() {
                 String::new()
             } else if cap.starts_with(&last) {
@@ -5529,7 +5541,11 @@ pub async fn run_discord_outbound_worker(state: GuiServerState) {
             };
             last_caps.insert(key, cap);
             let trimmed = new_part.trim();
-            if trimmed.is_empty() || trimmed.len() < 10 { continue; }
+            if trimmed.is_empty() || trimmed.len() < 10 {
+                tracing::info!(agent_id = %agent_id, new_part_len = new_part.len(), trimmed_len = trimmed.len(), "outbound: new_part 너무 짧음, skip");
+                continue;
+            }
+            tracing::info!(agent_id = %agent_id, len = trimmed.len(), "outbound: dispatch 준비");
             // rc.106 — 글자수 제한 제거. 줄바꿈 그대로. Discord 코드블록 길이 초과 시 .txt 첨부.
             let payload = trimmed.to_string();
             match platform.as_str() {
