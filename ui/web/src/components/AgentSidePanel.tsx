@@ -23,7 +23,6 @@ interface NotifyStatus {
 
 type TabId =
  | "overview"
- | "role"
  | "messenger"
  | "channel"
  | "status"
@@ -39,8 +38,7 @@ type TabId =
 // 사양 §5 12 탭 (S3 세로 사이드).
 const TABS: { id: TabId; label: string; icon: string}[] = [
  { id: "overview", label: "개요", icon: ""},
- { id: "role", label: "역할", icon: ""},
- { id: "messenger", label: "메신저 등록", icon: ""},
+ { id: "messenger", label: "역할·메신저 등록", icon: ""},
  { id: "channel", label: "채널 바인딩", icon: ""},
  { id: "status", label: "상태·리소스", icon: ""},
  { id: "history", label: "히스토리", icon: ""},
@@ -100,11 +98,8 @@ export function AgentSidePanel(props: {
  <Show when={tab() === "overview"}>
  <Overview peer={props.peer} />
  </Show>
- <Show when={tab() === "role"}>
- <RoleTab peer={props.peer} onJumpToSettings={props.onJumpToSettings} />
- </Show>
  <Show when={tab() === "messenger"}>
- <MessengerRegisterTab peer={props.peer} />
+ <MessengerRegisterTab peer={props.peer} onJumpToSettings={props.onJumpToSettings} />
  </Show>
  <Show when={tab() === "channel"}>
  <ChannelTab notify={notify()} onJumpToSettings={props.onJumpToSettings} agentId={props.peer.alias} />
@@ -530,11 +525,13 @@ interface AgentCapDto {
  orchestration_role: string | null;
  special_instructions: string | null;
 }
-function MessengerRegisterTab(props: { peer: PeerMeta}) {
+function MessengerRegisterTab(props: { peer: PeerMeta; onJumpToSettings: () => void}) {
  const alias = () => props.peer.alias;
  const [agents, { refetch}] = createResource<AgentCapDto[]>(async () => {
  try { return await invoke<AgentCapDto[]>("agents_list");} catch { return [];}
 });
+ // 통합: 기존 RoleTab 의 role policies (L3 + V1 마스터 정책) view
+ const [policies] = createResource(fetchRolePolicies);
  const current = () => (agents() ?? []).find((a) => a.alias === alias()) || null;
  // 기존 등록된 orchestration_role 목록 (autocomplete 용)
  const existingOrchRoles = () => {
@@ -659,6 +656,26 @@ function MessengerRegisterTab(props: { peer: PeerMeta}) {
  <div style={`padding:6px 10px; font-size:11px; border-radius:4px; background:${msg()!.startsWith("✓") || msg()!.startsWith("🔍") ? "rgba(35,134,54,0.2)" : "rgba(220,53,69,0.2)"};`}>{msg()}</div>
  </Show>
  </div>
+
+ {/* L3 + V1 — 역할별 auto_respond 마스터 정책 (기존 RoleTab 통합) */}
+ <hr style="margin:14px 0 8px; opacity:0.2;" />
+ <strong style="font-size:12px;">L3 + V1 — 역할별 auto_respond 마스터 정책</strong>
+ <p class="messenger-sidepanel-hint" style="margin:4px 0;">
+ 마스터 = {policies()?.master_card ?? "자율 행동 카드"}. 본 섹션은 view.
+ </p>
+ <For each={policies()?.roles ?? []}>
+ {(r) => (
+ <div style="display:flex; justify-content:space-between; padding:3px 0; font-size:11px; border-bottom:1px dashed var(--border);">
+ <span>{r.role}</span>
+ <span style={r.auto_respond_default ? "color:#5fa;" : "color:var(--text-3);"}>
+ {r.auto_respond_default ? " auto" : "× manual"} · max {r.max_concurrent}
+ </span>
+ </div>
+)}
+ </For>
+ <button class="link-btn" type="button" onClick={props.onJumpToSettings} style="margin-top:8px;">
+ 자율 행동 카드 (마스터 편집)
+ </button>
  </div>
 );
 }
