@@ -5530,20 +5530,48 @@ pub async fn run_discord_outbound_worker(state: GuiServerState) {
             last_caps.insert(key, cap);
             let trimmed = new_part.trim();
             if trimmed.is_empty() || trimmed.len() < 10 { continue; }
-            let max = if platform == "discord" { 1800 } else { 3800 };
-            let payload = if trimmed.len() > max {
-                format!("...(truncated)...\n{}", &trimmed[trimmed.len() - max..])
-            } else { trimmed.to_string() };
+            // rc.106 — 글자수 제한 제거. 줄바꿈 그대로. Discord 코드블록 길이 초과 시 .txt 첨부.
+            let payload = trimmed.to_string();
             match platform.as_str() {
                 "discord" => {
-                    // binding 의 bot_token 우선, 없으면 default (notify.toml)
-                    let tok_owned = binding_bot_tok.clone().or_else(|| default_discord_tok.clone());
-                    let Some(tok) = tok_owned else { continue };
+                    // bot_token: binding.bot_id → discord_bots 조회 (LEFT JOIN 결과) →
+                    //           없으면 첫 active 봇 fallback → 그래도 없으면 notify.toml legacy
+                    let tok_owned = binding_bot_tok.clone()
+                        .or_else(|| {
+                            let path = state.data_dir.join("db.sqlite");
+                            openxgram_db::Db::open(openxgram_db::DbConfig { path, ..Default::default() }).ok()
+                                .and_then(|mut db| db.conn().query_row::<String, _, _>(
+                                    "SELECT bot_token FROM discord_bots WHERE active=1 ORDER BY created_at ASC LIMIT 1",
+                                    [], |r| r.get(0)
+                                ).ok())
+                                .filter(|t: &String| !t.is_empty())
+                        })
+                        .or_else(|| default_discord_tok.clone());
+                    let Some(tok) = tok_owned else {
+                        tracing::warn!(agent_id = %agent_id, "outbound discord: bot token 조회 실패 (skip)");
+                        continue;
+                    };
                     let url = format!("https://discord.com/api/v10/channels/{}/messages", channel_ref);
-                    let _ = http.post(&url)
-                        .header("Authorization", format!("Bot {}", tok))
-                        .json(&serde_json::json!({"content": format!("```\n{}\n```", payload)}))
-                        .send().await;
+                    // Discord 메시지 본문 한도(2000자) - 코드블록 wrapper 여유 = 1900자 안전선.
+                    // 초과 시 .txt 첨부 (multipart). 줄바꿈은 file content 안에 그대로 유지.
+                    let wrapped = format!("```\n{}\n```", payload);
+                    if wrapped.len() <= 1900 {
+                        let _ = http.post(&url)
+                            .header("Authorization", format!("Bot {}", tok))
+                            .json(&serde_json::json!({"content": wrapped}))
+                            .send().await;
+                    } else {
+                        let filename = format!("terminal-{}.txt", chrono::Utc::now().format("%H%M%S"));
+                        let form = reqwest::multipart::Form::new()
+                            .text("payload_json", serde_json::json!({"content": format!("📎 터미널 출력 {} 자", payload.chars().count())}).to_string())
+                            .part("files[0]", reqwest::multipart::Part::bytes(payload.into_bytes())
+                                .file_name(filename)
+                                .mime_str("text/plain; charset=utf-8").unwrap_or_else(|_| reqwest::multipart::Part::text("").mime_str("text/plain").unwrap()));
+                        let _ = http.post(&url)
+                            .header("Authorization", format!("Bot {}", tok))
+                            .multipart(form)
+                            .send().await;
+                    }
                 }
                 "telegram" => {
                     let Some(tok) = &telegram_tok else { continue };
