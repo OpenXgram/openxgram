@@ -545,7 +545,7 @@ function MessengerRegisterTab(props: { peer: PeerMeta; onJumpToSettings: () => v
  let c = r.content || "";
  // rc.130 — 빈 파일 이면 placeholder template 자동 채움
  if (!c.trim()) {
- c = `# ${alias()}\n\n## 역할\n(예: PRD 작성, Rust 코어 구현, 테스트·검증)\n\n## 능력\n- ...\n- ...\n\n## 특수 지침\n(예외 처리, 보안 룰, 특별 행동 양식 등)\n`;
+ c = `# ${alias()}\n\n## 역할\n(예: PRD 작성, Rust 코어 구현, 테스트·검증)\n\n## 능력\n- ...\n- ...\n\n## 특수 지침\n(예외 처리, 보안 룰, 특별 행동 양식 등)\n\n---\n\nOpenXgram 표준 운영 가이드 (peer 통신·발신·Discord 카드 형식·오케스트레이션) 는 \`~/oxg.md\` 참조.\n`;
  }
  setInstContent(c);
  setInstFile(r.file || "");

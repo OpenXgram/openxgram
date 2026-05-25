@@ -86,6 +86,54 @@ openxgram.send_to_discord(content, channel?, bot_id?)
 채널 id 는 binding (`session_channel_bindings.channel_ref`) 에서 가져옴 — 
 첫 active discord binding 자동.
 
+### Discord 카드 형식 (rc.131 ~ 필수)
+
+**plain text 대신 embed 사용**. 매번 사용자가 요청하지 않아도 기본값.
+
+표준 embed 형식:
+```json
+{
+  "embeds": [{
+    "title": "...",
+    "description": "...",
+    "color": 2326507,
+    "fields": [
+      {"name": "...", "value": "...", "inline": false}
+    ],
+    "footer": {"text": "..."},
+    "timestamp": "<ISO 8601 UTC>"
+  }]
+}
+```
+
+색상 코드 (10진 정수):
+- 성공: `2326507` (0x238636 GitHub green)
+- 경고: `13801506` (0xD29922 amber)
+- 실패: `16270153` (0xF85149 red)
+- 정보: `3823210` (0x3A4A6A blue-grey)
+
+마크다운 사용:
+- `**bold**` / `*italic*` / `` `inline code` ``
+- ` ```multi-line code``` `
+- `> quote`
+- `# ## ###` headers
+- `-` 리스트 / `1.` 번호 리스트
+- `[text](url)` 링크
+- 이모지 / Unicode 문자 자유
+
+길이 분기:
+- 한두 문장 짧은 답 → content 만 + 마크다운
+- 작업 완료 보고 / 진단 / plan / 검증 결과 → embed 사용
+- 매우 긴 출력 (>2000자) → `.txt` 첨부 (multipart)
+
+호출 예 (`openxgram.send_to_discord` 가 embeds field 미지원 시 직접 HTTP):
+```bash
+curl -X POST "https://discord.com/api/v10/channels/{channel_id}/messages" \
+  -H "Authorization: Bot ${BOT_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"embeds":[{...}]}'
+```
+
 ### Telegram
 ```text
 openxgram.send_to_telegram(content, chat_id?)
