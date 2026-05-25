@@ -626,6 +626,8 @@ async fn dispatch_to_session(
     if !out.status.success() {
         bail!("tmux send-keys (paste) 실패: {}", String::from_utf8_lossy(&out.stderr));
     }
+    // rc.121 — bracket-paste 처리 완료까지 150ms 대기. paste mode 중 Enter 무시 방지.
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     let out_enter = Command::new("tmux")
         .args(["send-keys", "-t", &target, "Enter"])
         .output()

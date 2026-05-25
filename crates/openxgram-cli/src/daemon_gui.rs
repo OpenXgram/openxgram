@@ -2634,6 +2634,15 @@ async fn gui_session_binding_add(
             body.bot_id,
         ],
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("insert: {e}")})))?;
+    // rc.121 — binding add 시 agent_capabilities placeholder 자동 등록.
+    // role/description/capabilities 는 NULL — 그 binding 의 LLM 이 첫 세션 시
+    // register_subagent 호출로 자기 정보 명시 (oxg.md 룰).
+    // list_peers 결과에 이 binding 자동 노출 (alias 만이라도).
+    db.conn().execute(
+        "INSERT OR IGNORE INTO agent_capabilities (alias, role, description, capabilities, tool_list, project_path, updated_at) \
+         VALUES (?1, 'binding', NULL, NULL, NULL, NULL, ?2)",
+        rusqlite::params![agent_id, now],
+    ).ok();
     Ok(Json(serde_json::json!({"id": id, "agent_id": agent_id, "bot_id": body.bot_id, "ok": true})))
 }
 
