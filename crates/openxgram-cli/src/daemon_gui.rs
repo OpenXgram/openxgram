@@ -307,6 +307,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // rc.129 — 지침 파일 (cwd/AGENT.md) inline 편집
         .route("/v1/gui/agents/instructions",
                get(gui_agents_instructions_get).post(gui_agents_instructions_save))
+        // rc.132 — agent_templates 카탈로그 (msitarzewski/agency-agents)
+        .route("/v1/gui/agent-templates", get(gui_agent_templates_list))
+        .route("/v1/gui/agent-templates/refresh", post(gui_agent_templates_refresh))
         // Discord 봇이 가입한 guild 의 channel 목록 (세션 바인딩 시 사용자가 선택)
         .route("/v1/gui/notify/discord/channels", post(gui_notify_discord_channels))
         // Discord 봇 진단 — token + permission + guild + channel 한 번에
@@ -2755,6 +2758,161 @@ async fn gui_agents_register(
         ],
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("upsert: {e}")})))?;
     Ok(Json(serde_json::json!({"ok": true, "alias": body.alias})))
+}
+
+// rc.132 — agent_templates: agency-agents 카탈로그 (msitarzewski/agency-agents).
+// fetch + parse + insert (UPSERT). customized=1 row 는 보존.
+async fn fetch_agency_agents() -> Result<Vec<serde_json::Value>, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("OpenXgram/0.2")
+        .timeout(std::time::Duration::from_secs(60))
+        .build().map_err(|e| e.to_string())?;
+    let root_url = "https://api.github.com/repos/msitarzewski/agency-agents/contents";
+    let resp = client.get(root_url).send().await.map_err(|e| format!("github root: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("github root HTTP {}", resp.status()));
+    }
+    let categories: Vec<serde_json::Value> = resp.json().await.map_err(|e| format!("json: {e}"))?;
+    let mut all = vec![];
+    for cat in categories {
+        if cat.get("type").and_then(|v| v.as_str()) != Some("dir") { continue;}
+        let cat_name = match cat.get("name").and_then(|v| v.as_str()) {
+            Some(n) if !n.starts_with('.') && n != "examples" => n.to_string(),
+            _ => continue,
+        };
+        let url = format!("https://api.github.com/repos/msitarzewski/agency-agents/contents/{}", cat_name);
+        let resp2 = match client.get(&url).send().await {
+            Ok(r) if r.status().is_success() => r,
+            _ => continue,
+        };
+        let files: Vec<serde_json::Value> = match resp2.json().await {
+            Ok(v) => v, _ => continue,
+        };
+        for file in files {
+            if file.get("type").and_then(|v| v.as_str()) != Some("file") { continue;}
+            let path = file.get("path").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            if !path.ends_with(".md") || path.ends_with("README.md") { continue;}
+            let dl = match file.get("download_url").and_then(|v| v.as_str()) {
+                Some(u) => u.to_string(), None => continue,
+            };
+            let content = match client.get(&dl).send().await {
+                Ok(r) if r.status().is_success() => r.text().await.unwrap_or_default(),
+                _ => continue,
+            };
+            // frontmatter parse: --- ... --- + body
+            let mut name = String::new();
+            let mut description = None;
+            let mut color = None;
+            let mut emoji = None;
+            let mut vibe = None;
+            let body: String;
+            if let Some(rest) = content.strip_prefix("---\n") {
+                if let Some(end_idx) = rest.find("\n---\n") {
+                    let fm = &rest[..end_idx];
+                    body = rest[end_idx + 5..].to_string();
+                    for line in fm.lines() {
+                        if let Some((k, v)) = line.split_once(':') {
+                            let val = v.trim().trim_matches('"').to_string();
+                            match k.trim() {
+                                "name" => name = val,
+                                "description" => description = Some(val),
+                                "color" => color = Some(val),
+                                "emoji" => emoji = Some(val),
+                                "vibe" => vibe = Some(val),
+                                _ => {}
+                            }
+                        }
+                    }
+                } else { body = content.clone();}
+            } else { body = content.clone();}
+            if name.is_empty() {
+                name = path.split('/').next_back().unwrap_or("").trim_end_matches(".md").to_string();
+            }
+            all.push(serde_json::json!({
+                "id": format!("msitarzewski/agency-agents::{}", path),
+                "source_repo": "msitarzewski/agency-agents",
+                "source_path": path,
+                "category": cat_name,
+                "name": name,
+                "description": description,
+                "color": color,
+                "emoji": emoji,
+                "vibe": vibe,
+                "body": body,
+            }));
+        }
+    }
+    Ok(all)
+}
+
+async fn gui_agent_templates_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, source_repo, source_path, category, name, description, color, emoji, vibe, body, customized, fetched_at, updated_at \
+         FROM agent_templates ORDER BY category ASC, name ASC"
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map([], |r| Ok(serde_json::json!({
+        "id": r.get::<_, String>(0)?, "source_repo": r.get::<_, String>(1)?,
+        "source_path": r.get::<_, Option<String>>(2)?,
+        "category": r.get::<_, String>(3)?, "name": r.get::<_, String>(4)?,
+        "description": r.get::<_, Option<String>>(5)?,
+        "color": r.get::<_, Option<String>>(6)?, "emoji": r.get::<_, Option<String>>(7)?,
+        "vibe": r.get::<_, Option<String>>(8)?, "body": r.get::<_, String>(9)?,
+        "customized": r.get::<_, i64>(10)? != 0,
+        "fetched_at": r.get::<_, String>(11)?, "updated_at": r.get::<_, String>(12)?,
+    }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+async fn gui_agent_templates_refresh(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let fetched = fetch_agency_agents().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e})))?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
+    let mut inserted = 0; let mut updated = 0; let mut preserved = 0;
+    for tpl in &fetched {
+        let id = tpl.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+        // 기존 customized=1 이면 보존 (덮어쓰지 않음)
+        let is_customized: i64 = db.conn().query_row(
+            "SELECT customized FROM agent_templates WHERE id = ?1", rusqlite::params![id], |r| r.get(0)
+        ).unwrap_or(0);
+        if is_customized != 0 { preserved += 1; continue;}
+        let existed: i64 = db.conn().query_row(
+            "SELECT 1 FROM agent_templates WHERE id = ?1", rusqlite::params![id], |r| r.get(0)
+        ).unwrap_or(0);
+        db.conn().execute(
+            "INSERT INTO agent_templates (id, source_repo, source_path, category, name, description, color, emoji, vibe, body, customized, fetched_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, ?11) \
+             ON CONFLICT(id) DO UPDATE SET source_repo=excluded.source_repo, source_path=excluded.source_path, \
+             category=excluded.category, name=excluded.name, description=excluded.description, \
+             color=excluded.color, emoji=excluded.emoji, vibe=excluded.vibe, body=excluded.body, updated_at=?11",
+            rusqlite::params![
+                id, tpl.get("source_repo").and_then(|v| v.as_str()),
+                tpl.get("source_path").and_then(|v| v.as_str()),
+                tpl.get("category").and_then(|v| v.as_str()),
+                tpl.get("name").and_then(|v| v.as_str()),
+                tpl.get("description").and_then(|v| v.as_str()),
+                tpl.get("color").and_then(|v| v.as_str()),
+                tpl.get("emoji").and_then(|v| v.as_str()),
+                tpl.get("vibe").and_then(|v| v.as_str()),
+                tpl.get("body").and_then(|v| v.as_str()),
+                now,
+            ],
+        ).ok();
+        if existed != 0 { updated += 1;} else { inserted += 1;}
+    }
+    Ok(Json(serde_json::json!({
+        "ok": true, "fetched": fetched.len(), "inserted": inserted, "updated": updated, "preserved": preserved,
+    })))
 }
 
 // rc.129 — alias 의 cwd 추출 helper (tmux pane_current_path)
