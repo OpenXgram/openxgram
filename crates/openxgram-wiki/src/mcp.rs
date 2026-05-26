@@ -14,7 +14,7 @@ use std::str::FromStr;
 
 use crate::fs::WikiFs;
 use crate::page::{Page, PageId, PageType};
-use crate::search::{search_wiki as search_like, SearchHit};
+use crate::search::{search_wiki_combined, SearchHit};
 use crate::store::{WikiStore, WikiStoreError};
 use crate::WikiError;
 
@@ -31,9 +31,49 @@ impl<'a> WikiTools<'a> {
     }
 
     /// `read_wiki_page` — 페이지 본문 반환.
+    ///
+    /// topic은 `{type}/{slug}` 형식(정규) 또는 raw DB id (legacy) 모두 허용.
+    /// raw id의 경우 DB에서 file_path를 조회해 PageId를 재구성한다.
     pub async fn read(&self, topic: &str) -> Result<ReadResult, WikiError> {
-        let id = PageId::from_str(topic)?;
-        match self.fs.read(&id).await? {
+        // 1. 정규 형식 시도
+        let id = match PageId::from_str(topic) {
+            Ok(id) => id,
+            Err(_) => {
+                // 2. raw id로 DB 조회 → file_path에서 PageId 재구성
+                let store = WikiStore::new(self.conn);
+                let row = store
+                    .get_by_raw_id(topic)?
+                    .ok_or_else(|| WikiError::InvalidPageId(topic.to_string()))?;
+                // file_path 형식: "wiki/{type}/{slug}.md" 또는 "{type}/{slug}.md"
+                let fp = row.file_path.trim_start_matches("wiki/");
+                let fp = fp.trim_end_matches(".md");
+                PageId::from_str(fp)
+                    .map_err(|_| WikiError::InvalidPageId(topic.to_string()))?
+            }
+        };
+        // 1차: id 기반 정규 경로 시도
+        let page_opt = self.fs.read(&id).await?;
+
+        // 2차: DB에 등록된 file_path로 직접 읽기 (legacy "wiki/" prefix 등 경로 불일치 대응)
+        let page_opt = if page_opt.is_none() {
+            let store = WikiStore::new(self.conn);
+            if let Some(row) = store.get(&id)? {
+                // file_path는 "wiki/concept/foo.md" 또는 "concept/foo.md" 형태
+                let rel = row.file_path.trim_start_matches("wiki/");
+                let rel = rel.trim_end_matches(".md");
+                if let Ok(alt_id) = rel.parse::<PageId>() {
+                    self.fs.read(&alt_id).await?
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            page_opt
+        };
+
+        match page_opt {
             Some(page) => Ok(ReadResult {
                 id: page.id.to_string(),
                 page_type: page.page_type.to_string(),
@@ -119,10 +159,16 @@ impl<'a> WikiTools<'a> {
         })
     }
 
-    /// `search_wiki` — LIKE 검색 (k 기본 5).
-    pub fn search(&self, query: &str, k: Option<usize>) -> Result<Vec<SearchHit>, WikiError> {
+    /// `search_wiki` — LIKE + 벡터 검색 결합 (k 기본 5).
+    /// embedder를 주입하면 wiki_embeddings KNN도 함께 실행된다.
+    pub fn search(
+        &self,
+        query: &str,
+        k: Option<usize>,
+        embedder: Option<&dyn openxgram_memory::Embedder>,
+    ) -> Result<Vec<SearchHit>, WikiError> {
         let limit = k.unwrap_or(5);
-        Ok(search_like(self.conn, query, limit)?)
+        Ok(search_wiki_combined(self.conn, embedder, query, limit)?)
     }
 
     /// `list_wiki` — 타입 필터 옵션.

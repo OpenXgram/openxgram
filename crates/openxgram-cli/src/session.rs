@@ -11,8 +11,9 @@ use openxgram_core::paths::{db_path, keystore_dir, MASTER_KEY_NAME};
 use openxgram_db::{Db, DbConfig};
 use openxgram_keystore::{FsKeystore, Keystore};
 use openxgram_memory::{
-    default_embedder, export_session, import_session, reflect_all, reflect_session, EpisodeStore,
-    MessageStore, SessionStore, TextPackage,
+    backfill_memory_embeddings, backfill_message_embeddings, default_embedder, export_session,
+    import_session, reflect_all, reflect_session, EpisodeStore, MessageStore, SessionStore,
+    TextPackage,
 };
 
 #[derive(Debug, Clone)]
@@ -54,6 +55,9 @@ pub enum SessionAction {
         session_id: String,
         format: String,
     },
+    /// 임베딩이 없는 기존 메시지를 일괄 임베딩 (FastEmbedder 사용).
+    /// `force=true` 이면 기존 임베딩 맵 전체 삭제 후 재임베딩 (prefix 변경 후 필요).
+    BackfillEmbeddings { force: bool },
 }
 
 pub fn run_session(data_dir: &Path, action: SessionAction) -> Result<()> {
@@ -78,6 +82,7 @@ pub fn run_session(data_dir: &Path, action: SessionAction) -> Result<()> {
         SessionAction::Transcript { session_id, format } => {
             cmd_transcript(&mut db, &session_id, &format)
         }
+        SessionAction::BackfillEmbeddings { force } => cmd_backfill_embeddings(&mut db, force),
     }
 }
 
@@ -243,9 +248,10 @@ fn cmd_recall(db: &mut Db, query: &str, k: usize) -> Result<()> {
     println!("recall top-{} for {:?}", hits.len(), query);
     for (i, hit) in hits.iter().enumerate() {
         println!(
-            "  [{:>2}] dist={:.4} session={} sender={} ts={}",
+            "  [{:>2}] dist={:.4} source={} session={} sender={} ts={}",
             i + 1,
             hit.distance,
+            hit.source,
             hit.message.session_id,
             hit.message.sender,
             hit.message.timestamp,
@@ -348,5 +354,44 @@ fn cmd_reflect(db: &mut Db, session_id: &str) -> Result<()> {
         }
         None => println!("session 에 메시지가 없어 episode 미생성."),
     }
+    Ok(())
+}
+
+fn cmd_backfill_embeddings(db: &mut Db, force: bool) -> Result<()> {
+    let embedder = default_embedder()?;
+    println!("임베딩 백필 시작 (embedder: FastEmbedder multilingual-e5-small, force={force})...");
+
+    if force {
+        // 기존 임베딩 맵 + 벡터 전체 삭제 후 재임베딩
+        println!("  [force] 기존 message 임베딩 삭제 중...");
+        let conn = db.conn();
+        // message_embedding_map 삭제 → message_embeddings 는 orphan 이지만 vec0 는 직접 DELETE 지원
+        let msg_map_deleted = conn.execute("DELETE FROM message_embedding_map", [])?;
+        // vec0 가상 테이블 전체 삭제 — rowid 없이 DELETE * 사용
+        conn.execute("DELETE FROM message_embeddings WHERE rowid > 0", [])?;
+        println!("  [force] message_embedding_map {msg_map_deleted}건 삭제.");
+
+        println!("  [force] 기존 memory 임베딩 삭제 중...");
+        let mem_map_deleted = conn.execute("DELETE FROM memory_embedding_map", []).unwrap_or(0);
+        conn.execute("DELETE FROM memory_embeddings WHERE rowid > 0", []).unwrap_or(0);
+        println!("  [force] memory_embedding_map {mem_map_deleted}건 삭제.");
+    }
+
+    // messages 백필
+    let (msg_done, msg_total) = backfill_message_embeddings(db, embedder.as_ref())?;
+    if msg_total == 0 {
+        println!("✓ 메시지 백필 불필요 — 미임베딩 메시지 없음.");
+    } else {
+        println!("✓ 메시지 백필 완료 — {msg_done}/{msg_total} 건 임베딩 생성.");
+    }
+
+    // memories 백필
+    let (mem_done, mem_total) = backfill_memory_embeddings(db, embedder.as_ref())?;
+    if mem_total == 0 {
+        println!("✓ 메모리 백필 불필요 — 미임베딩 L2 memory 없음.");
+    } else {
+        println!("✓ 메모리 백필 완료 — {mem_done}/{mem_total} 건 임베딩 생성.");
+    }
+
     Ok(())
 }

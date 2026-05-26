@@ -116,7 +116,8 @@ impl<'a> WikiStore<'a> {
     /// id로 페이지 row 조회.
     pub fn get(&self, id: &PageId) -> Result<Option<PageRow>, WikiStoreError> {
         let row = self.conn.query_row(
-            "SELECT id, file_path, page_type, title, content_hash, related, source_refs,
+            "SELECT id, file_path, page_type, title, content_hash,
+                    COALESCE(related, '[]'), COALESCE(source_refs, '[]'),
                     embedding_hash, created_at, updated_at
              FROM wiki_pages WHERE id = ?1",
             params![id.as_str()],
@@ -159,13 +160,15 @@ impl<'a> WikiStore<'a> {
     pub fn list(&self, page_type: Option<PageType>) -> Result<Vec<PageRow>, WikiStoreError> {
         let mut stmt = if page_type.is_some() {
             self.conn.prepare(
-                "SELECT id, file_path, page_type, title, content_hash, related, source_refs,
+                "SELECT id, file_path, page_type, title, content_hash,
+                        COALESCE(related, '[]'), COALESCE(source_refs, '[]'),
                         embedding_hash, created_at, updated_at
                  FROM wiki_pages WHERE page_type = ?1 ORDER BY updated_at DESC",
             )?
         } else {
             self.conn.prepare(
-                "SELECT id, file_path, page_type, title, content_hash, related, source_refs,
+                "SELECT id, file_path, page_type, title, content_hash,
+                        COALESCE(related, '[]'), COALESCE(source_refs, '[]'),
                         embedding_hash, created_at, updated_at
                  FROM wiki_pages ORDER BY updated_at DESC",
             )?
@@ -197,12 +200,16 @@ impl<'a> WikiStore<'a> {
     }
 
     /// 단순 LIKE 검색 (벡터 검색은 search.rs).
+    /// title / id / file_path 세 컬럼에서 검색한다 (본문은 디스크 전용이므로 제외).
     pub fn search_like(&self, query: &str, limit: usize) -> Result<Vec<PageRow>, WikiStoreError> {
         let pattern = format!("%{}%", query);
         let mut stmt = self.conn.prepare(
-            "SELECT id, file_path, page_type, title, content_hash, related, source_refs,
+            "SELECT id, file_path, page_type, title, content_hash,
+                    COALESCE(related, '[]'), COALESCE(source_refs, '[]'),
                     embedding_hash, created_at, updated_at
-             FROM wiki_pages WHERE title LIKE ?1 OR id LIKE ?1 ORDER BY updated_at DESC LIMIT ?2",
+             FROM wiki_pages
+             WHERE title LIKE ?1 OR id LIKE ?1 OR file_path LIKE ?1
+             ORDER BY updated_at DESC LIMIT ?2",
         )?;
         let rows: Vec<PageRow> = stmt
             .query_map(params![pattern, limit as i64], |r| {
@@ -257,6 +264,100 @@ impl<'a> WikiStore<'a> {
             return Err(WikiStoreError::NotFound(id.to_string()));
         }
         Ok(())
+    }
+
+    /// wiki_embeddings 테이블에 벡터 저장 (f32 LE bytes).
+    pub fn upsert_embedding(&self, id: &PageId, vec: &[f32], model: &str) -> Result<(), WikiStoreError> {
+        let bytes: Vec<u8> = vec.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        self.conn.execute(
+            "INSERT INTO wiki_embeddings (page_id, embedding, dim, model, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(page_id) DO UPDATE SET
+                embedding  = excluded.embedding,
+                dim        = excluded.dim,
+                model      = excluded.model,
+                updated_at = excluded.updated_at",
+            params![id.as_str(), bytes, vec.len() as i64, model, now],
+        )?;
+        Ok(())
+    }
+
+    /// wiki_embeddings 전체 (page_id + 벡터). 벡터 KNN에 사용.
+    pub fn all_embeddings(&self) -> Result<Vec<(String, Vec<f32>)>, WikiStoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT page_id, embedding FROM wiki_embeddings",
+        )?;
+        let rows: Vec<(String, Vec<f32>)> = stmt
+            .query_map([], |r| {
+                let page_id: String = r.get(0)?;
+                let bytes: Vec<u8> = r.get(1)?;
+                Ok((page_id, bytes))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(|(pid, bytes)| {
+                let vec: Vec<f32> = bytes
+                    .chunks_exact(4)
+                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                    .collect();
+                (pid, vec)
+            })
+            .collect();
+        Ok(rows)
+    }
+
+    /// wiki_embeddings에서 벡터 조회.
+    pub fn get_embedding(&self, id: &PageId) -> Result<Option<Vec<f32>>, WikiStoreError> {
+        let row: rusqlite::Result<Vec<u8>> = self.conn.query_row(
+            "SELECT embedding FROM wiki_embeddings WHERE page_id = ?1",
+            params![id.as_str()],
+            |r| r.get(0),
+        );
+        match row {
+            Ok(bytes) => {
+                let vec: Vec<f32> = bytes
+                    .chunks_exact(4)
+                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                    .collect();
+                Ok(Some(vec))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// raw id(TEXT) 로 직접 조회 — `{type}/{slug}` 형식이 아닌 legacy id 지원.
+    pub fn get_by_raw_id(&self, raw_id: &str) -> Result<Option<PageRow>, WikiStoreError> {
+        let row = self.conn.query_row(
+            "SELECT id, file_path, page_type, title, content_hash,
+                    COALESCE(related, '[]'), COALESCE(source_refs, '[]'),
+                    embedding_hash, created_at, updated_at
+             FROM wiki_pages WHERE id = ?1",
+            params![raw_id],
+            |r| {
+                Ok(PageRow {
+                    id: r.get(0)?,
+                    file_path: r.get(1)?,
+                    page_type: r.get(2)?,
+                    title: r.get(3)?,
+                    content_hash: r.get(4)?,
+                    related: r.get(5)?,
+                    source_refs: r.get(6)?,
+                    embedding_hash: r.get(7)?,
+                    created_at: r.get(8)?,
+                    updated_at: r.get(9)?,
+                })
+            },
+        );
+        match row {
+            Ok(r) => Ok(Some(r)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// content_hash 변경 여부 (디스크 watcher 동기화).

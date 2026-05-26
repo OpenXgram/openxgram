@@ -5047,9 +5047,10 @@ async fn gui_messages_recent(
     let sender_filter = q.get("sender").map(|s| s.to_lowercase());
 
     let mut db = state.db.lock().await;
-    let embedder = openxgram_memory::default_embedder()
-        .map_err(|e| internal(&format!("embedder: {e}")))?;
-    let messages = openxgram_memory::MessageStore::new(&mut db, embedder.as_ref())
+    // rc.138 — list_recent 는 단순 SELECT (embedder 미사용) 인데 default_embedder() 가
+    // 매 호출마다 FastEmbedder model load 6초+. DummyEmbedder 로 즉시 반환.
+    let embedder = openxgram_memory::DummyEmbedder;
+    let messages = openxgram_memory::MessageStore::new(&mut db, &embedder)
         .list_recent(limit * 4) // 필터 후 limit 충족 보장
         .map_err(|e| internal(&format!("list_recent: {e}")))?;
 

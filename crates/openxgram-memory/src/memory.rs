@@ -9,7 +9,8 @@ use openxgram_db::Db;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::util::parse_ts;
+use crate::embed::Embedder;
+use crate::util::{floats_to_bytes, parse_ts};
 use crate::{MemoryError, Result};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -167,6 +168,111 @@ impl<'a> MemoryStore<'a> {
         }
         Ok(())
     }
+}
+
+/// memory_id + content 를 받아 임베딩 → memory_embeddings + memory_embedding_map INSERT.
+///
+/// 이미 map에 있으면 skip (idempotent).
+pub fn embed_and_store_memory<E: Embedder + ?Sized>(
+    db: &mut Db,
+    memory_id: &str,
+    content: &str,
+    embedder: &E,
+) -> Result<bool> {
+    {
+        let conn = db.conn();
+        let already: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM memory_embedding_map WHERE memory_id = ?1)",
+            rusqlite::params![memory_id],
+            |r| r.get(0),
+        )?;
+        if already {
+            return Ok(false);
+        }
+    }
+
+    let embedding = embedder.embed_passage(content);
+    if embedding.len() != embedder.dim() {
+        return Err(MemoryError::DimMismatch {
+            got: embedding.len(),
+            expected: embedder.dim(),
+        });
+    }
+    let embedding_bytes = floats_to_bytes(&embedding);
+
+    let conn = db.conn();
+    let tx = conn.transaction()?;
+    tx.execute(
+        "INSERT INTO memory_embeddings (embedding) VALUES (?1)",
+        rusqlite::params![embedding_bytes],
+    )?;
+    let embedding_rowid = tx.last_insert_rowid();
+    tx.execute(
+        "INSERT INTO memory_embedding_map (memory_id, embedding_rowid) VALUES (?1, ?2)",
+        rusqlite::params![memory_id, embedding_rowid],
+    )?;
+    tx.commit()?;
+
+    Ok(true)
+}
+
+/// 임베딩이 없는 L2 memories 를 일괄 임베딩 (passage prefix).
+///
+/// 반환값: (처리된 건수, 전체 미임베딩 건수)
+pub fn backfill_memory_embeddings<E: Embedder + ?Sized>(
+    db: &mut Db,
+    embedder: &E,
+) -> Result<(usize, usize)> {
+    let unembedded: Vec<(String, String)> = {
+        let conn = db.conn();
+        let mut stmt = conn.prepare(
+            "SELECT m.id, m.content FROM memories m
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM memory_embedding_map map WHERE map.memory_id = m.id
+             )
+             ORDER BY m.created_at",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows { out.push(row?); }
+        out
+    };
+
+    let total = unembedded.len();
+    let mut done = 0usize;
+
+    for (id, content) in &unembedded {
+        let embedding = embedder.embed_passage(content);
+        if embedding.len() != embedder.dim() {
+            return Err(MemoryError::DimMismatch {
+                got: embedding.len(),
+                expected: embedder.dim(),
+            });
+        }
+        let embedding_bytes = floats_to_bytes(&embedding);
+
+        let conn = db.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO memory_embeddings (embedding) VALUES (?1)",
+            rusqlite::params![embedding_bytes],
+        )?;
+        let embedding_rowid = tx.last_insert_rowid();
+        tx.execute(
+            "INSERT INTO memory_embedding_map (memory_id, embedding_rowid) VALUES (?1, ?2)",
+            rusqlite::params![id, embedding_rowid],
+        )?;
+        tx.commit()?;
+
+        done += 1;
+        if done % 20 == 0 || done == total {
+            eprintln!("[memory-backfill] {done}/{total} 완료");
+        }
+    }
+
+    Ok((done, total))
 }
 
 struct RawMemory {

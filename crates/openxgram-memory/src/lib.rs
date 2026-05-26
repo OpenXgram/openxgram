@@ -27,8 +27,10 @@ pub use claude_compat::{
 pub use embed::FastEmbedder;
 pub use embed::{default_embedder, embedder_mode_label, DummyEmbedder, Embedder, EMBED_DIM};
 pub use episode::{reflect_all, reflect_session, Episode, EpisodeStore};
-pub use memory::{Memory, MemoryKind, MemoryStore};
-pub use message::{Message, MessageStore, RecallHit};
+pub use memory::{
+    backfill_memory_embeddings, embed_and_store_memory, Memory, MemoryKind, MemoryStore,
+};
+pub use message::{backfill_message_embeddings, embed_and_store, Message, MessageStore, RecallHit};
 pub use pattern::{Classification, Pattern, PatternStore};
 pub use session::{Session, SessionStore};
 pub use stats::{store_stats, StoreStats};

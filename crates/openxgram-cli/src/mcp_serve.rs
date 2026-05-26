@@ -497,6 +497,7 @@ impl ToolDispatcher for OpenxgramDispatcher {
                             "body": h.message.body,
                             "timestamp": h.message.timestamp.to_rfc3339(),
                             "distance": h.distance,
+                            "source": h.source,
                         })
                     })
                     .collect();
@@ -1654,7 +1655,7 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 let fs = WikiFs::new(&wiki_root);
                 let conn: &rusqlite::Connection = self.db.conn();
                 let tools = WikiTools::new(&fs, conn);
-                let hits = tools.search(&query, k).map_err(internal)?;
+                let hits = tools.search(&query, k, None).map_err(internal)?;
                 let items: Vec<Value> = hits
                     .iter()
                     .map(|h| {

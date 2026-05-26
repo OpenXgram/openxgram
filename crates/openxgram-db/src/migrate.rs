@@ -186,6 +186,12 @@ const MIGRATIONS: &[Migration] = &[
         name: "agent_capabilities",
         sql: include_str!("../migrations/0035_agent_capabilities.sql"),
     },
+    // 36~38: 이미 DB에 직접 적용됨 (schema_migrations 미등록 상태). SKIP.
+    Migration {
+        version: 39,
+        name: "memory_embeddings",
+        sql: include_str!("../migrations/0039_memory_embeddings.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

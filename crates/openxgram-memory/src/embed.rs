@@ -6,9 +6,25 @@ use sha2::{Digest, Sha256};
 pub const EMBED_DIM: usize = 384;
 
 /// 임베딩 추상화. 어떤 구현체도 같은 차원·동일 dtype.
+///
+/// multilingual-e5 계열은 문서엔 `passage: `, 쿼리엔 `query: ` prefix 필수.
+/// `embed_passage` / `embed_query` 를 분리해 호출 측이 명시적으로 선택한다.
+/// 기본 구현(`embed`)은 하위 호환용 — 새 코드는 반드시 passage/query 변형 사용.
 pub trait Embedder: Send + Sync {
     fn dim(&self) -> usize;
+
+    /// prefix 없는 raw embed — 하위 호환. 새 코드는 embed_passage/embed_query 사용.
     fn embed(&self, text: &str) -> Vec<f32>;
+
+    /// 문서 저장용 임베딩 (`passage: <text>` prefix).
+    fn embed_passage(&self, text: &str) -> Vec<f32> {
+        self.embed(text)
+    }
+
+    /// 쿼리(검색어)용 임베딩 (`query: <text>` prefix).
+    fn embed_query(&self, text: &str) -> Vec<f32> {
+        self.embed(text)
+    }
 }
 
 /// SHA256 해시 기반 결정성 384d 임베딩. 같은 텍스트 → 같은 벡터.
@@ -63,19 +79,36 @@ impl FastEmbedder {
 }
 
 #[cfg(feature = "fastembed")]
+impl FastEmbedder {
+    fn embed_with_prefix(&self, prefix: &str, text: &str) -> Vec<f32> {
+        let prefixed = format!("{}{}", prefix, text);
+        let mut model = self.model.lock().expect("FastEmbedder mutex poisoned");
+        model
+            .embed(vec![prefixed.as_str()], None)
+            .expect("fastembed embed failed")
+            .into_iter()
+            .next()
+            .expect("fastembed returned empty result")
+    }
+}
+
+#[cfg(feature = "fastembed")]
 impl Embedder for FastEmbedder {
     fn dim(&self) -> usize {
         EMBED_DIM
     }
 
+    /// 하위 호환 — passage prefix 적용 (저장 기본값).
     fn embed(&self, text: &str) -> Vec<f32> {
-        let mut model = self.model.lock().expect("FastEmbedder mutex poisoned");
-        model
-            .embed(vec![text], None)
-            .expect("fastembed embed failed")
-            .into_iter()
-            .next()
-            .expect("fastembed returned empty result")
+        self.embed_with_prefix("passage: ", text)
+    }
+
+    fn embed_passage(&self, text: &str) -> Vec<f32> {
+        self.embed_with_prefix("passage: ", text)
+    }
+
+    fn embed_query(&self, text: &str) -> Vec<f32> {
+        self.embed_with_prefix("query: ", text)
     }
 }
 

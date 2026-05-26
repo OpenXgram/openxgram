@@ -8,6 +8,7 @@
 //! 본 모듈이 단일 canonical write path. 모든 caller 가 `save_l0_message()` 만 호출.
 
 use openxgram_db::Db;
+use openxgram_memory::embed::Embedder;
 use rusqlite::params;
 
 #[derive(Debug, Clone)]
@@ -34,9 +35,15 @@ pub struct L0SaveResult {
 }
 
 /// 메시지를 L0 (messages 테이블) 에 저장. session 자동 보장.
+/// embedder 가 Some 이면 저장 직후 임베딩 → message_embeddings + message_embedding_map INSERT.
+/// 임베딩 실패는 tracing::warn 으로 드러내고 메시지 저장은 보존.
 ///
 /// 안티패턴 10: 직접 INSERT 금지. 모든 caller 가 본 함수 호출.
-pub fn save_l0_message(db: &mut Db, input: L0SaveInput) -> Result<L0SaveResult, rusqlite::Error> {
+pub fn save_l0_message(
+    db: &mut Db,
+    input: L0SaveInput,
+    embedder: Option<&(dyn Embedder + Send + Sync)>,
+) -> Result<L0SaveResult, rusqlite::Error> {
     let id = input.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let now = chrono::Utc::now().to_rfc3339();
     let timestamp = input.timestamp.unwrap_or(&now).to_string();
@@ -91,10 +98,23 @@ pub fn save_l0_message(db: &mut Db, input: L0SaveInput) -> Result<L0SaveResult, 
         ],
     )?;
 
+    let inserted = affected > 0;
+
+    // 저장 직후 실시간 임베딩 (embedder 주입된 경우)
+    if inserted {
+        if let Some(emb) = embedder {
+            match openxgram_memory::message::embed_and_store(db, &id, input.body, emb) {
+                Ok(true) => tracing::debug!(message_id = %id, "save_l0: 임베딩 완료"),
+                Ok(false) => tracing::debug!(message_id = %id, "save_l0: 임베딩 이미 존재 (skip)"),
+                Err(e) => tracing::warn!(message_id = %id, error = %e, "save_l0: 임베딩 실패 — 메시지는 보존됨"),
+            }
+        }
+    }
+
     Ok(L0SaveResult {
         id,
         conversation_id: conv_id,
         timestamp,
-        inserted: affected > 0,
+        inserted,
     })
 }

@@ -8,6 +8,7 @@
 
 use openxgram_core::paths::db_path;
 use openxgram_db::{Db, DbConfig};
+use openxgram_memory::embed::Embedder;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,11 +29,23 @@ pub fn spawn_all_from_dir(data_dir: PathBuf) -> anyhow::Result<()> {
 pub fn spawn_all_with_data_dir(db: Arc<Mutex<Db>>, data_dir: PathBuf) {
     spawn_all(db.clone());
     // Claude Code .jsonl → messages 자동 ingestion (60s 주기)
+    // embedder 를 한 번만 초기화하여 Arc 로 공유 (per-tick 모델 로드 금지)
+    let embedder: Arc<dyn Embedder + Send + Sync> = match openxgram_memory::embed::default_embedder() {
+        Ok(e) => {
+            tracing::info!("claude_ingest embedder: {}", openxgram_memory::embed::embedder_mode_label());
+            Arc::from(e)
+        }
+        Err(e) => {
+            tracing::warn!("embedder 초기화 실패 — claude_ingest 임베딩 비활성: {e}");
+            Arc::new(openxgram_memory::embed::DummyEmbedder)
+        }
+    };
     let db_ci = db.clone();
+    let emb_ci = embedder.clone();
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(60)).await;
-            if let Err(e) = claude_ingest_tick(&db_ci).await {
+            if let Err(e) = claude_ingest_tick(&db_ci, &*emb_ci).await {
                 tracing::warn!("claude_ingest tick: {e}");
             }
         }
@@ -184,7 +197,8 @@ async fn patterns_mistakes_extract_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<(
 
 /// Claude Code 의 ~/.claude/projects/**/*.jsonl 을 읽어 OpenXgram messages 에 삽입.
 /// 각 파일별 last_offset 추적해서 새 라인만 처리.
-async fn claude_ingest_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
+/// embedder 를 받아 저장 직후 실시간 임베딩 수행.
+async fn claude_ingest_tick(db: &Arc<Mutex<Db>>, embedder: &(dyn Embedder + Send + Sync)) -> anyhow::Result<()> {
     let home = match std::env::var("HOME") {
         Ok(h) => std::path::PathBuf::from(h),
         Err(_) => return Ok(()),
@@ -280,7 +294,7 @@ async fn claude_ingest_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
             let parent = v.get("parentUuid").and_then(|p| p.as_str()).map(String::from);
 
             let mut guard = db.lock().await;
-            // canonical write path
+            // canonical write path — embedder 주입으로 저장 즉시 임베딩
             let r = crate::save_l0::save_l0_message(&mut *guard, crate::save_l0::L0SaveInput {
                 id: Some(uuid),
                 session_id: &db_session_id,
@@ -293,7 +307,7 @@ async fn claude_ingest_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
                 conversation_id: None,
                 source: "claude_ingest",
                 extra_metadata: Some(serde_json::json!({"file": path_str})),
-            });
+            }, Some(embedder));
             if let Ok(res) = r { if res.inserted { inserted += 1; } }
         }
 

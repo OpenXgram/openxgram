@@ -939,6 +939,13 @@ enum SessionCli {
         #[arg(long)]
         title: Option<String>,
     },
+    /// 임베딩이 없는 기존 메시지·memories 를 일괄 임베딩 (FastEmbedder, idempotent).
+    /// `--force` 를 주면 기존 임베딩을 전부 삭제 후 재임베딩 (e5 prefix 변경 후 필수).
+    BackfillEmbeddings {
+        /// 기존 임베딩 전체 삭제 후 재임베딩 (passage: prefix 적용)
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
 }
 
 impl From<SessionCli> for SessionAction {
@@ -967,6 +974,7 @@ impl From<SessionCli> for SessionAction {
             }
             // ImportApp 은 SessionAction 변환 안 함 — main dispatch 에서 직접 처리.
             SessionCli::ImportApp { .. } => unreachable!("ImportApp 은 dispatch 에서 직접 처리"),
+            SessionCli::BackfillEmbeddings { force } => SessionAction::BackfillEmbeddings { force },
         }
     }
 }
@@ -1712,6 +1720,8 @@ enum WikiCli {
         #[arg(long)]
         page_type: Option<String>,
     },
+    /// 미임베딩 wiki 페이지를 embed_passage 로 임베딩 (wiki_embeddings 채우기)
+    Embed,
 }
 
 #[derive(Subcommand, Debug)]
@@ -1845,6 +1855,7 @@ impl From<WikiCli> for WikiAction {
             WikiCli::Link { from, to, reason } => WikiAction::Link { from, to, reason },
             WikiCli::Search { query, k } => WikiAction::Search { query, k },
             WikiCli::List { page_type } => WikiAction::List { page_type },
+            WikiCli::Embed => WikiAction::Embed,
         }
     }
 }
