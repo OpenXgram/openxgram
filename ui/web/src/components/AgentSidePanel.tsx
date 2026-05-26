@@ -535,6 +535,9 @@ interface TemplateDtoMini {
  vibe: string | null;
  body: string;
 }
+// rc.135b — 카테고리 drill-down + 짙은 배경.
+// step 1: 카테고리 카드 그리드 (17개)
+// step 2: 카테고리 클릭 시 그 안의 템플릿만 표시 + ← 뒤로
 function CatalogPickerModal(props: {
  onClose: () => void;
  onSelect: (t: TemplateDtoMini) => void;
@@ -542,50 +545,89 @@ function CatalogPickerModal(props: {
  const [templates] = createResource<TemplateDtoMini[]>(async () => {
  try { return await invoke<TemplateDtoMini[]>("agent_templates_list");} catch { return [];}
 });
- const [category, setCategory] = createSignal("");
- const categories = () => {
- const set = new Set<string>();
- (templates() ?? []).forEach((t) => set.add(t.category));
- return Array.from(set).sort();
+ const [category, setCategory] = createSignal<string | null>(null);
+ const categoryStats = () => {
+ const map = new Map<string, number>();
+ (templates() ?? []).forEach((t) => map.set(t.category, (map.get(t.category) ?? 0) + 1));
+ return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
 };
- const filtered = () => {
+ const inCategory = () => {
  const c = category();
- const all = templates() ?? [];
- return c ? all.filter((t) => t.category === c) : all;
+ if (!c) return [];
+ return (templates() ?? []).filter((t) => t.category === c);
+};
+ // 카테고리별 emoji 매핑 (UX 향상)
+ const catEmoji: Record<string, string> = {
+ academic: "🎓", design: "🎨", engineering: "⚙️", finance: "💰",
+ "game-development": "🎮", integrations: "🔌", marketing: "📣",
+ "paid-media": "💸", product: "📦", "project-management": "📋",
+ sales: "💼", scripts: "📜", "spatial-computing": "🥽",
+ specialized: "🧠", strategy: "♟️", support: "🛟", testing: "🧪",
 };
  return (
  <div onClick={props.onClose}
- style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center;">
+ style="position:fixed; inset:0; background:rgba(0,0,0,0.85); backdrop-filter:blur(4px); z-index:9999; display:flex; align-items:center; justify-content:center;">
  <div onClick={(e) => e.stopPropagation()}
- style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:14px; max-width:900px; width:92%; max-height:82vh; overflow:auto;">
- <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
- <strong style="font-size:14px;">📚 카탈로그에서 역할 선택 ({(templates() ?? []).length}개)</strong>
- <button class="link-btn" onClick={props.onClose} style="padding:4px 10px;">닫기</button>
+ style="background:#0f1320; border:1px solid #3a4a6a; border-radius:10px; padding:16px; max-width:900px; width:92%; max-height:84vh; overflow:auto; box-shadow:0 20px 60px rgba(0,0,0,0.7);">
+ <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #2a3550;">
+ <Show when={category()} fallback={
+ <strong style="font-size:15px; color:#e6e9f0;">📚 에이전트 카탈로그 — 카테고리 선택 ({(templates() ?? []).length}개 / {categoryStats().length} 카테고리)</strong>
+ }>
+ <button onClick={() => setCategory(null)}
+ style="background:#1a2236; color:#e6e9f0; padding:5px 12px; border:1px solid #3a4a6a; border-radius:4px; cursor:pointer; font-size:12px;">
+ ← 카테고리로
+ </button>
+ <strong style="font-size:14px; color:#e6e9f0; margin:0 12px; flex:1;">{catEmoji[category()!] || "📁"} {category()} ({inCategory().length})</strong>
+ </Show>
+ <button onClick={props.onClose}
+ style="background:#2a1a1a; color:#e6e9f0; padding:5px 12px; border:1px solid #5a3a3a; border-radius:4px; cursor:pointer; font-size:12px;">
+ 닫기 ✕
+ </button>
  </div>
- <select value={category()} onChange={(e) => setCategory(e.currentTarget.value)}
- style="padding:6px; margin-bottom:10px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;">
- <option value="">— 전체 ({(templates() ?? []).length}) —</option>
- <For each={categories()}>{(c) => <option value={c}>{c} ({(templates() ?? []).filter((t) => t.category === c).length})</option>}</For>
- </select>
- <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:8px;">
- <For each={filtered()}>
- {(t) => (
- <div onClick={() => { props.onSelect(t); props.onClose();}}
- style="padding:8px; border:1px solid var(--border); border-radius:4px; cursor:pointer; background:var(--surface-2);">
- <div style="display:flex; align-items:center; gap:4px; margin-bottom:2px;">
- <span style="font-size:14px;">{t.emoji || "🤖"}</span>
- <strong style="font-size:12px;">{t.name}</strong>
- </div>
- <div style="font-size:10px; color:var(--text-3); margin-bottom:2px;">📁 {t.category}</div>
- <Show when={t.vibe}><div style="font-size:10px; color:var(--text-2); font-style:italic; margin-bottom:2px;">"{t.vibe}"</div></Show>
- <Show when={t.description}><div style="font-size:10px; color:var(--text-2); max-height:36px; overflow:hidden; line-height:1.3;">{t.description}</div></Show>
+
+ {/* Step 1: 카테고리 그리드 */}
+ <Show when={!category()}>
+ <Show when={(templates() ?? []).length === 0} fallback={
+ <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); gap:10px;">
+ <For each={categoryStats()}>
+ {([cat, count]) => (
+ <div onClick={() => setCategory(cat)}
+ style="padding:14px; border:1px solid #2a3550; border-radius:6px; cursor:pointer; background:#1a2236; text-align:center; transition:all 0.15s;"
+ onMouseOver={(e) => e.currentTarget.style.background = '#243150'}
+ onMouseOut={(e) => e.currentTarget.style.background = '#1a2236'}>
+ <div style="font-size:30px; margin-bottom:6px;">{catEmoji[cat] || "📁"}</div>
+ <div style="font-size:13px; color:#e6e9f0; font-weight:bold; margin-bottom:4px;">{cat}</div>
+ <div style="font-size:11px; color:#8a92a8;">{count} 개</div>
  </div>
 )}
  </For>
  </div>
- <Show when={(templates() ?? []).length === 0}>
- <div style="text-align:center; padding:20px; color:var(--text-3);">
- 카탈로그 비어있음. 홈 → 📚 에이전트 카탈로그 → 🔄 갱신 으로 fetch.
+ }>
+ <div style="text-align:center; padding:40px 20px; color:#8a92a8;">
+ ⚠ 카탈로그 비어있음.<br />
+ 홈 → 📚 에이전트 카탈로그 → 🔄 갱신 으로 fetch.
+ </div>
+ </Show>
+ </Show>
+
+ {/* Step 2: 그 카테고리 내 카드들 */}
+ <Show when={category()}>
+ <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:10px;">
+ <For each={inCategory()}>
+ {(t) => (
+ <div onClick={() => { props.onSelect(t); props.onClose();}}
+ style="padding:10px; border:1px solid #2a3550; border-radius:6px; cursor:pointer; background:#1a2236; transition:all 0.15s;"
+ onMouseOver={(e) => e.currentTarget.style.background = '#243150'}
+ onMouseOut={(e) => e.currentTarget.style.background = '#1a2236'}>
+ <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+ <span style="font-size:18px;">{t.emoji || "🤖"}</span>
+ <strong style="font-size:13px; color:#e6e9f0;">{t.name}</strong>
+ </div>
+ <Show when={t.vibe}><div style="font-size:11px; color:#a0a8c0; font-style:italic; margin-bottom:4px;">"{t.vibe}"</div></Show>
+ <Show when={t.description}><div style="font-size:11px; color:#8a92a8; max-height:60px; overflow:hidden; line-height:1.4;">{t.description}</div></Show>
+ </div>
+)}
+ </For>
  </div>
  </Show>
  </div>

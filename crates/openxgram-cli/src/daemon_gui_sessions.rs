@@ -787,11 +787,17 @@ fn extract_latest_changelog() -> (Option<String>, Option<String>) {
     (Some(title), Some(body))
 }
 
+// rc.135 — CARGO_PKG_VERSION 매크로가 incremental cache 로 workspace.version 변경 미반영.
+// const 직접 작성 → 파일 mtime 변경 → 강제 재컴파일 → version_info 응답 갱신 → App.tsx 의
+// 30s polling 이 cur != baseline 감지 → 업데이트 팝업 표시.
+// 매 release 마다 RELEASE_TAG 갱신 (Cargo.toml + ui/web/package.json + 본 const 3곳).
+pub const RELEASE_TAG: &str = "0.2.0-rc.136";
+
 pub fn version_info() -> VersionInfoDto {
     let (title, body) = extract_latest_changelog();
     VersionInfoDto {
-        release: env!("CARGO_PKG_VERSION").to_string(),
-        daemon: env!("CARGO_PKG_VERSION").to_string(),
+        release: RELEASE_TAG.to_string(),
+        daemon: RELEASE_TAG.to_string(),
         spec_doc: "UI-MESSENGER-SPEC v1.3".to_string(),
         prd_doc: "PRD-OpenXgram v1.4".to_string(),
         changelog_latest_title: title,
