@@ -187,6 +187,7 @@ const ROUTES: Record<string, Route> = {
  // rc.132 — agent_templates 카탈로그 (msitarzewski/agency-agents)
  agent_templates_list: { method: "GET", path: "/agent-templates"},
  agent_templates_refresh: { method: "POST", path: "/agent-templates/refresh"},
+ agent_templates_apply: { method: "POST", path: "/agent-templates/apply", body: true},
  // rc.126 — 워크플로우 오케스트레이션 (UI-MESSENGER-SPEC §20 W-1~W-10, backend 기존)
  workflows_list: { method: "GET", path: "/workflows"},
  workflow_upsert: { method: "POST", path: "/workflows", body: true},

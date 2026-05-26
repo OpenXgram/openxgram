@@ -100,29 +100,87 @@ export function AgentTemplatesCard(props: { onBack: () => void}) {
  </For>
  </div>
 
- {/* 선택 시 detail */}
+ {/* 선택 시 detail + 적용 form (rc.133) */}
  <Show when={selected()}>
- <div style="margin-top:14px; padding:12px; background:var(--surface-2); border:2px solid #238636; border-radius:6px;">
- <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
- <h4 style="margin:0;">{selected()!.emoji || "🤖"} {selected()!.name}</h4>
- <button class="link-btn" onClick={() => setSelected(null)} style="padding:4px 10px;">닫기</button>
- </div>
- <div style="font-size:11px; color:var(--text-3); margin-bottom:6px;">📁 {selected()!.category} · source: {selected()!.source_path}</div>
- <Show when={selected()!.vibe}>
- <p style="font-style:italic; color:var(--text-2);">"{selected()!.vibe}"</p>
- </Show>
- <Show when={selected()!.description}>
- <p style="font-size:12px; color:var(--text-2);">{selected()!.description}</p>
- </Show>
- <details style="margin-top:8px;">
- <summary style="cursor:pointer; font-size:12px; color:var(--text-3);">📝 본문 보기 ({selected()!.body.length} chars)</summary>
- <pre style="font-size:10px; padding:8px; background:var(--surface); border-radius:4px; max-height:400px; overflow:auto; white-space:pre-wrap;">{selected()!.body}</pre>
- </details>
- <p style="font-size:11px; color:#d29922; margin-top:8px;">
- ⚠️ \"적용\" 기능 (AGENT.md 자동 생성 + 메신저 등록) 은 다음 cycle (rc.133).
- </p>
- </div>
+ <ApplyPanel template={selected()!} onClose={() => setSelected(null)} onApplied={() => refetch()} />
  </Show>
  </section>
+);
+}
+
+// rc.133 — 적용 폼 (대상 alias + body 수정 + group + 활성)
+function ApplyPanel(props: { template: TemplateDto; onClose: () => void; onApplied: () => void}) {
+ const [targetAlias, setTargetAlias] = createSignal(
+ props.template.name.toLowerCase().replace(/[^a-z0-9-]+/g, "-")
+);
+ const [bodyOverride, setBodyOverride] = createSignal(props.template.body);
+ const [groupName, setGroupName] = createSignal("");
+ const [messengerEnabled, setMessengerEnabled] = createSignal(true);
+ const [busy, setBusy] = createSignal(false);
+ const [result, setResult] = createSignal<string | null>(null);
+
+ async function apply() {
+ if (!targetAlias().trim()) { setResult("✗ target alias 필수"); return;}
+ setBusy(true); setResult("⏳ 적용 중...");
+ try {
+ const r = await invoke<any>("agent_templates_apply", {
+ template_id: props.template.id,
+ target_alias: targetAlias().trim(),
+ body_override: bodyOverride(),
+ group_name: groupName().trim() || null,
+ messenger_enabled: messengerEnabled(),
+});
+ if (r?.ok) {
+ setResult(`✓ ${r.target_alias} 적용 (${r.bytes} bytes) — AGENT.md: ${r.agent_md}`);
+ props.onApplied();
+ } else {
+ setResult(`✗ ${r?.error || "실패"}`);
+ }
+} catch (e) { setResult(`✗ ${e}`);} finally { setBusy(false);}
+}
+
+ return (
+ <div style="margin-top:14px; padding:12px; background:var(--surface-2); border:2px solid #238636; border-radius:6px;">
+ <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+ <h4 style="margin:0;">{props.template.emoji || "🤖"} {props.template.name}</h4>
+ <button class="link-btn" onClick={props.onClose} style="padding:4px 10px;">닫기</button>
+ </div>
+ <div style="font-size:11px; color:var(--text-3); margin-bottom:6px;">📁 {props.template.category} · source: {props.template.source_path}</div>
+ <Show when={props.template.vibe}>
+ <p style="font-style:italic; color:var(--text-2); margin:4px 0;">"{props.template.vibe}"</p>
+ </Show>
+ <Show when={props.template.description}>
+ <p style="font-size:12px; color:var(--text-2); margin:4px 0;">{props.template.description}</p>
+ </Show>
+
+ <hr style="margin:10px 0; opacity:0.2;" />
+ <strong style="font-size:13px;">▶ 이 템플릿을 적용할 대상</strong>
+ <div style="display:flex; flex-direction:column; gap:6px; margin-top:6px;">
+ <label style="font-size:11px; color:var(--text-3);">대상 alias (= 터미널 tmux 세션 alias)</label>
+ <input value={targetAlias()} onInput={(e) => setTargetAlias(e.currentTarget.value)}
+ placeholder="예: starianset / portal / pip / eno"
+ style="padding:6px; background:var(--surface); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+ <label style="font-size:11px; color:var(--text-3);">그룹 (선택)</label>
+ <input value={groupName()} onInput={(e) => setGroupName(e.currentTarget.value)}
+ placeholder="prd-team / dev-team 등"
+ style="padding:6px; background:var(--surface); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
+ <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+ <input type="checkbox" checked={messengerEnabled()} onChange={(e) => setMessengerEnabled(e.currentTarget.checked)} />
+ 메신저 활성 (다른 peer 가 list_peers 로 인지)
+ </label>
+ <label style="font-size:11px; color:var(--text-3);">AGENT.md 내용 (수정 가능)</label>
+ <textarea value={bodyOverride()} onInput={(e) => setBodyOverride(e.currentTarget.value)} rows={12}
+ style="padding:6px; background:var(--surface); color:var(--text-1); border:1px solid var(--border); border-radius:4px; font-family:monospace; font-size:11px;" />
+ <div style="display:flex; gap:6px;">
+ <button class="link-btn" disabled={busy()} onClick={apply}
+ style="background:#238636; color:white; padding:8px 16px; border:none; border-radius:4px; font-weight:bold;">
+ ▶ 적용 (AGENT.md 생성 + 메신저 등록)
+ </button>
+ </div>
+ <Show when={result()}>
+ <div style={`padding:6px 10px; font-size:11px; border-radius:4px; background:${result()!.startsWith("✓") ? "rgba(35,134,54,0.2)" : result()!.startsWith("⏳") ? "rgba(58,74,106,0.2)" : "rgba(220,53,69,0.2)"};`}>{result()}</div>
+ </Show>
+ </div>
+ </div>
 );
 }

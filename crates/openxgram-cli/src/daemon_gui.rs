@@ -310,6 +310,7 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // rc.132 — agent_templates 카탈로그 (msitarzewski/agency-agents)
         .route("/v1/gui/agent-templates", get(gui_agent_templates_list))
         .route("/v1/gui/agent-templates/refresh", post(gui_agent_templates_refresh))
+        .route("/v1/gui/agent-templates/apply", post(gui_agent_templates_apply))
         // Discord 봇이 가입한 guild 의 channel 목록 (세션 바인딩 시 사용자가 선택)
         .route("/v1/gui/notify/discord/channels", post(gui_notify_discord_channels))
         // Discord 봇 진단 — token + permission + guild + channel 한 번에
@@ -2867,6 +2868,90 @@ async fn gui_agent_templates_list(
     }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
         .filter_map(|r| r.ok()).collect();
     Ok(Json(rows))
+}
+
+// rc.133 — 카탈로그 템플릿을 특정 alias 의 cwd 에 적용:
+//   • AGENT.md 자동 생성 (atomic write)
+//   • CLAUDE.md 끝에 @AGENT.md reference 자동 추가
+//   • agent_capabilities upsert (role/description/group/messenger_enabled)
+#[derive(serde::Deserialize)]
+struct AgentTemplateApplyBody {
+    template_id: String,
+    target_alias: String,
+    #[serde(default)] body_override: Option<String>,
+    #[serde(default)] group_name: Option<String>,
+    #[serde(default)] messenger_enabled: bool,
+    #[serde(default)] project_path_hint: Option<String>,
+}
+
+async fn gui_agent_templates_apply(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<AgentTemplateApplyBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    // 1) 템플릿 로드
+    let template: (String, String, String, Option<String>) = {
+        let mut db = state.db.lock().await;
+        match db.conn().query_row(
+            "SELECT name, body, category, emoji FROM agent_templates WHERE id = ?1",
+            rusqlite::params![&body.template_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?))
+        ) {
+            Ok(t) => t,
+            Err(_) => return Ok(Json(serde_json::json!({
+                "ok": false, "error": format!("template {} not found", body.template_id)
+            }))),
+        }
+    };
+    let (tpl_name, tpl_body, tpl_category, tpl_emoji) = template;
+    let final_body = body.body_override.unwrap_or(tpl_body);
+    // 2) 대상 cwd 확인
+    let cwd = match resolve_alias_cwd(&body.target_alias, body.project_path_hint.as_deref()).await {
+        Ok(p) => p,
+        Err(e) => return Ok(Json(serde_json::json!({"ok": false, "error": e}))),
+    };
+    // 3) AGENT.md atomic write
+    let agent_md = std::path::Path::new(&cwd).join("AGENT.md");
+    let tmp = agent_md.with_extension("md.new");
+    std::fs::write(&tmp, &final_body)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("write: {e}")})))?;
+    std::fs::rename(&tmp, &agent_md)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("rename: {e}")})))?;
+    // 4) CLAUDE.md @AGENT.md reference 자동 추가
+    let claude_md = std::path::Path::new(&cwd).join("CLAUDE.md");
+    let existing = std::fs::read_to_string(&claude_md).unwrap_or_default();
+    if !existing.contains("@AGENT.md") {
+        let mut new_content = existing.clone();
+        if !new_content.is_empty() && !new_content.ends_with('\n') { new_content.push('\n');}
+        new_content.push_str("\n# OpenXgram 에이전트 지침 (auto-injected, agency-agents 카탈로그)\n");
+        new_content.push_str("@AGENT.md\n");
+        std::fs::write(&claude_md, new_content).ok();
+    }
+    // 5) agent_capabilities upsert
+    let now = chrono::Utc::now().to_rfc3339();
+    let head: String = final_body.chars().take(4000).collect();
+    let role_short = format!("{} {}", tpl_emoji.unwrap_or_default(), tpl_name).trim().to_string();
+    {
+        let mut db = state.db.lock().await;
+        db.conn().execute(
+            "INSERT INTO agent_capabilities (alias, role, description, project_path, group_name, messenger_enabled, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+             ON CONFLICT(alias) DO UPDATE SET role=?2, description=?3, project_path=?4, group_name=COALESCE(?5, group_name), messenger_enabled=?6, updated_at=?7",
+            rusqlite::params![
+                body.target_alias, role_short, head, cwd, body.group_name, body.messenger_enabled as i64, now,
+            ],
+        ).ok();
+    }
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "applied_from": body.template_id,
+        "target_alias": body.target_alias,
+        "category": tpl_category,
+        "agent_md": agent_md.display().to_string(),
+        "bytes": final_body.len(),
+        "messenger_enabled": body.messenger_enabled,
+    })))
 }
 
 async fn gui_agent_templates_refresh(
