@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct MachineInfo {
     pub hostname: String,
     pub alias: String,                // 기본은 hostname. 사용자 설정 후 alias.
@@ -37,7 +37,7 @@ pub enum SessionStatus {
     Stale,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct DetectedSession {
     pub kind: SessionKind,
     pub identifier: String, // "tmux:starian" / "claude:openxgram" / "xgram:01HN..."
@@ -50,7 +50,7 @@ pub struct DetectedSession {
     pub agent_id: Option<String>, // ULID — instrumented 면 채움 (Phase 2)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct SessionsDto {
     pub machine: MachineInfo,
     pub sessions: Vec<DetectedSession>,
@@ -471,19 +471,36 @@ fn detect_processes() -> Vec<DetectedSession> {
 ///   - peer/process (peer:*, proc:*) — 네트워크/시스템 메타
 /// raw tmux:* 는 제외 — system jobs (xgramd 등) 노이즈 차단. portal 등록한 것만 의미 있음.
 /// portal-new 가 없는 머신만 fallback 으로 raw tmux 보임.
+// rc.134 — 5초 TTL 캐시. portal/claude_projects/tmux/processes 모두 합치면 sync I/O 가 길어져
+// async handler 가 tokio worker 를 점유 → endpoint 30초+ hang. 캐시 + spawn_blocking 으로 격리.
+static SESSIONS_CACHE: std::sync::OnceLock<
+    std::sync::Mutex<Option<(std::time::Instant, SessionsDto)>>
+> = std::sync::OnceLock::new();
+
 pub fn collect_sessions() -> SessionsDto {
+    let cache = SESSIONS_CACHE.get_or_init(|| std::sync::Mutex::new(None));
+    if let Ok(guard) = cache.lock() {
+        if let Some((ts, dto)) = guard.as_ref() {
+            if ts.elapsed() < std::time::Duration::from_secs(5) {
+                return dto.clone();
+            }
+        }
+    }
     let machine = detect_machine();
     let mut sessions = Vec::new();
     let portal = detect_starian_portal();
     let had_portal = !portal.is_empty();
     sessions.extend(portal);
     sessions.extend(detect_claude_projects());
-    // fallback: portal 없으면 raw tmux 로 polyfill
     if !had_portal {
         sessions.extend(detect_tmux());
     }
     sessions.extend(detect_processes());
-    SessionsDto { machine, sessions }
+    let dto = SessionsDto { machine, sessions };
+    if let Ok(mut guard) = cache.lock() {
+        *guard = Some((std::time::Instant::now(), dto.clone()));
+    }
+    dto
 }
 
 /// UI-MESSENGER-SPEC v1.3 §4.3 — 세션 클릭 시 중앙 패널 라이브 터미널 (S5 xterm.js).

@@ -591,7 +591,11 @@ async fn gui_sessions(
     headers: HeaderMap,
 ) -> Result<Json<crate::daemon_gui_sessions::SessionsDto>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    let mut dto = crate::daemon_gui_sessions::collect_sessions();
+    // rc.134 — sync collect (sub-process spawns + filesystem scan) 을 blocking pool 로 격리.
+    // 이전: tokio worker 30초+ blocked → endpoint hang. 이제 main worker 즉시 자유.
+    let mut dto = tokio::task::spawn_blocking(crate::daemon_gui_sessions::collect_sessions)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("collect: {e}")})))?;
 
     // S8 cross-machine fan-out — peers 테이블 의 http:// peer 들에게서 sessions 받아 merge
     // (실패는 silent, 3초 timeout, 토큰 동봉)
@@ -950,7 +954,7 @@ async fn gui_memory_l0_save(
         conversation_id: body.conversation_id.as_deref(),
         source: "gui_l0_endpoint",
         extra_metadata: body.metadata.clone(),
-    }).map_err(|e| internal(&format!("L0 save: {e}")))?;
+    }, None).map_err(|e| internal(&format!("L0 save: {e}")))?;
     Ok(Json(serde_json::json!({
         "ok": true,
         "id": result.id,
@@ -1205,7 +1209,7 @@ async fn gui_memory_import_desktop(
                     conversation_id: None,
                     source: "desktop_import",
                     extra_metadata: None,
-                });
+                }, None);
                 if let Ok(res) = r { if res.inserted { total += 1; } }
             }
         }
@@ -1266,7 +1270,7 @@ async fn process_import_bundle(
                     conversation_id: None,
                     source: "import_bundle",
                     extra_metadata: Some(serde_json::json!({"app": source_app})),
-                });
+                }, None);
                 if let Ok(res) = r { if res.inserted { *counts.entry("messages").or_insert(0) += 1; } }
             }
             "episode" => {
@@ -1646,7 +1650,7 @@ async fn gui_memory_migration_import(
             conversation_id: Some(conv),
             source: "migration_import",
             extra_metadata: None,
-        });
+        }, None);
         if let Ok(res) = r { if res.inserted { imported += 1; } }
     }
     Ok(Json(serde_json::json!({
@@ -5107,7 +5111,7 @@ async fn gui_peer_send(
             conversation_id: body.conversation_id.as_deref(),
             source: "messenger_outbound",
             extra_metadata: Some(serde_json::json!({"peer_alias": alias})),
-        });
+        }, None);
     }
     // UI-MESSENGER-SPEC v1.3 S6 — LLM 토큰비 + x402 결제 합산.
     // 정확 cost: model + tokens_in + tokens_out 제공 시 정밀, 미제공 시 length proxy.

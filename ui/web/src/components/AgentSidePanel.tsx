@@ -525,11 +525,87 @@ interface AgentCapDto {
  orchestration_role: string | null;
  special_instructions: string | null;
 }
+// rc.135 — 카탈로그-메신저 통합. 메신저 등록 탭에서 직접 173 템플릿 선택 → 폼 자동 채움.
+interface TemplateDtoMini {
+ id: string;
+ category: string;
+ name: string;
+ description: string | null;
+ emoji: string | null;
+ vibe: string | null;
+ body: string;
+}
+function CatalogPickerModal(props: {
+ onClose: () => void;
+ onSelect: (t: TemplateDtoMini) => void;
+}) {
+ const [templates] = createResource<TemplateDtoMini[]>(async () => {
+ try { return await invoke<TemplateDtoMini[]>("agent_templates_list");} catch { return [];}
+});
+ const [category, setCategory] = createSignal("");
+ const categories = () => {
+ const set = new Set<string>();
+ (templates() ?? []).forEach((t) => set.add(t.category));
+ return Array.from(set).sort();
+};
+ const filtered = () => {
+ const c = category();
+ const all = templates() ?? [];
+ return c ? all.filter((t) => t.category === c) : all;
+};
+ return (
+ <div onClick={props.onClose}
+ style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center;">
+ <div onClick={(e) => e.stopPropagation()}
+ style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:14px; max-width:900px; width:92%; max-height:82vh; overflow:auto;">
+ <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+ <strong style="font-size:14px;">📚 카탈로그에서 역할 선택 ({(templates() ?? []).length}개)</strong>
+ <button class="link-btn" onClick={props.onClose} style="padding:4px 10px;">닫기</button>
+ </div>
+ <select value={category()} onChange={(e) => setCategory(e.currentTarget.value)}
+ style="padding:6px; margin-bottom:10px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;">
+ <option value="">— 전체 ({(templates() ?? []).length}) —</option>
+ <For each={categories()}>{(c) => <option value={c}>{c} ({(templates() ?? []).filter((t) => t.category === c).length})</option>}</For>
+ </select>
+ <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:8px;">
+ <For each={filtered()}>
+ {(t) => (
+ <div onClick={() => { props.onSelect(t); props.onClose();}}
+ style="padding:8px; border:1px solid var(--border); border-radius:4px; cursor:pointer; background:var(--surface-2);">
+ <div style="display:flex; align-items:center; gap:4px; margin-bottom:2px;">
+ <span style="font-size:14px;">{t.emoji || "🤖"}</span>
+ <strong style="font-size:12px;">{t.name}</strong>
+ </div>
+ <div style="font-size:10px; color:var(--text-3); margin-bottom:2px;">📁 {t.category}</div>
+ <Show when={t.vibe}><div style="font-size:10px; color:var(--text-2); font-style:italic; margin-bottom:2px;">"{t.vibe}"</div></Show>
+ <Show when={t.description}><div style="font-size:10px; color:var(--text-2); max-height:36px; overflow:hidden; line-height:1.3;">{t.description}</div></Show>
+ </div>
+)}
+ </For>
+ </div>
+ <Show when={(templates() ?? []).length === 0}>
+ <div style="text-align:center; padding:20px; color:var(--text-3);">
+ 카탈로그 비어있음. 홈 → 📚 에이전트 카탈로그 → 🔄 갱신 으로 fetch.
+ </div>
+ </Show>
+ </div>
+ </div>
+);
+}
+
 function MessengerRegisterTab(props: { peer: PeerMeta; onJumpToSettings: () => void}) {
  const alias = () => props.peer.alias;
  const [agents, { refetch}] = createResource<AgentCapDto[]>(async () => {
  try { return await invoke<AgentCapDto[]>("agents_list");} catch { return [];}
 });
+ // rc.135 — 카탈로그 picker
+ const [showCatalog, setShowCatalog] = createSignal(false);
+ function applyTemplate(t: TemplateDtoMini) {
+ if (t.name) setRole(t.name);
+ if (t.description) setDescription(t.description);
+ setInstContent(t.body);
+ setMsg(`✓ 카탈로그 적용: ${t.name} — 저장 버튼으로 확정`);
+}
  // 통합: 기존 RoleTab 의 role policies (L3 + V1 마스터 정책) view
  const [policies] = createResource(fetchRolePolicies);
  // rc.129 — cwd/AGENT.md inline 편집
@@ -649,10 +725,17 @@ function MessengerRegisterTab(props: { peer: PeerMeta; onJumpToSettings: () => v
  </div>
  </Show>
  <div style="display:flex; flex-direction:column; gap:6px;">
+ <div style="display:flex; gap:6px; flex-wrap:wrap;">
  <button class="link-btn" disabled={busy()} onClick={autoDetect}
- style="background:#3a4a6a; color:white; padding:6px 14px; border:none; border-radius:4px; align-self:flex-start;">
+ style="background:#3a4a6a; color:white; padding:6px 14px; border:none; border-radius:4px;">
  🔍 자동 감지 (CLAUDE.md + .mcp.json)
  </button>
+ <button class="link-btn" type="button" onClick={() => setShowCatalog(true)}
+ style="background:#5c2d91; color:white; padding:6px 14px; border:none; border-radius:4px;"
+ title="agency-agents 173개 템플릿에서 선택 → role/description/AGENT.md 자동 채움">
+ 📚 카탈로그 적용 (173개)
+ </button>
+ </div>
  <label style="font-size:11px; color:var(--text-3);">역할 (role) — 짧은 직책</label>
  <input value={role()} onInput={(e) => setRole(e.currentTarget.value)}
  placeholder="예: PRD 작성, Rust 코어 구현, 테스트·검증" style="padding:6px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:4px;" />
@@ -737,6 +820,12 @@ function MessengerRegisterTab(props: { peer: PeerMeta; onJumpToSettings: () => v
  <button class="link-btn" type="button" onClick={props.onJumpToSettings} style="margin-top:8px;">
  자율 행동 카드 (마스터 편집)
  </button>
+ <Show when={showCatalog()}>
+ <CatalogPickerModal
+ onClose={() => setShowCatalog(false)}
+ onSelect={applyTemplate}
+ />
+ </Show>
  </div>
 );
 }
