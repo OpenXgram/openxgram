@@ -83,6 +83,11 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
         .await
         .context("GUI HTTP API 서버 가동 실패")?;
 
+    // rc.137 — session cache background warming. 30초마다 collect → cache 갱신.
+    // endpoint 는 항상 cache 즉시 반환 → 5s TTL 만료로 GUI 사이드바가 빈 화면 되는 문제 해결.
+    crate::daemon_gui_sessions::spawn_session_warming();
+    println!("  ✓ session cache warming spawned (30s interval)");
+
     // UI-MESSENGER-SPEC v1.3 enforcement workers (M-4 idle, M-6 auto-topup, L6 expiry, V6 outbound).
     crate::daemon_workers::spawn_all_from_dir(opts.data_dir.clone())
         .context("messenger enforcement workers 가동 실패")?;

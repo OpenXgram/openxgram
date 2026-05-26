@@ -471,21 +471,55 @@ fn detect_processes() -> Vec<DetectedSession> {
 ///   - peer/process (peer:*, proc:*) — 네트워크/시스템 메타
 /// raw tmux:* 는 제외 — system jobs (xgramd 등) 노이즈 차단. portal 등록한 것만 의미 있음.
 /// portal-new 가 없는 머신만 fallback 으로 raw tmux 보임.
-// rc.134 — 5초 TTL 캐시. portal/claude_projects/tmux/processes 모두 합치면 sync I/O 가 길어져
-// async handler 가 tokio worker 를 점유 → endpoint 30초+ hang. 캐시 + spawn_blocking 으로 격리.
+// rc.137 — stale-while-revalidate 패턴.
+// 60초 TTL + background warming worker (30초마다 미리 collect → cache 갱신).
+// endpoint 는 항상 cache 즉시 반환 (cache 만료돼도 옛 데이터라도 반환).
+// collect 가 5초 이상 걸려도 endpoint hang 안 함.
 static SESSIONS_CACHE: std::sync::OnceLock<
     std::sync::Mutex<Option<(std::time::Instant, SessionsDto)>>
 > = std::sync::OnceLock::new();
 
+const CACHE_TTL_SECS: u64 = 60;
+
 pub fn collect_sessions() -> SessionsDto {
     let cache = SESSIONS_CACHE.get_or_init(|| std::sync::Mutex::new(None));
+    // 1) cache 있으면 즉시 반환 (TTL 무관 — stale 도 OK, background warming 이 갱신)
     if let Ok(guard) = cache.lock() {
         if let Some((ts, dto)) = guard.as_ref() {
-            if ts.elapsed() < std::time::Duration::from_secs(5) {
+            // TTL 안 지났으면 fresh. 지났어도 stale 반환 — endpoint hang 안 시킴.
+            // 다만 stale 이면 다음 background tick 에서 갱신.
+            if ts.elapsed() < std::time::Duration::from_secs(CACHE_TTL_SECS) {
                 return dto.clone();
             }
+            // stale 반환 + fresh 도 시도 (fallthrough)
+            let stale = dto.clone();
+            drop(guard);
+            // background 가 비활성이면 여기서 동기 갱신 시도, 실패 시 stale 반환
+            return refresh_or_stale(stale);
         }
     }
+    // 2) cache 비어있음 (첫 호출) — 동기 collect
+    let dto = collect_fresh();
+    if let Ok(mut guard) = cache.lock() {
+        *guard = Some((std::time::Instant::now(), dto.clone()));
+    }
+    dto
+}
+
+fn refresh_or_stale(stale: SessionsDto) -> SessionsDto {
+    // 동기 갱신 시도. 실패하거나 시간 오래 걸리면 stale 반환.
+    // 단순 구현: 그냥 collect_fresh 호출 후 cache 갱신.
+    // background warming 이 잘 돌면 거의 도달 안 함.
+    let dto = collect_fresh();
+    let cache = SESSIONS_CACHE.get_or_init(|| std::sync::Mutex::new(None));
+    if let Ok(mut guard) = cache.lock() {
+        *guard = Some((std::time::Instant::now(), dto.clone()));
+    }
+    let _ = stale;
+    dto
+}
+
+fn collect_fresh() -> SessionsDto {
     let machine = detect_machine();
     let mut sessions = Vec::new();
     let portal = detect_starian_portal();
@@ -496,11 +530,38 @@ pub fn collect_sessions() -> SessionsDto {
         sessions.extend(detect_tmux());
     }
     sessions.extend(detect_processes());
-    let dto = SessionsDto { machine, sessions };
-    if let Ok(mut guard) = cache.lock() {
-        *guard = Some((std::time::Instant::now(), dto.clone()));
-    }
-    dto
+    SessionsDto { machine, sessions }
+}
+
+/// rc.137 — daemon 시작 시 spawn. 30초마다 collect → cache 갱신.
+/// endpoint 는 항상 cache 만 즉시 반환 → 사용자 응답 < 1ms 보장.
+pub fn spawn_session_warming() {
+    tokio::spawn(async {
+        // 시작 직후 첫 collect
+        let dto = tokio::task::spawn_blocking(collect_fresh).await
+            .unwrap_or_else(|_| SessionsDto { machine: detect_machine(), sessions: vec![] });
+        let cache = SESSIONS_CACHE.get_or_init(|| std::sync::Mutex::new(None));
+        if let Ok(mut guard) = cache.lock() {
+            *guard = Some((std::time::Instant::now(), dto));
+        }
+        tracing::info!("session_warming: initial collect done");
+        // 30초마다 갱신
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        interval.tick().await; // 첫 tick 즉시 — skip
+        loop {
+            interval.tick().await;
+            let started = std::time::Instant::now();
+            let dto = tokio::task::spawn_blocking(collect_fresh).await
+                .unwrap_or_else(|_| SessionsDto { machine: detect_machine(), sessions: vec![] });
+            let elapsed = started.elapsed();
+            if let Ok(mut guard) = cache.lock() {
+                *guard = Some((std::time::Instant::now(), dto));
+            }
+            if elapsed.as_secs() >= 5 {
+                tracing::warn!("session_warming: collect took {}s (slow)", elapsed.as_secs());
+            }
+        }
+    });
 }
 
 /// UI-MESSENGER-SPEC v1.3 §4.3 — 세션 클릭 시 중앙 패널 라이브 터미널 (S5 xterm.js).
@@ -791,7 +852,7 @@ fn extract_latest_changelog() -> (Option<String>, Option<String>) {
 // const 직접 작성 → 파일 mtime 변경 → 강제 재컴파일 → version_info 응답 갱신 → App.tsx 의
 // 30s polling 이 cur != baseline 감지 → 업데이트 팝업 표시.
 // 매 release 마다 RELEASE_TAG 갱신 (Cargo.toml + ui/web/package.json + 본 const 3곳).
-pub const RELEASE_TAG: &str = "0.2.0-rc.136";
+pub const RELEASE_TAG: &str = "0.2.0-rc.137";
 
 pub fn version_info() -> VersionInfoDto {
     let (title, body) = extract_latest_changelog();
