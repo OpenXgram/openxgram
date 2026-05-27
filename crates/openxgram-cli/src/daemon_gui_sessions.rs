@@ -56,6 +56,36 @@ pub struct SessionsDto {
     pub sessions: Vec<DetectedSession>,
 }
 
+/// rc.148 — portal AoE API 의 tmux_session_name → activity_state map.
+/// "active" = LLM 작업 중 (녹색), "waiting" = 사용자 입력 대기 (노랑).
+fn aoe_activity_map() -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    let url = portal_url_base();
+    let token = portal_token();
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .danger_accept_invalid_certs(true)
+        .build() {
+        Ok(c) => c,
+        Err(_) => return map,
+    };
+    if let Ok(resp) = client.get(format!("{}/api/aoe/sessions?token={}", url.trim_end_matches('/'), token)).send() {
+        if let Ok(v) = resp.json::<serde_json::Value>() {
+            if let Some(sessions) = v.get("sessions").and_then(|s| s.as_array()) {
+                for sess in sessions {
+                    if let (Some(name), Some(state)) = (
+                        sess.get("tmux_session_name").and_then(|x| x.as_str()),
+                        sess.get("activity_state").and_then(|x| x.as_str()),
+                    ) {
+                        map.insert(name.to_string(), state.to_string());
+                    }
+                }
+            }
+        }
+    }
+    map
+}
+
 /// rc.147 — attached=true 인 tmux session_name set. portal entry 상태 매핑용.
 fn tmux_attached_set() -> std::collections::HashSet<String> {
     let mut set = std::collections::HashSet::new();
@@ -543,9 +573,11 @@ fn collect_fresh() -> SessionsDto {
     let mut sessions = Vec::new();
     let mut portal = detect_starian_portal();
     let had_portal = !portal.is_empty();
-    // rc.147 — portal entry 의 attached/status 를 실제 tmux 상태로 갱신.
-    // 이전: portal entry 무조건 detached/None → 사용자 화면 모든 dot 노랑.
-    let attached_set = tmux_attached_set();
+    // rc.148 — portal entry 의 status 를 AoE activity_state 기반으로 매핑.
+    // active = LLM 작업 중 → 녹색 (Attached 로 표시)
+    // waiting = 사용자 입력 대기 → 노랑 (Detached 로 표시)
+    // 이전 (rc.147): tmux attached/detached 만 봐서 의미 부정확. 사용자 의도 = 에이전트 작동 상태.
+    let activity_map = aoe_activity_map();
     for s in &mut portal {
         let tmux_name: Option<String> = if let Some(rest) = s.identifier.strip_prefix("portal:") {
             rest.split(':').next().map(String::from)
@@ -553,11 +585,17 @@ fn collect_fresh() -> SessionsDto {
             rest.split(':').next().map(String::from)
         } else { None };
         if let Some(name) = tmux_name {
-            if attached_set.contains(&name) {
-                s.attached = Some(true);
-                s.status = SessionStatus::Attached;
-            } else {
-                s.attached = Some(false);
+            if let Some(state) = activity_map.get(&name) {
+                match state.as_str() {
+                    "active" => {
+                        s.status = SessionStatus::Active;
+                        s.attached = Some(true); // green dot
+                    }
+                    _ => {
+                        s.status = SessionStatus::Detached;
+                        s.attached = Some(false); // yellow dot
+                    }
+                }
             }
         }
     }
@@ -951,7 +989,7 @@ fn extract_latest_changelog() -> (Option<String>, Option<String>) {
 // const 직접 작성 → 파일 mtime 변경 → 강제 재컴파일 → version_info 응답 갱신 → App.tsx 의
 // 30s polling 이 cur != baseline 감지 → 업데이트 팝업 표시.
 // 매 release 마다 RELEASE_TAG 갱신 (Cargo.toml + ui/web/package.json + 본 const 3곳).
-pub const RELEASE_TAG: &str = "0.2.0-rc.147";
+pub const RELEASE_TAG: &str = "0.2.0-rc.148";
 
 pub fn version_info() -> VersionInfoDto {
     let (title, body) = extract_latest_changelog();

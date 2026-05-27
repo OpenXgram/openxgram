@@ -614,8 +614,9 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  // 상태별 dot 색
  let dotColor = "#666"; let dotTitle = "비활성";
  if (f.kind === "tmux") {
- if (f.sessionMeta?.attached) { dotColor = "#4caf50"; dotTitle = "attached (사용자 접속 중)";}
- else { dotColor = "#d4a017"; dotTitle = "detached (백그라운드 실행 중)";}
+ // rc.148 — portal AoE activity_state 기반. active = LLM 작업 중, waiting = 입력 대기
+ if (f.sessionMeta?.status === "active") { dotColor = "#4caf50"; dotTitle = "active (에이전트 작업 중)";}
+ else { dotColor = "#d4a017"; dotTitle = "waiting (대기 — 사용자 입력 기다림)";}
  } else if (f.kind === "claude_project") {
  const la = f.sessionMeta?.last_active_at;
  if (la && (Date.now() - new Date(la).getTime()) < 86400_000) {
