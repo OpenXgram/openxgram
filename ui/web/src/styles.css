@@ -645,31 +645,32 @@ input:focus-visible {
   overflow-y: auto;
   flex: 1;
 }
+/* rc.146 — compact friend row (스크롤 줄임) */
 .messenger-friend {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+  gap: 6px;
+  padding: 3px 10px;
   border-bottom: 1px solid #1c1c1c;
   cursor: pointer;
 }
 .messenger-friend:hover { background: #1c1c1c; }
 .messenger-friend.selected { background: #232a23; border-left: 3px solid #7df9c5; }
 .messenger-friend-icon {
-  width: 32px; height: 32px;
+  width: 20px; height: 20px;
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: 50%;
   font-weight: bold;
-  font-size: 14px;
+  font-size: 11px;
 }
 .messenger-friend-icon.kind-peer { background: #2a3a55; color: #b6d4ff; }
 .messenger-friend-icon.kind-discord { background: #4f4789; color: #d8d6ff; }
 .messenger-friend-icon.kind-telegram { background: #2c5a7a; color: #b6e1ff; }
-.messenger-friend-text { display: flex; flex-direction: column; min-width: 0; }
-.messenger-friend-name { font-size: 14px; color: #e6e6e6; }
+.messenger-friend-text { display: flex; flex-direction: row; align-items: baseline; gap: 8px; min-width: 0; flex: 1; }
+.messenger-friend-name { font-size: 13px; color: #e6e6e6; }
 .messenger-friend-sub {
-  font-size: 11px; color: #888;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px;
+  font-size: 10px; color: #777;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;
 }
 .messenger-empty { padding: 18px 14px; color: #777; font-size: 12px; }
 
