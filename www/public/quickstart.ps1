@@ -14,12 +14,17 @@
 #   7. start daemon + agent (Start-Process Hidden, survives parent exit)
 #   8. show status + next commands
 
-$ErrorActionPreference = 'Stop'
-
+# Force UTF-8 — avoid Korean encoding issues on Windows PowerShell 5.1 (cp949 default).
+# chcp 65001 + Console.Output/InputEncoding + $OutputEncoding (4 layers).
 try {
+    $null = & chcp.com 65001 2>&1
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-    $OutputEncoding            = [System.Text.Encoding]::UTF8
+    [Console]::InputEncoding  = [System.Text.Encoding]::UTF8
+    $OutputEncoding           = [System.Text.Encoding]::UTF8
+    [System.Globalization.CultureInfo]::CurrentCulture = 'ko-KR'
 } catch {}
+
+$ErrorActionPreference = 'Stop'
 
 $DataDir  = if ($env:XGRAM_DATA_DIR) { $env:XGRAM_DATA_DIR } else { Join-Path $env:USERPROFILE '.openxgram' }
 $EnvFile  = Join-Path $DataDir '.env.ps1'
@@ -29,19 +34,19 @@ $DaemonGuiPort = if ($env:XGRAM_DAEMON_GUI_PORT) { $env:XGRAM_DAEMON_GUI_PORT } 
 Write-Host ''
 Write-Host '═══════════════════════════════════════════════════' -ForegroundColor Cyan
 Write-Host '  OpenXgram quickstart' -ForegroundColor Cyan
-Write-Host "  데이터 디렉토리: $DataDir"
+Write-Host "  data dir: $DataDir"
 Write-Host '═══════════════════════════════════════════════════' -ForegroundColor Cyan
 Write-Host ''
 
-# 1. xgram 미설치면 install.ps1 자동 실행
+# 1. Auto-run install.ps1 if xgram missing
 $xgramCmd = Get-Command xgram -ErrorAction SilentlyContinue
 if (-not $xgramCmd) {
-    Write-Host '→ xgram 미설치 — install.ps1 자동 실행' -ForegroundColor Yellow
+    Write-Host '-> xgram missing — auto-running install.ps1' -ForegroundColor Yellow
     Invoke-Expression (Invoke-RestMethod -UseBasicParsing -Uri 'https://openxgram.org/install.ps1')
     $env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $xgramCmd = Get-Command xgram -ErrorAction SilentlyContinue
     if (-not $xgramCmd) {
-        Write-Error 'xgram 설치 후에도 PATH 에 없음 — PowerShell 재시작 후 다시 실행'
+        Write-Error 'xgram installed but not in PATH — restart PowerShell and retry'
         return
     }
 }
@@ -49,34 +54,34 @@ $xgramVersion = & xgram --version 2>&1 | Select-Object -First 1
 Write-Host "  xgram : $xgramVersion"
 Write-Host ''
 
-# 2. 머신 연결 선택 (manifest 없을 때만)
+# 2. Choose machine mode (only if no manifest)
 $mode = '1'
 if (-not (Test-Path $Manifest)) {
-    Write-Host '── 이 머신을 어떻게 사용하시겠어요? ──'
-    Write-Host '  [1] 새 노드로 시작 (시드 신규 발급, 독립 신원·메모리)'
-    Write-Host '  [2] 기존 노드에 머신 추가 (다른 머신 계정으로 원격 daemon 사용)'
+    Write-Host '── How will you use this machine? ──'
+    Write-Host '  [1] New node (fresh seed, independent identity + memory)'
+    Write-Host '  [2] Add to existing node (use remote daemon with other machine account)'
     Write-Host ''
-    $mode = Read-Host '선택 [1/2] (Enter = 1)'
+    $mode = Read-Host 'Select [1/2] (Enter = 1)'
     if ([string]::IsNullOrWhiteSpace($mode)) { $mode = '1' }
     Write-Host ''
 }
 
-# 3. 이메일 + GUI 비밀번호 (양쪽 모드 공통)
-$email = Read-Host '이메일'
+# 3. Email + GUI password (both modes)
+$email = Read-Host 'Email'
 while ($true) {
-    $secureGui = Read-Host '웹 GUI 비밀번호 (최소 12자)' -AsSecureString
+    $secureGui = Read-Host 'Web GUI password (min 12 chars)' -AsSecureString
     $guiPassword = [System.Net.NetworkCredential]::new('', $secureGui).Password
     if ($guiPassword.Length -ge 12) { break }
-    Write-Host '  ✗ 최소 12자 — 다시 입력' -ForegroundColor Red
+    Write-Host '  ✗ Need at least 12 chars — try again' -ForegroundColor Red
 }
 Write-Host ''
 
-# ── [2] 기존 노드 추가 ──
+# ── [2] Add to existing node ──
 if ($mode -eq '2') {
-    $remoteUrl = Read-Host '원격 daemon URL (예: https://other-machine.tailXXXX.ts.net)'
+    $remoteUrl = Read-Host 'Remote daemon URL (e.g. https://other-machine.tailXXXX.ts.net)'
     $remoteUrl = $remoteUrl.TrimEnd('/')
     if ([string]::IsNullOrWhiteSpace($remoteUrl)) {
-        Write-Error 'URL 입력 필수'
+        Write-Error 'URL required'
         return
     }
 
@@ -85,44 +90,44 @@ if ($mode -eq '2') {
         $loginResp = Invoke-RestMethod -Method Post -Uri "$remoteUrl/v1/auth/login" `
             -ContentType 'application/json' -Body $loginBody
     } catch {
-        Write-Error "원격 로그인 실패: $($_.Exception.Message)"
+        Write-Error "Remote login failed: $($_.Exception.Message)"
         return
     }
     if (-not $loginResp.jwt_token) {
-        Write-Error "JWT 응답 누락"
+        Write-Error "JWT missing in response"
         return
     }
 
     if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
     $envLines = @(
-        '# OpenXgram quickstart (원격 노드 모드)',
+        '# OpenXgram quickstart (remote node mode)',
         "`$env:XGRAM_DAEMON_URL = '$remoteUrl'",
         "`$env:XGRAM_GUI_JWT = '$($loginResp.jwt_token)'"
     )
     Set-Content -Path $EnvFile -Value $envLines -Encoding UTF8
     Write-Host ''
-    Write-Host '✓ 원격 노드 연결됨 — 이 머신의 xgram CLI/GUI는 원격 daemon 사용' -ForegroundColor Green
-    Write-Host '  (이 머신에는 daemon 띄우지 않음)'
+    Write-Host '✓ Connected to remote node — this machine xgram CLI/GUI uses remote daemon' -ForegroundColor Green
+    Write-Host '  (no local daemon on this machine)'
     Write-Host ''
-    Write-Host '다음 명령:'
-    Write-Host "  웹 GUI 열기: $remoteUrl/gui/ (또는 원격 머신 Tailscale Funnel URL)"
-    Write-Host '  → 같은 이메일/비밀번호로 어디서든 동일 자격으로 로그인'
+    Write-Host 'Next:'
+    Write-Host "  Open web GUI: $remoteUrl/gui/ (or remote Tailscale Funnel URL)"
+    Write-Host '  -> log in from anywhere with the same email/password'
     return
 }
 
-# ── [1] 새 노드 (default) ──
-# 4. xgram init — manifest 없으면 alias + 패스워드 prompt 후 init
+# ── [1] New node (default) ──
+# 4. xgram init — if no manifest, prompt alias + password then init
 $alias = ''
 if (-not (Test-Path $Manifest)) {
     $defaultAlias = $env:COMPUTERNAME
-    $alias = Read-Host "이 머신 alias (default: $defaultAlias)"
+    $alias = Read-Host "Machine alias (default: $defaultAlias)"
     if ([string]::IsNullOrWhiteSpace($alias)) { $alias = $defaultAlias }
 
     while ($true) {
-        $secure = Read-Host 'keystore 패스워드 (최소 12자)' -AsSecureString
+        $secure = Read-Host 'keystore password (min 12 chars)' -AsSecureString
         $password = [System.Net.NetworkCredential]::new('', $secure).Password
         if ($password.Length -ge 12) { break }
-        Write-Host '  ✗ 최소 12자 — 다시 입력' -ForegroundColor Red
+        Write-Host '  ✗ Need at least 12 chars — try again' -ForegroundColor Red
     }
 
     $env:XGRAM_KEYSTORE_PASSWORD = $password
@@ -132,22 +137,22 @@ if (-not (Test-Path $Manifest)) {
     Write-Host "→ xgram init --alias '$alias'"
     & xgram init --alias $alias
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "xgram init 실패 (exit $LASTEXITCODE)"
+        Write-Error "xgram init failed (exit $LASTEXITCODE)"
         return
     }
 } else {
-    Write-Host '→ 기존 install-manifest 발견 — init 건너뜀'
+    Write-Host '-> existing install-manifest found — skipping init'
     $existingAlias = (Get-Content $Manifest -Raw | ConvertFrom-Json).machine.alias
     $alias = $existingAlias
-    Write-Host "  기존 alias: $existingAlias"
-    $secure = Read-Host 'keystore 패스워드 입력 (저장된 봇 가동용)' -AsSecureString
+    Write-Host "  existing alias: $existingAlias"
+    $secure = Read-Host 'keystore password (for saved bots)' -AsSecureString
     $password = [System.Net.NetworkCredential]::new('', $secure).Password
     $env:XGRAM_KEYSTORE_PASSWORD = $password
 }
 Write-Host ''
 
-# 5. 외부 채널 — Enter 로 skip
-Write-Host '── 외부 채널 (모두 선택 — Enter 로 skip) ──'
+# 5. External channels — Enter to skip
+Write-Host '── External channels (all optional — Enter to skip) ──'
 $discordWebhook   = Read-Host 'Discord webhook URL'
 $discordBotToken  = Read-Host 'Discord bot token'
 $discordChannelId = Read-Host 'Discord channel id'
@@ -156,10 +161,10 @@ $telegramChatId   = Read-Host 'Telegram chat id'
 $anthropicApiKey  = ''
 Write-Host ''
 
-# 6. .env.ps1 저장
+# 6. Save .env.ps1
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
 $envLines = @(
-    '# OpenXgram quickstart — 다음 세션부터 . ' + $EnvFile + ' 로 환경 복원',
+    '# OpenXgram quickstart — restore env in future sessions: . ' + $EnvFile + '',
     "`$env:XGRAM_KEYSTORE_PASSWORD = '$password'"
 )
 if ($discordWebhook)   { $envLines += "`$env:XGRAM_DISCORD_WEBHOOK_URL = '$discordWebhook'" }
@@ -169,21 +174,21 @@ if ($telegramBotToken) { $envLines += "`$env:XGRAM_TELEGRAM_BOT_TOKEN = '$telegr
 if ($telegramChatId)   { $envLines += "`$env:XGRAM_TELEGRAM_CHAT_ID = '$telegramChatId'" }
 if ($anthropicApiKey)  { $envLines += "`$env:XGRAM_ANTHROPIC_API_KEY = '$anthropicApiKey'" }
 Set-Content -Path $EnvFile -Value $envLines -Encoding UTF8
-Write-Host "→ 비밀 저장: $EnvFile"
+Write-Host "-> secrets saved: $EnvFile"
 Write-Host ''
 
-# 7. 기존 가동 프로세스 종료
+# 7. Kill existing running processes
 Get-Process -Name xgram -ErrorAction SilentlyContinue | ForEach-Object {
     $cmdline = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).CommandLine
     if ($cmdline -match 'daemon|agent') {
-        Write-Host "  → 기존 프로세스 종료: PID $($_.Id) ($cmdline)"
+        Write-Host "  -> killing existing process: PID $($_.Id) ($cmdline)"
         Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
     }
 }
 Start-Sleep -Milliseconds 500
 
 # 8. daemon — Start-Process Hidden
-Write-Host '→ daemon 가동'
+Write-Host '-> starting daemon'
 $daemonLog = Join-Path $DataDir 'daemon.log'
 $daemonProc = Start-Process -FilePath (Get-Command xgram).Source `
     -ArgumentList 'daemon' `
@@ -193,29 +198,29 @@ $daemonProc = Start-Process -FilePath (Get-Command xgram).Source `
     -PassThru
 Start-Sleep -Seconds 3
 
-# 9. 웹 GUI 사용자 등록 (이메일+비밀번호)
-Write-Host '→ 웹 GUI 사용자 등록'
+# 9. Web GUI user registration (email+password)
+Write-Host '-> registering web GUI user'
 $regBody = @{ email = $email; password = $guiPassword; alias = $alias } | ConvertTo-Json -Compress
 try {
     $regResp = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$DaemonGuiPort/v1/auth/register" `
         -ContentType 'application/json' -Body $regBody
-    Write-Host "  ✓ 가입 완료 (role=$($regResp.role))" -ForegroundColor Green
+    Write-Host "  ✓ registered (role=$($regResp.role))" -ForegroundColor Green
 } catch {
     $msg = $_.Exception.Message
-    if ($msg -match '이미 가입' -or $msg -match 'Already') {
-        Write-Host '  → 이미 등록된 이메일 — 기존 계정 유지'
+    if ($msg -match 'already' -or $msg -match 'Already') {
+        Write-Host '  -> email already registered — keeping existing account'
     } else {
-        Write-Host "  ✗ 가입 실패: $msg" -ForegroundColor Yellow
-        Write-Host "  daemon 로그: $daemonLog"
+        Write-Host "  ✗ registration failed: $msg" -ForegroundColor Yellow
+        Write-Host "  daemon log: $daemonLog"
     }
 }
 Write-Host ''
 
-# 10. agent — Discord/Telegram 채널 토큰 있을 때만 가동
+# 10. agent — only if Discord/Telegram channel tokens present
 $hasChannel = $discordWebhook -or $telegramBotToken
 $agentProc = $null
 if ($hasChannel) {
-    Write-Host '→ agent 가동 (외부 채널 forward)'
+    Write-Host '-> starting agent (external channel forward)'
     $agentArgs = @('agent')
     if ($discordWebhook)   { $agentArgs += @('--discord-webhook-url', $discordWebhook) }
     if ($discordBotToken)  { $agentArgs += @('--discord-bot-token', $discordBotToken) }
@@ -230,40 +235,40 @@ if ($hasChannel) {
     Start-Sleep -Seconds 2
 }
 
-# 11. 상태 확인
+# 11. Status check
 Write-Host ''
-Write-Host '── 가동 상태 ──'
+Write-Host '── running status ──'
 $daemonAlive = $daemonProc -and -not $daemonProc.HasExited
 $agentAlive  = $agentProc  -and -not $agentProc.HasExited
 if ($daemonAlive) {
     Write-Host "  ✓ daemon  PID $($daemonProc.Id)  (log: $daemonLog)" -ForegroundColor Green
 } else {
-    Write-Host "  ✗ daemon  미가동 — 로그 확인: $daemonLog" -ForegroundColor Red
+    Write-Host "  ✗ daemon  not running — check log: $daemonLog" -ForegroundColor Red
 }
 if ($agentProc) {
     if ($agentAlive) {
         Write-Host "  ✓ agent   PID $($agentProc.Id)  (log: $agentLog)" -ForegroundColor Green
     } else {
-        Write-Host "  ✗ agent   미가동 — 로그 확인: $agentLog" -ForegroundColor Red
+        Write-Host "  ✗ agent   not running — check log: $agentLog" -ForegroundColor Red
     }
 } else {
-    Write-Host '  - agent   미가동 (외부 채널 토큰 없어 skip 됐을 수 있음)'
+    Write-Host '  - agent   not running (no external channel token — skipped)'
 }
 Write-Host ''
 
-# 12. 안내
+# 12. Guide
 Write-Host '═══════════════════════════════════════════════════' -ForegroundColor Cyan
-Write-Host '  ✓ OpenXgram 가동 완료' -ForegroundColor Green
+Write-Host '  ✓ OpenXgram running' -ForegroundColor Green
 Write-Host ''
-Write-Host '  웹 GUI 로그인 자격:'
-Write-Host "    이메일   : $email"
-Write-Host '    비밀번호 : (입력하신 GUI 비밀번호)'
+Write-Host '  Web GUI login:'
+Write-Host "    email    : $email"
+Write-Host '    password : (the GUI password you entered)'
 Write-Host ''
-Write-Host '  다음 명령:'
-Write-Host '    xgram peer send --alias <대상> --body "메시지"   # 메시지 보내기'
-Write-Host '    xgram bot register <name>                            # 추가 봇 등록'
-Write-Host '    xgram gui                                            # 웹 GUI (Tailscale Funnel URL 자동 오픈)'
+Write-Host '  Next commands:'
+Write-Host '    xgram peer send --alias <target> --body "message"   # send message'
+Write-Host '    xgram bot register <name>                            # register another bot'
+Write-Host '    xgram gui                                            # web GUI (auto-opens Tailscale Funnel URL)'
 Write-Host ''
-Write-Host '  환경 복원 (새 PowerShell 창):'
+Write-Host '  Restore env (new PowerShell window):'
 Write-Host "    . '$EnvFile'"
 Write-Host '═══════════════════════════════════════════════════' -ForegroundColor Cyan

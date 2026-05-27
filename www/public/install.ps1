@@ -6,16 +6,18 @@
 #
 # Privacy: GitHub Releases asset download + SHA256 verify, no telemetry.
 
-$ErrorActionPreference = 'Stop'
-
-# UTF-8 출력 강제 — Windows PowerShell 5.1의 기본 인코딩(CP949 등 OEM)에서
-# 한글이 깨지는 문제 해결. PowerShell 7은 기본 UTF-8이라 무영향.
+# Force UTF-8 — avoid Korean encoding issues on Windows PowerShell 5.1 (cp949 default).
+# chcp 65001 + Console.Output/InputEncoding + $OutputEncoding (4 layers).
 try {
+    $null = & chcp.com 65001 2>&1
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-    $OutputEncoding = [System.Text.Encoding]::UTF8
+    [Console]::InputEncoding  = [System.Text.Encoding]::UTF8
+    $OutputEncoding           = [System.Text.Encoding]::UTF8
 } catch {
-    # 인코딩 변경 실패해도 install 자체는 진행 (메시지만 깨짐).
+    # Encoding setup failure doesn't block install — only messages may be garbled.
 }
+
+$ErrorActionPreference = 'Stop'
 
 $REPO     = 'OpenXgram/openxgram'
 $VERSION  = if ($env:OPENXGRAM_VERSION) { $env:OPENXGRAM_VERSION } else { 'latest' }
@@ -31,12 +33,12 @@ Write-Host ''
 # 1. Resolve version → tag
 if ($VERSION -eq 'latest') {
     $api = "https://api.github.com/repos/$REPO/releases/latest"
-    Write-Host "==> Step 1: latest tag 조회 — $api"
+    Write-Host "==> Step 1: query latest tag — $api"
     try {
         $rel = Invoke-RestMethod -UseBasicParsing -Uri $api
         $tag = $rel.tag_name
     } catch {
-        # latest API 가 prerelease 거를 수 있어서 — list 에서 첫 번째 시도
+        # latest API may filter prereleases — try first from list
         $rels = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$REPO/releases"
         $tag = $rels[0].tag_name
     }
@@ -45,7 +47,7 @@ if ($VERSION -eq 'latest') {
 }
 Write-Host "    → tag = $tag"
 
-# 2. Download URL 구성
+# 2. Build download URL
 $asset   = "xgram-$tag-x86_64-windows.zip"
 $dlUrl   = "https://github.com/$REPO/releases/download/$tag/$asset"
 $shaUrl  = "$dlUrl.sha256"
@@ -56,92 +58,92 @@ Write-Host "==> Step 2: download — $dlUrl"
 Invoke-WebRequest -UseBasicParsing -Uri $dlUrl -OutFile $tmpZip
 Invoke-WebRequest -UseBasicParsing -Uri $shaUrl -OutFile $tmpSha
 
-# 3. SHA256 검증
-Write-Host '==> Step 3: SHA256 검증'
+# 3. SHA256 verify
+Write-Host '==> Step 3: SHA256 verify'
 $expected = (Get-Content $tmpSha).Split(' ')[0].ToLower()
 $actual   = (Get-FileHash $tmpZip -Algorithm SHA256).Hash.ToLower()
 if ($expected -ne $actual) {
-    Write-Error "SHA256 불일치 — expected $expected / actual $actual"
+    Write-Error "SHA256 mismatch — expected $expected / actual $actual"
     exit 1
 }
-Write-Host "    ✓ SHA256 일치 ($actual.Substring(0, 12)...)"
+Write-Host "    ✓ SHA256 ok ($actual.Substring(0, 12)...)"
 
-# 4. install dir 준비 + 압축 해제
+# 4. Prepare install dir + extract
 Write-Host "==> Step 4: install → $INSTALL"
 if (-not (Test-Path $INSTALL)) {
     New-Item -ItemType Directory -Force -Path $INSTALL | Out-Null
 }
 
-# 4a. 잠긴 .exe 가 있으면 Expand-Archive 가 silent skip 함 → 실행 중 프로세스 먼저 종료.
-# v0.2.0-rc.24~ : `xgram-desktop` 폐기됨(Tauri → 웹 GUI) — `xgram` 만 검사.
+# 4a. Locked .exe causes silent skip — kill running processes first.
+# v0.2.0-rc.24+: xgram-desktop deprecated (Tauri -> web GUI) — only check xgram.
 $running = Get-Process -Name xgram -ErrorAction SilentlyContinue
 if ($running) {
-    Write-Host "    → 실행 중인 OpenXgram 프로세스 종료 후 갱신 (재부팅 불필요)"
+    Write-Host "    -> killing running OpenXgram processes for update (no reboot)"
     foreach ($p in $running) {
         Write-Host "      - $($p.Name) (PID $($p.Id))"
         Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
     }
-    # Windows 가 핸들을 실제로 놓을 때까지 잠깐 대기.
+    # Wait for Windows to actually release handles.
     Start-Sleep -Milliseconds 800
 }
 
-# 4b. install dir 통째 삭제 후 재생성 — PS 5.1 의 모든 silent skip 케이스 회피.
-#     사이드 케이스 (hidden 속성, ACL, 파일별 잠금 등) 다 우회.
-Write-Host "    → install dir 통째 정리: $INSTALL"
+# 4b. Delete & recreate install dir — avoids all PS 5.1 silent-skip cases.
+#     Bypasses edge cases (hidden, ACL, per-file lock).
+Write-Host "    -> cleaning install dir: $INSTALL"
 if (Test-Path $INSTALL) {
     try {
         Remove-Item -Path $INSTALL -Recurse -Force -ErrorAction Stop
     } catch {
-        Write-Error "install dir 삭제 실패 (잠금/권한): $($_.Exception.Message)"
-        Write-Error "다음 명령으로 수동 종료 후 재시도: Get-Process xgram | Stop-Process -Force"
+        Write-Error "install dir delete failed (lock/perm): $($_.Exception.Message)"
+        Write-Error "Kill manually then retry: Get-Process xgram | Stop-Process -Force"
         exit 1
     }
 }
 New-Item -ItemType Directory -Force -Path $INSTALL | Out-Null
 
-# 4c. 새 빈 dir 에 압축 해제 — Expand-Archive 만으로도 빈 dir 이라 문제 없음.
+# 4c. Extract into fresh empty dir.
 Expand-Archive -Path $tmpZip -DestinationPath $INSTALL -Force
 
-# 4c-1. 압축 해제 결과 명시 로그 (디버깅용 — silent skip 즉시 발견).
-Write-Host "    → install dir 내용 (압축 해제 직후):"
+# 4c-1. Log extract result (debugging — catches silent skip).
+Write-Host "    -> install dir contents (after extract):"
 Get-ChildItem $INSTALL -File | ForEach-Object {
     Write-Host "      - $($_.Name)  $([int]($_.Length/1024))KB  $($_.LastWriteTime)"
 }
 
-# 4d. 갱신 검증 — xgram.exe 존재만 확인. LastWriteTime 비교는 zip 내부 시각 vs Get-Date 로컬 시각
-#     불일치(timezone) 로 false alarm 발생. step 4b 에서 dir 통째 비웠으니 silent-skip 자체가 불가능.
+# 4d. Verify — only check xgram.exe exists. LastWriteTime (zip vs local time)
+#     timezone false alarms; step 4b empties dir so silent-skip impossible.
 $xgramExe = Join-Path $INSTALL 'xgram.exe'
 if (-not (Test-Path $xgramExe)) {
-    Write-Error "xgram.exe 가 install dir 에 없음 — 압축 해제 실패. zip 파일 손상 의심."
+    Write-Error "xgram.exe missing in install dir — extract failed. zip may be corrupt."
     exit 1
 }
 
 Remove-Item $tmpZip, $tmpSha -ErrorAction SilentlyContinue
 
-# 5. PATH 영구 추가 (User scope, 이미 있으면 skip)
+# 5. Add to PATH permanently (User scope, skip if present)
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if ($userPath -notlike "*$INSTALL*") {
     [Environment]::SetEnvironmentVariable('Path', "$userPath;$INSTALL", 'User')
-    Write-Host "    ✓ PATH 에 영구 추가 ($INSTALL) — 새 PowerShell 창에서 자동 적용"
+    Write-Host "    ✓ added to PATH ($INSTALL) — new PowerShell windows pick it up"
 } else {
-    Write-Host "    (PATH 에 이미 있음)"
+    Write-Host "    (already in PATH)"
 }
 $env:Path += ";$INSTALL"
 
-# 6. 검증
+# 6. Verify
 Write-Host ''
-Write-Host '==> 설치 완료' -ForegroundColor Green
+Write-Host '==> install complete' -ForegroundColor Green
 & "$INSTALL\xgram.exe" --version
 
-# 7. (선택) 기존 install-manifest 있고 패스워드 env 도 설정돼 있으면 daemon/agent 자동 가동.
-#    quickstart.ps1 마법사를 거친 사용자의 재설치 시 한 줄로 복원되도록.
+# 7. (optional) auto-start daemon/agent if existing manifest + password env exist.
+#    One-line restore for users who already ran quickstart.ps1 wizard.
 $dataDir = Join-Path $env:USERPROFILE '.openxgram'
 $manifestPath = Join-Path $dataDir 'install-manifest.json'
 if ((Test-Path $manifestPath) -and $env:XGRAM_KEYSTORE_PASSWORD) {
     Write-Host ''
-    Write-Host '==> 기존 설치 발견 — daemon 자동 가동' -ForegroundColor Cyan
+    Write-Host '==> existing install detected — auto-starting daemon' -ForegroundColor Cyan
 
-    # 기존 xgram daemon / agent 종료 (있으면)
+    # Kill existing xgram daemon / agent if any
     Get-Process -Name xgram -ErrorAction SilentlyContinue | ForEach-Object {
         $cmdline = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)" -ErrorAction SilentlyContinue).CommandLine
         if ($cmdline -match 'daemon|agent') {
@@ -162,10 +164,10 @@ if ((Test-Path $manifestPath) -and $env:XGRAM_KEYSTORE_PASSWORD) {
     if ($daemonProc -and -not $daemonProc.HasExited) {
         Write-Host "    ✓ daemon PID $($daemonProc.Id)  (log: $daemonLog)"
     } else {
-        Write-Host "    ⚠ daemon 미가동 — 로그 확인 후 'xgram daemon' 수동 실행" -ForegroundColor Yellow
+        Write-Host "    ⚠ daemon not running — check logs then run xgram daemon manually" -ForegroundColor Yellow
     }
 
-    # agent (vault 의 Discord/Telegram 토큰을 vault_get 으로 추출 시도)
+    # agent (try to extract Discord/Telegram tokens from vault)
     $agentArgs = @('agent')
     try {
         $discordWebhook = & "$INSTALL\xgram.exe" vault get notify.discord.webhook_url 2>$null
@@ -196,35 +198,35 @@ if ((Test-Path $manifestPath) -and $env:XGRAM_KEYSTORE_PASSWORD) {
             -PassThru
         Start-Sleep -Seconds 1
         if ($agentProc -and -not $agentProc.HasExited) {
-            Write-Host "    ✓ agent PID $($agentProc.Id)  (Discord/Telegram forward 활성)"
+            Write-Host "    ✓ agent PID $($agentProc.Id)  (Discord/Telegram forward active)"
         }
     } else {
-        Write-Host "    (agent 미가동 — Discord/Telegram 토큰 없음. 필요시 'xgram setup discord' 후 재시작)"
+        Write-Host "    (agent not running — no Discord/Telegram token. Run xgram setup discord then restart)"
     }
 }
 
 Write-Host ''
-Write-Host '다음 단계:' -ForegroundColor Cyan
+Write-Host 'Next steps:' -ForegroundColor Cyan
 Write-Host ''
-Write-Host '[1] 신원 초기화 (한 번만):'
+Write-Host '[1] Initialize identity (one-time):'
 Write-Host '    xgram init --alias my-laptop'
 Write-Host ''
-Write-Host '[2] (선택) Discord / Telegram 연결 — 인터랙티브 마법사:'
+Write-Host '[2] (optional) Connect Discord / Telegram — interactive wizard:'
 Write-Host '    xgram setup discord            # webhook + bot token + channel id'
 Write-Host '    xgram setup telegram           # bot token + chat id'
 Write-Host ''
-Write-Host '[3] Claude Code 등 LLM 에 OpenXgram 풀 셋업 (MCP + identity + SessionStart hook):'
+Write-Host '[3] Full setup for Claude Code / other LLMs (MCP + identity + SessionStart hook):'
 Write-Host '    xgram mcp-install --scope user --full --use-path-lookup'
-Write-Host '    # ~/.claude.json (MCP) + ./CLAUDE.md (identity) + ~/.claude/settings.json (hook) 한 번에'
-Write-Host '    # → 새 Claude Code 세션이 자동으로 openxgram.* MCP 도구 인식'
+Write-Host '    # ~/.claude.json (MCP) + ./CLAUDE.md (identity) + ~/.claude/settings.json (hook) at once'
+Write-Host '    # -> new Claude Code sessions auto-detect openxgram.* MCP tools'
 Write-Host ''
-Write-Host '[4] daemon + 웹 GUI (Tailscale Funnel):'
-Write-Host '    xgram daemon                   # foreground 또는 백그라운드'
+Write-Host '[4] daemon + web GUI (Tailscale Funnel):'
+Write-Host '    xgram daemon                   # foreground or background'
 Write-Host '    sudo tailscale funnel --bg --https=443 http://localhost:47310'
-Write-Host '    xgram gui                      # → 브라우저에서 https://<machine>.tailXXXX.ts.net 자동 오픈'
+Write-Host '    xgram gui                      # -> opens browser at https://<machine>.tailXXXX.ts.net'
 Write-Host ''
-Write-Host '한 번에 모든 셋업 (인터랙티브 wizard):'
+Write-Host 'One-shot full setup (interactive wizard):'
 Write-Host '    irm https://openxgram.org/quickstart.ps1 | iex'
 Write-Host ''
-Write-Host '데모 plan: https://openxgram.org/demo/'
+Write-Host 'Demo plan: https://openxgram.org/demo/'
 Write-Host ''
