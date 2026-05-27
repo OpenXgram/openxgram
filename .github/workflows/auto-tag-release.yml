@@ -1,0 +1,70 @@
+name: Auto tag + release on version bump
+
+# main 브랜치 push 시 Cargo.toml workspace.package.version 검사.
+# 새 버전(아직 tag 없음)이면 자동:
+#   1. git tag v<version> 생성 + push
+#   2. GitHub Release 자동 생성 → release-binaries.yml 자동 트리거 → 5 타겟 zip 빌드
+#
+# 결과: 마스터가 main 에 push 만 하면 모든 OS 의 binary release 자동 게시.
+# Windows / macOS / Linux 사용자 모두 install.ps1 / install.sh 재실행 시 새 binary 받음.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+
+permissions:
+  contents: write
+
+jobs:
+  auto-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 모든 tag 받아야 중복 검사 가능
+
+      - name: Extract version from Cargo.toml
+        id: ver
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ -z "$VERSION" ]; then
+            # workspace.package.version 형식 지원
+            VERSION=$(grep -A 1 '\[workspace.package\]' Cargo.toml | grep '^version' | sed -E 's/.*"([^"]+)".*/\1/')
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          echo "extracted: $VERSION -> v$VERSION"
+
+      - name: Check if tag already exists
+        id: check
+        run: |
+          if git rev-parse "${{ steps.ver.outputs.tag }}" >/dev/null 2>&1; then
+            echo "tag ${{ steps.ver.outputs.tag }} already exists — skip"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "tag ${{ steps.ver.outputs.tag }} new — will create"
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create tag + GitHub Release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          git config user.name "openxgram-bot"
+          git config user.email "bot@openxgram.org"
+          git tag -a "$TAG" -m "Auto release $TAG (Cargo.toml version bump)"
+          git push origin "$TAG"
+          # Release 생성 → release-binaries.yml 자동 트리거
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes "Auto-generated release from main branch Cargo.toml version bump.
+
+            Binary downloads attached after release-binaries.yml workflow completes (~5-10 min).
+
+            Install: \`irm https://openxgram.org/install.ps1 | iex\` (Windows) or \`curl -sSfL https://openxgram.org/install.sh | sh\` (Linux/macOS)"
+          echo "✓ tag + release created: $TAG"

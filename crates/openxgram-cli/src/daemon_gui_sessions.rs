@@ -276,7 +276,10 @@ fn detect_claude_projects() -> Vec<DetectedSession> {
     // WSL 환경에서 Windows side claude projects 도 스캔 (W가 Windows 직접 Claude Code 실행하는 경우).
     // XGRAM_EXTRA_CLAUDE_DIRS env 로 추가 dir 콜론구분 (예: /mnt/c/Users/User/.claude/projects)
     let mut dirs: Vec<PathBuf> = Vec::new();
-    if let Some(home) = std::env::var_os("HOME") {
+    // rc.139 — Windows 호환: HOME 없으면 USERPROFILE fallback.
+    // 이전엔 Windows 에서 sessions 0 반환 (HOME env 없음).
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+    if let Some(home) = home {
         let p: PathBuf = [home, ".claude/projects".into()].iter().collect();
         dirs.push(p);
     }
@@ -601,7 +604,10 @@ fn capture_tmux(session_name: &str) -> Result<String, String> {
 /// Claude Code 프로젝트 디렉토리의 가장 최근 .jsonl 의 마지막 N 줄 (50줄).
 /// 각 줄 = 한 메시지 (system/user/assistant + content).
 fn tail_claude_jsonl(project_dir_name: &str) -> Result<String, String> {
-    let home = std::env::var_os("HOME").ok_or("HOME unset")?;
+    // rc.139 — Windows 호환: HOME 없으면 USERPROFILE fallback
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .ok_or("HOME/USERPROFILE unset")?;
     let dir: PathBuf = [home, ".claude/projects".into(), project_dir_name.into()]
         .iter()
         .collect();
@@ -852,7 +858,7 @@ fn extract_latest_changelog() -> (Option<String>, Option<String>) {
 // const 직접 작성 → 파일 mtime 변경 → 강제 재컴파일 → version_info 응답 갱신 → App.tsx 의
 // 30s polling 이 cur != baseline 감지 → 업데이트 팝업 표시.
 // 매 release 마다 RELEASE_TAG 갱신 (Cargo.toml + ui/web/package.json + 본 const 3곳).
-pub const RELEASE_TAG: &str = "0.2.0-rc.138";
+pub const RELEASE_TAG: &str = "0.2.0-rc.139";
 
 pub fn version_info() -> VersionInfoDto {
     let (title, body) = extract_latest_changelog();
