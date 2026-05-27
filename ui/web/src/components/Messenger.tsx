@@ -646,9 +646,11 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  <span class="messenger-friend-name">
  {f.display}
  {(() => {
- // rc.144 — aoe_xxx + portal:<name> + tmux:<name> 모두 매칭
+ // rc.145 — local 머신 sessions 만 매칭. peer:* 는 다른 머신의 registry 라 skip.
+ // (zalman root tmux 이름이 'starian' 우연 일치로 ✓ MSG false positive 방지)
  const set = registeredAgents();
  const id = f.id || "";
+ if (/(?:^|:)peer:/.test(id)) return null;
  let name: string | null = null;
  const aoeM = id.match(/aoe_[a-zA-Z0-9_-]+/);
  if (aoeM) name = aoeM[0];
