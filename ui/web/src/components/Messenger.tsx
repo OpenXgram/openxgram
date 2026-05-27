@@ -226,7 +226,9 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  for (const p of peers() ?? []) {
  if (connFilter() === "connected" && !isConnected(p)) continue;
  if (connFilter() === "offline" && isConnected(p)) continue;
- const m = (p.machine?.trim() || UNKNOWN_MACHINE);
+ // rc.138 — peers schema 에 machine 컬럼 없음 → alias 를 머신명 fallback 으로 사용.
+ // zalman / 다른 peer 가 (unknown) 그룹 대신 각자 머신 그룹으로 표시.
+ const m = (p.machine?.trim() || p.alias?.trim() || UNKNOWN_MACHINE);
  const friend: Friend = {
  kind: "peer",
  id: `peer:${p.alias}`,
@@ -533,13 +535,13 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  ];
  for (const f of g.friends) {
  const id = f.id || "";
+ // rc.139 — claude_project 완전 숨김 (사용자 결정 A).
+ // ~/.claude/projects 의 36+ 디렉토리 자동 detect 가 사용자 의도와 다름.
+ // 메신저 = 활성 터미널만. claude 디렉토리 history 노출 X.
+ if (f.kind === "claude_project") continue;
  // portal:* (옛 portal 등록 터미널) + aoe:* (AoE 세션) + tmux:* (portal 없는 머신 fallback)
  if (id.startsWith("portal:") || id.startsWith("aoe:") || f.kind === "tmux") {
  subs[0].items.push(f);
- } else if (f.kind === "claude_project") {
- const la = f.sessionMeta?.last_active_at;
- const recent = la && (Date.now() - new Date(la).getTime()) < 86400_000;
- (recent ? subs[1] : subs[2]).items.push(f);
  } else if (f.kind === "peer") {
  subs[3].items.push(f);
  } else if (f.kind === "discord" || f.kind === "telegram") {
