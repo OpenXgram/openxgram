@@ -646,9 +646,21 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  <span class="messenger-friend-name">
  {f.display}
  {(() => {
+ // rc.144 — aoe_xxx + portal:<name> + tmux:<name> 모두 매칭
  const set = registeredAgents();
- const m = (f.id || "").match(/aoe_[a-z0-9_-]+/i);
- const reg = set && m && set.has(m[0]);
+ const id = f.id || "";
+ let name: string | null = null;
+ const aoeM = id.match(/aoe_[a-zA-Z0-9_-]+/);
+ if (aoeM) name = aoeM[0];
+ else {
+ const portalM = id.match(/(?:^|:)portal:([^:]+)/);
+ if (portalM) name = portalM[1];
+ else {
+ const tmuxM = id.match(/(?:^|:)tmux:([^:]+)/);
+ if (tmuxM) name = tmuxM[1];
+ }
+ }
+ const reg = set && name && set.has(name);
  return reg ? (
  <span title="메신저 등록됨 — 다른 peer 의 list_peers 에 노출"
  style="margin-left:5px; padding:0 5px; background:#238636; color:white; border-radius:3px; font-size:9px; font-weight:bold;">
