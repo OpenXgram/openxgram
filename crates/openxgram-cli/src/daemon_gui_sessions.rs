@@ -543,6 +543,7 @@ pub fn spawn_session_warming() {
         // 시작 직후 첫 collect
         let dto = tokio::task::spawn_blocking(collect_fresh).await
             .unwrap_or_else(|_| SessionsDto { machine: detect_machine(), sessions: vec![] });
+        sync_messenger_registrations(&dto);
         let cache = SESSIONS_CACHE.get_or_init(|| std::sync::Mutex::new(None));
         if let Ok(mut guard) = cache.lock() {
             *guard = Some((std::time::Instant::now(), dto));
@@ -556,6 +557,7 @@ pub fn spawn_session_warming() {
             let started = std::time::Instant::now();
             let dto = tokio::task::spawn_blocking(collect_fresh).await
                 .unwrap_or_else(|_| SessionsDto { machine: detect_machine(), sessions: vec![] });
+            sync_messenger_registrations(&dto);
             let elapsed = started.elapsed();
             if let Ok(mut guard) = cache.lock() {
                 *guard = Some((std::time::Instant::now(), dto));
@@ -565,6 +567,63 @@ pub fn spawn_session_warming() {
             }
         }
     });
+}
+
+/// rc.143 — agent_capabilities 의 messenger_enabled 를 portal/aoe sessions 와 자동 동기화.
+/// • portal 에 있는 tmux session → messenger_enabled=1 (없으면 INSERT)
+/// • portal 에 없는 등록 → messenger_enabled=0
+/// 사이드바 보이는 것 = 메신저 등록된 것 일치성 보장.
+fn sync_messenger_registrations(dto: &SessionsDto) {
+    let data_dir = match openxgram_core::paths::default_data_dir() {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let db_path = data_dir.join("db.sqlite");
+    let conn = match rusqlite::Connection::open(&db_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    use std::collections::HashSet;
+    let mut portal_tmux: HashSet<String> = HashSet::new();
+    for s in &dto.sessions {
+        let id = &s.identifier;
+        // peer:<alias>:rest 면 local 머신 아님 (server-seoul 의 agent_capabilities 갱신 X)
+        if id.starts_with("peer:") { continue; }
+        let inner = id.as_str();
+        if let Some(rest) = inner.strip_prefix("portal:") {
+            if let Some(name) = rest.split(':').next() { portal_tmux.insert(name.to_string()); }
+        } else if let Some(rest) = inner.strip_prefix("aoe:") {
+            if let Some(name) = rest.split(':').next() { portal_tmux.insert(name.to_string()); }
+        } else if let Some(rest) = inner.strip_prefix("tmux:") {
+            if let Some(name) = rest.split(':').next() { portal_tmux.insert(name.to_string()); }
+        }
+    }
+    if portal_tmux.is_empty() {
+        return; // 안전 — portal 비어있으면 sync skip (모든 등록 비활성화 방지)
+    }
+    let now = chrono::Local::now().to_rfc3339();
+    // 새 / 갱신: portal 에 있는 모든 tmux session → messenger_enabled=1 upsert
+    for name in &portal_tmux {
+        let _ = conn.execute(
+            "INSERT INTO agent_capabilities (alias, role, description, capabilities, tool_list, project_path, updated_at, messenger_enabled) \
+             VALUES (?1, 'tmux', 'auto-synced from sessions', '[]', '[]', '', ?2, 1) \
+             ON CONFLICT(alias) DO UPDATE SET messenger_enabled=1, updated_at=excluded.updated_at",
+            rusqlite::params![name, &now],
+        );
+    }
+    // portal 없는 등록은 비활성 (alias 가 aoe_* 또는 sv_aoe_* 패턴인 것만 — 사용자 등록 안 건드림)
+    let placeholders = portal_tmux.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "UPDATE agent_capabilities SET messenger_enabled=0, updated_at=?1 \
+         WHERE messenger_enabled=1 AND (alias LIKE 'aoe_%' OR alias LIKE 'sv_aoe_%') AND alias NOT IN ({})",
+        placeholders
+    );
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
+    for name in &portal_tmux {
+        params.push(Box::new(name.clone()));
+    }
+    let params_ref: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+    let _ = conn.execute(&sql, &params_ref[..]);
 }
 
 /// UI-MESSENGER-SPEC v1.3 §4.3 — 세션 클릭 시 중앙 패널 라이브 터미널 (S5 xterm.js).
@@ -858,7 +917,7 @@ fn extract_latest_changelog() -> (Option<String>, Option<String>) {
 // const 직접 작성 → 파일 mtime 변경 → 강제 재컴파일 → version_info 응답 갱신 → App.tsx 의
 // 30s polling 이 cur != baseline 감지 → 업데이트 팝업 표시.
 // 매 release 마다 RELEASE_TAG 갱신 (Cargo.toml + ui/web/package.json + 본 const 3곳).
-pub const RELEASE_TAG: &str = "0.2.0-rc.142";
+pub const RELEASE_TAG: &str = "0.2.0-rc.143";
 
 pub fn version_info() -> VersionInfoDto {
     let (title, body) = extract_latest_changelog();
