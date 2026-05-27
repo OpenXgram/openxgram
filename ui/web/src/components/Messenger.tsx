@@ -154,6 +154,14 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  const [notifyStatus] = createResource(fetchNotifyStatus);
  // v1.3 §3.2 — 이 머신의 tmux + Claude Code projects + xgram sessions 통합.
  const [sessions, { refetch: refetchSessions}] = createResource(fetchSessions);
+ // rc.142 — 메신저 등록된 에이전트 set (agent_capabilities.messenger_enabled=1).
+ // 친구 옆 ✓ 배지로 사용자에게 등록 여부 즉시 표시.
+ const [registeredAgents] = createResource<Set<string>>(async () => {
+ try {
+ const list = await invoke<Array<{alias: string; messenger_enabled: boolean}>>("agents_list");
+ return new Set(list.filter((a) => a.messenger_enabled).map((a) => a.alias));
+ } catch { return new Set(); }
+ });
  const [selected, setSelected] = createSignal<string | null>(null); // friend id (에이전트 모드)
  const [selectedThread, setSelectedThread] = createSignal<string | null>(null); // conversation_id
  const [leftMode, setLeftMode] = createSignal<LeftMode>("agent"); // L1
@@ -635,7 +643,20 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  style={`display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; background:${dotColor};`}
  />
  <span class="messenger-friend-text">
- <span class="messenger-friend-name">{f.display}</span>
+ <span class="messenger-friend-name">
+ {f.display}
+ {(() => {
+ const set = registeredAgents();
+ const m = (f.id || "").match(/aoe_[a-z0-9_-]+/i);
+ const reg = set && m && set.has(m[0]);
+ return reg ? (
+ <span title="메신저 등록됨 — 다른 peer 의 list_peers 에 노출"
+ style="margin-left:5px; padding:0 5px; background:#238636; color:white; border-radius:3px; font-size:9px; font-weight:bold;">
+ ✓ MSG
+ </span>
+ ) : null;
+ })()}
+ </span>
  <span class="messenger-friend-sub">{f.subtitle}</span>
  </span>
  </>
