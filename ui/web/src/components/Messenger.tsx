@@ -248,7 +248,21 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  const sess = sessions();
  if (sess) {
  const localMachine = sess.machine.alias || sess.machine.hostname || UNKNOWN_MACHINE;
+ // rc.141 — portal:/aoe: 가 같은 tmux session 가리키면 portal: 만 유지.
+ // zalman daemon 의 /api/terminals + /api/aoe/sessions 가 같은 aoe_xxx tmux 를 2번 detect → 중복.
+ // selectedFriend 가 polling 마다 두 identifier 사이에서 깜빡거리는 문제 해결.
+ const tmuxNameRe = /aoe_[a-z0-9_-]+/i;
+ const portalTmux = new Set<string>();
  for (const s of sess.sessions) {
+ const m = s.identifier.match(tmuxNameRe);
+ if (m && /(?:^|:)portal:/.test(s.identifier)) portalTmux.add(m[0]);
+ }
+ const dedup = sess.sessions.filter((s) => {
+ const m = s.identifier.match(tmuxNameRe);
+ if (m && /(?:^|:)aoe:/.test(s.identifier) && portalTmux.has(m[0])) return false;
+ return true;
+ });
+ for (const s of dedup) {
  const conn = s.status === "attached" || s.status === "active";
  if (connFilter() === "connected" && !conn) continue;
  if (connFilter() === "offline" && conn) continue;
