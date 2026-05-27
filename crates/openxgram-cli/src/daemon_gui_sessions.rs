@@ -56,6 +56,22 @@ pub struct SessionsDto {
     pub sessions: Vec<DetectedSession>,
 }
 
+/// rc.147 — attached=true 인 tmux session_name set. portal entry 상태 매핑용.
+fn tmux_attached_set() -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    if let Ok(out) = Command::new("tmux").args(["ls", "-F", "#{session_name}|#{session_attached}"]).output() {
+        if out.status.success() {
+            for line in String::from_utf8_lossy(&out.stdout).lines() {
+                let parts: Vec<&str> = line.splitn(2, '|').collect();
+                if parts.len() == 2 && parts[1] != "0" {
+                    set.insert(parts[0].to_string());
+                }
+            }
+        }
+    }
+    set
+}
+
 /// `tmux ls -F '#{session_name}|#{session_windows}|#{session_attached}|#{session_created}'`
 /// tmux 미설치·없는 세션이면 빈 Vec.
 fn detect_tmux() -> Vec<DetectedSession> {
@@ -525,8 +541,26 @@ fn refresh_or_stale(stale: SessionsDto) -> SessionsDto {
 fn collect_fresh() -> SessionsDto {
     let machine = detect_machine();
     let mut sessions = Vec::new();
-    let portal = detect_starian_portal();
+    let mut portal = detect_starian_portal();
     let had_portal = !portal.is_empty();
+    // rc.147 — portal entry 의 attached/status 를 실제 tmux 상태로 갱신.
+    // 이전: portal entry 무조건 detached/None → 사용자 화면 모든 dot 노랑.
+    let attached_set = tmux_attached_set();
+    for s in &mut portal {
+        let tmux_name: Option<String> = if let Some(rest) = s.identifier.strip_prefix("portal:") {
+            rest.split(':').next().map(String::from)
+        } else if let Some(rest) = s.identifier.strip_prefix("aoe:") {
+            rest.split(':').next().map(String::from)
+        } else { None };
+        if let Some(name) = tmux_name {
+            if attached_set.contains(&name) {
+                s.attached = Some(true);
+                s.status = SessionStatus::Attached;
+            } else {
+                s.attached = Some(false);
+            }
+        }
+    }
     sessions.extend(portal);
     sessions.extend(detect_claude_projects());
     if !had_portal {
@@ -917,7 +951,7 @@ fn extract_latest_changelog() -> (Option<String>, Option<String>) {
 // const 직접 작성 → 파일 mtime 변경 → 강제 재컴파일 → version_info 응답 갱신 → App.tsx 의
 // 30s polling 이 cur != baseline 감지 → 업데이트 팝업 표시.
 // 매 release 마다 RELEASE_TAG 갱신 (Cargo.toml + ui/web/package.json + 본 const 3곳).
-pub const RELEASE_TAG: &str = "0.2.0-rc.146";
+pub const RELEASE_TAG: &str = "0.2.0-rc.147";
 
 pub fn version_info() -> VersionInfoDto {
     let (title, body) = extract_latest_changelog();
