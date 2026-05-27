@@ -68,3 +68,7 @@ jobs:
 
             Install: \`irm https://openxgram.org/install.ps1 | iex\` (Windows) or \`curl -sSfL https://openxgram.org/install.sh | sh\` (Linux/macOS)"
           echo "✓ tag + release created: $TAG"
+          # GitHub 보안: GITHUB_TOKEN 으로 만든 release 는 release-binaries.yml 안 트리거 (재귀 방지).
+          # workflow_dispatch 명시 호출로 우회.
+          gh workflow run release-binaries.yml --ref "$TAG" -f tag="$TAG"
+          echo "✓ release-binaries.yml dispatched for $TAG"
