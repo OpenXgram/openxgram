@@ -127,7 +127,25 @@ fn call_tool<D: ToolDispatcher + ?Sized>(
             message: "missing 'name'".into(),
         })?;
     let args = params.get("arguments").cloned().unwrap_or(Value::Null);
-    dispatcher.dispatch(name, &args)
+    let result = dispatcher.dispatch(name, &args)?;
+    // rc.149 — MCP 표준 응답 형식 자동 wrap.
+    // 표준 MCP 클라이언트는 result.content = [{type:text, text:...}] 만 봄.
+    // openxgram dispatch 는 result.peers / result.sessions 같은 직접 필드 return.
+    // → content array 가 없으면 JSON 직렬화 추가 (원본 필드도 보존, Claude Code 호환).
+    if let Value::Object(ref obj) = result {
+        if obj.contains_key("content") {
+            return Ok(result);
+        }
+        let text = serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".into());
+        let mut wrapped = obj.clone();
+        wrapped.insert(
+            "content".to_string(),
+            json!([{ "type": "text", "text": text }]),
+        );
+        return Ok(Value::Object(wrapped));
+    }
+    let text = serde_json::to_string(&result).unwrap_or_else(|_| "null".into());
+    Ok(json!({ "content": [{ "type": "text", "text": text }] }))
 }
 
 /// baseline dispatcher — echo tool 만. 통합 테스트·예시용.
