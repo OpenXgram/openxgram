@@ -673,11 +673,24 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  <span class="messenger-friend-name">
  {f.display}
  {(() => {
- // rc.145 — local 머신 sessions 만 매칭. peer:* 는 다른 머신의 registry 라 skip.
- // (zalman root tmux 이름이 'starian' 우연 일치로 ✓ MSG false positive 방지)
+ // rc.162 — peer 친구도 display name 으로 명시 등록 시 ✓ MSG 표시.
+ // 사용자가 우측 패널에서 peer 친구 등록하면 agent_capabilities.alias=display
+ // (예: zalman-wsl) row 생김 → 사이드바 매칭 가능.
  const set = registeredAgents();
  const id = f.id || "";
- if (/(?:^|:)peer:/.test(id)) return null;
+ const isPeer = /(?:^|:)peer:/.test(id);
+ if (isPeer) {
+ // peer 친구는 display name 매칭만 (false positive 줄임)
+ if (set && f.display && set.has(f.display)) {
+ return (
+ <span title="메신저 등록됨 (peer)"
+ style="margin-left:5px; padding:0 5px; background:#238636; color:white; border-radius:3px; font-size:9px; font-weight:bold;">
+ ✓ MSG
+ </span>
+ );
+ }
+ return null;
+ }
  let name: string | null = null;
  const aoeM = id.match(/aoe_[a-zA-Z0-9_-]+/);
  if (aoeM) name = aoeM[0];
