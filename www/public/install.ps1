@@ -74,27 +74,64 @@ if (-not (Test-Path $INSTALL)) {
     New-Item -ItemType Directory -Force -Path $INSTALL | Out-Null
 }
 
+# 4a-pre. Stop scheduled tasks + services that respawn xgram.exe (rc.166+).
+#         이름 모름 — *xgram* / *OpenXgram* glob 매칭하는 모든 task/service 자동 정지.
+#         재시작은 Step 7 의 마지막에 자동.
+$stoppedTasks = @()
+$stoppedSvcs  = @()
+try {
+    Get-ScheduledTask -ErrorAction SilentlyContinue |
+        Where-Object { $_.TaskName -like "*xgram*" -or $_.TaskName -like "*OpenXgram*" } |
+        ForEach-Object {
+            Write-Host "    -> stop scheduled task: $($_.TaskName)"
+            schtasks /End /TN $_.TaskName 2>$null | Out-Null
+            $script:stoppedTasks += $_.TaskName
+        }
+} catch {}
+try {
+    Get-Service -ErrorAction SilentlyContinue |
+        Where-Object { ($_.Name -like "*xgram*" -or $_.Name -like "*OpenXgram*") -and $_.Status -eq 'Running' } |
+        ForEach-Object {
+            Write-Host "    -> stop service: $($_.Name)"
+            Stop-Service -Name $_.Name -Force -ErrorAction SilentlyContinue
+            $script:stoppedSvcs += $_.Name
+        }
+} catch {}
+Start-Sleep -Milliseconds 500
+
 # 4a. Locked .exe causes silent skip — kill running processes first.
 # v0.2.0-rc.24+: xgram-desktop deprecated (Tauri -> web GUI) — only check xgram.
-$running = Get-Process -Name xgram -ErrorAction SilentlyContinue
-if ($running) {
-    Write-Host "    -> killing running OpenXgram processes for update (no reboot)"
+# rc.166+: 최대 5회 재시도 (respawn race 방지).
+for ($i = 0; $i -lt 5; $i++) {
+    $running = Get-Process -Name xgram -ErrorAction SilentlyContinue
+    if (-not $running) { break }
+    if ($i -eq 0) { Write-Host "    -> killing running OpenXgram processes for update (no reboot)" }
     foreach ($p in $running) {
         Write-Host "      - $($p.Name) (PID $($p.Id))"
         Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
     }
-    # Wait for Windows to actually release handles.
-    Start-Sleep -Milliseconds 800
+    Start-Sleep -Milliseconds 400
 }
 
 # 4b. Delete & recreate install dir — avoids all PS 5.1 silent-skip cases.
 #     Bypasses edge cases (hidden, ACL, per-file lock).
+# rc.166+: respawn race 대비 5회 재시도.
 Write-Host "    -> cleaning install dir: $INSTALL"
 if (Test-Path $INSTALL) {
-    try {
-        Remove-Item -Path $INSTALL -Recurse -Force -ErrorAction Stop
-    } catch {
-        Write-Error "install dir delete failed (lock/perm): $($_.Exception.Message)"
+    $deleted = $false
+    for ($i = 0; $i -lt 5; $i++) {
+        try {
+            Remove-Item -Path $INSTALL -Recurse -Force -ErrorAction Stop
+            $deleted = $true
+            break
+        } catch {
+            # 다시 kill (또 누군가 띄웠을 수 있음) + 짧게 대기 후 retry.
+            Get-Process -Name xgram -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 1
+        }
+    }
+    if (-not $deleted) {
+        Write-Error "install dir delete failed after 5 retries (lock/perm)."
         Write-Error "Kill manually then retry: Get-Process xgram | Stop-Process -Force"
         exit 1
     }
@@ -202,6 +239,21 @@ if ((Test-Path $manifestPath) -and $env:XGRAM_KEYSTORE_PASSWORD) {
         }
     } else {
         Write-Host "    (agent not running — no Discord/Telegram token. Run xgram setup discord then restart)"
+    }
+}
+
+# 8. Restart any scheduled tasks / services we stopped in Step 4a-pre.
+#    rc.166+: 자동화 마무리 — 사용자가 schtasks/nssm 따로 안 건드려도 됨.
+if ($stoppedTasks.Count -gt 0 -or $stoppedSvcs.Count -gt 0) {
+    Write-Host ''
+    Write-Host '==> Step 8: restart stopped tasks/services' -ForegroundColor Cyan
+    foreach ($t in $stoppedTasks) {
+        Write-Host "    -> start scheduled task: $t"
+        schtasks /Run /TN $t 2>$null | Out-Null
+    }
+    foreach ($s in $stoppedSvcs) {
+        Write-Host "    -> start service: $s"
+        Start-Service -Name $s -ErrorAction SilentlyContinue
     }
 }
 
