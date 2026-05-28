@@ -736,7 +736,7 @@ function MessengerRegisterTab(props: { peer: PeerMeta; onJumpToSettings: () => v
  try {
  await invoke("agents_register", {
  alias: alias(),
- role: role().trim() || null,
+ role: role().trim() || "agent",  // rc.158 — 빈 role default. backend NOT NULL 위반 회피
  description: description().trim() || null,
  group_name: groupName().trim() || null,
  orchestration_role: orchRole().trim() || null,
