@@ -5060,6 +5060,7 @@ async fn gui_messages_mirror(
     Ok(Json(serde_json::json!({"ok": true, "id": id, "ack_status": "delivered", "via": via})))
 }
 
+#[derive(Serialize)]
 struct GuiMessageDto {
     id: String,
     session_id: String,
