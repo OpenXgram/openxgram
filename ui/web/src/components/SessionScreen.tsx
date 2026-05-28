@@ -174,7 +174,7 @@ export function SessionScreen(props: { identifier: string; display: string}) {
  <div style="min-width:0; flex:1;">
  <strong>{props.display}</strong>
  <div style="font-size:11px; color:var(--text-3);">
- {props.identifier} · {meta()?.source_note ?? "loading…"}
+ {props.identifier}
  </div>
  </div>
  <label style="font-size:11px; color:var(--text-3); display:flex; align-items:center; gap:4px; cursor:pointer; white-space:nowrap;">
