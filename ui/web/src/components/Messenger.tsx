@@ -22,6 +22,32 @@ interface MessageDto {
  body: string;
  timestamp: string;
  conversation_id: string;
+ // rc.154 — ack tracking
+ ack_status?: string;
+ acked_at?: string;
+ ack_via?: string;
+}
+
+// rc.154 — ack badge helper
+function ackBadge(m: MessageDto) {
+ const s = m.ack_status;
+ if (!s || s === "sent") return null;
+ const map: Record<string, {bg: string; label: string; title: string}> = {
+ delivered: {bg: "#3a4a6a", label: "✓ delivered", title: "전달됨"},
+ read: {bg: "#2a5b8a", label: "✓✓ read", title: "읽음"},
+ processing: {bg: "#7a5a00", label: "⏳ processing", title: "처리 중"},
+ done: {bg: "#238636", label: "✓ done", title: "처리 완료"},
+ failed: {bg: "#a02828", label: "✗ failed", title: "실패"},
+ };
+ const v = map[s];
+ if (!v) return null;
+ const via = m.ack_via ? ` · ${m.ack_via}` : "";
+ return (
+ <span title={`${v.title}${via}${m.acked_at ? " · " + m.acked_at.slice(0, 19) : ""}`}
+ style={`margin-left:6px; padding:1px 5px; background:${v.bg}; color:#fff; border-radius:3px; font-size:9px; font-weight:bold;`}>
+ {v.label}
+ </span>
+ );
 }
 
 async function fetchMessages(): Promise<MessageDto[]> {
@@ -797,7 +823,7 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  ↗
  </button>
  </div>
- <div class="messenger-thread-body-text">{m.body}</div>
+ <div class="messenger-thread-body-text">{m.body}{ackBadge(m)}</div>
  </li>
 )}
  </For>
@@ -889,7 +915,7 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  ↗
  </button>
  </div>
- <div class="messenger-thread-body-text">{m.body}</div>
+ <div class="messenger-thread-body-text">{m.body}{ackBadge(m)}</div>
  </li>
 )}
  </For>
