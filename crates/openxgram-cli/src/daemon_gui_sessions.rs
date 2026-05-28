@@ -615,7 +615,9 @@ pub fn spawn_session_warming() {
         // 시작 직후 첫 collect
         let dto = tokio::task::spawn_blocking(collect_fresh).await
             .unwrap_or_else(|_| SessionsDto { machine: detect_machine(), sessions: vec![] });
-        sync_messenger_registrations(&dto);
+        // rc.156 — auto-sync 비활성화. 사용자가 GUI 에서 직접 등록/해제 선택.
+        // (이전 rc.143 의 자동 sync 가 portal 의 모든 tmux 를 강제 등록 → 사용자 선택 override)
+        let _ = sync_messenger_registrations; // keep function 참조 (dead-code 경고 회피)
         let cache = SESSIONS_CACHE.get_or_init(|| std::sync::Mutex::new(None));
         if let Ok(mut guard) = cache.lock() {
             *guard = Some((std::time::Instant::now(), dto));
@@ -629,7 +631,9 @@ pub fn spawn_session_warming() {
             let started = std::time::Instant::now();
             let dto = tokio::task::spawn_blocking(collect_fresh).await
                 .unwrap_or_else(|_| SessionsDto { machine: detect_machine(), sessions: vec![] });
-            sync_messenger_registrations(&dto);
+            // rc.156 — auto-sync 비활성화. 사용자가 GUI 에서 직접 등록/해제 선택.
+        // (이전 rc.143 의 자동 sync 가 portal 의 모든 tmux 를 강제 등록 → 사용자 선택 override)
+        let _ = sync_messenger_registrations; // keep function 참조 (dead-code 경고 회피)
             let elapsed = started.elapsed();
             if let Ok(mut guard) = cache.lock() {
                 *guard = Some((std::time::Instant::now(), dto));
@@ -989,7 +993,7 @@ fn extract_latest_changelog() -> (Option<String>, Option<String>) {
 // const 직접 작성 → 파일 mtime 변경 → 강제 재컴파일 → version_info 응답 갱신 → App.tsx 의
 // 30s polling 이 cur != baseline 감지 → 업데이트 팝업 표시.
 // 매 release 마다 RELEASE_TAG 갱신 (Cargo.toml + ui/web/package.json + 본 const 3곳).
-pub const RELEASE_TAG: &str = "0.2.0-rc.155";
+pub const RELEASE_TAG: &str = "0.2.0-rc.156";
 
 pub fn version_info() -> VersionInfoDto {
     let (title, body) = extract_latest_changelog();
