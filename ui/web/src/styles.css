@@ -3,17 +3,18 @@
  */
 
 :root {
-  --fg: #1a1d24;
-  --fg-dim: #4a4f5a;
-  --bg: #ffffff;
-  --bg-soft: #f4f5f7;
-  --border: #d0d3d9;
-  --border-strong: #2a2d33;
-  --accent: #0a66c2;
+  color-scheme: dark;
+  --fg: #e6e6e6;
+  --fg-dim: #a0a4ab;
+  --bg: #0b0f1a;
+  --bg-soft: #11151f;
+  --border: #2a2d33;
+  --border-strong: #4a4f5a;
+  --accent: #3b82f6;
   --accent-fg: #ffffff;
-  --danger: #b00020;
-  --warn-bg: #fffbe6;
-  --warn-border: #c2a83a;
+  --danger: #f85149;
+  --warn-bg: #2a210a;
+  --warn-border: #d29922;
   --radius: 6px;
 }
 
@@ -733,18 +734,17 @@ input:focus-visible {
 .messenger-thread-input button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ─────────────────────────────────────────────────────────────────────
-   v1.3 Tier 1~4 — 통합 테마 변수 + 다크 모드 자동 전환.
-   기존 :root (라이트) 위에 prefers-color-scheme 으로 다크 override.
+   v1.3 Tier 1~4 — 통합 테마 변수. rc.166: 시스템 테마와 무관하게 dark 강제 (마스터 지시).
    messenger-* 클래스는 var() 사용 권장 (이전 hardcode 잔존).
    ───────────────────────────────────────────────────────────────────── */
 
 :root {
-  --surface-1: #ffffff;          /* 카드/패널 기본 */
-  --surface-2: #f4f5f7;          /* 한 단계 어두운 표면 */
-  --surface-3: #e8eaee;          /* 헤더 표시 */
+  --surface-1: #15181f;          /* 카드/패널 기본 */
+  --surface-2: #1c1f26;          /* 한 단계 어두운 표면 */
+  --surface-3: #22262e;          /* 헤더 표시 */
   --surface-active: rgba(96, 165, 250, 0.18);
-  --text-1: #1a1d24;
-  --text-2: #4a4f5a;
+  --text-1: #e6e6e6;
+  --text-2: #a0a4ab;
   --text-3: #6b7280;
   --accent: #4f7df9;
   --accent-soft: #2a3a55;
