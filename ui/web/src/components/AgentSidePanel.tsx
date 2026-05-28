@@ -716,25 +716,27 @@ function MessengerRegisterTab(props: { peer: PeerMeta; onJumpToSettings: () => v
  }
  });
 
- async function autoDetect() {
- // rc.160 — peer alias (다른 머신) 은 server-seoul tmux 와 매칭 안 됨 → resolve_alias_cwd fail.
- // peer 면 자동 감지 skip (description/cwd 추출 안 함).
- if (props.peer?.kind === "peer" || alias().startsWith("peer:")) {
- setMsg("ℹ peer 머신은 자동 감지 skip — 직접 role/description 입력");
- return;
- }
- setBusy(true); setMsg("🔍 감지 중...");
+ async function autoDetect(opts?: {manual?: boolean}) {
+ // rc.161 — peer / tmux not found 같은 알려진 fail 은 silent. 사용자 버튼 클릭 시만 메시지.
+ const manual = opts?.manual === true;
+ if (manual) setBusy(true);
+ if (manual) setMsg("🔍 감지 중...");
  try {
  const r = await invoke<any>("agents_auto_detect", { alias: alias()});
  if (r?.ok) {
  if (r.description) setDescription(r.description);
  if (r.tool_list) setToolListJson(r.tool_list);
  if (r.project_path) setProjectPath(r.project_path);
- setMsg(`✓ 자동 감지 완료 (${r.project_path || "?"})`);
+ if (manual) setMsg(`✓ 자동 감지 완료 (${r.project_path || "?"})`);
  } else {
- setMsg(`✗ ${r?.error || "감지 실패"}`);
+ const errMsg = r?.error || "감지 실패";
+ // tmux session not found / no cwd — peer 거나 stale alias. silent.
+ if (manual && !/tmux session not found|cwd 추출 실패/.test(errMsg)) setMsg(`✗ ${errMsg}`);
  }
-} catch (e) { setMsg(`✗ ${e}`);} finally { setBusy(false);}
+} catch (e) {
+ const s = String(e);
+ if (manual && !/tmux session not found|cwd 추출 실패/.test(s)) setMsg(`✗ ${s}`);
+} finally { if (manual) setBusy(false);}
 }
 
  async function save(enabled: boolean) {
@@ -774,7 +776,7 @@ function MessengerRegisterTab(props: { peer: PeerMeta; onJumpToSettings: () => v
  </Show>
  <div style="display:flex; flex-direction:column; gap:6px;">
  <div style="display:flex; gap:6px; flex-wrap:wrap;">
- <button class="link-btn" disabled={busy()} onClick={autoDetect}
+ <button class="link-btn" disabled={busy()} onClick={() => autoDetect({manual: true})}
  style="background:#3a4a6a; color:white; padding:6px 14px; border:none; border-radius:4px;">
  🔍 자동 감지 (CLAUDE.md + .mcp.json)
  </button>
