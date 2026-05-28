@@ -4378,6 +4378,8 @@ async fn gui_workflow_run_approve(
 }
 
 /// peer-to-peer 메시지 — master 없이 outbound_queue 에 unsigned envelope 직접 enqueue.
+/// 스키마: msg_ulid PK, target_machine, target_alias, body, attempts, next_retry_at, last_error, enqueued_at, sent_at.
+/// worker (daemon_workers.rs S8) 가 target_alias JOIN peers 로 address 조회 → POST `/v1/inbound`.
 async fn gui_peer_send_unsigned(
     State(state): State<GuiServerState>, headers: HeaderMap, Path(alias): Path<String>, Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
@@ -4387,18 +4389,22 @@ async fn gui_peer_send_unsigned(
         return Err((StatusCode::BAD_REQUEST, Json(ErrorDto{error: "body 필수".into()})));
     }
     let mut db = state.db.lock().await;
-    // peer 의 address 조회.
-    let to_addr: String = db.conn().query_row(
-        "SELECT address FROM peers WHERE alias=?1", rusqlite::params![alias],
+    // peer 존재 확인 (worker 가 JOIN 으로 address 가져오므로 여기선 alias 유효성만).
+    let exists: i64 = db.conn().query_row(
+        "SELECT COUNT(*) FROM peers WHERE alias=?1", rusqlite::params![alias],
         |r| r.get(0),
-    ).map_err(|_| (StatusCode::NOT_FOUND, Json(ErrorDto{error: format!("peer {alias} not found")})))?;
+    ).unwrap_or(0);
+    if exists == 0 {
+        return Err((StatusCode::NOT_FOUND, Json(ErrorDto{error: format!("peer {alias} not found")})));
+    }
     let envelope_id = uuid::Uuid::new_v4().to_string();
+    let now_str = chrono::Utc::now().to_rfc3339();
     db.conn().execute(
-        "INSERT INTO outbound_queue (id, to_address, body, signature, created_at, attempts, status) \
-         VALUES (?1, ?2, ?3, 'external', datetime('now'), 0, 'pending')",
-        rusqlite::params![envelope_id, to_addr, text],
+        "INSERT INTO outbound_queue (msg_ulid, target_machine, target_alias, body, attempts, enqueued_at) \
+         VALUES (?1, '', ?2, ?3, 0, ?4)",
+        rusqlite::params![envelope_id, alias, text, now_str],
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("enqueue: {e}")})))?;
-    Ok(Json(serde_json::json!({"queued": envelope_id, "to_alias": alias, "to_address": to_addr, "signature": "external"})))
+    Ok(Json(serde_json::json!({"queued": envelope_id, "to_alias": alias})))
 }
 
 async fn gui_workflow_runs(
