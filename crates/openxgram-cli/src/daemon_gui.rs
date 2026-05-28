@@ -605,7 +605,8 @@ async fn gui_sessions(
     // (실패는 silent, 3초 timeout, 토큰 동봉)
     let peer_targets: Vec<(String, String)> = {
         let mut db = state.db.lock().await;
-        let mut stmt_o = db.conn().prepare("SELECT alias, address FROM peers WHERE address LIKE 'http%'");
+        // rc.167 — gui_address 있으면 우선 사용 (transport 와 GUI port 가 다른 경우).
+        let mut stmt_o = db.conn().prepare("SELECT alias, COALESCE(gui_address, address) FROM peers WHERE address LIKE 'http%'");
         match stmt_o {
             Ok(ref mut stmt) => stmt.query_map([], |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
