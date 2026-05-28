@@ -356,6 +356,10 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // 메신저 카드 v1.3 Step 0 — 메시지 송수신.
         .route("/v1/gui/messages", get(gui_messages_recent))
         .route("/v1/gui/peers/{alias}/send", post(gui_peer_send))
+        // rc.155 — portal × OpenXgram 통합. starian-portal 의 send 후 메시지 mirror.
+        // portal 가 sendKeys 한 직후 POST → messages 테이블에 INSERT.
+        // ack_status='delivered' 자동, via='portal_mirror'. GUI 의 ack badge 가 표시.
+        .route("/v1/gui/messages/mirror", post(gui_messages_mirror))
         .route("/v1/gui/channel/status", get(gui_channel_status))
         .route("/v1/gui/vault/pending", get(gui_vault_pending_list))
         .route(
@@ -5004,6 +5008,50 @@ async fn gui_notify_status(
 // ── Messenger v1.3 Step 0 — 메시지 송수신 ────────────────────────────────
 
 #[derive(Debug, Serialize)]
+/// rc.155 — portal × OpenXgram bridge. starian-portal 의 send 후 호출하면
+/// messages 테이블에 mirror INSERT (ack_status='delivered' 자동).
+#[derive(Debug, Deserialize)]
+struct MirrorMessageBody {
+    session_id: String,
+    sender: String,
+    body: String,
+    #[serde(default)]
+    conversation_id: Option<String>,
+    #[serde(default)]
+    via: Option<String>,
+}
+
+async fn gui_messages_mirror(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(b): Json<MirrorMessageBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Local::now().to_rfc3339();
+    let via = b.via.unwrap_or_else(|| "portal_mirror".into());
+    let mut db = state.db.lock().await;
+    // sessions 테이블에 session_id 가 없으면 자동 생성 (FK 만족)
+    let exists: i64 = db.conn().query_row(
+        "SELECT COUNT(*) FROM sessions WHERE id=?1",
+        rusqlite::params![b.session_id],
+        |r| r.get(0),
+    ).unwrap_or(0);
+    if exists == 0 {
+        let _ = db.conn().execute(
+            "INSERT INTO sessions (id, title, participants, created_at, last_active, home_machine, metadata) \
+             VALUES (?1, ?2, '[]', ?3, ?3, 'unknown', '{}')",
+            rusqlite::params![b.session_id, format!("portal-bridge: {}", b.session_id), &now],
+        );
+    }
+    db.conn().execute(
+        "INSERT INTO messages (id, session_id, sender, body, signature, timestamp, conversation_id, metadata, ack_status, acked_at, ack_via) \
+         VALUES (?1, ?2, ?3, ?4, '', ?5, ?6, '{}', 'delivered', ?5, ?7)",
+        rusqlite::params![id, b.session_id, b.sender, b.body, &now, b.conversation_id, via],
+    ).map_err(|e| internal(&format!("insert: {e}")))?;
+    Ok(Json(serde_json::json!({"ok": true, "id": id, "ack_status": "delivered", "via": via})))
+}
+
 struct GuiMessageDto {
     id: String,
     session_id: String,
