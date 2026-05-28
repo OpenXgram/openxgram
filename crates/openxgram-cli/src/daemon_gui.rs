@@ -5011,6 +5011,13 @@ struct GuiMessageDto {
     body: String,
     timestamp: String,
     conversation_id: String,
+    // rc.153 — ack tracking (sender 가 메시지 처리 상태 확인)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ack_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    acked_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ack_via: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -5047,28 +5054,34 @@ async fn gui_messages_recent(
     let sender_filter = q.get("sender").map(|s| s.to_lowercase());
 
     let mut db = state.db.lock().await;
-    // rc.138 — list_recent 는 단순 SELECT (embedder 미사용) 인데 default_embedder() 가
-    // 매 호출마다 FastEmbedder model load 6초+. DummyEmbedder 로 즉시 반환.
-    let embedder = openxgram_memory::DummyEmbedder;
-    let messages = openxgram_memory::MessageStore::new(&mut db, &embedder)
-        .list_recent(limit * 4) // 필터 후 limit 충족 보장
-        .map_err(|e| internal(&format!("list_recent: {e}")))?;
-
-    let items: Vec<GuiMessageDto> = messages
-        .into_iter()
+    // rc.153 — ack tracking 포함 직접 SELECT (MessageStore 의 list_recent 는 ack 컬럼 미포함).
+    // GUI 가 메시지 옆에 ack badge 표시 → sender 가 처리 상태 직접 확인.
+    let fetch_limit = (limit * 4) as i64;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, session_id, sender, body, timestamp, conversation_id, \
+                ack_status, acked_at, ack_via \
+         FROM messages ORDER BY timestamp DESC LIMIT ?1"
+    ).map_err(|e| internal(&format!("prep: {e}")))?;
+    let rows = stmt.query_map(rusqlite::params![fetch_limit], |r| {
+        Ok(GuiMessageDto {
+            id: r.get::<_, String>(0)?,
+            session_id: r.get::<_, String>(1)?,
+            sender: r.get::<_, String>(2)?,
+            body: r.get::<_, String>(3)?,
+            timestamp: r.get::<_, String>(4)?,
+            conversation_id: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
+            ack_status: r.get::<_, Option<String>>(6)?,
+            acked_at: r.get::<_, Option<String>>(7)?,
+            ack_via: r.get::<_, Option<String>>(8)?,
+        })
+    }).map_err(|e| internal(&format!("q: {e}")))?;
+    let items: Vec<GuiMessageDto> = rows
+        .filter_map(|r| r.ok())
         .filter(|m| match &sender_filter {
             Some(s) => m.sender.to_lowercase() == *s,
             None => true,
         })
         .take(limit)
-        .map(|m| GuiMessageDto {
-            id: m.id,
-            session_id: m.session_id,
-            sender: m.sender,
-            body: m.body,
-            timestamp: m.timestamp.to_rfc3339(),
-            conversation_id: m.conversation_id,
-        })
         .collect();
     Ok(Json(items))
 }
