@@ -426,6 +426,35 @@ impl ToolDispatcher for OpenxgramDispatcher {
             });
         }
 
+        // rc.151 — ack tracking. receiver 가 메시지 처리 상태 보고, sender 가 조회.
+        tools.push(ToolSpec {
+            name: "peer_ack".into(),
+            description: "받은 메시지의 처리 상태 보고 (delivered/read/processing/done/failed).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "message_id": {"type": "string"},
+                    "status": {
+                        "type": "string",
+                        "enum": ["delivered", "read", "processing", "done", "failed"]
+                    },
+                    "note": {"type": "string", "description": "결과/실패 사유 (선택)"}
+                },
+                "required": ["message_id", "status"]
+            }),
+        });
+        tools.push(ToolSpec {
+            name: "get_message_status".into(),
+            description: "보낸 메시지의 ack 상태 조회 (sender 측).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "message_id": {"type": "string"}
+                },
+                "required": ["message_id"]
+            }),
+        });
+
         // vault tools — XGRAM_KEYSTORE_PASSWORD 환경에 있을 때만 노출
         if self.vault_password.is_some() {
             tools.extend([
@@ -761,6 +790,48 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     ))
                     .map_err(|e| internal(e))?;
                 Ok(json!({"sent": true, "alias": alias, "via": "remote_peer"}))
+            }
+            "peer_ack" => {
+                let message_id = args.get("message_id").and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'message_id'"))?;
+                let status = args.get("status").and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'status'"))?;
+                let note = args.get("note").and_then(|v| v.as_str()).unwrap_or("");
+                let allowed = ["delivered", "read", "processing", "done", "failed"];
+                if !allowed.contains(&status) {
+                    return Err(invalid(&format!("status must be one of {:?}", allowed)));
+                }
+                let now = chrono::Local::now().to_rfc3339();
+                let updated = self.db.conn().execute(
+                    "UPDATE messages SET ack_status=?1, acked_at=?2, ack_note=?3 WHERE id=?4",
+                    rusqlite::params![status, &now, note, message_id],
+                ).map_err(internal)?;
+                Ok(json!({"acked": updated > 0, "message_id": message_id, "status": status, "acked_at": now}))
+            }
+            "get_message_status" => {
+                let message_id = args.get("message_id").and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'message_id'"))?;
+                let row: Result<(String, Option<String>, Option<String>, Option<String>), _> = self.db.conn().query_row(
+                    "SELECT ack_status, acked_at, ack_via, ack_note FROM messages WHERE id=?1",
+                    rusqlite::params![message_id],
+                    |r| Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, Option<String>>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                    )),
+                );
+                match row {
+                    Ok((status, acked_at, via, note)) => Ok(json!({
+                        "message_id": message_id,
+                        "ack_status": status,
+                        "acked_at": acked_at,
+                        "ack_via": via,
+                        "ack_note": note,
+                    })),
+                    Err(rusqlite::Error::QueryReturnedNoRows) => Err(invalid(&format!("message_id not found: {}", message_id))),
+                    Err(e) => Err(internal(e)),
+                }
             }
             "whoami" => {
                 use openxgram_manifest::InstallManifest;
