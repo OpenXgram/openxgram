@@ -717,6 +717,12 @@ function MessengerRegisterTab(props: { peer: PeerMeta; onJumpToSettings: () => v
  });
 
  async function autoDetect() {
+ // rc.160 — peer alias (다른 머신) 은 server-seoul tmux 와 매칭 안 됨 → resolve_alias_cwd fail.
+ // peer 면 자동 감지 skip (description/cwd 추출 안 함).
+ if (props.peer?.kind === "peer" || alias().startsWith("peer:")) {
+ setMsg("ℹ peer 머신은 자동 감지 skip — 직접 role/description 입력");
+ return;
+ }
  setBusy(true); setMsg("🔍 감지 중...");
  try {
  const r = await invoke<any>("agents_auto_detect", { alias: alias()});
