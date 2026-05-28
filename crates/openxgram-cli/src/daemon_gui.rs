@@ -5016,7 +5016,6 @@ async fn gui_notify_status(
 
 // ── Messenger v1.3 Step 0 — 메시지 송수신 ────────────────────────────────
 
-#[derive(Debug, Serialize)]
 /// rc.155 — portal × OpenXgram bridge. starian-portal 의 send 후 호출하면
 /// messages 테이블에 mirror INSERT (ack_status='delivered' 자동).
 #[derive(Debug, Deserialize)]
