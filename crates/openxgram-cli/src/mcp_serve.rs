@@ -776,7 +776,7 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         "from": from_alias,
                     }));
                 }
-                // 외부 peer (다른 머신) — 기존 transport path
+                // 외부 peer (다른 머신) — primary: P2P transport
                 let pw = self.require_vault()?.to_string();
                 let conv = args
                     .get("conversation_id")
@@ -784,12 +784,46 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     .map(str::to_string);
                 let data_dir = self.data_dir.clone();
                 let handle = tokio::runtime::Handle::current();
-                handle
-                    .block_on(crate::peer_send::run_peer_send_with_conv(
-                        &data_dir, &alias, None, &body, &pw, conv,
-                    ))
-                    .map_err(|e| internal(e))?;
-                Ok(json!({"sent": true, "alias": alias, "via": "remote_peer"}))
+                let p2p_result = handle.block_on(crate::peer_send::run_peer_send_with_conv(
+                    &data_dir, &alias, None, &body, &pw, conv.clone(),
+                ));
+                match p2p_result {
+                    Ok(_) => Ok(json!({"sent": true, "alias": alias, "via": "remote_peer"})),
+                    Err(p2p_err) => {
+                        // rc.152 — multi-transport fallback: P2P fail → Discord 봇으로 backup
+                        let p2p_err_str = format!("{}", p2p_err);
+                        let bot_row: rusqlite::Result<(String, String, String)> = self.db.conn().query_row(
+                            "SELECT bot_token, default_channel_id, alias FROM discord_bots WHERE active=1 LIMIT 1",
+                            [],
+                            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+                        );
+                        if let Ok((token, channel_id, bot_alias)) = bot_row {
+                            let backup_body = format!("📩 [backup peer:{}] {}", alias, body);
+                            let payload = json!({"content": backup_body});
+                            let url = format!("https://discord.com/api/v10/channels/{}/messages", channel_id);
+                            let post_res = handle.block_on(async {
+                                let client = reqwest::Client::new();
+                                client.post(&url)
+                                    .header("Authorization", format!("Bot {}", token))
+                                    .header("Content-Type", "application/json")
+                                    .json(&payload)
+                                    .send().await
+                            });
+                            if let Ok(resp) = post_res {
+                                if resp.status().is_success() {
+                                    return Ok(json!({
+                                        "sent": true, "alias": alias,
+                                        "via": "discord_backup",
+                                        "discord_bot": bot_alias,
+                                        "p2p_error": p2p_err_str,
+                                    }));
+                                }
+                            }
+                        }
+                        // Discord backup 도 fail (또는 봇 없음) — error 반환
+                        Err(internal(format!("p2p fail + discord backup unavailable: {}", p2p_err_str)))
+                    }
+                }
             }
             "peer_ack" => {
                 let message_id = args.get("message_id").and_then(|v| v.as_str())
