@@ -2744,6 +2744,9 @@ async fn gui_agents_register(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     let now = chrono::Utc::now().to_rfc3339();
+    // rc.157 — role NOT NULL 위반 fix. 사용자가 role 안 입력하면 default "agent".
+    // (이전: body.role None → INSERT 시 SQL constraint fail)
+    let role = body.role.as_deref().filter(|s| !s.is_empty()).unwrap_or("agent").to_string();
     let mut db = state.db.lock().await;
     db.conn().execute(
         "INSERT INTO agent_capabilities \
@@ -2761,7 +2764,7 @@ async fn gui_agents_register(
             special_instructions = COALESCE(excluded.special_instructions, special_instructions), \
             updated_at = excluded.updated_at",
         rusqlite::params![
-            body.alias, body.role, body.description, body.capabilities, body.tool_list,
+            body.alias, role, body.description, body.capabilities, body.tool_list,
             body.project_path, body.group_name, body.messenger_enabled as i64,
             body.orchestration_role, body.special_instructions, now,
         ],
