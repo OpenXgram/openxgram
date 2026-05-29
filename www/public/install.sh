@@ -16,7 +16,12 @@ REPO="OpenXgram/openxgram"
 VERSION="${OPENXGRAM_VERSION:-latest}"
 INSTALL_DIR="${OPENXGRAM_INSTALL_DIR:-}"
 DRY_RUN="0"
-FULL="0"
+# rc.169+: Claude Code 가 깔려있으면 (~/.claude.json 존재) FULL 자동 활성 — 메신저 본질.
+if [ -f "$HOME/.claude.json" ]; then
+  FULL="1"
+else
+  FULL="0"
+fi
 
 while [ $# -gt 0 ]; do
   case "$1" in

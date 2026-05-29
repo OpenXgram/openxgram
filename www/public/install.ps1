@@ -257,6 +257,25 @@ if ($stoppedTasks.Count -gt 0 -or $stoppedSvcs.Count -gt 0) {
     }
 }
 
+# 9. Auto MCP + identity + SessionStart hook (rc.169+).
+#    Claude Code 가 깔려있으면 (~/.claude.json 존재) 자동으로 mcp-install --full 실행.
+#    → 새 Claude Code 세션마다 openxgram MCP 도구 + Identity block + 가이드 자동 인식.
+$claudeJson = Join-Path $env:USERPROFILE '.claude.json'
+if (Test-Path $claudeJson) {
+    Write-Host ''
+    Write-Host '==> Step 9: auto MCP + identity + SessionStart hook' -ForegroundColor Cyan
+    try {
+        & "$INSTALL\xgram.exe" mcp-install --scope user --full --use-path-lookup 2>&1 | ForEach-Object { Write-Host "    $_" }
+        Write-Host '    ✓ 새 Claude Code 세션이 다음 부터 openxgram MCP + identity + 가이드 자동 인식'
+    } catch {
+        Write-Host "    ⚠ mcp-install 실패: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host '    수동: xgram mcp-install --scope user --full --use-path-lookup'
+    }
+} else {
+    Write-Host ''
+    Write-Host '    (Claude Code 미설치 — Step 9 skip. 설치 후: xgram mcp-install --scope user --full --use-path-lookup)' -ForegroundColor DarkGray
+}
+
 Write-Host ''
 Write-Host 'Next steps:' -ForegroundColor Cyan
 Write-Host ''
