@@ -6423,8 +6423,13 @@ async fn gui_bindings_status(
             ).ok(),
             None => None,
         };
-        // session 매칭 (claude:{agent_id}:%) — A path 직접 매칭만
-        let pattern = format!("claude:{}:%", agent_id);
+        // session 매칭 — rc.170: session_proj_name 있으면 그것 사용 (alias mapping), 없으면 agent_id 직접.
+        let proj_name: String = db.conn().query_row(
+            "SELECT COALESCE(session_proj_name, agent_id) FROM session_channel_bindings WHERE id=?1",
+            rusqlite::params![&binding_id],
+            |r| r.get::<_,String>(0)
+        ).unwrap_or_else(|_| agent_id.clone());
+        let pattern = format!("claude:{}:%", proj_name);
         let matched: Option<(String, String, String, String)> = db.conn().query_row(
             "SELECT id, session_id, substr(body, 1, 120), timestamp FROM messages \
              WHERE session_id LIKE ?1 AND sender='assistant' \

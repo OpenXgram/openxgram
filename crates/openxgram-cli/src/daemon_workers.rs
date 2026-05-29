@@ -80,6 +80,16 @@ pub fn spawn_all_with_data_dir(db: Arc<Mutex<Db>>, data_dir: PathBuf) {
             }
         }
     });
+    // rc.170 — auto-echo enforcer (60s 주기). active discord binding 의 매칭 session 새 assistant 메시지 → Discord push.
+    let db_ae = db.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            if let Err(e) = auto_echo_tick(&db_ae).await {
+                tracing::warn!("auto_echo tick: {e}");
+            }
+        }
+    });
 }
 
 /// L0 messages 를 스캔해서 키워드 기반으로 patterns/mistakes 자동 등록.
@@ -917,5 +927,133 @@ async fn v6_outbound_drain(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
             tracing::debug!(ulid=%ulid, alias=%alias, target=%target_url, "S8 outbound failed, backoff");
         }
     }
+    Ok(())
+}
+
+/// rc.170 — auto-echo enforcer worker.
+/// 60s 주기로 active discord binding 마다 매칭 session 의 최신 assistant message 를
+/// last_echoed_ulid 와 비교 → 새 메시지면 Discord 채널로 push.
+/// matching: COALESCE(session_proj_name, agent_id) → `claude:{proj}:%` LIKE.
+/// first_setup (last_echoed=NULL) 시 옛 메시지 echo 안 함 — 현재 msg_id 로 mark.
+pub async fn auto_echo_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
+    let bindings: Vec<(String, String, String, Option<String>, Option<String>, Option<String>)> = {
+        let mut guard = db.lock().await;
+        let mut stmt = match guard.conn().prepare(
+            "SELECT id, agent_id, channel_ref, bot_id, last_echoed_ulid, session_proj_name \
+             FROM session_channel_bindings \
+             WHERE platform='discord' AND active=1"
+        ) {
+            Ok(s) => s,
+            Err(_) => return Ok(()),
+        };
+        let rows = stmt.query_map([], |r| Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, Option<String>>(3)?,
+            r.get::<_, Option<String>>(4)?,
+            r.get::<_, Option<String>>(5)?,
+        )));
+        match rows {
+            Ok(it) => it.flatten().collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+
+    if bindings.is_empty() {
+        return Ok(());
+    }
+
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+
+    for (binding_id, agent_id, channel_ref, bot_id, last_echoed, proj_name) in bindings {
+        let proj = proj_name.clone().unwrap_or_else(|| agent_id.clone());
+        let pattern = format!("claude:{}:%", proj);
+
+        let latest: Option<(String, String)> = {
+            let mut guard = db.lock().await;
+            guard.conn().query_row(
+                "SELECT id, body FROM messages \
+                 WHERE session_id LIKE ?1 AND sender='assistant' \
+                 ORDER BY timestamp DESC LIMIT 1",
+                rusqlite::params![&pattern],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            ).ok()
+        };
+
+        let Some((msg_id, body)) = latest else { continue; };
+
+        if last_echoed.as_deref() == Some(msg_id.as_str()) { continue; }
+
+        if last_echoed.is_none() {
+            let mut guard = db.lock().await;
+            let _ = guard.conn().execute(
+                "UPDATE session_channel_bindings SET last_echoed_ulid=?1 WHERE id=?2",
+                rusqlite::params![&msg_id, &binding_id]
+            );
+            tracing::info!(binding=%binding_id, agent=%agent_id, "auto_echo: first_setup mark, 옛 메시지 echo 안 함");
+            continue;
+        }
+
+        let token: Option<String> = {
+            let mut guard = db.lock().await;
+            match &bot_id {
+                Some(bid) => guard.conn().query_row(
+                    "SELECT bot_token FROM discord_bots WHERE id=?1 AND active=1",
+                    rusqlite::params![bid],
+                    |r| r.get::<_, String>(0)
+                ).ok(),
+                None => guard.conn().query_row(
+                    "SELECT bot_token FROM discord_bots WHERE active=1 ORDER BY created_at LIMIT 1",
+                    [],
+                    |r| r.get::<_, String>(0)
+                ).ok(),
+            }
+        };
+
+        let Some(token) = token else {
+            tracing::warn!(binding=%binding_id, agent=%agent_id, "auto_echo: bot token 없음");
+            continue;
+        };
+
+        // Discord 2000 char 제한
+        let payload_body = if body.chars().count() > 1900 {
+            let truncated: String = body.chars().take(1900).collect();
+            format!("{}\n...[잘림]", truncated)
+        } else {
+            body
+        };
+
+        let url = format!("https://discord.com/api/v10/channels/{}/messages", channel_ref);
+        let payload = serde_json::json!({"content": payload_body});
+        let resp = http.post(&url)
+            .header("Authorization", format!("Bot {}", token))
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send()
+            .await;
+
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                let mut guard = db.lock().await;
+                let _ = guard.conn().execute(
+                    "UPDATE session_channel_bindings SET last_echoed_ulid=?1 WHERE id=?2",
+                    rusqlite::params![&msg_id, &binding_id]
+                );
+                tracing::info!(binding=%binding_id, agent=%agent_id, channel=%channel_ref, msg_id=%msg_id, "auto_echo: Discord 발송 success");
+            }
+            Ok(r) => {
+                let status = r.status();
+                let text = r.text().await.unwrap_or_default();
+                tracing::warn!(binding=%binding_id, status=%status, body=%text, "auto_echo: Discord HTTP 실패");
+            }
+            Err(e) => {
+                tracing::warn!(binding=%binding_id, error=%e, "auto_echo: 네트워크 실패");
+            }
+        }
+    }
+
     Ok(())
 }
