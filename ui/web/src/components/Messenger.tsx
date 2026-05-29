@@ -744,20 +744,25 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
   const matches = map.get(f.display);
   if (!matches || matches.length === 0) return null;
   return matches.map((b) => {
+    // rc.170+: transient(first_setup) / edge(no_assistant_messages) 는 chip 숨김 — 마스터 무관심.
+    if (b.match_status === "first_setup" || b.match_status === "no_assistant_messages") return null;
     const colorByStatus: Record<string, string> = {
-      "no_match": "#b00020",
-      "no_assistant_messages": "#6a737d",
-      "first_setup": "#d29922",
-      "pending_echo": "#3a82f6",
-      "up_to_date": "#238636",
+      "no_match": "#b00020",        // ✗ 빨강 — fix 필요
+      "pending_echo": "#3a82f6",     // → 파랑 — 60초 안 Discord 발송 예정
+      "up_to_date": "#238636",       // ✓ 초록 — 정상 (모두 echo 완료)
     };
     const platformIcon = b.platform === "discord" ? "D" : b.platform === "telegram" ? "T" : "X";
-    const title = `${b.platform} -> bot=${b.bot_alias || b.bot_label || "?"} ch=${b.channel_ref.slice(0, 10)}\nmatched_sessions: ${b.matched_session_count}\nstatus: ${b.match_status}` + (b.latest_preview ? `\nlatest: ${b.latest_preview.slice(0, 80)}` : "");
+    const statusLabel: Record<string, string> = {
+      "no_match": "매칭 X — fix 필요",
+      "pending_echo": "60s 안 Discord 발송 예정",
+      "up_to_date": "정상 (모두 echo 완료)",
+    };
+    const title = `${b.platform} -> bot=${b.bot_alias || b.bot_label || "?"} ch=${b.channel_ref.slice(0, 10)}\n매칭 세션: ${b.matched_session_count}\n${statusLabel[b.match_status] || b.match_status}` + (b.latest_preview ? `\n최근: ${b.latest_preview.slice(0, 80)}` : "");
     const bg = colorByStatus[b.match_status] || "#6a737d";
-    const txt = b.match_status === "no_match" ? "X" : String(b.matched_session_count);
+    const txt = b.match_status === "no_match" ? "✗" : b.match_status === "pending_echo" ? "→" : "✓";
     return (
       <span title={title} style={`margin-left:4px; padding:0 5px; border-radius:3px; font-size:9px; font-weight:bold; background:${bg}; color:white;`}>
-        {platformIcon}:{txt}
+        {platformIcon}{txt}
       </span>
     );
   });
