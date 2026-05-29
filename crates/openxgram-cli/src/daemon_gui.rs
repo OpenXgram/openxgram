@@ -716,11 +716,11 @@ async fn gui_session_screen(
         if let Some(idx) = rest.find(':') {
             let alias = &rest[..idx];
             let inner = &rest[idx + 1..];
-            // peer address 조회
+            // peer address 조회 — rc.167+: gui_address 있으면 우선 (7302 GUI), 없으면 address (7300 transport).
             let address: String = {
                 let mut db = state.db.lock().await;
                 db.conn().query_row(
-                    "SELECT address FROM peers WHERE alias = ?1",
+                    "SELECT COALESCE(gui_address, address) FROM peers WHERE alias = ?1",
                     rusqlite::params![alias],
                     |r| r.get(0),
                 ).unwrap_or_default()
