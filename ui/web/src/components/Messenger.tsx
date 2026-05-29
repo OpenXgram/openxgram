@@ -188,6 +188,33 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  return new Set(list.filter((a) => a.messenger_enabled).map((a) => a.alias));
  } catch { return new Set(); }
  });
+
+ // rc.170 — auto-echo enforcer visual: 각 binding 의 매칭 상태 (no_match/first_setup/pending_echo/up_to_date).
+ // friend row 옆 chip 으로 표시 → 마스터가 GUI 에서 매칭 정상 여부 직접 확인.
+ interface BindingStatus {
+   agent_id: string;
+   platform: string;
+   channel_ref: string;
+   bot_alias?: string | null;
+   bot_label?: string | null;
+   matched_session_count: number;
+   latest_preview?: string | null;
+   last_echoed_ulid?: string | null;
+   would_echo: boolean;
+   match_status: "no_match" | "no_assistant_messages" | "first_setup" | "pending_echo" | "up_to_date";
+ }
+ const [bindingsByAgent] = createResource<Map<string, BindingStatus[]>>(async () => {
+   try {
+     const resp = await invoke<{bindings: BindingStatus[]}>("bindings_status");
+     const map = new Map<string, BindingStatus[]>();
+     for (const b of resp.bindings || []) {
+       const arr = map.get(b.agent_id) || [];
+       arr.push(b);
+       map.set(b.agent_id, arr);
+     }
+     return map;
+   } catch { return new Map(); }
+ });
  const [selected, setSelected] = createSignal<string | null>(null); // friend id (에이전트 모드)
  const [selectedThread, setSelectedThread] = createSignal<string | null>(null); // conversation_id
  const [leftMode, setLeftMode] = createSignal<LeftMode>("agent"); // L1
@@ -709,6 +736,31 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  ✓ MSG
  </span>
  ) : null;
+ })()}
+ {(() => {
+  // rc.170 — auto-echo enforcer visual chip. friend.display 로 binding 매칭.
+  const map = bindingsByAgent();
+  if (!map || !f.display) return null;
+  const matches = map.get(f.display);
+  if (!matches || matches.length === 0) return null;
+  return matches.map((b) => {
+    const colorByStatus: Record<string, string> = {
+      "no_match": "#b00020",
+      "no_assistant_messages": "#6a737d",
+      "first_setup": "#d29922",
+      "pending_echo": "#3a82f6",
+      "up_to_date": "#238636",
+    };
+    const platformIcon = b.platform === "discord" ? "D" : b.platform === "telegram" ? "T" : "X";
+    const title = `${b.platform} -> bot=${b.bot_alias || b.bot_label || "?"} ch=${b.channel_ref.slice(0, 10)}\nmatched_sessions: ${b.matched_session_count}\nstatus: ${b.match_status}` + (b.latest_preview ? `\nlatest: ${b.latest_preview.slice(0, 80)}` : "");
+    const bg = colorByStatus[b.match_status] || "#6a737d";
+    const txt = b.match_status === "no_match" ? "X" : String(b.matched_session_count);
+    return (
+      <span title={title} style={`margin-left:4px; padding:0 5px; border-radius:3px; font-size:9px; font-weight:bold; background:${bg}; color:white;`}>
+        {platformIcon}:{txt}
+      </span>
+    );
+  });
  })()}
  </span>
  <span class="messenger-friend-sub">{f.subtitle}</span>

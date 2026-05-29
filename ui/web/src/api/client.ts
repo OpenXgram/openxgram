@@ -176,6 +176,8 @@ const ROUTES: Record<string, Route> = {
  session_bindings_list: { method: "GET", path: "/sessions/{agent_id}/channel-bindings"},
  session_binding_add: { method: "POST", path: "/sessions/{agent_id}/channel-bindings", body: true},
  session_binding_delete: { method: "POST", path: "/sessions/{agent_id}/channel-bindings/{binding_id}"},
+ // rc.170 — auto-echo enforcer visual verification (각 binding 의 매칭 session + would_echo)
+ bindings_status: { method: "GET", path: "/bindings_status"},
  // rc.122 — 에이전트 메신저 등록 (agent_capabilities CRUD, 외부 채널 바인딩과 별개)
  agents_list: { method: "GET", path: "/agents"},
  agents_register: { method: "POST", path: "/agents", body: true},
