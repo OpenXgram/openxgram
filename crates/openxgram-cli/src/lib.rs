@@ -64,6 +64,7 @@ pub mod traits;
 pub mod tui;
 pub mod ui_assets;
 pub mod uninstall;
+pub mod update;
 pub mod vault;
 pub mod wiki;
 pub mod wizard;

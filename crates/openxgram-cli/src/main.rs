@@ -411,6 +411,16 @@ enum Commands {
         data_dir: Option<PathBuf>,
     },
 
+    /// 자체 업데이트 — install.ps1 / install.sh 위임 (Task/Service auto stop+restart 자동).
+    /// `xgram install` 도 같은 동작 (재설치/업그레이드 둘 다 idempotent).
+    /// 사용 예: `xgram update` (latest) / `xgram install --tag v0.2.0-rc.167`.
+    #[command(alias = "install")]
+    Update {
+        /// 특정 tag 로 update (생략 시 latest)
+        #[arg(long)]
+        tag: Option<String>,
+    },
+
     /// Peer 레지스트리 — 머신 간 통신 주소록 (cross-machine 메시지 baseline)
     Peer {
         #[arg(long, global = true)]
@@ -2588,6 +2598,10 @@ async fn main() -> anyhow::Result<()> {
         Commands::PairDesktop { data_dir } => {
             let dir = resolve_data_dir(data_dir)?;
             openxgram_cli::pair_desktop::run_pair_desktop(&dir)?;
+        }
+
+        Commands::Update { tag } => {
+            openxgram_cli::update::run_update(tag)?;
         }
 
         Commands::Peer { data_dir, action } => {
