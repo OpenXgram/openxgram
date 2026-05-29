@@ -339,10 +339,11 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  id: `session:${s.identifier}`,
  display: s.display.replace(/^\[[^\]]+\]\s*/, ""), // [zalman] prefix 제거 (이미 머신 그룹으로 분리됨)
  subtitle:
+ // rc.171 — tmux jargon (attached/detached/N win) 제거. portal capture-pane 이라 tmux 입장에선 항상 detached → 마스터 혼란.
  s.kind === "tmux"
- ? `tmux · ${s.windows ?? 0} win · ${s.attached ? "attached" : "detached"}`
+ ? (s.last_active_at ? `최근 활동: ${new Date(s.last_active_at).toLocaleString()}` : "")
  : s.kind === "claude_project"
- ? `Claude Code · ${s.last_active_at ? new Date(s.last_active_at).toLocaleString() : "—"}`
+ ? (s.last_active_at ? `최근 활동: ${new Date(s.last_active_at).toLocaleString()}` : "")
  : "xgram session",
  sessionMeta: s,
  });
