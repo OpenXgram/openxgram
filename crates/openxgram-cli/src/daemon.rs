@@ -316,41 +316,35 @@ pub fn process_inbound(
     let embedder = default_embedder().context("embedder init 실패")?;
 
     for env in envelopes {
-        // 1. peer 조회 (envelope.from = eth_address)
-        let peer = match PeerStore::new(&mut db).get_by_eth_address(&env.from) {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                tracing::warn!(from = %env.from, "unknown peer — envelope drop (PRD-2.0.1)");
-                continue;
-            }
+        // rc.173 — 메신저 본질: unknown peer 도 inbox 에 저장 (Telegram/카카오톡 식).
+        // 단 신원 미검증 표시. 검증 정책은 sender_label prefix 로 구분 (peer: vs unverified:).
+        let peer_opt = match PeerStore::new(&mut db).get_by_eth_address(&env.from) {
+            Ok(opt) => opt,
             Err(e) => {
                 tracing::warn!(error = %e, "peer 조회 실패");
                 continue;
             }
         };
 
-        // 2. 서명 검증 (peer.public_key_hex 로 envelope.payload_hex bytes 검증)
-        let payload_bytes = match hex::decode(&env.payload_hex) {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::warn!(error = %e, from = %env.from, "payload hex decode 실패");
-                continue;
-            }
+        // payload decode — 실패 시 placeholder body
+        let payload_bytes = hex::decode(&env.payload_hex).unwrap_or_default();
+        let sig_bytes = hex::decode(&env.signature_hex).unwrap_or_default();
+
+        // 서명 검증 — peer 있고 서명 verify 성공 시만 verified.
+        let verified = match &peer_opt {
+            Some(p) => verify_with_pubkey(&p.public_key_hex, &payload_bytes, &sig_bytes).is_ok(),
+            None => false,
         };
-        let sig_bytes = match hex::decode(&env.signature_hex) {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::warn!(error = %e, from = %env.from, "signature hex decode 실패");
-                continue;
-            }
-        };
-        if let Err(e) = verify_with_pubkey(&peer.public_key_hex, &payload_bytes, &sig_bytes) {
-            tracing::warn!(error = %e, from = %env.from, "서명 검증 실패 — drop (PRD-2.0.1)");
-            continue;
+        if peer_opt.is_none() {
+            tracing::info!(from = %env.from, "unknown peer — inbox 저장 진행 (unverified)");
+        } else if !verified {
+            tracing::warn!(from = %env.from, "서명 검증 실패 — inbox 저장 진행 (unverified)");
         }
 
-        // 3. session 매핑 — alias 별 inbox session ensure (PRD-2.0.3)
-        let session_title = format!("inbox-from-{}", peer.alias);
+        let alias = peer_opt.as_ref().map(|p| p.alias.clone()).unwrap_or_else(|| env.from.clone());
+
+        // session 매핑 — alias 별 inbox session ensure (PRD-2.0.3)
+        let session_title = format!("inbox-from-{}", alias);
         let session = match SessionStore::new(&mut db).ensure_by_title(&session_title, "inbound") {
             Ok(s) => s,
             Err(e) => {
@@ -359,11 +353,14 @@ pub fn process_inbound(
             }
         };
 
-        // 4. L0 message 자동 저장 (PRD-2.0.2)
-        // sender 는 라우팅용 prefix 형식 — `peer:{alias}` (회신 시 alias 로 peer_send).
-        // env.from (eth_address) 은 signature_hex 와 함께 검증 가능.
+        // L0 message 자동 저장 (PRD-2.0.2)
+        // sender label: verified 면 peer:{alias}, 아니면 unverified:{alias} (LLM 이 신뢰도 판단 가능).
         let body = String::from_utf8_lossy(&payload_bytes).into_owned();
-        let sender_label = format!("peer:{}", peer.alias);
+        let sender_label = if verified {
+            format!("peer:{}", alias)
+        } else {
+            format!("unverified:{}", alias)
+        };
         if let Err(e) = MessageStore::new(&mut db, embedder.as_ref()).insert(
             &session.id,
             &sender_label,
@@ -374,6 +371,14 @@ pub fn process_inbound(
             tracing::warn!(error = %e, "L0 message insert 실패");
             continue;
         }
+        // dummy peer var for legacy code paths below (payment receipt, touch).
+        let peer = match peer_opt {
+            Some(p) => p,
+            None => {
+                tracing::debug!(from = %env.from, session = %session.id, "unverified inbound 저장 완료 (peer 미등록, touch skip)");
+                continue;
+            }
+        };
 
         // 4b. payment receipt 자동 인식 — 첫 줄이 magic prefix 면 L2 reference memory 로 추가 기록.
         //     수취인 측이 "최근 받은 결제" 를 메모리 검색으로 즉시 회상 가능 (PRD §16 양쪽 메모리 기록).
