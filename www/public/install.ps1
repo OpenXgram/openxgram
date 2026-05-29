@@ -277,10 +277,11 @@ if ($stoppedTasks.Count -gt 0 -or $stoppedSvcs.Count -gt 0) {
     }
 }
 
-# 8.5 (rc.174+) Scheduled Task `OpenXgram-Daemon` 자동 등록 (없으면).
-#      ONLOGON 트리거 + xgram daemon 실행. 사용자 로그인 시 자동 시작 → 시작프로그램 효과.
+
+# 8.5 (rc.174+) Auto-register Scheduled Task 'OpenXgram-Daemon' (ONLOGON) if missing.
+#      Triggers xgram daemon on user logon = Windows startup-program effect.
 $daemonTaskName = 'OpenXgram-Daemon'
-$existing = schtasks /Query /TN $daemonTaskName 2>$null
+$existing = Get-ScheduledTask -TaskName $daemonTaskName -ErrorAction SilentlyContinue
 if (-not $existing) {
     Write-Host ''
     Write-Host '==> Step 8.5: register OpenXgram-Daemon Scheduled Task (auto-start on logon)' -ForegroundColor Cyan
@@ -290,22 +291,22 @@ if (-not $existing) {
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
     try {
         Register-ScheduledTask -TaskName $daemonTaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'OpenXgram sidecar daemon (auto-start on user logon)' -Force | Out-Null
-        Write-Host "    ✓ Scheduled Task '$daemonTaskName' 등록 완료 — 로그인 시 자동 시작"
-        schtasks /Run /TN $daemonTaskName 2>$null | Out-Null
+        Write-Host "    [OK] Scheduled Task '$daemonTaskName' registered (auto-start on logon)"
+        Start-ScheduledTask -TaskName $daemonTaskName -ErrorAction SilentlyContinue
     } catch {
-        Write-Host "    ⚠ Scheduled Task 등록 실패: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "    [WARN] Scheduled Task register failed: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 } else {
-    Write-Host "    (Scheduled Task '$daemonTaskName' 이미 존재)" -ForegroundColor DarkGray
+    Write-Host "    (Scheduled Task '$daemonTaskName' already exists)" -ForegroundColor DarkGray
 }
 
-# 8.6 (rc.174+) WSL 자동 시작 — Windows boot 시 wsl daemon (Linux subsystem) 시작.
-#      WSL2 의 vmcompute / LxssManager 가 boot 시 시작되지만 첫 distro 시작은 지연됨.
-#      `wsl --exec /bin/true` 로 lazy init trigger → 마스터의 Linux 환경 즉시 사용 가능.
+# 8.6 (rc.174+) WSL warm-up on logon (if wsl.exe available).
+#      WSL2 vmcompute/LxssManager auto-starts at boot; first distro init is lazy.
+#      `wsl --exec /bin/true` triggers warm-up so Linux env is ready when user logs in.
 $wslAvailable = Get-Command wsl.exe -ErrorAction SilentlyContinue
 if ($wslAvailable) {
     $wslTaskName = 'OpenXgram-WSL-Boot'
-    $existingWsl = schtasks /Query /TN $wslTaskName 2>$null
+    $existingWsl = Get-ScheduledTask -TaskName $wslTaskName -ErrorAction SilentlyContinue
     if (-not $existingWsl) {
         Write-Host ''
         Write-Host '==> Step 8.6: register OpenXgram-WSL-Boot Scheduled Task (WSL warm-up on logon)' -ForegroundColor Cyan
@@ -315,12 +316,12 @@ if ($wslAvailable) {
             $wslSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
             $wslPrincipal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
             Register-ScheduledTask -TaskName $wslTaskName -Action $wslAction -Trigger $wslTrigger -Settings $wslSettings -Principal $wslPrincipal -Description 'WSL warm-up (start default distro on logon)' -Force | Out-Null
-            Write-Host "    ✓ Scheduled Task '$wslTaskName' 등록 완료 — 로그인 시 WSL 자동 warm-up"
+            Write-Host "    [OK] Scheduled Task '$wslTaskName' registered (WSL warm-up on logon)"
         } catch {
-            Write-Host "    ⚠ WSL Scheduled Task 등록 실패: $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-Host "    [WARN] WSL Scheduled Task register failed: $($_.Exception.Message)" -ForegroundColor Yellow
         }
     } else {
-        Write-Host "    (Scheduled Task '$wslTaskName' 이미 존재)" -ForegroundColor DarkGray
+        Write-Host "    (Scheduled Task '$wslTaskName' already exists)" -ForegroundColor DarkGray
     }
 }
 
@@ -333,14 +334,14 @@ if (Test-Path $claudeJson) {
     Write-Host '==> Step 9: auto MCP + identity + SessionStart hook' -ForegroundColor Cyan
     try {
         & "$INSTALL\xgram.exe" mcp-install --scope user --full --use-path-lookup 2>&1 | ForEach-Object { Write-Host "    $_" }
-        Write-Host '    ✓ 새 Claude Code 세션이 다음 부터 openxgram MCP + identity + 가이드 자동 인식'
+        Write-Host '    [OK] New Claude Code sessions will auto-recognize openxgram MCP + identity + guide'
     } catch {
-        Write-Host "    ⚠ mcp-install 실패: $($_.Exception.Message)" -ForegroundColor Yellow
-        Write-Host '    수동: xgram mcp-install --scope user --full --use-path-lookup'
+        Write-Host "    [WARN] mcp-install failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host '    Manual: xgram mcp-install --scope user --full --use-path-lookup'
     }
 } else {
     Write-Host ''
-    Write-Host '    (Claude Code 미설치 — Step 9 skip. 설치 후: xgram mcp-install --scope user --full --use-path-lookup)' -ForegroundColor DarkGray
+    Write-Host '    (Claude Code not installed - Step 9 skipped. After install: xgram mcp-install --scope user --full --use-path-lookup)' -ForegroundColor DarkGray
 }
 
 Write-Host ''
