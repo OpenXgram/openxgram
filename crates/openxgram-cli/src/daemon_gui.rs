@@ -360,6 +360,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // portal 가 sendKeys 한 직후 POST → messages 테이블에 INSERT.
         // ack_status='delivered' 자동, via='portal_mirror'. GUI 의 ack badge 가 표시.
         .route("/v1/gui/messages/mirror", post(gui_messages_mirror))
+        // rc.170 — auto-echo enforcer visual verification API
+        .route("/v1/gui/bindings_status", get(gui_bindings_status))
         .route("/v1/gui/channel/status", get(gui_channel_status))
         .route("/v1/gui/vault/pending", get(gui_vault_pending_list))
         .route(
@@ -6381,4 +6383,100 @@ async fn gui_channels_summary(
         },
     })))
 }
+/// rc.170 — auto-echo enforcer 의 visual verification API.
+/// session_channel_bindings + matched session + last assistant message + last_echoed_ulid.
+/// 마스터가 GUI 에서 매칭 정상인지 visual 확인 후 worker 활성화.
+async fn gui_bindings_status(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+
+    // 1) active binding row 수집
+    let bindings: Vec<(String, String, String, String, Option<String>, Option<String>, i64, Option<String>)> = {
+        let mut stmt = db.conn().prepare(
+            "SELECT id, agent_id, platform, channel_ref, bot_id, bot_label, active, last_echoed_ulid \
+             FROM session_channel_bindings WHERE active = 1"
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+        let rows = stmt.query_map([], |r| Ok((
+            r.get::<_,String>(0)?,
+            r.get::<_,String>(1)?,
+            r.get::<_,String>(2)?,
+            r.get::<_,String>(3)?,
+            r.get::<_,Option<String>>(4)?,
+            r.get::<_,Option<String>>(5)?,
+            r.get::<_,i64>(6)?,
+            r.get::<_,Option<String>>(7)?,
+        ))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("query: {e}")})))?;
+        rows.flatten().collect()
+    };
+
+    let mut out = Vec::new();
+    for (binding_id, agent_id, platform, channel_ref, bot_id, bot_label, _active, last_echoed) in bindings {
+        // bot alias (있으면)
+        let bot_alias: Option<String> = match &bot_id {
+            Some(bid) => db.conn().query_row(
+                "SELECT alias FROM discord_bots WHERE id=?1",
+                rusqlite::params![bid],
+                |r| r.get::<_,String>(0)
+            ).ok(),
+            None => None,
+        };
+        // session 매칭 (claude:{agent_id}:%) — A path 직접 매칭만
+        let pattern = format!("claude:{}:%", agent_id);
+        let matched: Option<(String, String, String, String)> = db.conn().query_row(
+            "SELECT id, session_id, substr(body, 1, 120), timestamp FROM messages \
+             WHERE session_id LIKE ?1 AND sender='assistant' \
+             ORDER BY timestamp DESC LIMIT 1",
+            rusqlite::params![&pattern],
+            |r| Ok((r.get::<_,String>(0)?, r.get::<_,String>(1)?, r.get::<_,String>(2)?, r.get::<_,String>(3)?))
+        ).ok();
+        let session_count: i64 = db.conn().query_row(
+            "SELECT COUNT(DISTINCT session_id) FROM messages WHERE session_id LIKE ?1",
+            rusqlite::params![&pattern],
+            |r| r.get::<_,i64>(0)
+        ).unwrap_or(0);
+
+        let (latest_msg_id, latest_session_id, preview, latest_ts) = match matched {
+            Some((m, s, p, t)) => (Some(m), Some(s), Some(p), Some(t)),
+            None => (None, None, None, None),
+        };
+        let would_echo = match (&latest_msg_id, &last_echoed) {
+            (Some(m), Some(e)) => m != e,
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        let match_status = if session_count == 0 { "no_match" }
+            else if latest_msg_id.is_none() { "no_assistant_messages" }
+            else if last_echoed.is_none() { "first_setup" }
+            else if would_echo { "pending_echo" }
+            else { "up_to_date" };
+
+        out.push(serde_json::json!({
+            "binding_id": binding_id,
+            "agent_id": agent_id,
+            "platform": platform,
+            "channel_ref": channel_ref,
+            "bot_id": bot_id,
+            "bot_label": bot_label,
+            "bot_alias": bot_alias,
+            "session_pattern": pattern,
+            "matched_session_count": session_count,
+            "latest_message_id": latest_msg_id,
+            "latest_session_id": latest_session_id,
+            "latest_preview": preview,
+            "latest_timestamp": latest_ts,
+            "last_echoed_ulid": last_echoed,
+            "would_echo": would_echo,
+            "match_status": match_status,
+        }));
+    }
+
+    Ok(Json(serde_json::json!({
+        "bindings": out,
+        "note": "match_status: no_match (세션 없음) / no_assistant_messages / first_setup (옛 메시지 echo 방지) / pending_echo (다음 worker tick) / up_to_date",
+    })))
+}
+
 // rc.122 trigger marker
