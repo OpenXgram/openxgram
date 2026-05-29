@@ -130,28 +130,28 @@ pub fn run_install(
     fs::write(&config_path, new_content)
         .with_context(|| format!("{} 쓰기 실패", config_path.display()))?;
 
-    println!("✓ MCP 등록 완료: {}", config_path.display());
+    println!("[OK] MCP registered: {}", config_path.display());
     println!("  xgram binary : {}", xgram_bin.display());
     println!("  data_dir     : {}", data_dir.display());
     println!(
-        "  패스워드     : {}",
+        "  password     : {}",
         if include_password {
-            "config 에 포함 (XGRAM_KEYSTORE_PASSWORD env)"
+            "included (XGRAM_KEYSTORE_PASSWORD env in config)"
         } else {
-            "포함 안 함 (사용자가 별도 export 필요)"
+            "not included (user must export separately)"
         }
     );
     println!();
 
-    // 글로벌 설정 (~/.claude/CLAUDE.md + env vars) 에서 webhook/token 자동 import.
-    println!("→ 글로벌 설정에서 webhook / token 자동 import 시도");
+    // Auto-import webhook/token from global settings (~/.claude/CLAUDE.md + env vars).
+    println!("--> attempting auto-import of webhook/token from global settings");
     match import_global_defaults(data_dir) {
-        Ok(0) => println!("  (가져올 글로벌 설정 없음 — 스킵)"),
-        Ok(n) => println!("  ✓ {n}개 자동 등록"),
-        Err(e) => eprintln!("  ⚠ global import 실패 (계속): {e}"),
+        Ok(0) => println!("  (no global settings to import - skipped)"),
+        Ok(n) => println!("  [OK] {n} entries auto-registered"),
+        Err(e) => eprintln!("  [WARN] global import failed (continuing): {e}"),
     }
     println!();
-    println!("Claude Code (또는 다른 MCP 클라이언트) 재시작 후 `openxgram.*` 도구 사용 가능.");
+    println!("Restart Claude Code (or other MCP client) to use `openxgram.*` tools.");
     Ok(())
 }
 
@@ -197,15 +197,15 @@ pub fn run_inject(target: &Path, data_dir: &Path) -> Result<()> {
     }
     fs::write(target, new_content).with_context(|| format!("{} 쓰기 실패", target.display()))?;
 
-    println!("✓ identity context 주입 완료: {}", target.display());
-    println!("  marker: {} … {}", CLAUDE_MD_BEGIN, CLAUDE_MD_END);
+    println!("[OK] identity context injected: {}", target.display());
+    println!("  marker: {} ... {}", CLAUDE_MD_BEGIN, CLAUDE_MD_END);
 
-    // rc.117 — ~/oxg.md + 전역 CLAUDE.md @~/oxg.md reference 자동 setup.
-    // identity inject 한 번 실행으로 전체 OpenXgram 가이드 setup 완료.
+    // rc.117 — auto-setup ~/oxg.md + global CLAUDE.md @~/oxg.md reference.
+    // Single identity inject sets up full OpenXgram guide.
     if let Err(e) = setup_oxg_md() {
-        eprintln!("  (oxg.md setup 경고: {}) — 수동: xgram setup-oxg", e);
+        eprintln!("  (oxg.md setup warning: {}) - manual: xgram setup-oxg", e);
     } else {
-        println!("  ✓ ~/oxg.md + 전역 CLAUDE.md @~/oxg.md reference 자동 setup");
+        println!("  [OK] ~/oxg.md + global CLAUDE.md @~/oxg.md reference auto-setup");
     }
 
     Ok(())
@@ -282,7 +282,7 @@ pub fn import_global_defaults(data_dir: &Path) -> Result<usize> {
     let pw = match std::env::var("XGRAM_KEYSTORE_PASSWORD") {
         Ok(p) => p,
         Err(_) => {
-            eprintln!("(global import skip — XGRAM_KEYSTORE_PASSWORD env 없음)");
+            eprintln!("(global import skipped - XGRAM_KEYSTORE_PASSWORD env not set)");
             return Ok(0);
         }
     };
@@ -356,13 +356,13 @@ pub fn import_global_defaults(data_dir: &Path) -> Result<usize> {
     let mut count = 0;
     for (key, value) in &found {
         if existing.contains(*key) {
-            eprintln!("  - skip {}: 이미 vault 에 있음", key);
+            eprintln!("  - skip {}: already in vault", key);
             continue;
         }
         VaultStore::new(&mut db)
             .set(key, value.as_bytes(), &pw, &[])
-            .with_context(|| format!("vault set {key} 실패"))?;
-        eprintln!("  + {}: 글로벌에서 자동 등록", key);
+            .with_context(|| format!("vault set {key} failed"))?;
+        eprintln!("  + {}: auto-registered from global", key);
         count += 1;
     }
     Ok(count)
@@ -577,7 +577,7 @@ pub fn run_agent_restart(data_dir: &Path) -> Result<()> {
     let pid = child.id();
     drop(child);
 
-    println!("✓ agent 재가동 (PID {pid}, log: {})", log_path.display());
+    println!("[OK] agent restarted (PID {pid}, log: {})", log_path.display());
     Ok(())
 }
 
@@ -599,6 +599,6 @@ pub fn run_uninject(target: &Path) -> Result<()> {
     // 연속 빈줄 정리.
     let trimmed = out.trim_end_matches('\n').to_string() + "\n";
     fs::write(target, trimmed)?;
-    println!("✓ OpenXgram 블록 제거: {}", target.display());
+    println!("[OK] OpenXgram block removed: {}", target.display());
     Ok(())
 }
