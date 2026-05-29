@@ -362,6 +362,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/messages/mirror", post(gui_messages_mirror))
         // rc.170 — auto-echo enforcer visual verification API
         .route("/v1/gui/bindings_status", get(gui_bindings_status))
+        // rc.176 — daemon log tail (cross-machine 진단 도구). zalman 같은 remote peer 의 silent fail 진단.
+        .route("/v1/gui/daemon/log", get(gui_daemon_log))
         .route("/v1/gui/channel/status", get(gui_channel_status))
         .route("/v1/gui/vault/pending", get(gui_vault_pending_list))
         .route(
@@ -6481,6 +6483,38 @@ async fn gui_bindings_status(
     Ok(Json(serde_json::json!({
         "bindings": out,
         "note": "match_status: no_match (세션 없음) / no_assistant_messages / first_setup (옛 메시지 echo 방지) / pending_echo (다음 worker tick) / up_to_date",
+    })))
+}
+
+/// rc.176 — daemon.log tail (cross-machine 진단 도구).
+/// data_dir 의 daemon.log 마지막 N 줄. zalman 같은 remote peer 의 process_inbound silent fail 등 진단.
+/// Query: ?tail=50 (기본 100, 최대 1000)
+async fn gui_daemon_log(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let tail_n: usize = q.get("tail").and_then(|s| s.parse().ok()).unwrap_or(100).min(1000);
+    let log_path = state.data_dir.join("daemon.log");
+    let err_path = state.data_dir.join("daemon.log.err");
+
+    let read_tail = |path: &std::path::Path, n: usize| -> Option<String> {
+        let content = std::fs::read_to_string(path).ok()?;
+        let lines: Vec<&str> = content.lines().collect();
+        let start = lines.len().saturating_sub(n);
+        Some(lines[start..].join("\n"))
+    };
+
+    let stdout_tail = read_tail(&log_path, tail_n).unwrap_or_else(|| String::from("(no daemon.log)"));
+    let stderr_tail = read_tail(&err_path, tail_n).unwrap_or_else(|| String::from("(no daemon.log.err)"));
+
+    Ok(Json(serde_json::json!({
+        "log_path": log_path.display().to_string(),
+        "err_path": err_path.display().to_string(),
+        "tail_n": tail_n,
+        "stdout": stdout_tail,
+        "stderr": stderr_tail,
     })))
 }
 
