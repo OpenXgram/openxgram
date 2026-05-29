@@ -340,11 +340,14 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  display: s.display.replace(/^\[[^\]]+\]\s*/, ""), // [zalman] prefix 제거 (이미 머신 그룹으로 분리됨)
  subtitle:
  // rc.171 — tmux jargon (attached/detached/N win) 제거. portal capture-pane 이라 tmux 입장에선 항상 detached → 마스터 혼란.
- s.kind === "tmux"
- ? (s.last_active_at ? `최근 활동: ${new Date(s.last_active_at).toLocaleString()}` : "")
- : s.kind === "claude_project"
- ? (s.last_active_at ? `최근 활동: ${new Date(s.last_active_at).toLocaleString()}` : "")
- : "xgram session",
+ // rc.172 — Invalid Date fix: getTime() isNaN check + 빈 string 처리.
+ (() => {
+   const ts = s.last_active_at;
+   if (!ts) return "";
+   const d = new Date(ts);
+   if (isNaN(d.getTime())) return "";
+   return `최근 활동: ${d.toLocaleString()}`;
+ })(),
  sessionMeta: s,
  });
  byMachine.set(machine, arr);
