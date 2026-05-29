@@ -278,26 +278,27 @@ if ($stoppedTasks.Count -gt 0 -or $stoppedSvcs.Count -gt 0) {
 }
 
 
-# 8.5 (rc.174+) Auto-register Scheduled Task 'OpenXgram-Daemon' (ONLOGON) if missing.
+# 8.5 (rc.174+, rc.177 updated) Auto-register Scheduled Task 'OpenXgram-Daemon' (ONLOGON).
 #      Triggers xgram daemon on user logon = Windows startup-program effect.
+#      rc.177: cmd /c wrapper for stdout/stderr redirect → daemon.log (diagnostics).
+#      Force unregister+register so existing task gets new action (redirect).
 $daemonTaskName = 'OpenXgram-Daemon'
-$existing = Get-ScheduledTask -TaskName $daemonTaskName -ErrorAction SilentlyContinue
-if (-not $existing) {
-    Write-Host ''
-    Write-Host '==> Step 8.5: register OpenXgram-Daemon Scheduled Task (auto-start on logon)' -ForegroundColor Cyan
-    $action  = New-ScheduledTaskAction -Execute "$INSTALL\xgram.exe" -Argument 'daemon' -WorkingDirectory $INSTALL
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
-    try {
-        Register-ScheduledTask -TaskName $daemonTaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'OpenXgram sidecar daemon (auto-start on user logon)' -Force | Out-Null
-        Write-Host "    [OK] Scheduled Task '$daemonTaskName' registered (auto-start on logon)"
-        Start-ScheduledTask -TaskName $daemonTaskName -ErrorAction SilentlyContinue
-    } catch {
-        Write-Host "    [WARN] Scheduled Task register failed: $($_.Exception.Message)" -ForegroundColor Yellow
-    }
-} else {
-    Write-Host "    (Scheduled Task '$daemonTaskName' already exists)" -ForegroundColor DarkGray
+Write-Host ''
+Write-Host '==> Step 8.5: register OpenXgram-Daemon Scheduled Task (auto-start on logon)' -ForegroundColor Cyan
+$dataDir = Join-Path $env:USERPROFILE '.openxgram'
+$daemonLog = Join-Path $dataDir 'daemon.log'
+# cmd /c wrapper: stdout >> daemon.log, stderr >> daemon.log (both → same file).
+$cmdArg = "/c `"`"$INSTALL\xgram.exe`" daemon >> `"$daemonLog`" 2>>&1`""
+$action  = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument $cmdArg -WorkingDirectory $INSTALL
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
+try {
+    Register-ScheduledTask -TaskName $daemonTaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'OpenXgram sidecar daemon (auto-start on logon, stdout->daemon.log)' -Force | Out-Null
+    Write-Host "    [OK] Scheduled Task '$daemonTaskName' registered (auto-start + stdout redirect)"
+    Start-ScheduledTask -TaskName $daemonTaskName -ErrorAction SilentlyContinue
+} catch {
+    Write-Host "    [WARN] Scheduled Task register failed: $($_.Exception.Message)" -ForegroundColor Yellow
 }
 
 # 8.6 (rc.174+) WSL warm-up on logon (if wsl.exe available).
