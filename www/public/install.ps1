@@ -97,6 +97,26 @@ try {
             $script:stoppedSvcs += $_.Name
         }
 } catch {}
+
+# rc.174+: OpenXgram 표준 port (47300 transport, 47302 GUI, 47301 MCP, 7300 legacy transport, 7302 legacy GUI) 점유 process 자동 kill.
+#          port 충돌 시 새 daemon 이 bind fail → 부분 작동 → process_inbound 도 작동 안 함 (실제 발견 사례).
+foreach ($port in 47300, 47302, 47301, 7300, 7302) {
+    try {
+        $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+        if ($conn) {
+            $procIds = @($conn.OwningProcess | Sort-Object -Unique)
+            foreach ($procId in $procIds) {
+                if ($procId -and $procId -gt 0) {
+                    $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
+                    if ($proc) {
+                        Write-Host "    -> kill port $port owner: $($proc.Name) PID=$procId"
+                        Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+        }
+    } catch {}
+}
 Start-Sleep -Milliseconds 500
 
 # 4a. Locked .exe causes silent skip — kill running processes first.
@@ -254,6 +274,53 @@ if ($stoppedTasks.Count -gt 0 -or $stoppedSvcs.Count -gt 0) {
     foreach ($s in $stoppedSvcs) {
         Write-Host "    -> start service: $s"
         Start-Service -Name $s -ErrorAction SilentlyContinue
+    }
+}
+
+# 8.5 (rc.174+) Scheduled Task `OpenXgram-Daemon` 자동 등록 (없으면).
+#      ONLOGON 트리거 + xgram daemon 실행. 사용자 로그인 시 자동 시작 → 시작프로그램 효과.
+$daemonTaskName = 'OpenXgram-Daemon'
+$existing = schtasks /Query /TN $daemonTaskName 2>$null
+if (-not $existing) {
+    Write-Host ''
+    Write-Host '==> Step 8.5: register OpenXgram-Daemon Scheduled Task (auto-start on logon)' -ForegroundColor Cyan
+    $action  = New-ScheduledTaskAction -Execute "$INSTALL\xgram.exe" -Argument 'daemon' -WorkingDirectory $INSTALL
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
+    try {
+        Register-ScheduledTask -TaskName $daemonTaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'OpenXgram sidecar daemon (auto-start on user logon)' -Force | Out-Null
+        Write-Host "    ✓ Scheduled Task '$daemonTaskName' 등록 완료 — 로그인 시 자동 시작"
+        schtasks /Run /TN $daemonTaskName 2>$null | Out-Null
+    } catch {
+        Write-Host "    ⚠ Scheduled Task 등록 실패: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "    (Scheduled Task '$daemonTaskName' 이미 존재)" -ForegroundColor DarkGray
+}
+
+# 8.6 (rc.174+) WSL 자동 시작 — Windows boot 시 wsl daemon (Linux subsystem) 시작.
+#      WSL2 의 vmcompute / LxssManager 가 boot 시 시작되지만 첫 distro 시작은 지연됨.
+#      `wsl --exec /bin/true` 로 lazy init trigger → 마스터의 Linux 환경 즉시 사용 가능.
+$wslAvailable = Get-Command wsl.exe -ErrorAction SilentlyContinue
+if ($wslAvailable) {
+    $wslTaskName = 'OpenXgram-WSL-Boot'
+    $existingWsl = schtasks /Query /TN $wslTaskName 2>$null
+    if (-not $existingWsl) {
+        Write-Host ''
+        Write-Host '==> Step 8.6: register OpenXgram-WSL-Boot Scheduled Task (WSL warm-up on logon)' -ForegroundColor Cyan
+        try {
+            $wslAction  = New-ScheduledTaskAction -Execute 'wsl.exe' -Argument '--exec /bin/true'
+            $wslTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+            $wslSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+            $wslPrincipal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
+            Register-ScheduledTask -TaskName $wslTaskName -Action $wslAction -Trigger $wslTrigger -Settings $wslSettings -Principal $wslPrincipal -Description 'WSL warm-up (start default distro on logon)' -Force | Out-Null
+            Write-Host "    ✓ Scheduled Task '$wslTaskName' 등록 완료 — 로그인 시 WSL 자동 warm-up"
+        } catch {
+            Write-Host "    ⚠ WSL Scheduled Task 등록 실패: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "    (Scheduled Task '$wslTaskName' 이미 존재)" -ForegroundColor DarkGray
     }
 }
 
