@@ -90,6 +90,119 @@ pub fn spawn_all_with_data_dir(db: Arc<Mutex<Db>>, data_dir: PathBuf) {
             }
         }
     });
+    // rc.178 — cross-machine peer sync (60s 주기). 각 active peer 의 /v1/gui/peers fetch + upsert.
+    // 모든 머신의 peers list 가 자동 동일 → agent 간 대화 가능.
+    let db_ps = db.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            if let Err(e) = peer_sync_tick(&db_ps).await {
+                tracing::warn!("peer_sync tick: {e}");
+            }
+        }
+    });
+}
+
+/// rc.178 — cross-machine peer sync worker.
+/// 각 active peer 의 /v1/gui/peers 호출 + 자기 peers 테이블에 upsert (없는 alias 면 INSERT).
+/// 양방향 자동 sync 로 모든 머신의 list_peers 가 자동 동일.
+pub async fn peer_sync_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
+    let local_pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").unwrap_or_default();
+    if local_pw.is_empty() {
+        return Ok(());
+    }
+
+    // 자기 alias (manifest 에서)
+    let self_alias: String = {
+        let mut guard = db.lock().await;
+        guard.conn().query_row(
+            "SELECT value FROM identity_settings WHERE key='alias'",
+            [],
+            |r| r.get::<_, String>(0),
+        ).unwrap_or_default()
+    };
+
+    // active peer target 수집
+    let peer_targets: Vec<(String, String)> = {
+        let mut guard = db.lock().await;
+        let mut stmt = match guard.conn().prepare(
+            "SELECT alias, COALESCE(gui_address, address) FROM peers \
+             WHERE address LIKE 'http%' AND last_seen IS NOT NULL"
+        ) {
+            Ok(s) => s,
+            Err(_) => return Ok(()),
+        };
+        let rows = stmt.query_map([], |r| Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+        )));
+        match rows {
+            Ok(it) => it.flatten().collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+
+    if peer_targets.is_empty() {
+        return Ok(());
+    }
+
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()?;
+
+    for (peer_alias, address) in peer_targets {
+        let base = address.trim_end_matches('/');
+        // 1) peer 의 unlock → session_token
+        let unlock_resp = http.post(format!("{base}/v1/auth/unlock"))
+            .json(&serde_json::json!({"password": local_pw}))
+            .send().await;
+        let token: String = match unlock_resp {
+            Ok(r) => match r.json::<serde_json::Value>().await {
+                Ok(v) => v.get("session_token").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+                Err(_) => String::new(),
+            },
+            Err(_) => String::new(),
+        };
+        if token.is_empty() { continue; }
+
+        // 2) peer 의 /v1/gui/peers GET
+        let resp = http.get(format!("{base}/v1/gui/peers"))
+            .header("Authorization", format!("Bearer {token}"))
+            .send().await;
+        let remote_peers: Vec<serde_json::Value> = match resp {
+            Ok(r) => match r.json::<serde_json::Value>().await {
+                Ok(serde_json::Value::Array(a)) => a,
+                _ => Vec::new(),
+            },
+            Err(_) => Vec::new(),
+        };
+
+        let mut added = 0;
+        for p in &remote_peers {
+            let alias = p.get("alias").and_then(|v| v.as_str()).unwrap_or("");
+            if alias.is_empty() { continue; }
+            // 자기 자신 skip
+            if alias == self_alias { continue; }
+            let addr = p.get("address").and_then(|v| v.as_str()).unwrap_or("");
+            let pk = p.get("public_key_hex").and_then(|v| v.as_str()).unwrap_or("0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000");
+            let role = p.get("role").and_then(|v| v.as_str()).unwrap_or("worker");
+
+            let id = format!("{}-sync-{}", alias, &uuid::Uuid::new_v4().to_string()[..8]);
+            let mut guard = db.lock().await;
+            let result = guard.conn().execute(
+                "INSERT INTO peers (id, alias, public_key_hex, address, role, last_seen, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'), datetime('now')) \
+                 ON CONFLICT(alias) DO UPDATE SET address = excluded.address, last_seen = datetime('now')",
+                rusqlite::params![id, alias, pk, addr, role],
+            );
+            if result.is_ok() { added += 1; }
+        }
+        if added > 0 {
+            tracing::info!(via=%peer_alias, count=added, "peer_sync: upserted from remote /v1/gui/peers");
+        }
+    }
+
+    Ok(())
 }
 
 /// L0 messages 를 스캔해서 키워드 기반으로 patterns/mistakes 자동 등록.
