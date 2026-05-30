@@ -109,11 +109,23 @@ try {
     Get-ScheduledTask -ErrorAction SilentlyContinue |
         Where-Object { $_.TaskName -like "*xgram*" -or $_.TaskName -like "*OpenXgram*" } |
         ForEach-Object {
-            Write-Host "    -> stop scheduled task: $($_.TaskName)"
+            Write-Host "    -> stop + disable scheduled task: $($_.TaskName)"
+            # rc.186 patch: stop + disable. /End 만 으로는 5초 후 wrapper restart 가 새 process spawn → kill race.
+            # Disable 가 task 자체 비활성 → spawn 안 함. Step 8.5 후 다시 Enable.
             schtasks /End /TN $_.TaskName 2>$null | Out-Null
+            Disable-ScheduledTask -TaskName $_.TaskName -ErrorAction SilentlyContinue | Out-Null
             $script:stoppedTasks += $_.TaskName
         }
 } catch {}
+# wrapper.cmd 의 cmd.exe + xgram.exe descendants 모두 kill (Scheduled Task 가 disable 된 후라 안 spawn).
+try {
+    $procs = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object { ($_.Name -eq 'cmd.exe' -and $_.CommandLine -match 'openxgram-daemon-wrapper') -or $_.Name -eq 'xgram.exe' }
+    foreach ($p in $procs) {
+        Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+} catch {}
+Start-Sleep -Seconds 2
 try {
     Get-Service -ErrorAction SilentlyContinue |
         Where-Object { ($_.Name -like "*xgram*" -or $_.Name -like "*OpenXgram*") -and $_.Status -eq 'Running' } |
