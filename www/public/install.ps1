@@ -344,48 +344,66 @@ if ($stoppedTasks.Count -gt 0 -or $stoppedSvcs.Count -gt 0) {
 }
 
 
-# 8.5 (rc.174+, updated rc.182) Auto-register Scheduled Task 'OpenXgram-Daemon' (ONLOGON) + auto-restart on exit.
-#      ONLOGON trigger + REPEAT every 1 min for indefinite duration + RestartCount=999 if task fails.
-#      rc.182: 핵심 변경 — auto restart on daemon process exit (이전엔 process 죽으면 dead).
-#      Wrapper script (.cmd) 가 무한 loop 으로 daemon 실행 → 죽으면 5초 후 재시작.
-$daemonTaskName = 'OpenXgram-Daemon'
-Write-Host ''
-Write-Host '==> Step 8.5: register OpenXgram-Daemon Scheduled Task (auto-start + auto-restart)' -ForegroundColor Cyan
+# 8.5 (rc.187+) NSSM service 등록 — Windows daemon standard.
+#      NSSM 가 process 죽으면 자동 restart (built-in). start=auto = 재부팅 후 자동.
+#      옛 wrapper.cmd + Scheduled Task 접근 폐기 — 비표준 + edge case 많음.
+$serviceName = 'OpenXgram-Daemon'
 $dataDir = Join-Path $env:USERPROFILE '.openxgram'
 $daemonLog = Join-Path $dataDir 'daemon.log'
-$wrapperPath = Join-Path $INSTALL 'openxgram-daemon-wrapper.cmd'
+Write-Host ''
+Write-Host '==> Step 8.5: NSSM service register (Windows daemon standard)' -ForegroundColor Cyan
 
-# Wrapper .cmd: infinite loop. daemon process 가 exit 하면 5초 후 재시작 (kernel signal trap 같이).
-# Windows 의 Scheduled Task 의 restart-on-fail 보다 robust (exit code 0 이여도 restart).
-$wrapperContent = @"
-@echo off
-:loop
-echo [%DATE% %TIME%] starting openxgram daemon >> "$daemonLog" 2>&1
-REM rc.184: --bind 0.0.0.0 external access. GUI port 는 daemon 자체 fallback (47302 fail 시 17302/47312/27302/random 자동).
-"$INSTALL\xgram.exe" daemon --bind 0.0.0.0:47300 --gui-bind 0.0.0.0:47302 >> "$daemonLog" 2>&1
-echo [%DATE% %TIME%] daemon exited code=%ERRORLEVEL%, restart in 5s >> "$daemonLog" 2>&1
-timeout /t 5 /nobreak > nul
-goto loop
-"@
-try {
-    Set-Content -Path $wrapperPath -Value $wrapperContent -Encoding ASCII -Force
-    Write-Host "    [OK] wrapper script: $wrapperPath"
-} catch {
-    Write-Host "    [WARN] wrapper script write failed: $($_.Exception.Message)" -ForegroundColor Yellow
+# NSSM 자동 install (winget) — 없으면.
+$nssmPath = (Get-Command nssm.exe -ErrorAction SilentlyContinue).Source
+if (-not $nssmPath) {
+    # 표준 winget 경로 시도
+    $candidates = @(
+        "$env:LOCALAPPDATA\Microsoft\WinGet\Links\nssm.exe",
+        "$env:ProgramFiles\nssm\nssm.exe",
+        "${env:ProgramFiles(x86)}\nssm\nssm.exe"
+    )
+    foreach ($c in $candidates) {
+        if (Test-Path $c) { $nssmPath = $c; break }
+    }
+}
+if (-not $nssmPath) {
+    Write-Host '    -> NSSM not found, installing via winget...'
+    try {
+        & winget install --id NSSM.NSSM --silent --accept-source-agreements --accept-package-agreements 2>$null | Out-Null
+        Start-Sleep 2
+        $nssmPath = (Get-Command nssm.exe -ErrorAction SilentlyContinue).Source
+        if (-not $nssmPath) { $nssmPath = "$env:LOCALAPPDATA\Microsoft\WinGet\Links\nssm.exe" }
+    } catch {}
 }
 
-$action  = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c `"$wrapperPath`"" -WorkingDirectory $INSTALL
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
-# rc.183: ExecutionTimeLimit 제거 → default (PT72H or 무제한) 사용. P36500D 가 Windows max 초과로 등록 fail 한 버그 수정.
-$settings.ExecutionTimeLimit = 'PT0S'  # PT0S = no limit (Windows Task Scheduler 의 무제한 표현)
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
-try {
-    Register-ScheduledTask -TaskName $daemonTaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'OpenXgram sidecar daemon (auto-start on logon + infinite restart loop)' -Force | Out-Null
-    Write-Host "    [OK] Scheduled Task '$daemonTaskName' registered (auto-start + auto-restart loop)"
-    Start-ScheduledTask -TaskName $daemonTaskName -ErrorAction SilentlyContinue
-} catch {
-    Write-Host "    [WARN] Scheduled Task register failed: $($_.Exception.Message)" -ForegroundColor Yellow
+if ($nssmPath -and (Test-Path $nssmPath)) {
+    Write-Host "    -> NSSM: $nssmPath"
+    # 옛 service 제거 (있으면)
+    & $nssmPath stop $serviceName 2>$null | Out-Null
+    & $nssmPath remove $serviceName confirm 2>$null | Out-Null
+    Start-Sleep 1
+
+    # 등록 + 설정
+    & $nssmPath install $serviceName "$INSTALL\xgram.exe" 2>&1 | Out-Null
+    & $nssmPath set $serviceName AppParameters 'daemon --bind 0.0.0.0:47300 --gui-bind 0.0.0.0:47302' | Out-Null
+    & $nssmPath set $serviceName AppDirectory $INSTALL | Out-Null
+    & $nssmPath set $serviceName AppStdout $daemonLog | Out-Null
+    & $nssmPath set $serviceName AppStderr "$daemonLog.err" | Out-Null
+    & $nssmPath set $serviceName AppExit Default Restart | Out-Null
+    & $nssmPath set $serviceName AppRestartDelay 3000 | Out-Null
+    & $nssmPath set $serviceName Start SERVICE_AUTO_START | Out-Null
+    # env 전달 (vault password 등)
+    if ($env:XGRAM_KEYSTORE_PASSWORD) {
+        & $nssmPath set $serviceName AppEnvironmentExtra "XGRAM_KEYSTORE_PASSWORD=$env:XGRAM_KEYSTORE_PASSWORD" | Out-Null
+    }
+    & $nssmPath start $serviceName 2>&1 | Out-Null
+    Write-Host "    [OK] NSSM service '$serviceName' registered (auto-restart + auto-start on boot)"
+
+    # 옛 Scheduled Task 제거 (clean migration)
+    Unregister-ScheduledTask -TaskName $serviceName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+    Remove-Item (Join-Path $INSTALL 'openxgram-daemon-wrapper.cmd') -Force -ErrorAction SilentlyContinue | Out-Null
+} else {
+    Write-Host '    [WARN] NSSM not available — daemon auto-restart not configured. Manual: winget install NSSM.NSSM' -ForegroundColor Yellow
 }
 
 # 8.6 (rc.174+) WSL warm-up on logon (if wsl.exe available).
