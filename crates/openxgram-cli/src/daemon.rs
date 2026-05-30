@@ -95,22 +95,32 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
 
     // inbound processor — 1초 주기로 server.drain_received() 한 후 envelope.from 매칭으로
     // peer.touch_by_eth_address. 매칭 실패는 silent (anonymous envelope 도 정상 도착).
+    // rc.190 — 명시 logging 추가 (마스터 본질 fix). zalman 측 process_inbound 호출 안 되는 root cause 식별.
     let data_dir_clone = opts.data_dir.clone();
     let received_arc = std::sync::Arc::new(server);
     let received_for_task = received_arc.clone();
     let processor = tokio::spawn(async move {
+        tracing::info!("inbound_processor: task spawned, 1s polling start");
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        let mut tick_count: u64 = 0;
         loop {
             interval.tick().await;
+            tick_count += 1;
             let envelopes = received_for_task.drain_received();
+            if tick_count % 60 == 0 {
+                tracing::debug!(tick=tick_count, "inbound_processor: heartbeat (no envelopes recently)");
+            }
             if envelopes.is_empty() {
                 continue;
             }
-            if let Err(e) = process_inbound(&data_dir_clone, &envelopes) {
-                tracing::warn!(error = %e, "inbound processor 처리 실패");
+            tracing::info!(count=envelopes.len(), tick=tick_count, "inbound_processor: envelopes drained, calling process_inbound");
+            match process_inbound(&data_dir_clone, &envelopes) {
+                Ok(_) => tracing::info!(count=envelopes.len(), "inbound_processor: process_inbound 성공"),
+                Err(e) => tracing::warn!(error = %e, "inbound_processor: process_inbound 실패"),
             }
         }
     });
+    tracing::info!("inbound_processor: spawn complete (main thread)");
     println!("  ✓ inbound processor running (1s interval)");
 
     // Discord inbound listener — rc.92: 멀티 봇 지원.
