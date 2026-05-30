@@ -671,8 +671,13 @@ function MessengerRegisterTab(props: { peer: PeerMeta; onJumpToSettings: () => v
  }
 } catch (e) { /* silent */}
 }
- createEffect(() => {
- alias();
+ // rc.183 — 이슈 #8 fix: alias 가 진짜 변경됐을 때만 reload.
+// 이전: 매 reactive trigger 마다 loadInstructions → setInstContent → textarea reset → 입력 안 됨.
+let lastLoadedAlias: string | null = null;
+createEffect(() => {
+ const a = alias();
+ if (a === lastLoadedAlias) return;  // 같은 alias 면 skip
+ lastLoadedAlias = a;
  loadInstructions();
  // rc.130 — 진입 시 auto-detect 자동 호출 (수동 버튼 클릭 불필요)
  autoDetect();
