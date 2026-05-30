@@ -665,16 +665,17 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 }
                 let (alias, role) = chosen.ok_or_else(|| invalid("매칭되는 peer 없음 — register_subagent 호출 안 됨"))?;
 
-                // rc.193 본질 fix — 매칭만 하지 말고 자동 peer_send 까지 (오케스트레이션 본질).
-                // peer_send 가 sender keystore unlock 필요 → daemon process 의 env XGRAM_KEYSTORE_PASSWORD 사용.
+                // rc.194 본질 fix — 매칭만 하지 말고 자동 peer_send 까지 (오케스트레이션 본질).
+                // rc.195 — tokio runtime 안에서 block_on 호출 시 panic. block_in_place 로 우회.
                 let pw = openxgram_core::env::require_password()
                     .map_err(|e| internal(&format!("XGRAM_KEYSTORE_PASSWORD 필요 (daemon env): {e}")))?;
                 let data_dir = self.data_dir.clone();
                 let task_clone = task.to_string();
                 let alias_clone = alias.clone();
-                let handle = tokio::runtime::Handle::current();
-                let send_result = handle.block_on(async move {
-                    crate::peer_send::run_peer_send(&data_dir, &alias_clone, None, &task_clone, &pw).await
+                let send_result = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async move {
+                        crate::peer_send::run_peer_send(&data_dir, &alias_clone, None, &task_clone, &pw).await
+                    })
                 });
                 let (sent, error) = match send_result {
                     Ok(()) => (true, None),
