@@ -223,11 +223,15 @@ pub async fn peer_sync_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
             s
         } else {
             // fallback: manifest 의 machine.alias
-            let manifest_path = openxgram_core::paths::manifest_path(
-                &std::env::var("XGRAM_DATA_DIR")
-                    .map(std::path::PathBuf::from)
-                    .unwrap_or_else(|_| dirs::home_dir().unwrap_or_default().join(".openxgram"))
-            );
+            let data_dir = std::env::var("XGRAM_DATA_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    let home = std::env::var("HOME")
+                        .or_else(|_| std::env::var("USERPROFILE"))
+                        .unwrap_or_default();
+                    std::path::PathBuf::from(home).join(".openxgram")
+                });
+            let manifest_path = openxgram_core::paths::manifest_path(&data_dir);
             openxgram_manifest::InstallManifest::read(manifest_path)
                 .ok()
                 .map(|m| m.machine.alias)
