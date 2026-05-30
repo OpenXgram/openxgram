@@ -129,15 +129,26 @@ Start-Sleep -Milliseconds 500
 # 4a. Locked .exe causes silent skip — kill running processes first.
 # v0.2.0-rc.24+: xgram-desktop deprecated (Tauri -> web GUI) — only check xgram.
 # rc.166+: 최대 5회 재시도 (respawn race 방지).
+# rc.186+: wrapper.cmd 의 cmd.exe parent + xgram.exe child 둘 다 kill.
 for ($i = 0; $i -lt 5; $i++) {
     $running = Get-Process -Name xgram -ErrorAction SilentlyContinue
-    if (-not $running) { break }
+    # cmd.exe 중 openxgram-daemon-wrapper 실행 중인 것도 찾음
+    $wrapperCmds = @()
+    try {
+        $wrapperCmds = Get-CimInstance Win32_Process -Filter "Name='cmd.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -and $_.CommandLine -match 'openxgram-daemon-wrapper' }
+    } catch {}
+    if (-not $running -and (-not $wrapperCmds -or $wrapperCmds.Count -eq 0)) { break }
     if ($i -eq 0) { Write-Host "    -> killing running OpenXgram processes for update (no reboot)" }
     foreach ($p in $running) {
         Write-Host "      - $($p.Name) (PID $($p.Id))"
         Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
     }
-    Start-Sleep -Milliseconds 400
+    foreach ($w in $wrapperCmds) {
+        Write-Host "      - wrapper cmd.exe (PID $($w.ProcessId))"
+        Stop-Process -Id $w.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Milliseconds 600
 }
 
 # 4b. Delete & recreate install dir — avoids all PS 5.1 silent-skip cases.
