@@ -278,24 +278,42 @@ if ($stoppedTasks.Count -gt 0 -or $stoppedSvcs.Count -gt 0) {
 }
 
 
-# 8.5 (rc.174+, rc.177 updated) Auto-register Scheduled Task 'OpenXgram-Daemon' (ONLOGON).
-#      Triggers xgram daemon on user logon = Windows startup-program effect.
-#      rc.177: cmd /c wrapper for stdout/stderr redirect → daemon.log (diagnostics).
-#      Force unregister+register so existing task gets new action (redirect).
+# 8.5 (rc.174+, updated rc.182) Auto-register Scheduled Task 'OpenXgram-Daemon' (ONLOGON) + auto-restart on exit.
+#      ONLOGON trigger + REPEAT every 1 min for indefinite duration + RestartCount=999 if task fails.
+#      rc.182: 핵심 변경 — auto restart on daemon process exit (이전엔 process 죽으면 dead).
+#      Wrapper script (.cmd) 가 무한 loop 으로 daemon 실행 → 죽으면 5초 후 재시작.
 $daemonTaskName = 'OpenXgram-Daemon'
 Write-Host ''
-Write-Host '==> Step 8.5: register OpenXgram-Daemon Scheduled Task (auto-start on logon)' -ForegroundColor Cyan
+Write-Host '==> Step 8.5: register OpenXgram-Daemon Scheduled Task (auto-start + auto-restart)' -ForegroundColor Cyan
 $dataDir = Join-Path $env:USERPROFILE '.openxgram'
 $daemonLog = Join-Path $dataDir 'daemon.log'
-# cmd /c wrapper: stdout >> daemon.log, stderr >> daemon.log (both → same file).
-$cmdArg = "/c `"`"$INSTALL\xgram.exe`" daemon >> `"$daemonLog`" 2>>&1`""
-$action  = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument $cmdArg -WorkingDirectory $INSTALL
+$wrapperPath = Join-Path $INSTALL 'openxgram-daemon-wrapper.cmd'
+
+# Wrapper .cmd: infinite loop. daemon process 가 exit 하면 5초 후 재시작 (kernel signal trap 같이).
+# Windows 의 Scheduled Task 의 restart-on-fail 보다 robust (exit code 0 이여도 restart).
+$wrapperContent = @"
+@echo off
+:loop
+echo [$(Get-Date)] starting openxgram daemon >> "$daemonLog" 2>&1
+"$INSTALL\xgram.exe" daemon >> "$daemonLog" 2>&1
+echo [$(Get-Date)] daemon exited code=%ERRORLEVEL%, restart in 5s >> "$daemonLog" 2>&1
+timeout /t 5 /nobreak > nul
+goto loop
+"@
+try {
+    Set-Content -Path $wrapperPath -Value $wrapperContent -Encoding ASCII -Force
+    Write-Host "    [OK] wrapper script: $wrapperPath"
+} catch {
+    Write-Host "    [WARN] wrapper script write failed: $($_.Exception.Message)" -ForegroundColor Yellow
+}
+
+$action  = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c `"$wrapperPath`"" -WorkingDirectory $INSTALL
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Days 36500) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
 try {
-    Register-ScheduledTask -TaskName $daemonTaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'OpenXgram sidecar daemon (auto-start on logon, stdout->daemon.log)' -Force | Out-Null
-    Write-Host "    [OK] Scheduled Task '$daemonTaskName' registered (auto-start + stdout redirect)"
+    Register-ScheduledTask -TaskName $daemonTaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'OpenXgram sidecar daemon (auto-start on logon + infinite restart loop)' -Force | Out-Null
+    Write-Host "    [OK] Scheduled Task '$daemonTaskName' registered (auto-start + auto-restart loop)"
     Start-ScheduledTask -TaskName $daemonTaskName -ErrorAction SilentlyContinue
 } catch {
     Write-Host "    [WARN] Scheduled Task register failed: $($_.Exception.Message)" -ForegroundColor Yellow
