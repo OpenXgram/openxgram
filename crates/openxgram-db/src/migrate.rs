@@ -186,11 +186,48 @@ const MIGRATIONS: &[Migration] = &[
         name: "agent_capabilities",
         sql: include_str!("../migrations/0035_agent_capabilities.sql"),
     },
-    // 36~38: 이미 DB에 직접 적용됨 (schema_migrations 미등록 상태). SKIP.
+    // rc.196 — 36/37/38 잘못된 SKIP 가정 fix. 새 install (zalman 등) 에서 안 적용되어
+    // 'no column named group_name' error 로 messenger 등록 fail 한 본질 결함.
+    // runner 가 'duplicate column' 은 graceful skip (이미 수동 ALTER 된 server-seoul case).
+    Migration {
+        version: 36,
+        name: "messenger_group",
+        sql: include_str!("../migrations/0036_messenger_group.sql"),
+    },
+    Migration {
+        version: 37,
+        name: "agent_orchestration",
+        sql: include_str!("../migrations/0037_agent_orchestration.sql"),
+    },
+    Migration {
+        version: 38,
+        name: "agent_templates",
+        sql: include_str!("../migrations/0038_agent_templates.sql"),
+    },
     Migration {
         version: 39,
         name: "memory_embeddings",
         sql: include_str!("../migrations/0039_memory_embeddings.sql"),
+    },
+    Migration {
+        version: 40,
+        name: "message_ack",
+        sql: include_str!("../migrations/0040_message_ack.sql"),
+    },
+    Migration {
+        version: 41,
+        name: "peer_gui_address",
+        sql: include_str!("../migrations/0041_peer_gui_address.sql"),
+    },
+    Migration {
+        version: 42,
+        name: "session_binding_echo_state",
+        sql: include_str!("../migrations/0042_session_binding_echo_state.sql"),
+    },
+    Migration {
+        version: 43,
+        name: "binding_proj_name",
+        sql: include_str!("../migrations/0043_binding_proj_name.sql"),
     },
 ];
 
@@ -232,10 +269,29 @@ impl<'a> MigrationRunner<'a> {
             tracing::info!(version = m.version, name = m.name, "applying migration");
 
             let tx = self.conn.transaction()?;
-            tx.execute_batch(m.sql).map_err(|e| DbError::Migration {
-                version: m.version,
-                reason: e.to_string(),
-            })?;
+            // rc.196: ALTER ADD COLUMN 가 이미 수동 적용된 경우 (server-seoul 36-38 case)
+            // 'duplicate column name' 으로 fail. graceful skip — schema_migrations 만 등록.
+            match tx.execute_batch(m.sql) {
+                Ok(_) => {}
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("duplicate column name")
+                        || msg.contains("already exists")
+                    {
+                        tracing::info!(
+                            version = m.version,
+                            name = m.name,
+                            error = %msg,
+                            "migration partial (column/object already exists) — schema_migrations 만 mark"
+                        );
+                    } else {
+                        return Err(DbError::Migration {
+                            version: m.version,
+                            reason: msg,
+                        });
+                    }
+                }
+            }
 
             let now = chrono::Local::now().to_rfc3339();
             let affected = tx.execute(

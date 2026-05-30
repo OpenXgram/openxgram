@@ -93,6 +93,15 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
         .context("messenger enforcement workers 가동 실패")?;
     println!("  ✓ messenger workers (M-4 / M-6 / L6 / V6) spawned");
 
+    // rc.196 — retroactive register: messenger_enabled=1 인데 peer entry 없는 옛 agent 들의
+    // sub-keystore + peer 자동 생성. 마스터의 portal/akashic 등 ui 토글만 켜고 rc.192 fix 이전
+    // 등록된 agent 들이 mock 상태였던 본질 결함 해결.
+    match retroactive_register_agents(&opts.data_dir) {
+        Ok(n) if n > 0 => println!("  ✓ rc.196 retroactive: {n} 옛 agent → verified peer 자동 등록"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "rc.196 retroactive register 실패 (계속 진행)"),
+    }
+
     // inbound processor — 1초 주기로 server.drain_received() 한 후 envelope.from 매칭으로
     // peer.touch_by_eth_address. 매칭 실패는 silent (anonymous envelope 도 정상 도착).
     // rc.190 — 명시 logging 추가 (마스터 본질 fix). zalman 측 process_inbound 호출 안 되는 root cause 식별.
@@ -539,5 +548,105 @@ async fn register_workflow_cron_jobs(
             tracing::info!("workflow cron 등록: {} ({})", name, cron_expr);
         }
     }
+    Ok(registered)
+}
+
+/// rc.196 — retroactive register agents.
+/// messenger_enabled=1 인 모든 agent 가 sub-keystore + peer 등록되어 있는지 보장.
+/// rc.192 fix (UI 토글 시 자동 등록) 이전에 등록된 옛 agent 들이 mock 상태였던 본질 결함 해결.
+/// daemon startup 시 한 번 실행 (idempotent).
+fn retroactive_register_agents(data_dir: &std::path::Path) -> anyhow::Result<usize> {
+    let pw = match openxgram_core::env::require_password() {
+        Ok(p) => p,
+        Err(_) => return Ok(0), // keystore password 없음 — skip (CLI mode 등)
+    };
+
+    let mut db = openxgram_db::Db::open(openxgram_db::DbConfig {
+        path: openxgram_core::paths::db_path(data_dir),
+        ..Default::default()
+    })?;
+
+    let candidates: Vec<String> = {
+        let mut stmt = db.conn().prepare(
+            "SELECT alias FROM agent_capabilities WHERE messenger_enabled = 1
+             AND alias NOT IN (SELECT alias FROM peers)
+             AND alias IS NOT NULL AND alias != ''",
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    // rc.196 추가 fix — self-peer (master alias) 의 address 가 'http://unknown' 또는 빈값이면
+    // 실제 transport URL 로 update. retroactive 가 reply 못 보내던 본질 결함 해결.
+    let local_url = std::env::var("XGRAM_TRANSPORT_PUBLIC_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:47300".to_string());
+    let updated = db.conn().execute(
+        "UPDATE peers SET address = ?1
+         WHERE (address = 'http://unknown' OR address = '' OR address IS NULL)
+           AND eth_address IS NOT NULL AND eth_address != ''",
+        rusqlite::params![local_url],
+    ).unwrap_or(0);
+    if updated > 0 {
+        tracing::info!(updated = updated, addr = %local_url, "rc.196 self-peer address fix (http://unknown → real)");
+    }
+
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+
+    tracing::info!(
+        count = candidates.len(),
+        "rc.196 retroactive: 옛 messenger_enabled=1 agent → sub-keystore + peer 자동 등록 시작"
+    );
+
+    use openxgram_keystore::{FsKeystore, Keystore};
+    let ks = FsKeystore::new(openxgram_core::paths::keystore_dir(data_dir));
+    let local_addr = local_url;
+
+    let mut registered = 0;
+    for alias in &candidates {
+        // 'null', 'star [aoe-window]' 같은 invalid alias skip
+        if alias == "null" || alias.contains('[') || alias.contains('\n') {
+            continue;
+        }
+        let kp = match ks.load(alias, &pw) {
+            Ok(k) => k,
+            Err(_) => {
+                if let Err(e) = ks.create(alias, &pw) {
+                    tracing::warn!(alias = %alias, error = %e, "retroactive: keypair 생성 실패");
+                    continue;
+                }
+                match ks.load(alias, &pw) {
+                    Ok(k) => k,
+                    Err(e) => {
+                        tracing::warn!(alias = %alias, error = %e, "retroactive: keypair load 실패");
+                        continue;
+                    }
+                }
+            }
+        };
+        let pubkey_hex = hex::encode(kp.public_key_bytes());
+        let eth_addr = kp.address.to_string();
+
+        let mut peer_store = openxgram_peer::PeerStore::new(&mut db);
+        match peer_store.add_with_eth(
+            alias,
+            &pubkey_hex,
+            &local_addr,
+            Some(&eth_addr),
+            openxgram_peer::PeerRole::Worker,
+            Some("rc.196 retroactive (옛 messenger_enabled=1 agent 자동 등록)"),
+        ) {
+            Ok(_) => {
+                tracing::info!(alias = %alias, eth = %eth_addr, "retroactive: peer 등록 성공");
+                registered += 1;
+            }
+            Err(e) => {
+                tracing::debug!(alias = %alias, error = %e, "retroactive: peer add skip (이미 있거나 충돌)");
+            }
+        }
+    }
+
+    tracing::info!(registered = registered, candidates = candidates.len(), "rc.196 retroactive 완료");
     Ok(registered)
 }
