@@ -48,6 +48,17 @@ pub struct Envelope {
     /// 서명에는 포함되지 않음 (전송 메타데이터). None 이면 수신측이 새 conversation 시작.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<String>,
+    /// rc.193 — sender 자동 등록 hint (수신측이 unknown sender 자동 peer upsert).
+    /// `sender_alias` = sender 의 alias (수신측 peers table 의 alias).
+    /// `sender_transport_url` = sender 머신의 외부 reach 가능 URL (예: http://100.101.237.9:47300).
+    /// `sender_pubkey_hex` = sender 의 compressed secp256k1 pubkey (서명 검증 용).
+    /// 메타데이터 — 서명 검증 대상 아님. 거짓 가능성 있지만 자동 등록은 best-effort.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_alias: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_transport_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_pubkey_hex: Option<String>,
 }
 
 #[derive(Debug, Error)]

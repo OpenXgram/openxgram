@@ -334,7 +334,7 @@ pub fn process_inbound(
     for env in envelopes {
         // rc.173 — 메신저 본질: unknown peer 도 inbox 에 저장 (Telegram/카카오톡 식).
         // 단 신원 미검증 표시. 검증 정책은 sender_label prefix 로 구분 (peer: vs unverified:).
-        let peer_opt = match PeerStore::new(&mut db).get_by_eth_address(&env.from) {
+        let mut peer_opt = match PeerStore::new(&mut db).get_by_eth_address(&env.from) {
             Ok(opt) => opt,
             Err(e) => {
                 tracing::warn!(error = %e, "peer 조회 실패");
@@ -345,6 +345,43 @@ pub fn process_inbound(
         // payload decode — 실패 시 placeholder body
         let payload_bytes = hex::decode(&env.payload_hex).unwrap_or_default();
         let sig_bytes = hex::decode(&env.signature_hex).unwrap_or_default();
+
+        // rc.193 본질 fix — unknown peer + sender hint (alias, pubkey, transport_url) 있으면 자동 등록.
+        // 서명 검증 OK 인 경우만 (sender 가 자기 pubkey 로 sign 했는지). 거짓 alias claim 방지.
+        if peer_opt.is_none() {
+            if let (Some(alias), Some(pubkey_hex)) =
+                (env.sender_alias.as_deref(), env.sender_pubkey_hex.as_deref())
+            {
+                if verify_with_pubkey(pubkey_hex, &payload_bytes, &sig_bytes).is_ok() {
+                    let addr = env
+                        .sender_transport_url
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("http://unknown");
+                    let mut peer_store = PeerStore::new(&mut db);
+                    match peer_store.add_with_eth(
+                        alias,
+                        pubkey_hex,
+                        addr,
+                        Some(&env.from),
+                        openxgram_peer::PeerRole::Worker,
+                        Some("auto-registered via envelope sender hint (rc.193)"),
+                    ) {
+                        Ok(p) => {
+                            tracing::info!(alias = %alias, eth = %env.from, "rc.193 auto-peer-upsert 성공 (sender hint + signature 검증 OK)");
+                            peer_opt = Some(p);
+                        }
+                        Err(e) => {
+                            // UNIQUE alias 충돌 등 — silent
+                            tracing::debug!(alias = %alias, error = %e, "auto-peer-upsert skip (이미 있거나 alias 충돌)");
+                            if let Ok(Some(p)) = PeerStore::new(&mut db).get_by_eth_address(&env.from) {
+                                peer_opt = Some(p);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // 서명 검증 — peer 있고 서명 verify 성공 시만 verified.
         let verified = match &peer_opt {

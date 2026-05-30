@@ -136,6 +136,29 @@ pub async fn run_peer_send_with_conv(
     let signature_hex = hex::encode(master.sign(body.as_bytes()));
     let payload_hex = hex::encode(body.as_bytes());
 
+    // rc.193 — sender 자동 등록 hint. 수신측 process_inbound 가 unknown sender 자동 peer upsert.
+    // sender_alias: sender 명시된 경우 그 alias, 아니면 install-manifest 의 machine.alias (master).
+    // sender_transport_url: env XGRAM_TRANSPORT_PUBLIC_URL 우선, 없으면 install-manifest tailscale_ip + port.
+    // sender_pubkey_hex: signer 의 압축 공개키 (서명 검증 + 자동 peer 등록 용).
+    let manifest_opt = openxgram_manifest::InstallManifest::read(
+        openxgram_core::paths::manifest_path(data_dir),
+    )
+    .ok();
+    let sender_alias = sender
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .or_else(|| manifest_opt.as_ref().map(|m| m.machine.alias.clone()));
+    let sender_transport_url = std::env::var("XGRAM_TRANSPORT_PUBLIC_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            manifest_opt
+                .as_ref()
+                .and_then(|m| m.machine.tailscale_ip.clone())
+                .map(|ip| format!("http://{ip}:47300"))
+        });
+    let sender_pubkey_hex = Some(hex::encode(master.public_key_bytes()));
+
     let envelope = Envelope {
         from: sender_addr,
         to: peer.public_key_hex.clone(),
@@ -144,6 +167,9 @@ pub async fn run_peer_send_with_conv(
         signature_hex,
         nonce: Some(uuid::Uuid::new_v4().to_string()),
         conversation_id,
+        sender_alias,
+        sender_transport_url,
+        sender_pubkey_hex,
     };
 
     match parse_route(&address, &peer.public_key_hex)? {
@@ -208,6 +234,22 @@ pub async fn run_peer_broadcast(
     let signature_hex = hex::encode(master.sign(body.as_bytes()));
     let payload_hex = hex::encode(body.as_bytes());
     let now = kst_now();
+    // rc.193 sender hint — broadcast 도 자동 등록 hint 제공.
+    let manifest_opt = openxgram_manifest::InstallManifest::read(
+        openxgram_core::paths::manifest_path(data_dir),
+    )
+    .ok();
+    let bcast_sender_alias = manifest_opt.as_ref().map(|m| m.machine.alias.clone());
+    let bcast_sender_transport_url = std::env::var("XGRAM_TRANSPORT_PUBLIC_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            manifest_opt
+                .as_ref()
+                .and_then(|m| m.machine.tailscale_ip.clone())
+                .map(|ip| format!("http://{ip}:47300"))
+        });
+    let bcast_sender_pubkey_hex = Some(hex::encode(master.public_key_bytes()));
 
     // 1. db open 1회 — 모든 peer 의 (alias, address, public_key) 미리 resolve
     let mut targets: Vec<(String, String, String)> = Vec::new();
@@ -243,6 +285,9 @@ pub async fn run_peer_broadcast(
             signature_hex: signature_hex.clone(),
             nonce: Some(uuid::Uuid::new_v4().to_string()),
             conversation_id: None,
+            sender_alias: bcast_sender_alias.clone(),
+            sender_transport_url: bcast_sender_transport_url.clone(),
+            sender_pubkey_hex: bcast_sender_pubkey_hex.clone(),
         };
         match route {
             SendRoute::Http(url) => {
