@@ -298,6 +298,7 @@ fn gather_db_metrics(data_dir: &std::path::Path) -> String {
 /// drain 된 envelope 들을 한 번의 DB open 으로 처리.
 /// 각 envelope: peer 조회 → 서명 검증 → L0 message insert → peer.touch (성공 시).
 /// 검증 실패·미등록 peer 는 silent drop + WARN (PRD-2.0.1 / 2.0.2 / 2.0.3).
+/// rc.181 — Step 2 silent fail 진단 위한 명시 로깅 강화.
 pub fn process_inbound(
     data_dir: &std::path::Path,
     envelopes: &[openxgram_transport::Envelope],
@@ -307,13 +308,18 @@ pub fn process_inbound(
     use openxgram_memory::{default_embedder, MessageStore, SessionStore};
     use openxgram_peer::PeerStore;
 
+    tracing::info!(count = envelopes.len(), "process_inbound: entry");
+
     let mut db = Db::open(DbConfig {
         path: db_path(data_dir),
         ..Default::default()
     })
     .context("DB open (inbound) 실패")?;
+    tracing::debug!("process_inbound: DB open ok");
     db.migrate().context("DB migrate (inbound) 실패")?;
+    tracing::debug!("process_inbound: migrate ok");
     let embedder = default_embedder().context("embedder init 실패")?;
+    tracing::debug!("process_inbound: embedder init ok");
 
     for env in envelopes {
         // rc.173 — 메신저 본질: unknown peer 도 inbox 에 저장 (Telegram/카카오톡 식).
@@ -345,10 +351,14 @@ pub fn process_inbound(
 
         // session 매핑 — alias 별 inbox session ensure (PRD-2.0.3)
         let session_title = format!("inbox-from-{}", alias);
+        tracing::debug!(session_title=%session_title, "process_inbound: ensure_by_title 호출");
         let session = match SessionStore::new(&mut db).ensure_by_title(&session_title, "inbound") {
-            Ok(s) => s,
+            Ok(s) => {
+                tracing::debug!(session_id=%s.id, "process_inbound: session ensure ok");
+                s
+            }
             Err(e) => {
-                tracing::warn!(error = %e, "session ensure 실패");
+                tracing::error!(error = %e, title=%session_title, "process_inbound: session ensure 실패 (silent X)");
                 continue;
             }
         };
@@ -361,6 +371,7 @@ pub fn process_inbound(
         } else {
             format!("unverified:{}", alias)
         };
+        tracing::debug!(session_id=%session.id, sender=%sender_label, body_len=body.len(), "process_inbound: MessageStore insert 시도");
         if let Err(e) = MessageStore::new(&mut db, embedder.as_ref()).insert(
             &session.id,
             &sender_label,
@@ -368,9 +379,10 @@ pub fn process_inbound(
             &env.signature_hex,
             env.conversation_id.as_deref(),
         ) {
-            tracing::warn!(error = %e, "L0 message insert 실패");
+            tracing::error!(error = %e, session_id=%session.id, "process_inbound: L0 insert 실패 (silent X)");
             continue;
         }
+        tracing::info!(session_id=%session.id, sender=%sender_label, body_len=body.len(), "process_inbound: 메시지 inbox 저장 완료");
         // dummy peer var for legacy code paths below (payment receipt, touch).
         let peer = match peer_opt {
             Some(p) => p,
