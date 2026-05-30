@@ -17,6 +17,25 @@ try {
     # Encoding setup failure doesn't block install — only messages may be garbled.
 }
 
+# rc.186 patch: admin 권한 자동 elevate. process kill 가 admin 필요한 케이스 대응.
+# UAC prompt 한 번만 → 모든 kill/Register-ScheduledTask admin 권한으로 실행.
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host '==> Re-launching as Administrator (UAC prompt)...' -ForegroundColor Cyan
+    $tempScript = Join-Path $env:TEMP ("openxgram-install-" + [guid]::NewGuid() + ".ps1")
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri 'https://openxgram.org/install.ps1' -OutFile $tempScript
+        $envPrefix = ''
+        if ($env:OPENXGRAM_VERSION) { $envPrefix = "`$env:OPENXGRAM_VERSION='$env:OPENXGRAM_VERSION'; " }
+        $cmd = "$envPrefix & '$tempScript'; Write-Host ''; Write-Host 'Done. Press Enter to close.'; Read-Host"
+        Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $cmd | Out-Null
+        Write-Host '   (continuing in elevated window — this window can be closed)' -ForegroundColor DarkGray
+        exit 0
+    } catch {
+        Write-Host "    [WARN] elevate 실패 ($($_.Exception.Message)) — non-admin 으로 계속 (일부 step 가 fail 할 수 있음)" -ForegroundColor Yellow
+    }
+}
+
 $ErrorActionPreference = 'Stop'
 
 $REPO     = 'OpenXgram/openxgram'
