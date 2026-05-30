@@ -101,6 +101,104 @@ pub fn spawn_all_with_data_dir(db: Arc<Mutex<Db>>, data_dir: PathBuf) {
             }
         }
     });
+    // rc.179 — Tailscale 자동 peer discovery (5분 주기).
+    // tailscale status --json 으로 tailnet 머신 detect + 각 머신의 OpenXgram daemon health check.
+    // 응답하면 자동 peer add (placeholder pubkey). 사용자 추가 작업 0 — 진짜 자동 메신저.
+    let db_td = db.clone();
+    tokio::spawn(async move {
+        // 초기 30초 대기 (daemon startup 직후 race 방지)
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        loop {
+            if let Err(e) = tailscale_discovery_tick(&db_td).await {
+                tracing::warn!("tailscale_discovery tick: {e}");
+            }
+            tokio::time::sleep(Duration::from_secs(300)).await;
+        }
+    });
+}
+
+/// rc.179 — Tailscale 자동 peer discovery.
+/// `tailscale status --json` 호출 → tailnet 머신 list → 각 머신의 OpenXgram daemon (7300/47300) health check
+/// → 응답하면 자동 peer add. 사용자 manual peer add 불필요.
+pub async fn tailscale_discovery_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
+    // 1) tailscale status --json (Linux/Windows/macOS 동일 명령)
+    let output = tokio::process::Command::new("tailscale")
+        .args(["status", "--json"])
+        .output().await;
+    let stdout = match output {
+        Ok(o) if o.status.success() => o.stdout,
+        Ok(_) | Err(_) => {
+            tracing::debug!("tailscale_discovery: tailscale command unavailable");
+            return Ok(());
+        }
+    };
+    let parsed: serde_json::Value = match serde_json::from_slice(&stdout) {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+
+    let self_name = parsed.get("Self").and_then(|s| s.get("HostName")).and_then(|n| n.as_str()).unwrap_or("").to_string();
+
+    // 2) Peer 머신 IP 수집 (online 만, funnel-ingress 제외)
+    let mut candidates: Vec<(String, String)> = Vec::new();  // (hostname, ip)
+    if let Some(peers) = parsed.get("Peer").and_then(|p| p.as_object()) {
+        for (_id, p) in peers {
+            let hostname = p.get("HostName").and_then(|n| n.as_str()).unwrap_or("");
+            if hostname.is_empty() || hostname.contains("funnel-ingress") { continue; }
+            let online = p.get("Online").and_then(|o| o.as_bool()).unwrap_or(false);
+            if !online { continue; }
+            if hostname == self_name { continue; }
+            // IPv4 만 (IPv6 OpenXgram daemon 가 listen 안 할 수도)
+            if let Some(ips) = p.get("TailscaleIPs").and_then(|a| a.as_array()) {
+                for ip in ips {
+                    if let Some(s) = ip.as_str() {
+                        if s.contains(':') { continue; }  // IPv6 skip
+                        candidates.push((hostname.to_string(), s.to_string()));
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if candidates.is_empty() { return Ok(()); }
+
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()?;
+
+    let mut discovered = 0;
+    for (hostname, ip) in candidates {
+        // 3) port 47300 / 7300 둘 다 시도 (OpenXgram transport)
+        let mut found_port: Option<u16> = None;
+        for port in [47300, 7300] {
+            let url = format!("http://{}:{}/v1/health", ip, port);
+            if let Ok(r) = http.get(&url).send().await {
+                if r.status().is_success() {
+                    found_port = Some(port);
+                    break;
+                }
+            }
+        }
+        let Some(port) = found_port else { continue; };
+        let address = format!("http://{}:{}", ip, port);
+
+        // 4) 자기 peers 에 upsert (alias = hostname)
+        let id = format!("ts-{}-{}", hostname, &uuid::Uuid::new_v4().to_string()[..8]);
+        let pk_placeholder = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001".to_string();
+        let mut guard = db.lock().await;
+        let r = guard.conn().execute(
+            "INSERT INTO peers (id, alias, public_key_hex, address, role, last_seen, created_at) \
+             VALUES (?1, ?2, ?3, ?4, 'worker', datetime('now'), datetime('now')) \
+             ON CONFLICT(alias) DO UPDATE SET address = excluded.address, last_seen = datetime('now')",
+            rusqlite::params![id, hostname, pk_placeholder, address],
+        );
+        if r.is_ok() { discovered += 1; }
+    }
+    if discovered > 0 {
+        tracing::info!(count=discovered, "tailscale_discovery: peers discovered+upserted");
+    }
+    Ok(())
 }
 
 /// rc.178 — cross-machine peer sync worker.
@@ -112,14 +210,29 @@ pub async fn peer_sync_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // 자기 alias (manifest 에서)
+    // 자기 alias — identity_settings → install-manifest.json fallback
     let self_alias: String = {
         let mut guard = db.lock().await;
-        guard.conn().query_row(
+        let from_settings: Option<String> = guard.conn().query_row(
             "SELECT value FROM identity_settings WHERE key='alias'",
             [],
             |r| r.get::<_, String>(0),
-        ).unwrap_or_default()
+        ).ok();
+        drop(guard);
+        if let Some(s) = from_settings.filter(|x| !x.is_empty()) {
+            s
+        } else {
+            // fallback: manifest 의 machine.alias
+            let manifest_path = openxgram_core::paths::manifest_path(
+                &std::env::var("XGRAM_DATA_DIR")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|_| dirs::home_dir().unwrap_or_default().join(".openxgram"))
+            );
+            openxgram_manifest::InstallManifest::read(manifest_path)
+                .ok()
+                .map(|m| m.machine.alias)
+                .unwrap_or_default()
+        }
     };
 
     // active peer target 수집
@@ -150,6 +263,9 @@ pub async fn peer_sync_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
         .timeout(std::time::Duration::from_secs(3))
         .build()?;
 
+    // self info (manifest 에서 alias, transport bind 주소 추정)
+    let self_address = std::env::var("XGRAM_SELF_ADDRESS").ok();
+
     for (peer_alias, address) in peer_targets {
         let base = address.trim_end_matches('/');
         // 1) peer 의 unlock → session_token
@@ -164,6 +280,24 @@ pub async fn peer_sync_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
             Err(_) => String::new(),
         };
         if token.is_empty() { continue; }
+
+        // 1.5) self-announce — 자기 신원을 peer 의 /v1/gui/peers 에 POST (없으면 등록, 있으면 ignored).
+        //     rc.178+: chicken-and-egg 해결 — 어느 한쪽에서 peer add 안 됐어도 양방향 자동 등록.
+        if !self_alias.is_empty() {
+            let addr_for_peer = self_address.clone().unwrap_or_else(|| "http://localhost:47300".to_string());
+            // placeholder pubkey — process_inbound 의 rc.173 unknown peer fix 가 unverified 로 INSERT.
+            let pk_placeholder = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001".to_string();
+            let _ = http.post(format!("{base}/v1/gui/peers"))
+                .header("Authorization", format!("Bearer {token}"))
+                .json(&serde_json::json!({
+                    "alias": self_alias,
+                    "address": addr_for_peer,
+                    "public_key_hex": pk_placeholder,
+                    "notes": "auto-announce via peer_sync_tick (rc.178)"
+                }))
+                .send().await;
+            // 응답 무시 (이미 등록되어 있으면 409/500 — silent skip OK).
+        }
 
         // 2) peer 의 /v1/gui/peers GET
         let resp = http.get(format!("{base}/v1/gui/peers"))
