@@ -295,8 +295,7 @@ $wrapperContent = @"
 @echo off
 :loop
 echo [%DATE% %TIME%] starting openxgram daemon >> "$daemonLog" 2>&1
-REM rc.183: 47302 port 충돌 자주 발생 → 시작 전 점유 process 강제 kill (taskkill 은 admin 권한 없어도 자기 user process 는 kill).
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":47302" ^| findstr LISTENING') do taskkill /F /PID %%a >nul 2>&1
+REM rc.184: --bind 0.0.0.0 external access. GUI port 는 daemon 자체 fallback (47302 fail 시 17302/47312/27302/random 자동).
 "$INSTALL\xgram.exe" daemon --bind 0.0.0.0:47300 --gui-bind 0.0.0.0:47302 >> "$daemonLog" 2>&1
 echo [%DATE% %TIME%] daemon exited code=%ERRORLEVEL%, restart in 5s >> "$daemonLog" 2>&1
 timeout /t 5 /nobreak > nul

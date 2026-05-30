@@ -559,22 +559,24 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 use openxgram_peer::PeerStore;
                 let peers = PeerStore::new(&mut self.db).list().map_err(internal)?;
                 // rc.92 D2 — agent_capabilities LEFT JOIN 으로 description / capabilities 도 반환.
-                let mut caps_map: std::collections::HashMap<String, (Option<String>, Option<String>)> = Default::default();
+                // rc.185 — agent_capabilities 의 row 자체 도 응답 (peers 외 agent 도 보임).
+                let mut caps_map: std::collections::HashMap<String, (Option<String>, Option<String>, Option<String>)> = Default::default();
                 if let Ok(mut stmt) = self.db.conn().prepare(
-                    "SELECT alias, description, capabilities FROM agent_capabilities"
+                    "SELECT alias, role, description, capabilities FROM agent_capabilities WHERE messenger_enabled = 1 OR alias IN (SELECT alias FROM peers)"
                 ) {
                     if let Ok(rows) = stmt.query_map([], |r| {
-                        Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Option<String>>(2)?))
+                        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?))
                     }) {
                         for row in rows.flatten() {
-                            caps_map.insert(row.0, (row.1, row.2));
+                            caps_map.insert(row.0, (Some(row.1), row.2, row.3));
                         }
                     }
                 }
-                let items: Vec<Value> = peers
+                let peer_aliases: std::collections::HashSet<String> = peers.iter().map(|p| p.alias.clone()).collect();
+                let mut items: Vec<Value> = peers
                     .iter()
                     .map(|p| {
-                        let (description, capabilities_json) = caps_map.get(&p.alias).cloned().unwrap_or((None, None));
+                        let (_role, description, capabilities_json) = caps_map.get(&p.alias).cloned().unwrap_or((None, None, None));
                         let capabilities: Vec<String> = capabilities_json.as_ref()
                             .and_then(|s| serde_json::from_str(s).ok())
                             .unwrap_or_default();
@@ -586,10 +588,29 @@ impl ToolDispatcher for OpenxgramDispatcher {
                             "eth_address": p.eth_address,
                             "description": description,
                             "capabilities": capabilities,
+                            "kind": "peer",
                         })
                     })
                     .collect();
-                Ok(json!({"peers": items, "count": items.len()}))
+                // rc.185: agent_capabilities 의 row 중 peers 에 없는 alias 도 추가 (kind="agent").
+                for (alias, (role, description, caps_json)) in &caps_map {
+                    if peer_aliases.contains(alias) { continue; }
+                    let capabilities: Vec<String> = caps_json.as_ref()
+                        .and_then(|s| serde_json::from_str(s).ok())
+                        .unwrap_or_default();
+                    items.push(json!({
+                        "alias": alias,
+                        "public_key_hex": null,
+                        "address": null,
+                        "role": role.clone().unwrap_or_else(|| "agent".to_string()),
+                        "eth_address": null,
+                        "description": description,
+                        "capabilities": capabilities,
+                        "kind": "agent",
+                    }));
+                }
+                let count = items.len();
+                Ok(json!({"peers": items, "count": count}))
             }
             "request_help" => {
                 // rc.92 D3 — capabilities 매칭 → 가장 적합한 peer 에게 peer_send 자동 위임.

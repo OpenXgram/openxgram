@@ -443,9 +443,30 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/gui/{*path}", get(crate::ui_assets::gui_asset_path))
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind(bind_addr)
-        .await
-        .with_context(|| format!("daemon-gui bind 실패: {bind_addr}"))?;
+    // rc.184 — port 자동 fallback. 47302 가 Hyper-V/Windows 예약 port 가면 fail → 다른 port 시도.
+    // Windows 47302 Hyper-V dynamic port 예약 케이스 처리. 사용자 install 부담 0.
+    let listener = match tokio::net::TcpListener::bind(bind_addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::warn!(addr=%bind_addr, error=%e, "daemon-gui primary bind 실패 — fallback port 시도");
+            let host = bind_addr.ip();
+            let mut listener_opt = None;
+            // 17302, 47312, 27302, 0 (random ephemeral) 순서 시도
+            for port in [17302u16, 47312, 27302, 0] {
+                let fallback = std::net::SocketAddr::new(host, port);
+                match tokio::net::TcpListener::bind(fallback).await {
+                    Ok(l) => {
+                        tracing::warn!(fallback=%fallback, original=%bind_addr, "daemon-gui fallback bind 성공");
+                        println!("  ⚠ GUI HTTP API fallback: {bind_addr} → {fallback}");
+                        listener_opt = Some(l);
+                        break;
+                    }
+                    Err(_) => continue,
+                }
+            }
+            listener_opt.ok_or_else(|| anyhow::anyhow!("daemon-gui bind 전체 실패: {bind_addr} + fallback ports"))?
+        }
+    };
     let bound = listener.local_addr()?;
     tracing::info!(addr = %bound, "GUI HTTP API server bound");
     println!("  ✓ GUI HTTP API bound: http://{bound}");
