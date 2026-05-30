@@ -378,30 +378,46 @@ if (-not $nssmPath) {
 
 if ($nssmPath -and (Test-Path $nssmPath)) {
     Write-Host "    -> NSSM: $nssmPath"
-    # 옛 service 제거 (있으면)
-    & $nssmPath stop $serviceName 2>$null | Out-Null
-    & $nssmPath remove $serviceName confirm 2>$null | Out-Null
-    Start-Sleep 1
+    # rc.188: nssm 의 native stderr 가 $ErrorActionPreference='Stop' 트리거 → 전체 block 을 EAP=Continue 로 wrapping.
+    $oldEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        # 옛 service 제거 (있으면 — Can't open service 는 정상)
+        cmd /c "`"$nssmPath`" stop $serviceName" 2>&1 | Out-Null
+        cmd /c "`"$nssmPath`" remove $serviceName confirm" 2>&1 | Out-Null
+        Start-Sleep -Milliseconds 800
 
-    # 등록 + 설정
-    & $nssmPath install $serviceName "$INSTALL\xgram.exe" 2>&1 | Out-Null
-    & $nssmPath set $serviceName AppParameters 'daemon --bind 0.0.0.0:47300 --gui-bind 0.0.0.0:47302' | Out-Null
-    & $nssmPath set $serviceName AppDirectory $INSTALL | Out-Null
-    & $nssmPath set $serviceName AppStdout $daemonLog | Out-Null
-    & $nssmPath set $serviceName AppStderr "$daemonLog.err" | Out-Null
-    & $nssmPath set $serviceName AppExit Default Restart | Out-Null
-    & $nssmPath set $serviceName AppRestartDelay 3000 | Out-Null
-    & $nssmPath set $serviceName Start SERVICE_AUTO_START | Out-Null
-    # env 전달 (vault password 등)
-    if ($env:XGRAM_KEYSTORE_PASSWORD) {
-        & $nssmPath set $serviceName AppEnvironmentExtra "XGRAM_KEYSTORE_PASSWORD=$env:XGRAM_KEYSTORE_PASSWORD" | Out-Null
+        # 등록 + 설정 (모든 nssm set 명령 cmd /c 로 wrapping → stderr swallow)
+        cmd /c "`"$nssmPath`" install $serviceName `"$INSTALL\xgram.exe`"" 2>&1 | Out-Null
+        cmd /c "`"$nssmPath`" set $serviceName AppParameters `"daemon --bind 0.0.0.0:47300 --gui-bind 0.0.0.0:47302`"" 2>&1 | Out-Null
+        cmd /c "`"$nssmPath`" set $serviceName AppDirectory `"$INSTALL`"" 2>&1 | Out-Null
+        cmd /c "`"$nssmPath`" set $serviceName AppStdout `"$daemonLog`"" 2>&1 | Out-Null
+        cmd /c "`"$nssmPath`" set $serviceName AppStderr `"$daemonLog.err`"" 2>&1 | Out-Null
+        cmd /c "`"$nssmPath`" set $serviceName AppExit Default Restart" 2>&1 | Out-Null
+        cmd /c "`"$nssmPath`" set $serviceName AppRestartDelay 3000" 2>&1 | Out-Null
+        cmd /c "`"$nssmPath`" set $serviceName Start SERVICE_AUTO_START" 2>&1 | Out-Null
+        if ($env:XGRAM_KEYSTORE_PASSWORD) {
+            cmd /c "`"$nssmPath`" set $serviceName AppEnvironmentExtra `"XGRAM_KEYSTORE_PASSWORD=$env:XGRAM_KEYSTORE_PASSWORD`"" 2>&1 | Out-Null
+        }
+
+        # Firewall rule (admin 권한 필요 — install.ps1 self-elevate 했으므로 admin)
+        $fwExists = Get-NetFirewallRule -DisplayName 'OpenXgram' -ErrorAction SilentlyContinue
+        if (-not $fwExists) {
+            New-NetFirewallRule -DisplayName 'OpenXgram' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 47300,47301,47302,17302,47312,27302 -Program "$INSTALL\xgram.exe" -ErrorAction SilentlyContinue | Out-Null
+        }
+
+        # service start
+        cmd /c "`"$nssmPath`" start $serviceName" 2>&1 | Out-Null
+        Start-Sleep -Seconds 2
+
+        Write-Host "    [OK] NSSM service '$serviceName' registered + started (auto-restart, auto-boot, firewall allowed)"
+
+        # 옛 Scheduled Task + wrapper.cmd 정리 (clean migration)
+        Unregister-ScheduledTask -TaskName $serviceName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+        Remove-Item (Join-Path $INSTALL 'openxgram-daemon-wrapper.cmd') -Force -ErrorAction SilentlyContinue | Out-Null
+    } finally {
+        $ErrorActionPreference = $oldEAP
     }
-    & $nssmPath start $serviceName 2>&1 | Out-Null
-    Write-Host "    [OK] NSSM service '$serviceName' registered (auto-restart + auto-start on boot)"
-
-    # 옛 Scheduled Task 제거 (clean migration)
-    Unregister-ScheduledTask -TaskName $serviceName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-    Remove-Item (Join-Path $INSTALL 'openxgram-daemon-wrapper.cmd') -Force -ErrorAction SilentlyContinue | Out-Null
 } else {
     Write-Host '    [WARN] NSSM not available — daemon auto-restart not configured. Manual: winget install NSSM.NSSM' -ForegroundColor Yellow
 }
