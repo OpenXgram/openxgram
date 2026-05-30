@@ -51,8 +51,15 @@ Write-Host "    → tag = $tag"
 $asset   = "xgram-$tag-x86_64-windows.zip"
 $dlUrl   = "https://github.com/$REPO/releases/download/$tag/$asset"
 $shaUrl  = "$dlUrl.sha256"
-$tmpZip  = Join-Path $env:TEMP $asset
-$tmpSha  = "$tmpZip.sha256"
+# rc.186: unique tmp file (timestamp suffix) — Windows Defender / 옛 zip lock 으로 download fail 회피.
+$tsSuffix = (Get-Date -Format 'yyyyMMddHHmmss')
+$tmpZip   = Join-Path $env:TEMP "xgram-${tsSuffix}-${asset}"
+$tmpSha   = "$tmpZip.sha256"
+
+# 옛 tmp zip 정리 (file lock 안 잡힌 것만)
+Get-ChildItem -Path $env:TEMP -Filter "xgram-*-${asset}" -ErrorAction SilentlyContinue | ForEach-Object {
+    try { Remove-Item $_.FullName -Force -ErrorAction Stop } catch { Write-Host "    (skip locked old zip: $($_.Name))" -ForegroundColor DarkGray }
+}
 
 Write-Host "==> Step 2: download — $dlUrl"
 Invoke-WebRequest -UseBasicParsing -Uri $dlUrl -OutFile $tmpZip
