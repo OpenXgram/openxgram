@@ -118,16 +118,21 @@ pub async fn run_peer_send_with_conv(
         .ok_or_else(|| anyhow!("peer 없음: {alias}"))?;
     let address = peer.address.clone();
 
-    // sender 미지정 시 master 주소 사용
+    // sender 명시되면 그 alias 의 sub-keystore 로 sign (rc.192 본질 fix).
+    // 미지정 시 master keystore.
     let ks = FsKeystore::new(keystore_dir(data_dir));
-    let master = ks
-        .load(MASTER_KEY_NAME, password)
-        .context("master 키 로드 실패")?;
-    let sender_addr = sender
-        .map(str::to_string)
-        .unwrap_or_else(|| master.address.to_string());
+    let signer = match sender.filter(|s| !s.is_empty()) {
+        Some(alias) => ks
+            .load(alias, password)
+            .with_context(|| format!("sender keystore '{alias}' 로드 실패"))?,
+        None => ks
+            .load(MASTER_KEY_NAME, password)
+            .context("master 키 로드 실패")?,
+    };
+    let sender_addr = signer.address.to_string();
+    let master = signer; // nostr fallback 호환 (변수명 유지)
 
-    // body ECDSA 서명 (master)
+    // body ECDSA 서명 — sender 의 keystore 로
     let signature_hex = hex::encode(master.sign(body.as_bytes()));
     let payload_hex = hex::encode(body.as_bytes());
 

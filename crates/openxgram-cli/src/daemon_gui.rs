@@ -2795,7 +2795,54 @@ async fn gui_agents_register(
             body.orchestration_role, body.special_instructions, now,
         ],
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("upsert: {e}")})))?;
-    Ok(Json(serde_json::json!({"ok": true, "alias": body.alias})))
+
+    // rc.192 본질 fix — UI 토글 messenger_enabled=true 시 sub-keypair + peer entry 자동 생성.
+    // 이전엔 messenger_enabled flag 만 set 되어 UI MSG 태그 거짓 표시였음.
+    // 진실: 이 alias 가 sub-keypair 보유 + peers table 등록 → 실제 peer-to-peer 통신 가능.
+    let mut registered_eth: Option<String> = None;
+    if body.messenger_enabled {
+        use openxgram_keystore::{FsKeystore, Keystore};
+        use openxgram_core::paths::keystore_dir;
+
+        let pw = openxgram_core::env::require_password()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("XGRAM_KEYSTORE_PASSWORD 미설정 (daemon env): {e}")})))?;
+        let ks = FsKeystore::new(keystore_dir(state.data_dir.as_ref()));
+
+        // sub-keypair: 같은 alias 의 key 이미 있으면 load, 없으면 generate.
+        let kp = match ks.load(&body.alias, &pw) {
+            Ok(k) => k,
+            Err(_) => {
+                ks.create(&body.alias, &pw)
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("agent sub-keypair 생성 실패: {e}")})))?;
+                ks.load(&body.alias, &pw)
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("새 keypair load 실패: {e}")})))?
+            }
+        };
+        let pubkey_hex = hex::encode(kp.public_key_bytes());
+        let eth_addr = kp.address.to_string();
+        registered_eth = Some(eth_addr.clone());
+
+        // peer entry add. address = 이 머신의 transport public URL (env override 가능).
+        // 외부 peer 가 이 URL 로 envelope POST → daemon 가 alias 별 inbox 분리 routing (Step 2).
+        let local_addr = std::env::var("XGRAM_TRANSPORT_PUBLIC_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:47300".to_string());
+        let mut peer_store = PeerStore::new(&mut db);
+        // 이미 있으면 (UNIQUE alias) error — silent skip.
+        let _ = peer_store.add_with_eth(
+            &body.alias,
+            &pubkey_hex,
+            &local_addr,
+            Some(&eth_addr),
+            PeerRole::Worker,
+            Some(&format!("auto-registered via UI messenger toggle ({now})")),
+        );
+    }
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "alias": body.alias,
+        "eth_address": registered_eth,
+    })))
 }
 
 // rc.132 — agent_templates: agency-agents 카탈로그 (msitarzewski/agency-agents).
