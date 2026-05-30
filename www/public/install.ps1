@@ -389,7 +389,7 @@ if ($nssmPath -and (Test-Path $nssmPath)) {
 
         # 등록 + 설정 (모든 nssm set 명령 cmd /c 로 wrapping → stderr swallow)
         cmd /c "`"$nssmPath`" install $serviceName `"$INSTALL\xgram.exe`"" 2>&1 | Out-Null
-        cmd /c "`"$nssmPath`" set $serviceName AppParameters `"daemon --bind 0.0.0.0:47300 --gui-bind 0.0.0.0:47302`"" 2>&1 | Out-Null
+        cmd /c "`"$nssmPath`" set $serviceName AppParameters `"daemon --data-dir `\"C:\\Users\\User\\.openxgram`\" --bind 0.0.0.0:47300 --gui-bind 0.0.0.0:47302`"" 2>&1 | Out-Null
         cmd /c "`"$nssmPath`" set $serviceName AppDirectory `"$INSTALL`"" 2>&1 | Out-Null
         cmd /c "`"$nssmPath`" set $serviceName AppStdout `"$daemonLog`"" 2>&1 | Out-Null
         cmd /c "`"$nssmPath`" set $serviceName AppStderr `"$daemonLog.err`"" 2>&1 | Out-Null
