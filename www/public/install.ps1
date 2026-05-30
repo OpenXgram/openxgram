@@ -258,10 +258,10 @@ if ((Test-Path $manifestPath) -and $env:XGRAM_KEYSTORE_PASSWORD) {
     }
     Start-Sleep -Milliseconds 500
 
-    # daemon
+    # daemon — rc.186 patch: external bind (0.0.0.0) 필수. localhost only 면 Tailscale 외부 access X.
     $daemonLog = Join-Path $dataDir 'daemon.log'
     $daemonProc = Start-Process -FilePath "$INSTALL\xgram.exe" `
-        -ArgumentList 'daemon' `
+        -ArgumentList 'daemon', '--bind', '0.0.0.0:47300', '--gui-bind', '0.0.0.0:47302' `
         -WindowStyle Hidden `
         -RedirectStandardOutput $daemonLog `
         -RedirectStandardError "$daemonLog.err" `
@@ -315,9 +315,11 @@ if ((Test-Path $manifestPath) -and $env:XGRAM_KEYSTORE_PASSWORD) {
 #    rc.166+: 자동화 마무리 — 사용자가 schtasks/nssm 따로 안 건드려도 됨.
 if ($stoppedTasks.Count -gt 0 -or $stoppedSvcs.Count -gt 0) {
     Write-Host ''
-    Write-Host '==> Step 8: restart stopped tasks/services' -ForegroundColor Cyan
+    Write-Host '==> Step 8: re-enable + restart stopped tasks/services' -ForegroundColor Cyan
     foreach ($t in $stoppedTasks) {
-        Write-Host "    -> start scheduled task: $t"
+        Write-Host "    -> enable + start scheduled task: $t"
+        # rc.186 patch: Disable 됐던 task 다시 Enable. /Run 만 으로는 disabled task fail.
+        Enable-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue | Out-Null
         schtasks /Run /TN $t 2>$null | Out-Null
     }
     foreach ($s in $stoppedSvcs) {
