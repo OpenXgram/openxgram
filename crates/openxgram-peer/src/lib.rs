@@ -281,8 +281,15 @@ fn tuple_to_peer(
         address,
         eth_address,
         role: PeerRole::parse(&role)?,
-        last_seen: last_seen.as_deref().map(parse_ts).transpose()?,
-        created_at: parse_ts(&created_at)?,
+        // rc.188: invalid timestamp graceful fallback. 빈 string / invalid format → None / epoch.
+        // 원인: peer add 시 created_at 빈 string 또는 SQL datetime('now') 의 non-RFC3339 format.
+        // 이전엔 parse_ts fail → list() 전체 fail → process_inbound silent drop.
+        last_seen: last_seen.as_deref().and_then(|s| parse_ts(s).ok()),
+        created_at: parse_ts(&created_at).unwrap_or_else(|_| {
+            // SQL datetime('now') format = 'YYYY-MM-DD HH:MM:SS' (no T, no TZ). 보완 시도.
+            DateTime::parse_from_str(&format!("{}+00:00", created_at.replace(' ', "T")), "%Y-%m-%dT%H:%M:%S%z")
+                .unwrap_or_else(|_| chrono::Utc::now().fixed_offset())
+        }),
         notes,
     })
 }
