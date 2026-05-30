@@ -258,7 +258,22 @@ if ((Test-Path $manifestPath) -and $env:XGRAM_KEYSTORE_PASSWORD) {
     }
     Start-Sleep -Milliseconds 500
 
-    # daemon — rc.186 patch: external bind (0.0.0.0) 필수. localhost only 면 Tailscale 외부 access X.
+    # rc.186 patch: Windows Defender Firewall rule 추가 — 0.0.0.0 bind 만 으로는 외부 access X.
+    # 모든 OpenXgram port (transport 47300, GUI 47302 + fallback 17302/47312/27302, MCP 47301) 허용.
+    try {
+        $existingRule = Get-NetFirewallRule -DisplayName 'OpenXgram' -ErrorAction SilentlyContinue
+        if (-not $existingRule) {
+            New-NetFirewallRule -DisplayName 'OpenXgram' `
+                -Direction Inbound -Action Allow -Protocol TCP `
+                -LocalPort 47300,47301,47302,17302,47312,27302 `
+                -Program "$INSTALL\xgram.exe" -ErrorAction SilentlyContinue | Out-Null
+            Write-Host "    [OK] Firewall rule 'OpenXgram' added (allow inbound 47300-47302/17302/47312/27302)"
+        }
+    } catch {
+        Write-Host "    [WARN] Firewall rule failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+
+    # daemon
     $daemonLog = Join-Path $dataDir 'daemon.log'
     $daemonProc = Start-Process -FilePath "$INSTALL\xgram.exe" `
         -ArgumentList 'daemon', '--bind', '0.0.0.0:47300', '--gui-bind', '0.0.0.0:47302' `
