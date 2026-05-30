@@ -2073,11 +2073,47 @@ async fn main() -> anyhow::Result<()> {
 
     // 로그 초기화 — `XGRAM_LOG_FORMAT=json` 시 구조화 로그 (운영·SRE 친화),
     // 그 외 사람용 pretty.
+    // rc.189 — daemon mode 시 file logging 추가 (NSSM AppStdout 의존 X, Windows buffering 우회).
     let log_level = if cli.verbose { "debug" } else { "info" };
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level));
     let json_mode = std::env::var("XGRAM_LOG_FORMAT").as_deref() == Ok("json");
-    if json_mode {
+    let is_daemon_cmd = matches!(&cli.command, Commands::Daemon { .. });
+
+    if is_daemon_cmd {
+        // daemon: file logging 추가. ~/.openxgram/daemon.log 에 append.
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+
+        let log_dir = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .map(|h| std::path::PathBuf::from(h).join(".openxgram"))
+            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let _ = std::fs::create_dir_all(&log_dir);
+        let log_path = log_dir.join("daemon.log");
+
+        let file_opt = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .ok();
+
+        if let Some(file) = file_opt {
+            let stderr_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
+            let file_layer = tracing_subscriber::fmt::layer()
+                .with_writer(std::sync::Mutex::new(file))
+                .with_ansi(false);
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(stderr_layer)
+                .with(file_layer)
+                .init();
+        } else if json_mode {
+            tracing_subscriber::fmt().with_env_filter(env_filter).json().init();
+        } else {
+            tracing_subscriber::fmt().with_env_filter(env_filter).init();
+        }
+    } else if json_mode {
         tracing_subscriber::fmt()
             .with_env_filter(env_filter)
             .json()
