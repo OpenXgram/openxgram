@@ -294,9 +294,11 @@ $wrapperPath = Join-Path $INSTALL 'openxgram-daemon-wrapper.cmd'
 $wrapperContent = @"
 @echo off
 :loop
-echo [$(Get-Date)] starting openxgram daemon >> "$daemonLog" 2>&1
-"$INSTALL\xgram.exe" daemon >> "$daemonLog" 2>&1
-echo [$(Get-Date)] daemon exited code=%ERRORLEVEL%, restart in 5s >> "$daemonLog" 2>&1
+echo [%DATE% %TIME%] starting openxgram daemon >> "$daemonLog" 2>&1
+REM rc.183: 47302 port 충돌 자주 발생 → 시작 전 점유 process 강제 kill (taskkill 은 admin 권한 없어도 자기 user process 는 kill).
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":47302" ^| findstr LISTENING') do taskkill /F /PID %%a >nul 2>&1
+"$INSTALL\xgram.exe" daemon --bind 0.0.0.0:47300 --gui-bind 0.0.0.0:47302 >> "$daemonLog" 2>&1
+echo [%DATE% %TIME%] daemon exited code=%ERRORLEVEL%, restart in 5s >> "$daemonLog" 2>&1
 timeout /t 5 /nobreak > nul
 goto loop
 "@
@@ -309,7 +311,9 @@ try {
 
 $action  = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c `"$wrapperPath`"" -WorkingDirectory $INSTALL
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Days 36500) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+# rc.183: ExecutionTimeLimit 제거 → default (PT72H or 무제한) 사용. P36500D 가 Windows max 초과로 등록 fail 한 버그 수정.
+$settings.ExecutionTimeLimit = 'PT0S'  # PT0S = no limit (Windows Task Scheduler 의 무제한 표현)
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
 try {
     Register-ScheduledTask -TaskName $daemonTaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'OpenXgram sidecar daemon (auto-start on logon + infinite restart loop)' -Force | Out-Null
