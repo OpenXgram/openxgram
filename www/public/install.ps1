@@ -537,19 +537,41 @@ if ($wslAvailable) {
                 $wslDCmd = 'if [ -f ~/.openxgram/daemon.env ]; then . ~/.openxgram/daemon.env; fi; mkdir -p ~/.openxgram; nohup ~/.local/bin/xgram daemon --bind 0.0.0.0:17400 --gui-bind 0.0.0.0:17402 > ~/.openxgram/wsl-daemon.log 2>&1 &'
                 $wslDArg = "-- bash -lc `"$wslDCmd`""
 
-                $wslDAction    = New-ScheduledTaskAction -Execute 'wsl.exe' -Argument $wslDArg
-                $wslDTrigger   = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-                $wslDSettings  = New-ScheduledTaskSettingsSet `
-                    -AllowStartIfOnBatteries `
-                    -DontStopIfGoingOnBatteries `
-                    -StartWhenAvailable `
-                    -RestartCount 5 `
-                    -RestartInterval (New-TimeSpan -Minutes 1) `
-                    -ExecutionTimeLimit ([TimeSpan]::Zero) `
-                    -MultipleInstances IgnoreNew
-                $wslDPrincipal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Highest
-
-                Register-ScheduledTask -TaskName $wslDaemonTaskName -Action $wslDAction -Trigger $wslDTrigger -Settings $wslDSettings -Principal $wslDPrincipal -Description "OpenXgram WSL daemon (user: $wslUser, ports 17400/17402, reboot survival)" -Force | Out-Null
+                # rc.211 — schtasks.exe 로 직접 등록 (New-ScheduledTaskPrincipal -UserId 의 SID mapping
+                # 실패 회피). Step 8.5 의 PowerShell cmdlet 방식은 일부 환경 (Microsoft Account,
+                # AzureAD-joined, 비-domain) 에서 "No mapping between account names and security IDs"
+                # error 발생. schtasks /RU 는 current user 를 native 로 해석 → 항상 작동.
+                $wslDTr = "wsl.exe -- bash -lc `"$wslDCmd`""
+                # schtasks XML escape: " → \"  (cmd.exe 의 quote 규칙).
+                $wslDTrEsc = $wslDTr -replace '"', '\"'
+                $schtasksArgs = @(
+                    '/Create',
+                    '/TN', $wslDaemonTaskName,
+                    '/TR', "`"$wslDTrEsc`"",
+                    '/SC', 'ONLOGON',
+                    '/RU', $env:USERNAME,
+                    '/RL', 'HIGHEST',
+                    '/F'
+                )
+                $schtasksOut = & schtasks.exe @schtasksArgs 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "    [WARN] schtasks /Create failed (exit=$LASTEXITCODE): $schtasksOut" -ForegroundColor Yellow
+                    Write-Host '    Fallback: New-ScheduledTask*' -ForegroundColor DarkGray
+                    # Fallback: PowerShell cmdlet path (may fail on MSA accounts).
+                    $wslDAction    = New-ScheduledTaskAction -Execute 'wsl.exe' -Argument $wslDArg
+                    $wslDTrigger   = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+                    $wslDSettings  = New-ScheduledTaskSettingsSet `
+                        -AllowStartIfOnBatteries `
+                        -DontStopIfGoingOnBatteries `
+                        -StartWhenAvailable `
+                        -RestartCount 5 `
+                        -RestartInterval (New-TimeSpan -Minutes 1) `
+                        -ExecutionTimeLimit ([TimeSpan]::Zero) `
+                        -MultipleInstances IgnoreNew
+                    # LogonType=Interactive + -UserId 생략 → current logged-on user 자동.
+                    $wslDPrincipal = New-ScheduledTaskPrincipal -GroupId 'S-1-5-32-545' -RunLevel Highest
+                    Register-ScheduledTask -TaskName $wslDaemonTaskName -Action $wslDAction -Trigger $wslDTrigger -Settings $wslDSettings -Principal $wslDPrincipal -Description "OpenXgram WSL daemon (user: $wslUser, ports 17400/17402, reboot survival)" -Force | Out-Null
+                }
 
                 # Trigger immediately so we don't wait for next logon.
                 Start-ScheduledTask -TaskName $wslDaemonTaskName -ErrorAction SilentlyContinue
