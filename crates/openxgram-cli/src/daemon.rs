@@ -93,6 +93,15 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
         .context("messenger enforcement workers 가동 실패")?;
     println!("  ✓ messenger workers (M-4 / M-6 / L6 / V6) spawned");
 
+    // rc.201 — auto-seed: 자기 머신 tmux session 을 agent_capabilities + peer 자동 등록.
+    // 마스터의 본질: "peer = 터미널". daemon 가 자기 tmux 의 active session 을 자동 agent 등록
+    // → 마스터가 manual GUI toggle 안 해도 됨 → 진정한 peer-per-terminal architecture.
+    match auto_seed_local_tmux_agents(&opts.data_dir) {
+        Ok(n) if n > 0 => println!("  ✓ rc.201 auto-seed: {n} tmux session → agent + sub-keystore + peer 자동 등록"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "rc.201 auto-seed 실패 (계속)"),
+    }
+
     // rc.196 — retroactive register: messenger_enabled=1 인데 peer entry 없는 옛 agent 들의
     // sub-keystore + peer 자동 생성. 마스터의 portal/akashic 등 ui 토글만 켜고 rc.192 fix 이전
     // 등록된 agent 들이 mock 상태였던 본질 결함 해결.
@@ -603,6 +612,70 @@ async fn register_workflow_cron_jobs(
         }
     }
     Ok(registered)
+}
+
+/// rc.201 — auto-seed: 자기 머신 의 tmux session 을 agent_capabilities 자동 등록.
+/// 마스터의 본질: peer = 터미널 (각 tmux). daemon startup 시 자기 머신 tmux session list
+/// 가져와서 각 session_name 의 alias 추출 → agent_capabilities INSERT OR IGNORE.
+/// 그 다음 retroactive_register_agents 가 sub-keystore + peer 자동 등록.
+fn auto_seed_local_tmux_agents(data_dir: &std::path::Path) -> anyhow::Result<usize> {
+    // 자기 머신 tmux list-sessions
+    let local_sessions: Vec<String> = {
+        let (cmd, base_arg) = if cfg!(windows) {
+            ("wsl", Some("tmux"))
+        } else {
+            ("tmux", None)
+        };
+        let mut c = std::process::Command::new(cmd);
+        if let Some(a) = base_arg {
+            c.arg(a);
+        }
+        match c.args(["list-sessions", "-F", "#{session_name}"]).output() {
+            Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
+            _ => return Ok(0),
+        }
+    };
+    if local_sessions.is_empty() {
+        return Ok(0);
+    }
+
+    let mut db = openxgram_db::Db::open(openxgram_db::DbConfig {
+        path: openxgram_core::paths::db_path(data_dir),
+        ..Default::default()
+    })?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut seeded = 0;
+    for sn in &local_sessions {
+        // alias 추출: 'aoe_<alias>_<id>' → alias / 그 외 → session_name 그대로
+        let alias: String = if let Some(s) = sn.strip_prefix("aoe_") {
+            match s.rsplit_once('_') {
+                Some((a, _id)) => a.to_string(),
+                None => s.to_string(),
+            }
+        } else {
+            sn.clone()
+        };
+        if alias.is_empty() || alias == "null" || alias.contains('[') {
+            continue;
+        }
+        // INSERT OR IGNORE — 이미 있으면 messenger_enabled 만 1 로 update (auto-enable).
+        let affected = db.conn().execute(
+            "INSERT INTO agent_capabilities (alias, role, description, messenger_enabled, updated_at) \
+             VALUES (?1, 'tmux', ?2, 1, ?3) \
+             ON CONFLICT(alias) DO UPDATE SET messenger_enabled=1, updated_at=excluded.updated_at",
+            rusqlite::params![&alias, &format!("auto-seed from tmux: {sn}"), &now],
+        ).unwrap_or(0);
+        if affected > 0 {
+            seeded += 1;
+            tracing::info!(alias = %alias, tmux = %sn, "rc.201 auto-seed: agent_capabilities");
+        }
+    }
+    tracing::info!(seeded = seeded, total_sessions = local_sessions.len(), "rc.201 auto-seed 완료");
+    Ok(seeded)
 }
 
 /// rc.196 — retroactive register agents.
