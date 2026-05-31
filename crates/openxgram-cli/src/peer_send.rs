@@ -8,11 +8,51 @@ use openxgram_core::paths::{db_path, keystore_dir, MASTER_KEY_NAME};
 use openxgram_core::time::kst_now;
 use openxgram_db::{Db, DbConfig};
 use openxgram_keystore::{FsKeystore, Keystore};
+use openxgram_memory::{default_embedder, MessageStore, SessionStore};
 use openxgram_nostr::{
     encrypt_for_peer, keys_from_master, NostrKeys, NostrKind, NostrSink, NostrTag, PublicKey,
 };
 use openxgram_peer::PeerStore;
 use openxgram_transport::{send_envelope, Envelope};
+
+/// rc.204 — sender 측 outbox INSERT.
+/// 송신 성공 직후 호출. session_title=`outbox-to-{alias}` (kind=`outbound`),
+/// sender_label=`self:{sender_alias}` (receiver 측 `peer:*`/`unverified:*` 와 명확히 구분).
+/// 실패해도 send 자체는 이미 성공 — outbox INSERT 실패는 WARN 로깅 후 진행 (PRD-2.0.2).
+fn record_outbox(
+    data_dir: &Path,
+    peer_alias: &str,
+    sender_alias_for_log: &str,
+    body: &str,
+    signature_hex: &str,
+    conversation_id: Option<&str>,
+) -> Result<()> {
+    let mut db = open_db(data_dir)?;
+    let embedder = default_embedder().context("embedder init 실패")?;
+
+    let session_title = format!("outbox-to-{}", peer_alias);
+    let session = SessionStore::new(&mut db)
+        .ensure_by_title(&session_title, "outbound")
+        .with_context(|| format!("outbox session ensure 실패: {session_title}"))?;
+
+    let sender_label = format!("self:{}", sender_alias_for_log);
+    MessageStore::new(&mut db, embedder.as_ref())
+        .insert(
+            &session.id,
+            &sender_label,
+            body,
+            signature_hex,
+            conversation_id,
+        )
+        .with_context(|| format!("outbox L0 insert 실패 (session={})", session.id))?;
+    tracing::info!(
+        session_id = %session.id,
+        sender = %sender_label,
+        body_len = body.len(),
+        "record_outbox: 송신 메시지 outbox 저장 완료"
+    );
+    Ok(())
+}
 
 /// 주소 scheme 별 라우트.
 #[derive(Debug, Clone)]
@@ -211,6 +251,27 @@ pub async fn run_peer_send_with_conv(
 
     // 통신 성공 → last_seen 갱신
     store.touch(alias)?;
+
+    // 통신 성공 → outbox INSERT (send 성공 시만, partial 상태 회피)
+    // sender_alias_for_log: 명시된 sender alias 또는 "master".
+    // PeerStore lock 충돌 회피 위해 outbox INSERT 전 store drop 필요 — 다른 open_db 호출.
+    drop(store);
+    drop(db);
+    let log_alias = envelope
+        .sender_alias
+        .clone()
+        .unwrap_or_else(|| "master".to_string());
+    if let Err(e) = record_outbox(
+        data_dir,
+        alias,
+        &log_alias,
+        body,
+        &envelope.signature_hex,
+        envelope.conversation_id.as_deref(),
+    ) {
+        tracing::warn!(error = %e, alias = %alias, "record_outbox 실패 (send 자체는 성공)");
+    }
+
     println!(
         "✓ peer {alias} 에 메시지 전송 (size={} bytes)",
         envelope.payload_hex.len() / 2
@@ -330,6 +391,27 @@ pub async fn run_peer_broadcast(
     for (alias, res) in &results {
         if res.is_ok() {
             let _ = store.touch(alias);
+        }
+    }
+    drop(store);
+    drop(db);
+
+    // 4. rc.204 — 성공한 peer 별 outbox INSERT (broadcast 도 sender DB trace 가능)
+    let log_alias = bcast_sender_alias
+        .clone()
+        .unwrap_or_else(|| "master".to_string());
+    for (alias, res) in &results {
+        if res.is_ok() {
+            if let Err(e) = record_outbox(
+                data_dir,
+                alias,
+                &log_alias,
+                body,
+                &signature_hex,
+                None,
+            ) {
+                tracing::warn!(error = %e, alias = %alias, "broadcast record_outbox 실패");
+            }
         }
     }
 
