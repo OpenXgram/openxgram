@@ -247,6 +247,33 @@ fn generate_context_block(data_dir: &Path) -> Result<String> {
     s.push_str(&format!("- **data_dir**: `{}`\n", data_dir.display()));
     s.push_str("\n전체 가이드 (peer 통신·발신·오케스트레이션·자동 echo 룰): `@~/oxg.md`\n");
     s.push_str("Peer 목록은 동적 — `openxgram.list_peers` 호출 시 role/description/capabilities 함께 반환.\n\n");
+
+    // rc.206 — sub-agent 자율 등록 가이드. 각 LLM session 이 시작 시 자기 정체성을
+    // register_subagent 로 직접 등록. 다른 agent 가 list_peers / request_help 로 인지 + 매칭.
+    s.push_str("## 자율 등록 — 시작 시 한 번\n\n");
+    s.push_str("각 LLM session 시작 시 자기 정체성을 OpenXgram 에 등록하세요:\n\n");
+    s.push_str("```\n");
+    s.push_str("mcp__openxgram__register_subagent(\n");
+    s.push_str("  alias = \"<자기 tmux session 이름 또는 자유 alias>\",\n");
+    s.push_str("  role = \"<자기 역할 한 줄>\",\n");
+    s.push_str("  description = \"<이 agent 가 잘하는 일 1-2 문장>\",\n");
+    s.push_str("  capabilities = [\"<능력1>\", \"<능력2>\", ...],\n");
+    s.push_str("  messenger_enabled = true\n");
+    s.push_str(")\n");
+    s.push_str("```\n\n");
+    s.push_str("가이드:\n");
+    s.push_str("- **alias**: 자기 tmux session 이름 (예: `aoe_akashic_5054a80a`) 또는 자유 alias\n");
+    s.push_str("- **role**: 짧은 자기 역할명 (예: `akashic-keeper`, `portal-dev`, `rust-impl`, `frontend`)\n");
+    s.push_str("- **description**: 자기 자신의 1-2 문장 자기소개. `X 영역 담당, Y 잘함`\n");
+    s.push_str("- **capabilities**: 자기가 할 수 있는 일 keyword 배열. 다른 agent 가 `request_help(required_capability=*)` 로 자동 매칭\n");
+    s.push_str("  예: `['code_review', 'memory_extraction', 'prd_writing', 'rust_implementation', 'frontend_react', 'gamedev_unity', ...]`\n");
+    s.push_str("- **messenger_enabled**: `true` 면 `list_peers` 에 노출 + 다른 agent 가 `peer_send` 가능\n\n");
+    s.push_str("이미 등록되어 있다면 같은 호출이 idempotent — 매번 시작 시 호출 안전 (UPSERT).\n\n");
+    s.push_str("## 통신\n\n");
+    s.push_str("- 다른 agent 에게 메시지: `mcp__openxgram__peer_send(alias='target', body='메시지')`\n");
+    s.push_str("- 받은 메시지 확인: `mcp__openxgram__recv_messages()`\n");
+    s.push_str("- 도움 필요할 때: `mcp__openxgram__request_help(task='...', required_capability='...')` — 자동 적합 agent 매칭 + `peer_send` 위임\n\n");
+
     s.push_str(CLAUDE_MD_END);
     Ok(s)
 }
