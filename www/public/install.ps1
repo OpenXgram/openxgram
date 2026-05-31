@@ -504,6 +504,64 @@ if ($wslAvailable) {
     } else {
         Write-Host "    (Scheduled Task '$wslTaskName' already exists)" -ForegroundColor DarkGray
     }
+
+    # 8.7 (rc.210) WSL daemon reboot survival.
+    #      Windows daemon은 Step 8.5 Task로 auto-start. WSL daemon은 install.sh 의 nohup 만
+    #      걸려 있어 reboot 후 사라짐. → AtLogOn Task로 WSL 안의 xgram daemon도 자동 기동.
+    #      bind: 0.0.0.0:17400 (data port), 0.0.0.0:17402 (gui port) — Windows 47300/47302 와 충돌 X.
+    #      pair-host (rc.209) 가 두 daemon 자동 매칭하므로 co-exist OK.
+    $wslDaemonTaskName = 'OpenXgram-WSL-Daemon-User'
+    Write-Host ''
+    Write-Host '==> Step 8.7: register OpenXgram-WSL-Daemon-User Scheduled Task (WSL daemon reboot survival)' -ForegroundColor Cyan
+    try {
+        # WSL user 자동 detect (default distro).
+        $wslUser = ''
+        try { $wslUser = (wsl.exe -- whoami 2>$null | Out-String).Trim() } catch {}
+        if (-not $wslUser) {
+            Write-Host '    [WARN] WSL whoami failed — Task 등록 skip. WSL distro 가 init 안 됐을 수 있음.' -ForegroundColor Yellow
+        } else {
+            # WSL 안에 xgram 바이너리 있는지 확인 (없으면 안내 후 skip).
+            $xgramExists = (wsl.exe -- bash -lc 'test -x "$HOME/.local/bin/xgram" && echo OK || echo NO' 2>$null | Out-String).Trim()
+            if ($xgramExists -ne 'OK') {
+                Write-Host '    [SKIP] WSL 안에 ~/.local/bin/xgram 없음.' -ForegroundColor Yellow
+                Write-Host '           WSL 에서 먼저 install:  curl -sL https://openxgram.org/install.sh | bash' -ForegroundColor Yellow
+            } else {
+                # Existing task?  Replace cleanly.
+                $existingWslD = Get-ScheduledTask -TaskName $wslDaemonTaskName -ErrorAction SilentlyContinue
+                if ($existingWslD) {
+                    Unregister-ScheduledTask -TaskName $wslDaemonTaskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+                }
+
+                # bash -lc payload: source daemon.env (if exists) → nohup xgram daemon (bg).
+                # 17400 = data port (Windows 47300 과 분리), 17402 = gui port (Windows 47302 와 분리).
+                $wslDCmd = 'if [ -f ~/.openxgram/daemon.env ]; then . ~/.openxgram/daemon.env; fi; mkdir -p ~/.openxgram; nohup ~/.local/bin/xgram daemon --bind 0.0.0.0:17400 --gui-bind 0.0.0.0:17402 > ~/.openxgram/wsl-daemon.log 2>&1 &'
+                $wslDArg = "-- bash -lc `"$wslDCmd`""
+
+                $wslDAction    = New-ScheduledTaskAction -Execute 'wsl.exe' -Argument $wslDArg
+                $wslDTrigger   = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+                $wslDSettings  = New-ScheduledTaskSettingsSet `
+                    -AllowStartIfOnBatteries `
+                    -DontStopIfGoingOnBatteries `
+                    -StartWhenAvailable `
+                    -RestartCount 5 `
+                    -RestartInterval (New-TimeSpan -Minutes 1) `
+                    -ExecutionTimeLimit ([TimeSpan]::Zero) `
+                    -MultipleInstances IgnoreNew
+                $wslDPrincipal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Highest
+
+                Register-ScheduledTask -TaskName $wslDaemonTaskName -Action $wslDAction -Trigger $wslDTrigger -Settings $wslDSettings -Principal $wslDPrincipal -Description "OpenXgram WSL daemon (user: $wslUser, ports 17400/17402, reboot survival)" -Force | Out-Null
+
+                # Trigger immediately so we don't wait for next logon.
+                Start-ScheduledTask -TaskName $wslDaemonTaskName -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 2
+                Write-Host "    [OK] Scheduled Task '$wslDaemonTaskName' registered + started (user=$wslUser, bind 0.0.0.0:17400 / 0.0.0.0:17402)"
+                Write-Host '    -> pair-host 가 Windows 47300 daemon 과 자동 매칭.' -ForegroundColor DarkGray
+            }
+        }
+    } catch {
+        Write-Host "    [WARN] WSL daemon Scheduled Task register failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "    Manual: schtasks /create /tn $wslDaemonTaskName /tr `"wsl.exe -- bash -lc 'nohup ~/.local/bin/xgram daemon --bind 0.0.0.0:17400 --gui-bind 0.0.0.0:17402 > ~/.openxgram/wsl-daemon.log 2>&1 &'`" /sc onlogon /rl highest" -ForegroundColor Yellow
+    }
 }
 
 # 9. Auto MCP + identity + SessionStart hook (rc.169+).
