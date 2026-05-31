@@ -328,6 +328,8 @@ const ROUTES: Record<string, Route> = {
 
  // 메신저 v1.3 Step 0 — 메시지 송수신
  messages_recent: { method: "GET", path: "/messages", emptyAs: []},
+ // rc.212 — peer 와의 전 session (outbox/inbox/Peer·/Claude Code·) 통합 chronological view
+ peer_conversation: { method: "GET", path: "/peer_conversation/{alias}", emptyAs: []},
  peer_send: { method: "POST", path: "/peers/{alias}/send", body: true},
  peer_send_unsigned: { method: "POST", path: "/peers/{alias}/send-unsigned", body: true},
  attachment_upload: { method: "POST", path: "/attachments", body: true},

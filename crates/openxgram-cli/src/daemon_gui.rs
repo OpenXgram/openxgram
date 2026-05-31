@@ -355,6 +355,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/peers/{alias}/send-unsigned", post(gui_peer_send_unsigned))
         // 메신저 카드 v1.3 Step 0 — 메시지 송수신.
         .route("/v1/gui/messages", get(gui_messages_recent))
+        // rc.212 — peer conversation unified view. 한 peer 와의 전 session (outbox/inbox/Peer·/Claude Code·) 합쳐서 시간순.
+        .route("/v1/gui/peer_conversation/{alias}", get(gui_peer_conversation))
         .route("/v1/gui/peers/{alias}/send", post(gui_peer_send))
         // rc.155 — portal × OpenXgram 통합. starian-portal 의 send 후 메시지 mirror.
         // portal 가 sendKeys 한 직후 POST → messages 테이블에 INSERT.
@@ -5213,6 +5215,110 @@ async fn gui_messages_recent(
         })
         .take(limit)
         .collect();
+    Ok(Json(items))
+}
+
+/// rc.212 — `GET /v1/gui/peer_conversation/{alias}` — peer 와의 통합 conversation view.
+///
+/// 본질 결함 fix: 한 peer (예: akashic) 와의 메시지가 다음 여러 session 에 분산:
+///  - `outbox-to-<alias>` / `outbox-to-<alias_variant>` (sender side, sender_label='self:*'/'me')
+///  - `inbox-from-<alias>` / `inbox-from-<alias_variant>` (receiver side, sender_label='peer:*')
+///  - `Peer · <alias>` (양방향 session, sender_label='me'/'peer:*')
+///  - `Claude Code · <alias> · *` (LLM session, sender='user'/'assistant')
+///
+/// 단일 endpoint 가 alias root 매칭으로 모두 가져와 timestamp ASC 정렬 반환.
+/// alias variant 매핑: `akashic` 선택 시 peers table 의 alias 가 `akashic` 또는
+/// `*akashic*` (예: `aoe_akashic_5054a80a`) 인 row 들의 alias 모두 OR 매칭.
+async fn gui_peer_conversation(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Json<Vec<GuiMessageDto>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let limit = q
+        .get("limit")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(500)
+        .min(2000);
+
+    let mut db = state.db.lock().await;
+
+    // alias variants — peers table 에서 자기 자신 + substring 매칭되는 모든 alias 수집.
+    // 예: 입력 alias="akashic" → ["akashic", "aoe_akashic_5054a80a"] 모두 매칭.
+    let mut alias_variants: Vec<String> = vec![alias.clone()];
+    {
+        let pattern = format!("%{}%", alias);
+        if let Ok(mut stmt) = db
+            .conn()
+            .prepare("SELECT alias FROM peers WHERE alias LIKE ?1 OR ?2 LIKE '%' || alias || '%'")
+        {
+            if let Ok(rows) = stmt.query_map(rusqlite::params![pattern, alias], |r| {
+                r.get::<_, String>(0)
+            }) {
+                for row in rows.flatten() {
+                    if !alias_variants.contains(&row) {
+                        alias_variants.push(row);
+                    }
+                }
+            }
+        }
+    }
+
+    // 각 variant 에 대해 4가지 title pattern 매칭. session.title LIKE 'outbox-to-' || ?1 || '%' 등.
+    // dedup 위해 message id key set 사용.
+    let mut items: Vec<GuiMessageDto> = Vec::new();
+    let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for variant in &alias_variants {
+        let outbox = format!("outbox-to-{}", variant);
+        let inbox = format!("inbox-from-{}", variant);
+        let peer_session = format!("Peer · {}", variant);
+        let cc_prefix = format!("Claude Code · {} · ", variant);
+
+        // outbox/inbox/Peer 는 정확 매칭, Claude Code 는 prefix LIKE 매칭.
+        let sql = "SELECT m.id, m.session_id, m.sender, m.body, m.timestamp, \
+                          m.conversation_id, m.ack_status, m.acked_at, m.ack_via \
+                   FROM sessions s JOIN messages m ON m.session_id = s.id \
+                   WHERE s.title = ?1 OR s.title = ?2 OR s.title = ?3 OR s.title LIKE ?4 \
+                   ORDER BY m.timestamp ASC \
+                   LIMIT ?5";
+        let cc_like = format!("{}%", cc_prefix);
+        let mut stmt = db
+            .conn()
+            .prepare(sql)
+            .map_err(|e| internal(&format!("prep peer_conv: {e}")))?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params![outbox, inbox, peer_session, cc_like, limit as i64],
+                |r| {
+                    Ok(GuiMessageDto {
+                        id: r.get::<_, String>(0)?,
+                        session_id: r.get::<_, String>(1)?,
+                        sender: r.get::<_, String>(2)?,
+                        body: r.get::<_, String>(3)?,
+                        timestamp: r.get::<_, String>(4)?,
+                        conversation_id: r.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                        ack_status: r.get::<_, Option<String>>(6)?,
+                        acked_at: r.get::<_, Option<String>>(7)?,
+                        ack_via: r.get::<_, Option<String>>(8)?,
+                    })
+                },
+            )
+            .map_err(|e| internal(&format!("q peer_conv: {e}")))?;
+        for r in rows.filter_map(|r| r.ok()) {
+            if seen_ids.insert(r.id.clone()) {
+                items.push(r);
+            }
+        }
+    }
+
+    // 전역 timestamp ASC 정렬 (chronological, oldest first).
+    items.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+    if items.len() > limit {
+        let drop_n = items.len() - limit;
+        items.drain(0..drop_n);
+    }
     Ok(Json(items))
 }
 

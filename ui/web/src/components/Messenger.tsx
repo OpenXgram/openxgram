@@ -58,6 +58,27 @@ async function fetchMessages(): Promise<MessageDto[]> {
 }
 }
 
+// rc.212 — peer 와의 통합 conversation. backend /v1/gui/peer_conversation/{alias} 가
+// outbox-to-/inbox-from-/Peer ·/Claude Code · {alias|variant} 모든 session 합쳐서 timestamp ASC 반환.
+async function fetchPeerConversation(alias: string): Promise<MessageDto[]> {
+ if (!alias) return [];
+ try {
+ return await invoke<MessageDto[]>("peer_conversation", { alias, limit: 500});
+} catch {
+ return [];
+}
+}
+
+// rc.212 — sender label → "내(마스터/sender)" 측 인지 분류.
+// self:* / me / me:* / user → 오른쪽 (마스터 발신)
+// peer:* / assistant / unverified:* / 그 외 → 왼쪽 (상대/LLM)
+function isSelfSender(sender: string): boolean {
+ const s = (sender || "").toLowerCase();
+ if (s === "me" || s === "user") return true;
+ if (s.startsWith("self:") || s.startsWith("me:")) return true;
+ return false;
+}
+
 function fmtTime(iso: string): string {
  // ISO 8601 → 'MM-dd HH:mm' (KST). 실패 시 원문.
  try {
@@ -938,16 +959,24 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  />
 );
 }
- // peer 친구는 sender 로 필터, 채널(Discord/Telegram)은 일단 전체 보여줌.
+ // rc.212 — peer 친구: peer_conversation endpoint 로 전체 양방향 session 통합 fetch.
+ // 마스터 발 메시지 (sender=self:*) + peer reply (sender=peer:*) + LLM session (user/assistant) 모두.
+ // 3초 폴링.
+ const [peerConv, { refetch: refetchPeerConv}] = createResource(
+ () => f().kind === "peer" ? f().display : null,
+ (alias) => fetchPeerConversation(alias as string),
+ );
+ const convPollTimer = setInterval(() => {
+ if (f().kind === "peer") void refetchPeerConv();
+ }, 3000);
+ onCleanup(() => clearInterval(convPollTimer));
+
+ // filtered 계산: peer 면 peerConv (timestamp ASC 정렬됨), 아니면 messages 전체.
  const filtered = createMemo<MessageDto[]>(() => {
- const all = messages() ?? [];
- if (f().kind !== "peer") return all;
- const alias = f().display;
- const addr = f().meta?.address?.toLowerCase();
- return all.filter((m) => {
- const s = m.sender.toLowerCase();
- return s === alias.toLowerCase() || (addr ? s === addr : false);
-});
+ if (f().kind === "peer") {
+ return peerConv() ?? [];
+ }
+ return messages() ?? [];
 });
 
  return (
@@ -973,12 +1002,19 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  </div>
 }
  >
+ {/* rc.212 — peer 면 timestamp ASC (오래된 → 최신 아래). 아니면 기존 reverse. */}
  <ul class="messenger-thread-list">
- <For each={filtered().slice().reverse()}>
- {(m) => (
- <li class="messenger-thread-item">
- <div class="messenger-thread-meta">
- <span class="messenger-thread-sender">{m.sender}</span>
+ <For each={f().kind === "peer" ? filtered() : filtered().slice().reverse()}>
+ {(m) => {
+ const self = isSelfSender(m.sender);
+ // rc.212 — sender 측 (마스터) = 오른쪽 정렬 + 파란 톤. peer/assistant = 왼쪽 + 회색 톤.
+ const align = self ? "flex-end" : "flex-start";
+ const bg = self ? "rgba(58, 130, 246, 0.15)" : "rgba(255, 255, 255, 0.04)";
+ const border = self ? "rgba(58, 130, 246, 0.4)" : "var(--border)";
+ return (
+ <li class="messenger-thread-item" style={`display:flex; flex-direction:column; align-items:${align}; padding:6px 8px;`}>
+ <div class="messenger-thread-meta" style={`display:flex; gap:8px; font-size:11px; opacity:0.75; align-items:center; ${self ? "flex-direction:row-reverse;" : ""}`}>
+ <span class="messenger-thread-sender" style="font-weight:600;">{m.sender}</span>
  <span class="messenger-thread-time">{fmtTime(m.timestamp)}</span>
  <button
  type="button"
@@ -989,9 +1025,15 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  ↗
  </button>
  </div>
- <div class="messenger-thread-body-text">{m.body}{ackBadge(m)}</div>
+ <div
+ class="messenger-thread-body-text"
+ style={`max-width:75%; margin-top:3px; padding:6px 10px; border-radius:8px; background:${bg}; border:1px solid ${border}; white-space:pre-wrap; word-break:break-word;`}
+ >
+ {m.body}{ackBadge(m)}
+ </div>
  </li>
-)}
+ );
+ }}
  </For>
  </ul>
  </Show>
@@ -1000,6 +1042,7 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  friend={f()}
  onSent={() => {
  void refetchMessages();
+ if (f().kind === "peer") void refetchPeerConv();
 }}
  />
  </>
