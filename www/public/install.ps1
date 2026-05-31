@@ -647,21 +647,59 @@ if ($wslAvailable) {
                 #          → Step 8.5 와 동일 패턴: PowerShell + WMI Win32_Process.Create 로
                 #          wsl-daemon-launch.bat wrapper 를 system-detached 로 spawn.
                 #          wrapper 는 wsl.exe -- bash -lc 단일 명령만 호출 → quoting 단순화 + 진짜 detach.
-                $winProfileForWsl = ($env:USERPROFILE -replace '\\', '/' -replace '^([A-Za-z]):', { '/mnt/' + $args[0].Groups[1].Value.ToLower() })
-                $wslLogPath = "$winProfileForWsl/.openxgram/wsl-daemon.log"
-                $xgramBin = "/home/$wslUser/.local/bin/xgram"
-                $wslDCmd = "mkdir -p `"$winProfileForWsl/.openxgram`" ~/.openxgram; if [ -f ~/.openxgram/daemon.env ]; then . ~/.openxgram/daemon.env; fi; setsid nohup $xgramBin daemon --bind 0.0.0.0:17400 --gui-bind 0.0.0.0:17402 > `"$wslLogPath`" 2>&1 < /dev/null & disown; exit 0"
+                # rc.220 BUGFIX — 본질 fix:
+                #   1. PowerShell scriptblock `-replace { ... }` callback 가 PS edition 따라 literal
+                #      string 으로 leak (rc.218 Task arg 에 `$args[0].Groups[1].Value.ToLower()` 가 그대로
+                #      박혀 LastTaskResult=1). → [regex]::Match 명시 호출로 교체.
+                #   2. WSL bash -lc payload 에 XGRAM_KEYSTORE_PASSWORD export 명시.
+                #      wsl.exe 는 default 로 Windows env 를 WSL 로 전달 X (WSLENV 명시 필요).
+                #      → install.ps1 시점의 $env:XGRAM_KEYSTORE_PASSWORD 를 .bat 안에 직접 박는다.
+                #   3. xgram daemon 에 `--data-dir /home/<user>/.openxgram` 명시 (Step 8.5 와 동일).
+                #   4. .bat 안에서 wsl.exe 호출 시 chcp UTF-8 (한글 path 안전).
+                $userProfilePath = $env:USERPROFILE
+                $winProfileForWsl = $userProfilePath -replace '\\', '/'
+                $driveMatch = [regex]::Match($winProfileForWsl, '^([A-Za-z]):(.*)$')
+                if ($driveMatch.Success) {
+                    $winProfileForWsl = '/mnt/' + $driveMatch.Groups[1].Value.ToLower() + $driveMatch.Groups[2].Value
+                }
+                $wslLogPath  = "$winProfileForWsl/.openxgram/wsl-daemon.log"
+                $wslHome     = "/home/$wslUser"
+                $wslDataDir  = "$wslHome/.openxgram"
+                $xgramBin    = "$wslHome/.local/bin/xgram"
 
-                # rc.218: wsl-daemon-launch.bat wrapper — wsl.exe -- bash -lc 단일 호출.
-                # Task action 이 PowerShell + WMI 만 호출하므로 schtasks parser 의 -- corner case 회피.
+                # Keystore password — WSL 측 vault unlock 용. install 시점에 env 로 받음.
+                # 없으면 WSL daemon 가 keystore unlock 실패 → vault-dependent 기능 fail.
+                # rc.220: bat 안에서 명시 export (Windows env 전파 안 됨).
+                $wslKeystorePw = $env:XGRAM_KEYSTORE_PASSWORD
+                if (-not $wslKeystorePw) { $wslKeystorePw = $env:XGRAM_KEYSTORE_PASSWORD_WSL }
+                $kpExportLine = ''
+                if ($wslKeystorePw) {
+                    # single-quote escape: ' → '\''
+                    $kpEsc = $wslKeystorePw -replace "'", "'\''"
+                    $kpExportLine = "export XGRAM_KEYSTORE_PASSWORD='$kpEsc'; "
+                } else {
+                    Write-Host "    [WARN] XGRAM_KEYSTORE_PASSWORD env 없음 — WSL daemon vault unlock 안 됨." -ForegroundColor Yellow
+                    Write-Host "           해결: PowerShell 에서 '`$env:XGRAM_KEYSTORE_PASSWORD=...' 후 install.ps1 재실행." -ForegroundColor Yellow
+                }
+
+                # bash -lc payload — rc.220 자동 detach + env export + --data-dir + 명시 path.
+                $wslDCmd = "mkdir -p `"$winProfileForWsl/.openxgram`" $wslDataDir; if [ -f $wslDataDir/daemon.env ]; then . $wslDataDir/daemon.env; fi; ${kpExportLine}setsid nohup $xgramBin daemon --bind 0.0.0.0:17400 --gui-bind 0.0.0.0:17402 --data-dir $wslDataDir > `"$wslLogPath`" 2>&1 < /dev/null & disown; exit 0"
+
+                # rc.220 wrapper bat — UTF-8 codepage + wsl.exe single call.
+                # Task action 이 PowerShell + WMI 만 호출 → schtasks parser 의 -- corner case 회피.
                 $wslLaunchBat = Join-Path $dataDir 'wsl-daemon-launch.bat'
                 $wslBatLines = @(
                     '@echo off',
-                    'rem OpenXgram WSL daemon launcher (rc.218 — WMI detached spawn, bash -lc payload)',
+                    'rem OpenXgram WSL daemon launcher (rc.220 — WMI detached spawn, bash -lc payload, keystore env injected)',
+                    'chcp 65001 >nul 2>&1',
                     "wsl.exe -- bash -lc `"$wslDCmd`"",
                     'exit /b 0'
                 )
                 [System.IO.File]::WriteAllLines($wslLaunchBat, $wslBatLines, [System.Text.Encoding]::ASCII)
+                if (-not (Test-Path $wslLaunchBat)) {
+                    Write-Host "    [FAIL] $wslLaunchBat 작성 실패 — Step 8.7 abort." -ForegroundColor Red
+                    return
+                }
 
                 # WMI Win32_Process.Create argument: cmd /c "wsl-daemon-launch.bat"
                 $wslWmiArg = "cmd /c `"`"$wslLaunchBat`"`""
@@ -683,7 +721,7 @@ if ($wslAvailable) {
                         -MultipleInstances IgnoreNew
                     # GroupId='S-1-5-32-545' = BUILTIN\Users SID. locale-independent + MSA 호환.
                     $wslDPrincipal = New-ScheduledTaskPrincipal -GroupId 'S-1-5-32-545' -RunLevel Highest
-                    Register-ScheduledTask -TaskName $wslDaemonTaskName -Action $wslDAction -Trigger @($wslDTrigLogon, $wslDTrigBoot) -Settings $wslDSettings -Principal $wslDPrincipal -Description "OpenXgram WSL daemon (user: $wslUser, ports 17400/17402, rc.215 cmd/c wrapper + Users SID)" -Force | Out-Null
+                    Register-ScheduledTask -TaskName $wslDaemonTaskName -Action $wslDAction -Trigger @($wslDTrigLogon, $wslDTrigBoot) -Settings $wslDSettings -Principal $wslDPrincipal -Description "OpenXgram WSL daemon (user: $wslUser, ports 17400/17402, rc.220 fixed regex callback + keystore env + --data-dir)" -Force | Out-Null
                     $wslRegistered = $true
                 } catch {
                     Write-Host "    [WARN] Register-ScheduledTask 실패: $($_.Exception.Message) — fallback schtasks.exe" -ForegroundColor Yellow
