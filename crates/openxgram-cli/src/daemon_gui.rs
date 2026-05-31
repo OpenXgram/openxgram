@@ -4452,9 +4452,12 @@ async fn gui_workflow_run_approve(
     Ok(Json(serde_json::json!({"resumed": run_id, "status": result.status, "total_cost": result.total_cost})))
 }
 
-/// peer-to-peer 메시지 — master 없이 outbound_queue 에 unsigned envelope 직접 enqueue.
-/// 스키마: msg_ulid PK, target_machine, target_alias, body, attempts, next_retry_at, last_error, enqueued_at, sent_at.
-/// worker (daemon_workers.rs S8) 가 target_alias JOIN peers 로 address 조회 → POST `/v1/inbound`.
+/// peer-to-peer 메시지 — outbound_queue 에 **signed envelope (JSON)** enqueue.
+/// rc.215 fix: 과거 이름은 "unsigned" 였지만 receiver `/v1/message` 가 `Envelope` JSON
+/// deserialize 를 요구하므로 master keystore 로 서명 후 직렬화한 envelope 을 INSERT.
+/// 스키마: msg_ulid PK, target_machine, target_alias, body (Envelope JSON 문자열),
+///         attempts, next_retry_at, last_error, enqueued_at, sent_at.
+/// worker (daemon_workers.rs S8) 가 target_alias JOIN peers 로 address 조회 → POST `/v1/message`.
 async fn gui_peer_send_unsigned(
     State(state): State<GuiServerState>, headers: HeaderMap, Path(alias): Path<String>, Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
@@ -4463,21 +4466,91 @@ async fn gui_peer_send_unsigned(
     if text.is_empty() {
         return Err((StatusCode::BAD_REQUEST, Json(ErrorDto{error: "body 필수".into()})));
     }
-    let mut db = state.db.lock().await;
-    // peer 존재 확인 (worker 가 JOIN 으로 address 가져오므로 여기선 alias 유효성만).
-    let exists: i64 = db.conn().query_row(
-        "SELECT COUNT(*) FROM peers WHERE alias=?1", rusqlite::params![alias],
-        |r| r.get(0),
-    ).unwrap_or(0);
-    if exists == 0 {
-        return Err((StatusCode::NOT_FOUND, Json(ErrorDto{error: format!("peer {alias} not found")})));
-    }
+    let conversation_id_in = body
+        .get("conversation_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    // master keystore 로 서명. env 필요 — 명시적 503 (silent fallback 금지).
+    let pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").map_err(|_| {
+        (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorDto{
+            error: "XGRAM_KEYSTORE_PASSWORD 미설정 — daemon 환경변수 필요".into()
+        }))
+    })?;
+
+    // peer 조회 + 서명 준비. db lock 은 짧게 (INSERT 위해 다시 잡는다).
+    let (peer_pubkey_hex, _peer_address) = {
+        let mut db = state.db.lock().await;
+        let row = db.conn().query_row(
+            "SELECT address, public_key_hex FROM peers WHERE alias=?1",
+            rusqlite::params![alias],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        );
+        match row {
+            Ok(r) => r,
+            Err(_) => {
+                return Err((StatusCode::NOT_FOUND, Json(ErrorDto{
+                    error: format!("peer {alias} not found")
+                })));
+            }
+        }
+    };
+
+    let data_dir = state.data_dir.as_ref().clone();
+    use openxgram_keystore::{FsKeystore, Keystore};
+    let ks = FsKeystore::new(openxgram_core::paths::keystore_dir(&data_dir));
+    let signer = ks
+        .load(openxgram_core::paths::MASTER_KEY_NAME, &pw)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{
+            error: format!("master 키 로드 실패: {e}")
+        })))?;
+
+    let signature_hex = hex::encode(signer.sign(text.as_bytes()));
+    let payload_hex = hex::encode(text.as_bytes());
+    let sender_addr = signer.address.to_string();
+
+    // install-manifest 기반 sender 메타데이터.
+    let manifest_opt = openxgram_manifest::InstallManifest::read(
+        openxgram_core::paths::manifest_path(&data_dir),
+    ).ok();
+    let sender_alias = manifest_opt.as_ref().map(|m| m.machine.alias.clone());
+    let sender_transport_url = std::env::var("XGRAM_TRANSPORT_PUBLIC_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            manifest_opt
+                .as_ref()
+                .and_then(|m| m.machine.tailscale_ip.clone())
+                .map(|ip| format!("http://{ip}:47300"))
+        });
+    let sender_pubkey_hex = Some(hex::encode(signer.public_key_bytes()));
+
+    let envelope = openxgram_transport::Envelope {
+        from: sender_addr,
+        to: peer_pubkey_hex,
+        payload_hex,
+        timestamp: openxgram_core::time::kst_now(),
+        signature_hex,
+        nonce: Some(uuid::Uuid::new_v4().to_string()),
+        conversation_id: conversation_id_in.or_else(|| Some(uuid::Uuid::new_v4().to_string())),
+        sender_alias,
+        sender_transport_url,
+        sender_pubkey_hex,
+        recipient_alias: Some(alias.clone()),
+    };
+    let envelope_json = serde_json::to_string(&envelope).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{
+            error: format!("envelope serialize: {e}")
+        }))
+    })?;
+
     let envelope_id = uuid::Uuid::new_v4().to_string();
     let now_str = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
     db.conn().execute(
         "INSERT INTO outbound_queue (msg_ulid, target_machine, target_alias, body, attempts, enqueued_at) \
          VALUES (?1, '', ?2, ?3, 0, ?4)",
-        rusqlite::params![envelope_id, alias, text, now_str],
+        rusqlite::params![envelope_id, alias, envelope_json, now_str],
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("enqueue: {e}")})))?;
     Ok(Json(serde_json::json!({"queued": envelope_id, "to_alias": alias})))
 }

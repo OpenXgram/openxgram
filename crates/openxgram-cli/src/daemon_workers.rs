@@ -1142,10 +1142,11 @@ async fn v6_outbound_drain(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
         .build()?;
 
     for (ulid, alias, body, attempts, address) in to_send {
+        // rc.215 — endpoint fix: receiver router 는 /v1/message 만 노출. /v1/inbound 는 404 forever.
         let target_url = if address.ends_with('/') {
-            format!("{address}v1/inbound")
+            format!("{address}v1/message")
         } else {
-            format!("{address}/v1/inbound")
+            format!("{address}/v1/message")
         };
         let result = http
             .post(&target_url)
