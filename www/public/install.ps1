@@ -446,24 +446,41 @@ try {
     # rc.217 — detached spawn (start "" /B ... > log 2>&1) + exit /b 0.
     # 원인: foreground 로 xgram.exe 실행 시 Task Scheduler 가 child 죽일 때 Ctrl-C 전파 →
     #       daemon 종료 + LastTaskResult=0xC000013A (STATUS_CONTROL_C_EXIT).
-    # 해결: start /B = no new console detach, exit 0 = bat 즉시 return → Task LastTaskResult=0,
-    #       child xgram 는 detached 로 살아남음.
+    # rc.218 — `start "" /B` 만으로는 process tree 분리 부족 (parent cmd 종료 시 child 도 cleanup).
+    #          진짜 detach = WMI Win32_Process.Create — winlogon/services.exe parent 와 분리되어
+    #          Task 종료 / ssh logoff 에 영향 X.
+    # 구조: Task → daemon-launch.bat → PowerShell Invoke-WmiMethod Win32_Process.Create
+    #              → daemon-launch-inner.bat → xgram.exe daemon (foreground, system-detached)
     $launchBat = Join-Path $dataDir 'daemon-launch.bat'
+    $launchBatInner = Join-Path $dataDir 'daemon-launch-inner.bat'
     $logPath = Join-Path $dataDir 'daemon.log'
-    $batLines = @(
+
+    # Inner bat: 실제 env set + xgram daemon foreground 실행 (WMI Win32_Process.Create 의 자식).
+    $innerLines = @(
         '@echo off',
-        'rem OpenXgram daemon launcher (rc.217 — detached spawn)',
+        'rem OpenXgram daemon inner launcher (rc.218 — WMI spawned, system-detached)',
         "cd /d `"$INSTALL`""
     )
     if ($env:XGRAM_KEYSTORE_PASSWORD) {
-        $batLines += "set XGRAM_KEYSTORE_PASSWORD=$env:XGRAM_KEYSTORE_PASSWORD"
+        $innerLines += "set XGRAM_KEYSTORE_PASSWORD=$env:XGRAM_KEYSTORE_PASSWORD"
     }
     if ($transportPublicUrl) {
-        $batLines += "set XGRAM_TRANSPORT_PUBLIC_URL=$transportPublicUrl"
+        $innerLines += "set XGRAM_TRANSPORT_PUBLIC_URL=$transportPublicUrl"
     }
-    $batLines += "start `"`" /B `"$INSTALL\xgram.exe`" daemon --data-dir `"$dataDir`" --bind 0.0.0.0:47300 --gui-bind 0.0.0.0:47302 > `"$logPath`" 2>&1"
-    $batLines += 'exit /b 0'
-    [System.IO.File]::WriteAllLines($launchBat, $batLines, [System.Text.Encoding]::ASCII)
+    $innerLines += "`"$INSTALL\xgram.exe`" daemon --data-dir `"$dataDir`" --bind 0.0.0.0:47300 --gui-bind 0.0.0.0:47302 > `"$logPath`" 2>&1"
+    [System.IO.File]::WriteAllLines($launchBatInner, $innerLines, [System.Text.Encoding]::ASCII)
+
+    # Outer bat: WMI Win32_Process.Create 로 inner bat 을 분리된 process tree 로 spawn.
+    # Invoke-WmiMethod 가 만드는 process 는 system parent (winlogon/services) 에 attach →
+    # Task / ssh / cmd parent 종료에 영향 받지 않음 (진짜 daemon detach).
+    $wmiArg = "cmd /c `"`"$launchBatInner`"`""
+    $outerLines = @(
+        '@echo off',
+        'rem OpenXgram daemon outer launcher (rc.218 — WMI detached spawn)',
+        "powershell.exe -NoProfile -WindowStyle Hidden -Command `"Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList '$wmiArg' | Out-Null`" 2>nul",
+        'exit /b 0'
+    )
+    [System.IO.File]::WriteAllLines($launchBat, $outerLines, [System.Text.Encoding]::ASCII)
 
     # --- 7) Register Scheduled Task — Register-ScheduledTask (PowerShell standard) ---
     #        Principal: -GroupId 'S-1-5-32-545' (BUILTIN\Users SID, locale 독립 — MSA·AzureAD 모두 OK)
@@ -511,21 +528,22 @@ try {
     }
 
     # --- 8) Start + verify (silent fail 금지 — 실제 health check) ---
-    # rc.217 — detached spawn 검증: process + health 둘 다 확인 (둘 다 살아야 OK).
+    # rc.218 — WMI detached spawn 검증: WMI spawn 후 6초 대기 (PS bootstrap + bat exec 여유) →
+    #          process + health 둘 다 확인. 진짜 detach 면 Task LastTaskResult=0 이 보장됨.
     if ($registered) {
         Start-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 5
+        Start-Sleep -Seconds 6
         $proc = Get-Process xgram -ErrorAction SilentlyContinue
         if (-not $proc) {
-            Write-Host "    [FAIL] daemon process not running after Task start" -ForegroundColor Red
-            Write-Host "           hint: check $logPath" -ForegroundColor Yellow
+            Write-Host "    [FAIL] daemon process not running after WMI Win32_Process.Create spawn" -ForegroundColor Red
+            Write-Host "           hint: check $logPath  (or run $launchBatInner manually)" -ForegroundColor Yellow
         } else {
             try {
                 $health = Invoke-WebRequest -Uri 'http://127.0.0.1:47300/v1/health' -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
-                Write-Host "    [OK] daemon spawned + health responding (pid=$($proc.Id))"
+                Write-Host "    [OK] daemon detached + alive (pid=$($proc.Id), health=$($health.StatusCode), WMI parent-detach OK)"
                 if ($transportPublicUrl) { Write-Host "    -> XGRAM_TRANSPORT_PUBLIC_URL = $transportPublicUrl" }
             } catch {
-                Write-Host "    [WARN] process alive but health not responding (pid=$($proc.Id))" -ForegroundColor Yellow
+                Write-Host "    [WARN] process alive but health $($_.Exception.Message) (pid=$($proc.Id))" -ForegroundColor Yellow
                 Write-Host "           hint: check $logPath" -ForegroundColor Yellow
             }
         }
@@ -541,10 +559,35 @@ try {
     $ErrorActionPreference = $oldEAP
 }
 
+# 8.4.5 (rc.218+) WSL daemon binary auto-update via install.sh.
+#       install.ps1 가 Windows binary 만 update 하던 corner case (WSL 안 binary 는 옛 rc 그대로).
+#       → 이 step 가 WSL 안에서 install.sh 호출해 WSL daemon binary 도 같은 rc 로 sync.
+#       반드시 Step 8.7 (WSL daemon Task spawn) 직전 — binary 최신 후 daemon spawn.
+$wslAvailable = Get-Command wsl.exe -ErrorAction SilentlyContinue
+if ($wslAvailable) {
+    Write-Host ''
+    Write-Host '==> Step 8.4.5: WSL daemon binary update (install.sh)' -ForegroundColor Cyan
+    try {
+        # OPENXGRAM_VERSION 동적 — install.ps1 가 받은 $VERSION 변수 (env or 'latest') 사용.
+        $wslInstallEnv = if ($VERSION -and $VERSION -ne 'latest') { "OPENXGRAM_VERSION=$VERSION " } else { '' }
+        $installShCmd = "${wslInstallEnv}curl -sSL https://openxgram.org/install.sh | bash"
+        $wslResult = wsl.exe -- bash -lc "$installShCmd" 2>&1
+        $wslExit = $LASTEXITCODE
+        if ($wslExit -eq 0) {
+            Write-Host "    [OK] WSL daemon binary updated (install.sh exit=0, version=$VERSION)"
+        } else {
+            Write-Host "    [WARN] WSL install.sh exit=$wslExit (manual: wsl -- bash -lc 'curl -sSL https://openxgram.org/install.sh | bash')" -ForegroundColor Yellow
+            $errLines = ($wslResult -join "`n") -split "`n" | Where-Object { $_ -match '(?i)(error|fail|warn)' } | Select-Object -First 5
+            if ($errLines) { $errLines | ForEach-Object { Write-Host "           $_" -ForegroundColor Yellow } }
+        }
+    } catch {
+        Write-Host "    [WARN] Step 8.4.5 WSL install.sh failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
 # 8.6 (rc.174+) WSL warm-up on logon (if wsl.exe available).
 #      WSL2 vmcompute/LxssManager auto-starts at boot; first distro init is lazy.
 #      `wsl --exec /bin/true` triggers warm-up so Linux env is ready when user logs in.
-$wslAvailable = Get-Command wsl.exe -ErrorAction SilentlyContinue
 if ($wslAvailable) {
     $wslTaskName = 'OpenXgram-WSL-Boot'
     $existingWsl = Get-ScheduledTask -TaskName $wslTaskName -ErrorAction SilentlyContinue
@@ -600,16 +643,34 @@ if ($wslAvailable) {
                 # rc.217 — full path xgram + setsid detach + log to Windows-visible mnt path
                 #          + exit 0 (LastTaskResult=1 = generic error; bash exits 0 → Task OK).
                 #          USERPROFILE 를 WSL 경유 /mnt/c/... 로 환산해 Windows 측에서 진단 가능.
+                # rc.218 — Task action 가 cmd.exe + 복잡한 quoting 로 LastTaskResult=1 발생.
+                #          → Step 8.5 와 동일 패턴: PowerShell + WMI Win32_Process.Create 로
+                #          wsl-daemon-launch.bat wrapper 를 system-detached 로 spawn.
+                #          wrapper 는 wsl.exe -- bash -lc 단일 명령만 호출 → quoting 단순화 + 진짜 detach.
                 $winProfileForWsl = ($env:USERPROFILE -replace '\\', '/' -replace '^([A-Za-z]):', { '/mnt/' + $args[0].Groups[1].Value.ToLower() })
                 $wslLogPath = "$winProfileForWsl/.openxgram/wsl-daemon.log"
                 $xgramBin = "/home/$wslUser/.local/bin/xgram"
                 $wslDCmd = "mkdir -p `"$winProfileForWsl/.openxgram`" ~/.openxgram; if [ -f ~/.openxgram/daemon.env ]; then . ~/.openxgram/daemon.env; fi; setsid nohup $xgramBin daemon --bind 0.0.0.0:17400 --gui-bind 0.0.0.0:17402 > `"$wslLogPath`" 2>&1 < /dev/null & disown; exit 0"
-                # cmd /c wrapper: -- parser 우회. wsl 명령 통째를 quoted string 으로 cmd.exe 가 수령.
-                $wslDArg = "/c `"wsl.exe -- bash -lc `"`"$wslDCmd`"`"`""
+
+                # rc.218: wsl-daemon-launch.bat wrapper — wsl.exe -- bash -lc 단일 호출.
+                # Task action 이 PowerShell + WMI 만 호출하므로 schtasks parser 의 -- corner case 회피.
+                $wslLaunchBat = Join-Path $dataDir 'wsl-daemon-launch.bat'
+                $wslBatLines = @(
+                    '@echo off',
+                    'rem OpenXgram WSL daemon launcher (rc.218 — WMI detached spawn, bash -lc payload)',
+                    "wsl.exe -- bash -lc `"$wslDCmd`"",
+                    'exit /b 0'
+                )
+                [System.IO.File]::WriteAllLines($wslLaunchBat, $wslBatLines, [System.Text.Encoding]::ASCII)
+
+                # WMI Win32_Process.Create argument: cmd /c "wsl-daemon-launch.bat"
+                $wslWmiArg = "cmd /c `"`"$wslLaunchBat`"`""
+                # Task action: PowerShell -Command Invoke-WmiMethod (Step 8.5 패턴과 동일).
+                $wslDArg = "-NoProfile -WindowStyle Hidden -Command `"Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList '$wslWmiArg' | Out-Null`""
 
                 $wslRegistered = $false
                 try {
-                    $wslDAction    = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument $wslDArg
+                    $wslDAction    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $wslDArg
                     $wslDTrigLogon = New-ScheduledTaskTrigger -AtLogOn
                     $wslDTrigBoot  = New-ScheduledTaskTrigger -AtStartup
                     $wslDSettings  = New-ScheduledTaskSettingsSet `
@@ -626,8 +687,8 @@ if ($wslAvailable) {
                     $wslRegistered = $true
                 } catch {
                     Write-Host "    [WARN] Register-ScheduledTask 실패: $($_.Exception.Message) — fallback schtasks.exe" -ForegroundColor Yellow
-                    # Fallback: schtasks.exe direct (cmd /c wrapped).
-                    $wslDTrEsc = ("cmd.exe " + $wslDArg) -replace '"', '\"'
+                    # rc.218 — Fallback: schtasks.exe 가 PowerShell + WMI 호출 (Register-ScheduledTask 와 동일 패턴).
+                    $wslDTrEsc = ("powershell.exe " + $wslDArg) -replace '"', '\"'
                     $schtasksArgs = @(
                         '/Create',
                         '/TN', $wslDaemonTaskName,
@@ -646,10 +707,10 @@ if ($wslAvailable) {
                     }
                 }
 
-                # Trigger immediately + verify (rc.217 — WSL process + health 둘 다 확인).
+                # Trigger immediately + verify (rc.218 — WMI bootstrap + bash spawn 여유 → 7s).
                 if ($wslRegistered) {
                     Start-ScheduledTask -TaskName $wslDaemonTaskName -ErrorAction SilentlyContinue
-                    Start-Sleep -Seconds 5
+                    Start-Sleep -Seconds 7
                     $wslAlive = $false
                     $wslHealthy = $false
                     try {
@@ -669,6 +730,7 @@ if ($wslAvailable) {
                     } else {
                         Write-Host "    [FAIL] Step 8.7 WSL daemon spawn 실패 — Task 는 등록되었으나 WSL 안 xgram process 없음." -ForegroundColor Red
                         Write-Host "           Windows 측 log: $env:USERPROFILE\.openxgram\wsl-daemon.log" -ForegroundColor Yellow
+                        Write-Host "           WMI wrapper bat: $wslLaunchBat  (직접 실행 가능)" -ForegroundColor Yellow
                         Write-Host "           수동 디버그: wsl.exe -- bash -lc '$wslDCmd'  직접 실행해 확인." -ForegroundColor Yellow
                     }
                 }
