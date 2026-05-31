@@ -57,6 +57,61 @@ done
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 
+# rc.208 — WSL 자동 detect + Windows daemon db symlink (production launch fix)
+# Windows daemon (install.ps1) 가 native 로 돌고, WSL CLI 는 그 db 를 공유해야
+# cross-machine peer 통신 + peer-per-tmux 가 작동. 다른 data_dir 사용 시
+# WSL standalone (peers=0) ↔ Windows daemon db 단절.
+detect_wsl() {
+  if grep -qi -E "microsoft|wsl" /proc/version 2>/dev/null; then
+    return 0  # WSL
+  fi
+  return 1  # 일반 Linux
+}
+
+setup_wsl_symlink() {
+  # Windows USERPROFILE 추정 — wslvar USERPROFILE 우선, 없으면 $USER
+  local win_user="${USER}"
+  if command -v wslvar >/dev/null 2>&1; then
+    local win_profile
+    win_profile=$(wslvar USERPROFILE 2>/dev/null | tr -d '\r')
+    if [ -n "$win_profile" ]; then
+      win_user=$(basename "$win_profile")
+    fi
+  fi
+  local win_openxgram="/mnt/c/Users/${win_user}/.openxgram"
+  if [ ! -d "$win_openxgram" ]; then
+    echo "  → Windows daemon 없음 (path: $win_openxgram). standalone WSL daemon 으로 진행."
+    return 1  # symlink skip — fallback 으로 일반 Linux flow
+  fi
+  # 기존 ~/.openxgram 가 이미 동일 symlink 면 skip
+  if [ -L "$HOME/.openxgram" ]; then
+    local existing
+    existing=$(readlink "$HOME/.openxgram")
+    if [ "$existing" = "$win_openxgram" ]; then
+      echo "  ✓ 이미 Windows daemon symlink ($HOME/.openxgram → $win_openxgram)"
+      return 0
+    fi
+  fi
+  if [ -e "$HOME/.openxgram" ]; then
+    local backup="$HOME/.openxgram.bak-$(date +%s)"
+    mv "$HOME/.openxgram" "$backup"
+    echo "  → 기존 ~/.openxgram → $backup 으로 backup"
+  fi
+  ln -s "$win_openxgram" "$HOME/.openxgram"
+  echo "  ✓ WSL detect: Windows daemon db symlink ($HOME/.openxgram → $win_openxgram)"
+  return 0
+}
+
+WSL_MODE=0
+if detect_wsl; then
+  echo "==> WSL 환경 detect"
+  if setup_wsl_symlink; then
+    WSL_MODE=1
+    echo "  → Windows daemon 의 db 공유. WSL standalone daemon 건너뜀."
+    echo "  → CLI 만 install (binary download + ~/.local/bin link)."
+  fi
+fi
+
 case "$OS" in
   linux) OS_ALIAS="linux" ;;
   darwin) OS_ALIAS="darwin" ;;
@@ -399,8 +454,11 @@ if [ "$PREBUILT_OK" = "1" ]; then
     fi
   done
 
+  # rc.208 — WSL_MODE 면 Windows daemon 의 db 를 share 하므로 WSL 안에서 daemon 안 띄움
+  if [ "$WSL_MODE" = "1" ]; then
+    echo "    (WSL_MODE: Windows daemon 의 db 공유 — WSL daemon spawn skip)"
   # 4. daemon 백그라운드 가동 (이미 떠 있으면 skip)
-  if ! pgrep -f "$INSTALL_DIR/xgram daemon" >/dev/null 2>&1; then
+  elif ! pgrep -f "$INSTALL_DIR/xgram daemon" >/dev/null 2>&1; then
     echo "==> xgram daemon 가동 (Tailscale IP 에 bind, nohup background)"
     mkdir -p "$DATA_DIR"
     if [ -n "${PW:-}" ]; then
@@ -430,7 +488,10 @@ if [ "$PREBUILT_OK" = "1" ]; then
   # 4b. agent 런타임 가동 (inbox 폴링 + Discord 양방향)
   #     - XGRAM_DISCORD_WEBHOOK_URL: outbound (inbox → Discord forward)
   #     - XGRAM_DISCORD_BOT_TOKEN + XGRAM_DISCORD_CHANNEL_ID: inbound (Discord → daemon)
-  if ! pgrep -f "$INSTALL_DIR/xgram agent" >/dev/null 2>&1; then
+  # rc.208 — WSL_MODE 면 Windows agent 가 이미 돌고 있으므로 WSL agent spawn skip.
+  if [ "$WSL_MODE" = "1" ]; then
+    echo "    (WSL_MODE: Windows agent 가 inbox 처리 — WSL agent spawn skip)"
+  elif ! pgrep -f "$INSTALL_DIR/xgram agent" >/dev/null 2>&1; then
     echo "==> xgram agent 런타임 가동 (inbox 폴링 + Discord 양방향)"
     XGRAM_DISCORD_WEBHOOK_URL="${XGRAM_DISCORD_WEBHOOK_URL:-}" \
     XGRAM_DISCORD_BOT_TOKEN="${XGRAM_DISCORD_BOT_TOKEN:-}" \
@@ -618,8 +679,13 @@ if [ "$FULL" = "1" ] && [ "$DRY_RUN" = "0" ]; then
     "$XGRAM_BIN" init --alias "$(hostname -s 2>/dev/null || echo node)" || true
   fi
   "$XGRAM_BIN" mcp-install --scope user --full --use-path-lookup || true
-  "$XGRAM_BIN" daemon-install || true
-  echo ""
-  echo "✓ --full 완료. systemd user 활성화:"
-  echo "  systemctl --user enable --now openxgram-sidecar.service"
+  # rc.208 — WSL_MODE 면 daemon-install (systemd user service) skip — Windows daemon 공유
+  if [ "$WSL_MODE" = "1" ]; then
+    echo "  (WSL_MODE: daemon-install skip — Windows daemon 의 db 공유)"
+  else
+    "$XGRAM_BIN" daemon-install || true
+    echo ""
+    echo "✓ --full 완료. systemd user 활성화:"
+    echo "  systemctl --user enable --now openxgram-sidecar.service"
+  fi
 fi
