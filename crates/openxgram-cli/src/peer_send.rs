@@ -170,6 +170,7 @@ pub async fn run_peer_send_with_conv(
         sender_alias,
         sender_transport_url,
         sender_pubkey_hex,
+        recipient_alias: Some(alias.to_string()),
     };
 
     match parse_route(&address, &peer.public_key_hex)? {
@@ -288,6 +289,7 @@ pub async fn run_peer_broadcast(
             sender_alias: bcast_sender_alias.clone(),
             sender_transport_url: bcast_sender_transport_url.clone(),
             sender_pubkey_hex: bcast_sender_pubkey_hex.clone(),
+            recipient_alias: Some(alias.clone()),
         };
         match route {
             SendRoute::Http(url) => {

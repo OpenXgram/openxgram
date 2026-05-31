@@ -441,13 +441,18 @@ pub fn process_inbound(
         tracing::info!(session_id=%session.id, sender=%sender_label, body_len=body.len(), "process_inbound: 메시지 inbox 저장 완료");
 
         // rc.197 본질 push 알림 — DB INSERT 만 ≠ 통신.
-        // receiver 측 머신의 active tmux session (master alias 또는 envelope.to 매칭 peer) 에
-        // 즉시 bracket-paste inject. 그 tmux 의 LLM 이 화면에서 메시지 확인.
-        let recv_alias = PeerStore::new(&mut db)
-            .get_by_public_key(&env.to)
-            .ok()
-            .flatten()
-            .map(|p| p.alias)
+        // rc.199 — envelope.recipient_alias hint 우선 (송신측 명시). 그래야 cross-machine 시
+        // 받는 측 peers 에 receiver alias 등록 안 됐어도 tmux 매핑 가능.
+        let recv_alias = env
+            .recipient_alias
+            .clone()
+            .or_else(|| {
+                PeerStore::new(&mut db)
+                    .get_by_public_key(&env.to)
+                    .ok()
+                    .flatten()
+                    .map(|p| p.alias)
+            })
             .or_else(|| {
                 openxgram_manifest::InstallManifest::read(
                     openxgram_core::paths::manifest_path(data_dir),

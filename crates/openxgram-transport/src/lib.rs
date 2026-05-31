@@ -59,6 +59,11 @@ pub struct Envelope {
     pub sender_transport_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_pubkey_hex: Option<String>,
+    /// rc.199 — 받는 측 tmux push 매핑 hint.
+    /// 송신 측이 peer table 의 alias 로 send 시 그 alias 자체를 동봉.
+    /// 받는 측 process_inbound 가 envelope.to pubkey 매핑 실패 시 이 hint 로 tmux session resolve.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipient_alias: Option<String>,
 }
 
 #[derive(Debug, Error)]
