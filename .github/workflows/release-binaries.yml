@@ -110,7 +110,11 @@ jobs:
           # cc crate cross-compile env (aarch64-linux 전용 — windows 는 native msvc).
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
-        run: cargo build --release --target "$MATRIX_TARGET" -p openxgram-cli
+        # rc.202 — Windows MSVC 의 cargo incremental fingerprint 가 src 변경 안 detect → 옛 binary.
+        # cargo clean -p openxgram-cli 로 강제 fresh build (deps cache 는 reuse).
+        run: |
+          cargo clean -p openxgram-cli || true
+          cargo build --release --target "$MATRIX_TARGET" -p openxgram-cli
 
       - name: Package + SHA256
         shell: bash
