@@ -43,6 +43,7 @@ pub mod openagentx;
 pub mod orchestration;
 pub mod otel;
 pub mod pair_desktop;
+pub mod pair_host;
 pub mod pattern_cmd;
 pub mod patterns;
 pub mod payment;

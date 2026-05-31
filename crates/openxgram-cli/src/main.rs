@@ -411,6 +411,15 @@ enum Commands {
         data_dir: Option<PathBuf>,
     },
 
+    /// rc.209 — WSL ↔ Windows host daemon 자동 peer-pair.
+    /// install.sh 가 WSL detect 시 자동 호출. 검출 후보 (127.0.0.1, resolv.conf nameserver,
+    /// host.docker.internal) /v1/health 순회 → 첫 OK 응답 URL 을 host 로 등록 +
+    /// announce envelope 송신 → Windows daemon 가 sender hint 로 자동 peer upsert.
+    PairHost {
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+
     /// 자체 업데이트 — install.ps1 / install.sh 위임 (Task/Service auto stop+restart 자동).
     /// `xgram install` 도 같은 동작 (재설치/업그레이드 둘 다 idempotent).
     /// 사용 예: `xgram update` (latest) / `xgram install --tag v0.2.0-rc.167`.
@@ -2634,6 +2643,12 @@ async fn main() -> anyhow::Result<()> {
         Commands::PairDesktop { data_dir } => {
             let dir = resolve_data_dir(data_dir)?;
             openxgram_cli::pair_desktop::run_pair_desktop(&dir)?;
+        }
+
+        Commands::PairHost { data_dir } => {
+            let dir = resolve_data_dir(data_dir)?;
+            let pw = openxgram_core::env::require_password()?;
+            openxgram_cli::pair_host::run_pair_host(&dir, &pw).await?;
         }
 
         Commands::Update { tag } => {
