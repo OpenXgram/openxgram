@@ -544,8 +544,19 @@ pub async fn run_discord_inbound_for_daemon(
 ///   2. aoe wrapper 매칭 (aoe_<alias>_<id>)
 ///   3. substring 매칭 (session_name.contains(alias))
 /// 첫 매칭 반환. 매번 tmux 진리원천 조회 → 재시작/id 변경 자동 대응. 하드코딩 0.
+/// rc.198 — Windows daemon 가 WSL 안의 tmux 호출 가능하게 cross-platform wrapper.
+/// Linux/macOS: `tmux ...`. Windows: `wsl tmux ...`.
+pub fn tmux_command_async() -> tokio::process::Command {
+    if cfg!(windows) {
+        let mut c = tokio::process::Command::new("wsl");
+        c.arg("tmux");
+        c
+    } else {
+        tokio::process::Command::new("tmux")
+    }
+}
+
 pub async fn resolve_alias_to_tmux(alias: &str) -> Option<(String, u32)> {
-    use tokio::process::Command;
     // 입력 정규화 — GUI suffix ("starianset [aoe-window]", "name (xxx)") 제거.
     // 모든 GUI 명명 변종 흡수, sanitize 후 매칭.
     let cleaned = alias
@@ -553,7 +564,7 @@ pub async fn resolve_alias_to_tmux(alias: &str) -> Option<(String, u32)> {
         .split(" (").next().unwrap_or(alias)
         .trim();
     if cleaned.is_empty() { return None;}
-    let out = Command::new("tmux")
+    let out = tmux_command_async()
         .args(["list-sessions", "-F", "#{session_name}"])
         .output().await.ok()?;
     if !out.status.success() { return None;}

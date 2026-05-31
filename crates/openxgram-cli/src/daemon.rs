@@ -467,12 +467,13 @@ pub fn process_inbound(
                     {
                         let target = format!("{}:{}", session, idx);
                         let wrapped = format!("\x1b[200~{}\x1b[201~", injected_clone);
-                        let _ = tokio::process::Command::new("tmux")
+                        // rc.198 — Windows daemon → wsl tmux 자동 wrap
+                        let _ = crate::notify::tmux_command_async()
                             .args(["send-keys", "-t", &target, "-l", &wrapped])
                             .output()
                             .await;
                         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-                        let _ = tokio::process::Command::new("tmux")
+                        let _ = crate::notify::tmux_command_async()
                             .args(["send-keys", "-t", &target, "Enter"])
                             .output()
                             .await;
