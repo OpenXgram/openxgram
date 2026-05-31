@@ -3724,6 +3724,75 @@ async fn gui_reflection_runs_list(
     Ok(Json(rows))
 }
 
+/// rc.216 — L3 patterns → L2 wiki_pages 격상 (Karpathy 패턴 본질 fix).
+///
+/// 흐름 (CLAUDE.md 5층 메모리 아키텍처):
+///   L0 messages → L1 episodes (reflect_all)
+///   L0 messages → L3 patterns (heuristic_extract, frequency upsert)
+///   **L3 patterns (RECURRING/ROUTINE) → L2 wiki_pages (이 함수)**
+///   L3 patterns (ROUTINE) → L4 traits (derive_traits_from_patterns)
+///
+/// 멱등 (idempotent): 동일 pattern_text 는 같은 wiki_pages.id 로 upsert.
+/// 임계값: frequency >= 2 (RECURRING 이상) — NEW 1회는 격상하지 않음.
+fn promote_patterns_to_wiki(db: &mut openxgram_db::Db) -> anyhow::Result<i64> {
+    let conn = db.conn();
+    let rows: Vec<(String, String, i64, String, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, pattern_text, frequency, first_seen, last_seen \
+             FROM patterns WHERE frequency >= 2 ORDER BY frequency DESC, last_seen DESC LIMIT 200",
+        )?;
+        let it = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+            ))
+        })?;
+        it.flatten().collect()
+    };
+
+    let mut promoted = 0i64;
+    for (pid, ptxt, freq, first_seen, last_seen) in rows {
+        let class = if freq >= 5 { "routine" } else { "recurring" };
+        // 안정적인 wiki page id — pattern.id 기반 deterministic.
+        let page_id = format!("pattern-{}", &pid[..pid.len().min(36)]);
+        let file_path = format!("entity/{}.md", page_id);
+        let title = ptxt.chars().take(80).collect::<String>();
+        let content = format!(
+            "# {title}\n\n- classification: {class}\n- frequency: {freq}\n- first_seen: {first_seen}\n- last_seen: {last_seen}\n- source_pattern_id: {pid}\n\n원본 pattern_text:\n\n> {ptxt}\n",
+        );
+        use sha2::{Digest, Sha256};
+        let content_hash = format!("{:x}", Sha256::new().chain_update(content.as_bytes()).finalize());
+        let now = chrono::Utc::now().timestamp();
+        let r = conn.execute(
+            "INSERT INTO wiki_pages (id, file_path, page_type, title, content_hash, embedding_hash, created_at, updated_at, category_path, tags, authors) \
+             VALUES (?1, ?2, 'entity', ?3, ?4, ?4, ?5, ?5, 'patterns', ?6, '[\"reflection_pass\"]') \
+             ON CONFLICT(id) DO UPDATE SET \
+                title = excluded.title, \
+                content_hash = excluded.content_hash, \
+                embedding_hash = excluded.embedding_hash, \
+                updated_at = excluded.updated_at, \
+                tags = excluded.tags",
+            rusqlite::params![
+                page_id,
+                file_path,
+                title,
+                content_hash,
+                now,
+                serde_json::json!([class, "auto-promoted"]).to_string()
+            ],
+        );
+        match r {
+            Ok(n) if n > 0 => promoted += 1,
+            Ok(_) => {}
+            Err(e) => tracing::warn!("wiki upsert 실패 ({}): {e}", page_id),
+        }
+    }
+    Ok(promoted)
+}
+
 async fn gui_reflection_now(
     State(state): State<GuiServerState>,
     headers: HeaderMap,
@@ -3731,6 +3800,7 @@ async fn gui_reflection_now(
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     let started = chrono::Utc::now().to_rfc3339();
     // 실제 reflection 실행 — openxgram_memory::reflect_all + derive_traits_from_patterns
+    //                  + rc.216: L3 ROUTINE/RECURRING patterns → wiki_pages 격상 (Karpathy 패턴).
     let data_dir = state.data_dir.as_ref().clone();
     let pre_counts = {
         let mut db = state.db.lock().await;
@@ -3738,8 +3808,9 @@ async fn gui_reflection_now(
         let wiki: i64 = conn
             .query_row("SELECT COUNT(*) FROM wiki_pages", [], |r| r.get(0))
             .unwrap_or(0);
+        // rc.216 fix: patterns_found 는 L3 patterns 테이블 기준 (memory_patterns 가 아님 — 그건 M-5 인덱스).
         let patterns: i64 = conn
-            .query_row("SELECT COUNT(*) FROM memory_patterns", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM patterns", [], |r| r.get(0))
             .unwrap_or(0);
         (wiki, patterns)
     };
@@ -3751,6 +3822,12 @@ async fn gui_reflection_now(
         })?;
         openxgram_memory::reflect_all(&mut db)?;
         openxgram_memory::derive_traits_from_patterns(&mut db)?;
+        // rc.216 — L3 → L2 wiki 격상. RECURRING(2~4)·ROUTINE(5+) 빈도의 patterns 를
+        // wiki_pages 에 entity 타입으로 upsert. 디스크는 후속 sync 가 처리.
+        let promoted = promote_patterns_to_wiki(&mut db)?;
+        if promoted > 0 {
+            tracing::info!(promoted, "rc.216 reflection: patterns → wiki_pages 격상");
+        }
         Ok(())
     })
     .await;
@@ -3766,7 +3843,7 @@ async fn gui_reflection_now(
         .query_row("SELECT COUNT(*) FROM wiki_pages", [], |r| r.get(0))
         .unwrap_or(0);
     let post_patterns: i64 = conn
-        .query_row("SELECT COUNT(*) FROM memory_patterns", [], |r| r.get(0))
+        .query_row("SELECT COUNT(*) FROM patterns", [], |r| r.get(0))
         .unwrap_or(0);
     let new_pages = post_wiki - pre_counts.0;
     let patterns_found = post_patterns - pre_counts.1;

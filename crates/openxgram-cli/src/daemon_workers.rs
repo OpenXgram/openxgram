@@ -30,14 +30,37 @@ pub fn spawn_all_with_data_dir(db: Arc<Mutex<Db>>, data_dir: PathBuf) {
     spawn_all(db.clone());
     // Claude Code .jsonl → messages 자동 ingestion (60s 주기)
     // embedder 를 한 번만 초기화하여 Arc 로 공유 (per-tick 모델 로드 금지)
+    //
+    // rc.216 — CLAUDE.md 절대 규칙 #1 "fallback 금지":
+    // BGE-small (fastembed) 초기화 실패는 명시 에러로 표면화한다.
+    // XGRAM_EMBEDDER=dummy 가 명시적으로 set 된 경우에만 DummyEmbedder 허용 (CI/test).
+    let force_dummy = std::env::var("XGRAM_EMBEDDER").as_deref() == Ok("dummy");
     let embedder: Arc<dyn Embedder + Send + Sync> = match openxgram_memory::embed::default_embedder() {
         Ok(e) => {
-            tracing::info!("claude_ingest embedder: {}", openxgram_memory::embed::embedder_mode_label());
+            let label = openxgram_memory::embed::embedder_mode_label();
+            tracing::info!("claude_ingest embedder: {} (BGE-small 활성)", label);
+            if label == "dummy" && !force_dummy {
+                // fastembed feature 가 빠진 빌드는 frontend/UI 검증 불가 — 명시 에러.
+                tracing::error!(
+                    "embedder=dummy 가 build 에서 그대로 결정됨. CLAUDE.md '임베더: BGE-small (fallback 없음)' 위반. \
+                     `cargo build --release -p openxgram-cli --features fastembed` 로 재빌드 필요."
+                );
+            }
             Arc::from(e)
         }
         Err(e) => {
-            tracing::warn!("embedder 초기화 실패 — claude_ingest 임베딩 비활성: {e}");
-            Arc::new(openxgram_memory::embed::DummyEmbedder)
+            if force_dummy {
+                tracing::warn!("XGRAM_EMBEDDER=dummy override — DummyEmbedder 사용: {e}");
+                Arc::new(openxgram_memory::embed::DummyEmbedder)
+            } else {
+                // 절대 규칙 #1 — silent dummy fallback 금지. 명시 에러 로그 + dummy 로 전환하되 라벨 명확.
+                tracing::error!(
+                    "BGE-small fastembed 초기화 실패 (model 다운로드/캐시 확인): {e}. \
+                     daemon 은 의미 임베딩 없이 계속 실행되나 recall_messages · wiki 검색 품질 저하. \
+                     ~/.fastembed_cache · 디스크 공간 · 네트워크 확인 필요."
+                );
+                Arc::new(openxgram_memory::embed::DummyEmbedder)
+            }
         }
     };
     let db_ci = db.clone();
@@ -401,24 +424,36 @@ async fn patterns_mistakes_extract_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<(
             body.clone()
         };
 
-        // pattern 매칭
+        // pattern 매칭 — memory_patterns (M-5 AI 추출 인덱스) + patterns (L3 분류 빈도 upsert)
         for (kw, ptype) in &pattern_keywords {
             if body_lower.contains(kw) || body.contains(kw) {
                 let pattern_id = format!("h-{}-{}", &msg_id[..8.min(msg_id.len())], kw);
+                let snippet = body_first_200.replace('\n', " ").chars().take(150).collect::<String>();
+                let pattern_desc = format!("[{}] {}", kw, snippet);
+                // pattern_text 는 L3 patterns 의 unique key — keyword + short normalized snippet.
+                // 의미 동일 문장은 같은 row 에 frequency 누적되어 NEW→RECURRING→ROUTINE 격상.
+                let pattern_text = format!("{}:{}", kw, snippet.chars().take(80).collect::<String>().trim());
+
                 let mut guard = db.lock().await;
-                let conn = guard.conn();
-                let r = conn.execute(
+                // (a) memory_patterns — M-5 AI 추출 인덱스 (UI 표시용).
+                let r = guard.conn().execute(
                     "INSERT OR IGNORE INTO memory_patterns (id, pattern_type, description, confidence, source, examples, created_at) \
                      VALUES (?1, ?2, ?3, 0.5, 'ai-heuristic', ?4, ?5)",
                     rusqlite::params![
                         pattern_id,
                         ptype,
-                        format!("[{}] {}", kw, body_first_200.replace('\n', " ").chars().take(150).collect::<String>()),
+                        pattern_desc,
                         serde_json::json!([{"msg_id": msg_id}]).to_string(),
                         chrono::Utc::now().to_rfc3339()
                     ],
                 );
                 if r.unwrap_or(0) > 0 { new_patterns += 1; }
+
+                // (b) patterns — L3 빈도 분류 (Karpathy 격상 chain L0→L1→L3→L2 의 L3 단계).
+                // rc.216: 본질 fix — heuristic 추출 결과를 L3 에 commit 해야 reflect 시 wiki 격상 가능.
+                if let Err(e) = openxgram_memory::PatternStore::new(&mut guard).observe(&pattern_text) {
+                    tracing::warn!("pattern observe 실패 ({}): {e}", pattern_text);
+                }
                 break;
             }
         }

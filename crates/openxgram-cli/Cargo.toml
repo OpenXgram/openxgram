@@ -8,7 +8,10 @@ repository.workspace = true
 authors.workspace = true
 
 [features]
-default = []
+# rc.216 — fastembed 기본 활성. CLAUDE.md 절대 규칙 #1 "fallback 금지" 준수:
+# 빌드 시 fastembed 가 항상 포함되어 daemon 이 BGE-small 의미 임베딩으로 시작.
+# Dummy 는 cargo test 의 결정성 보장용으로만 남기되 --no-default-features 로 명시.
+default = ["fastembed"]
 fastembed = ["openxgram-memory/fastembed"]
 
 [lib]

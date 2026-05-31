@@ -297,9 +297,13 @@ fn check_embedder_mode() -> CheckResult {
         },
         _ => CheckResult {
             name: "Embedder mode",
-            verdict: Verdict::Warn,
+            // rc.216 — CLAUDE.md 절대 규칙 #1 "fallback 금지". dummy 가 production daemon 에서
+            // 결정되면 의미 임베딩 동작 안 함 → WARN 으로는 사용자가 인식 못 하고 모르고 지나간다.
+            // FAIL 로 격상해 doctor 실행 시 즉시 빨갛게 표시되도록 한다.
+            verdict: Verdict::Fail,
             detail:
-                "DummyEmbedder (CI/test 결정성) — `--features fastembed` 빌드 시 의미 임베딩 활성"
+                "DummyEmbedder — fastembed feature 가 빌드에서 빠짐 (CLAUDE.md 절대 규칙 #1 위반). \
+                 `cargo build --release -p openxgram-cli` 로 재빌드 필요 (default features 에 fastembed 포함됨)."
                     .to_string(),
         },
     }
