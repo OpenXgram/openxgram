@@ -177,6 +177,9 @@ async fn send_announce(
         sender_transport_url: Some(self_transport_url.to_string()),
         sender_pubkey_hex: Some(sender_pubkey_hex),
         recipient_alias: Some("windows-host".to_string()),
+        envelope_type: None,
+        ack_for_ulid: None,
+        ack_status: None,
     };
 
     send_envelope(host_url, &envelope)

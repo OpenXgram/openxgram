@@ -350,6 +350,44 @@ pub fn process_inbound(
     tracing::debug!("process_inbound: embedder init ok");
 
     for env in envelopes {
+        // rc.219 — ACK envelope branch. envelope_type="ack" 면 outbound_queue.ack_at UPDATE 만.
+        // inbox 저장 / tmux inject / peer touch 모두 skip (ACK 자체는 사용자 메시지 X).
+        if env.envelope_type.as_deref() == Some("ack") {
+            let ulid = env.ack_for_ulid.clone().unwrap_or_default();
+            let status = env.ack_status.clone().unwrap_or_else(|| "unknown".to_string());
+            if ulid.is_empty() {
+                tracing::warn!(from = %env.from, "rc.219 ACK envelope 도착했으나 ack_for_ulid 비어있음 (skip)");
+                continue;
+            }
+            let now_str = chrono::Utc::now().to_rfc3339();
+            let conn = db.conn();
+            match conn.execute(
+                "UPDATE outbound_queue SET ack_at = ?1, ack_status = ?2 WHERE msg_ulid = ?3",
+                rusqlite::params![now_str, status, ulid],
+            ) {
+                Ok(n) if n > 0 => {
+                    tracing::info!(
+                        msg_ulid = %ulid,
+                        ack_status = %status,
+                        from = %env.from,
+                        "rc.219 ACK 수신 → outbound_queue.ack_at UPDATE"
+                    );
+                }
+                Ok(_) => {
+                    tracing::warn!(
+                        msg_ulid = %ulid,
+                        ack_status = %status,
+                        from = %env.from,
+                        "rc.219 ACK 수신했으나 outbound_queue 매칭 row 없음 (이미 archived 또는 unknown ulid)"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, msg_ulid = %ulid, "rc.219 ACK UPDATE 실패");
+                }
+            }
+            continue;
+        }
+
         // rc.173 — 메신저 본질: unknown peer 도 inbox 에 저장 (Telegram/카카오톡 식).
         // 단 신원 미검증 표시. 검증 정책은 sender_label prefix 로 구분 (peer: vs unverified:).
         let mut peer_opt = match PeerStore::new(&mut db).get_by_eth_address(&env.from) {
@@ -452,6 +490,12 @@ pub fn process_inbound(
         // rc.197 본질 push 알림 — DB INSERT 만 ≠ 통신.
         // rc.199 — envelope.recipient_alias hint 우선 (송신측 명시). 그래야 cross-machine 시
         // 받는 측 peers 에 receiver alias 등록 안 됐어도 tmux 매핑 가능.
+        // rc.219 — recv_alias resolve 결과를 INFO log 로 명시. None 일 때도 silent X.
+        let manifest_self_alias_for_log = openxgram_manifest::InstallManifest::read(
+            openxgram_core::paths::manifest_path(data_dir),
+        )
+        .ok()
+        .map(|m| m.machine.alias);
         let recv_alias = env
             .recipient_alias
             .clone()
@@ -462,13 +506,19 @@ pub fn process_inbound(
                     .flatten()
                     .map(|p| p.alias)
             })
-            .or_else(|| {
-                openxgram_manifest::InstallManifest::read(
-                    openxgram_core::paths::manifest_path(data_dir),
-                )
-                .ok()
-                .map(|m| m.machine.alias)
-            });
+            .or_else(|| manifest_self_alias_for_log.clone());
+        let env_to_short: String = env.to.chars().take(16).collect();
+        tracing::info!(
+            recv_alias = ?recv_alias,
+            recipient_alias_hint = ?env.recipient_alias,
+            envelope_to_pubkey_prefix = %env_to_short,
+            self_manifest_alias = ?manifest_self_alias_for_log,
+            "rc.219 recv_alias resolution result"
+        );
+
+        // rc.219 — tmux inject 결과를 mutable variable 로 캡쳐 → ACK envelope 의 ack_status 결정.
+        let mut tmux_injected = false;
+
         if let Some(target_alias) = recv_alias {
             // rc.207 본질 fix — inject 형식에 conversation_id 의 앞 8자 포함.
             // LLM 가 자기 peer_send 의 conversation_id 와 시각적 link → polling 무의미.
@@ -485,7 +535,8 @@ pub fn process_inbound(
             let target_clone = target_alias.clone();
             let injected_clone = injected.clone();
             // process_inbound 는 sync — block_in_place + block_on 으로 async tmux send-keys 호출
-            tokio::task::block_in_place(|| {
+            // rc.219 — return bool 로 tmux inject 성공/실패 명시 (silent debug 제거).
+            tmux_injected = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async move {
                     if let Some((session, idx)) =
                         crate::notify::resolve_alias_to_tmux(&target_clone).await
@@ -507,11 +558,112 @@ pub fn process_inbound(
                             tmux_session = %session,
                             "rc.197 inbound push → tmux LLM 화면에 inject"
                         );
+                        true
                     } else {
-                        tracing::debug!(alias = %target_clone, "rc.197 inbound push: tmux 매칭 안 됨 (silent)");
+                        // rc.219 — silent debug 승격 → WARN. tmux session list 도 함께 log.
+                        let sessions_listed = crate::notify::tmux_command_async()
+                            .args(["list-sessions", "-F", "#{session_name}"])
+                            .output()
+                            .await
+                            .ok()
+                            .and_then(|o| {
+                                if o.status.success() {
+                                    Some(String::from_utf8_lossy(&o.stdout).to_string())
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or_else(|| "(tmux list-sessions 실패 또는 tmux 미설치)".to_string());
+                        tracing::warn!(
+                            target_alias = %target_clone,
+                            tmux_sessions = %sessions_listed.replace('\n', ","),
+                            "rc.219 tmux 매칭 안 됨 — alias → tmux session resolve 실패"
+                        );
+                        false
                     }
                 })
             });
+        } else {
+            tracing::warn!(
+                envelope_to_pubkey_prefix = %env_to_short,
+                "rc.219 recv_alias 미정 — recipient_alias hint X + peer table lookup 실패 + manifest 의 self alias 도 없음. tmux inject skip"
+            );
+        }
+
+        // rc.219 — ACK envelope 송신. sender 측 outbound_queue.ack_at UPDATE 가능하도록.
+        // ack_status: inbox_stored 는 항상 (위에서 insert 성공 후 도달).
+        // tmux_injected 면 tmux_injected 로 격상.
+        // nonce 는 envelope 의 것 (== outbound_queue.msg_ulid 와 다른 sender 측 generator. envelope.nonce 가 msg_ulid 매칭 키).
+        // sender 측 outbound_queue.msg_ulid 는 sender 가 record 한 ulid. envelope.nonce 와 별개.
+        // → 따라서 sender 가 outbound_queue INSERT 시 사용한 ulid 를 envelope 의 어떤 필드로 운반해야 매칭 가능.
+        // 본 envelope 의 nonce 를 ulid 로 활용 (sender 가 record_outbox 시 동일 값 사용).
+        let ack_for_ulid = env.nonce.clone();
+        let ack_status_val = if tmux_injected { "tmux_injected" } else { "inbox_stored" };
+        if let Some(ack_ulid) = ack_for_ulid.as_ref() {
+            // sender hint — env.sender_transport_url 우선, 없으면 peer table 의 address.
+            let sender_url = env.sender_transport_url.clone().or_else(|| {
+                PeerStore::new(&mut db)
+                    .get_by_eth_address(&env.from)
+                    .ok()
+                    .flatten()
+                    .map(|p| p.address)
+            });
+            let to_pubkey_for_ack = env.sender_pubkey_hex.clone().unwrap_or_default();
+            // rc.219 — ACK envelope 의 from 은 receiver 측 eth_address.
+            // 자체적 derivation 비용 회피 위해 env.to (=자기 pubkey hex) 를 from 으로 사용.
+            // sender 측 ACK 처리는 ack_for_ulid 매칭만 사용 — from/to 검증 X.
+            let self_addr_for_ack = env.to.clone();
+            if let Some(url) = sender_url {
+                let ack_envelope = openxgram_transport::Envelope {
+                    from: self_addr_for_ack,
+                    to: to_pubkey_for_ack,
+                    payload_hex: String::new(),
+                    timestamp: openxgram_core::time::kst_now(),
+                    signature_hex: String::new(),
+                    nonce: Some(uuid::Uuid::new_v4().to_string()),
+                    conversation_id: env.conversation_id.clone(),
+                    sender_alias: manifest_self_alias_for_log.clone(),
+                    sender_transport_url: std::env::var("XGRAM_TRANSPORT_PUBLIC_URL").ok(),
+                    sender_pubkey_hex: None,
+                    recipient_alias: env.sender_alias.clone(),
+                    envelope_type: Some("ack".to_string()),
+                    ack_for_ulid: Some(ack_ulid.clone()),
+                    ack_status: Some(ack_status_val.to_string()),
+                };
+                let ulid_for_log = ack_ulid.clone();
+                let url_clone = url.clone();
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async move {
+                        match openxgram_transport::send_envelope(&url_clone, &ack_envelope).await {
+                            Ok(()) => {
+                                tracing::info!(
+                                    ack_for_ulid = %ulid_for_log,
+                                    ack_status = %ack_status_val,
+                                    target_url = %url_clone,
+                                    "rc.219 ACK envelope 송신 OK"
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    ack_for_ulid = %ulid_for_log,
+                                    target_url = %url_clone,
+                                    "rc.219 ACK envelope 송신 실패 (sender 측 ack_at UPDATE 못 함)"
+                                );
+                            }
+                        }
+                    })
+                });
+            } else {
+                tracing::warn!(
+                    ack_for_ulid = %ack_ulid,
+                    "rc.219 ACK 송신 skip — sender_transport_url + peer.address 둘 다 없음"
+                );
+            }
+        } else {
+            tracing::info!(
+                "rc.219 ACK 송신 skip — envelope.nonce (=ack 매칭 키) 비어있음 (legacy sender)"
+            );
         }
         // dummy peer var for legacy code paths below (payment receipt, touch).
         let peer = match peer_opt {

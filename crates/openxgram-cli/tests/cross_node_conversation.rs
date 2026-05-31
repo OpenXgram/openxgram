@@ -92,6 +92,13 @@ fn envelope_carries_conversation_id_to_inbox_message() {
         signature_hex: hex::encode(master.sign(body1)),
         nonce: Some(uuid::Uuid::new_v4().to_string()),
         conversation_id: Some(conv_a.clone()),
+        sender_alias: None,
+        sender_transport_url: None,
+        sender_pubkey_hex: None,
+        recipient_alias: None,
+        envelope_type: None,
+        ack_for_ulid: None,
+        ack_status: None,
     };
 
     // 두 번째 envelope — 같은 conversation_id 로 thread 이어가기
@@ -104,6 +111,13 @@ fn envelope_carries_conversation_id_to_inbox_message() {
         signature_hex: hex::encode(master.sign(body2)),
         nonce: Some(uuid::Uuid::new_v4().to_string()),
         conversation_id: Some(conv_a.clone()),
+        sender_alias: None,
+        sender_transport_url: None,
+        sender_pubkey_hex: None,
+        recipient_alias: None,
+        envelope_type: None,
+        ack_for_ulid: None,
+        ack_status: None,
     };
 
     process_inbound(&data_dir, &[env1, env2]).unwrap();
@@ -143,6 +157,13 @@ fn envelope_carries_conversation_id_to_inbox_message() {
         signature_hex: hex::encode(master.sign(body3)),
         nonce: Some(uuid::Uuid::new_v4().to_string()),
         conversation_id: None,
+        sender_alias: None,
+        sender_transport_url: None,
+        sender_pubkey_hex: None,
+        recipient_alias: None,
+        envelope_type: None,
+        ack_for_ulid: None,
+        ack_status: None,
     };
     process_inbound(&data_dir, &[env3]).unwrap();
     let still_two = MessageStore::new(&mut db, embedder.as_ref())

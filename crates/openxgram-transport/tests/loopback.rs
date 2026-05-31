@@ -14,6 +14,13 @@ fn sample_envelope() -> Envelope {
         signature_hex: "00".repeat(64),
         nonce: None,
         conversation_id: None,
+        sender_alias: None,
+        sender_transport_url: None,
+        sender_pubkey_hex: None,
+        recipient_alias: None,
+        envelope_type: None,
+        ack_for_ulid: None,
+        ack_status: None,
     }
 }
 

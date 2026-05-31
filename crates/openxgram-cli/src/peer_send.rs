@@ -54,6 +54,35 @@ fn record_outbox(
     Ok(())
 }
 
+/// rc.219 — outbound_queue 에 sent_at=now 인 row INSERT (ACK 추적용).
+/// peer_send 의 직접 HTTP 송신 path 가 outbound_queue 를 거치지 않으므로 별도 INSERT.
+/// msg_ulid = envelope.nonce (== receiver 측 ACK 의 ack_for_ulid 매칭 키).
+/// 이후 v6_outbound_drain worker 가 ack_at IS NULL + sent_at threshold 도달 시 자동 재발송.
+fn record_outbound_queue_sent(
+    data_dir: &Path,
+    msg_ulid: &str,
+    target_alias: &str,
+    envelope_json: &str,
+) -> Result<()> {
+    let mut db = open_db(data_dir)?;
+    let conn = db.conn();
+    let now_str = chrono::Utc::now().to_rfc3339();
+    // 이미 송신 직후 — sent_at = now, attempts = 0 (ACK 카운터 시작점).
+    conn.execute(
+        "INSERT OR IGNORE INTO outbound_queue \
+         (msg_ulid, target_machine, target_alias, body, attempts, enqueued_at, sent_at) \
+         VALUES (?1, '', ?2, ?3, 0, ?4, ?4)",
+        rusqlite::params![msg_ulid, target_alias, envelope_json, now_str],
+    )
+    .with_context(|| format!("outbound_queue INSERT 실패 (msg_ulid={msg_ulid})"))?;
+    tracing::info!(
+        msg_ulid = %msg_ulid,
+        target_alias = %target_alias,
+        "rc.219 record_outbound_queue_sent: ACK 추적용 row INSERT (sent_at=now, ack_at=NULL)"
+    );
+    Ok(())
+}
+
 /// 주소 scheme 별 라우트.
 #[derive(Debug, Clone)]
 pub enum SendRoute {
@@ -142,6 +171,93 @@ pub async fn run_peer_send(
     run_peer_send_with_conv(data_dir, alias, sender, body, password, None).await
 }
 
+/// rc.219 — `--wait-ack` 지원. `30s`, `60`, `500ms` 형식 파싱.
+pub fn parse_wait_ack_duration(spec: &str) -> Result<std::time::Duration> {
+    let s = spec.trim().to_lowercase();
+    if let Some(rest) = s.strip_suffix("ms") {
+        let n: u64 = rest
+            .trim()
+            .parse()
+            .with_context(|| format!("--wait-ack ms 파싱 실패: '{spec}'"))?;
+        return Ok(std::time::Duration::from_millis(n));
+    }
+    let stripped = s.strip_suffix('s').unwrap_or(&s);
+    let n: u64 = stripped
+        .trim()
+        .parse()
+        .with_context(|| format!("--wait-ack 초 파싱 실패: '{spec}' (지원 형식: '30s', '60', '500ms')"))?;
+    Ok(std::time::Duration::from_secs(n))
+}
+
+/// rc.219 — `xgram peer send --wait-ack` 진입점. send + outbound_queue.ack_at 폴링 (1s 간격).
+/// 반환: process exit code (0=ACK 수신, 1=timeout, 2=send 자체 실패).
+pub async fn run_peer_send_with_ack_wait(
+    data_dir: &Path,
+    alias: &str,
+    sender: Option<&str>,
+    body: &str,
+    password: &str,
+    timeout: std::time::Duration,
+) -> Result<i32> {
+    let start = std::time::Instant::now();
+    // 1. 일반 send — 내부에서 outbound_queue 에 ACK 추적용 row INSERT.
+    if let Err(e) = run_peer_send_with_conv(data_dir, alias, sender, body, password, None).await {
+        eprintln!("✗ send 실패: {e}");
+        return Ok(2);
+    }
+    // 2. 가장 최근 outbound_queue row (alias 매칭) 의 msg_ulid 조회.
+    //    record_outbound_queue_sent 가 직전에 INSERT 한 row.
+    let msg_ulid = {
+        let mut db = open_db(data_dir)?;
+        let conn = db.conn();
+        conn.query_row(
+            "SELECT msg_ulid FROM outbound_queue \
+             WHERE target_alias = ?1 ORDER BY enqueued_at DESC LIMIT 1",
+            rusqlite::params![alias],
+            |r| r.get::<_, String>(0),
+        )
+        .with_context(|| format!("outbound_queue 의 최근 row 조회 실패 (alias={alias})"))?
+    };
+    println!("⏳ ACK 대기 중 (msg_ulid={msg_ulid}, timeout={:?})", timeout);
+
+    // 3. 1초 간격 폴링.
+    loop {
+        let elapsed = start.elapsed();
+        if elapsed >= timeout {
+            println!(
+                "⚠ ACK timeout (sent OK but no inbox confirmation in {:?}). msg_ulid={msg_ulid}",
+                timeout
+            );
+            return Ok(1);
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let ack: Option<(Option<String>, Option<String>)> = {
+            let mut db = open_db(data_dir)?;
+            let conn = db.conn();
+            conn.query_row(
+                "SELECT ack_at, ack_status FROM outbound_queue WHERE msg_ulid = ?1",
+                rusqlite::params![msg_ulid],
+                |r| {
+                    Ok((
+                        r.get::<_, Option<String>>(0)?,
+                        r.get::<_, Option<String>>(1)?,
+                    ))
+                },
+            )
+            .ok()
+        };
+        if let Some((Some(ack_at), status_opt)) = ack {
+            let latency = start.elapsed();
+            let status = status_opt.unwrap_or_else(|| "(unknown)".to_string());
+            println!(
+                "✓ delivered (ack_status={status}, latency={:.1}s, ack_at={ack_at})",
+                latency.as_secs_f64()
+            );
+            return Ok(0);
+        }
+    }
+}
+
 /// 1.9.1.3 / 2.3.4 — conversation_id 동봉 버전. 메인 진입점은 `run_peer_send` (None) 호출.
 /// rc.207 — 호출자가 conversation_id 미지정 시 자동 UUID 부여 (reply auto-correlate 보장).
 pub async fn run_peer_send_with_conv(
@@ -217,6 +333,9 @@ pub async fn run_peer_send_with_conv(
         sender_transport_url,
         sender_pubkey_hex,
         recipient_alias: Some(alias.to_string()),
+        envelope_type: None,
+        ack_for_ulid: None,
+        ack_status: None,
     };
 
     match parse_route(&address, &peer.public_key_hex)? {
@@ -276,6 +395,16 @@ pub async fn run_peer_send_with_conv(
         envelope.conversation_id.as_deref(),
     ) {
         tracing::warn!(error = %e, alias = %alias, "record_outbox 실패 (send 자체는 성공)");
+    }
+
+    // rc.219 — ACK 추적용 outbound_queue INSERT.
+    // msg_ulid = envelope.nonce (receiver 측 ACK 의 ack_for_ulid 매칭 키).
+    // sent_at = now (이미 송신 성공), ack_at = NULL.
+    if let Some(ulid) = envelope.nonce.as_deref() {
+        let envelope_json = serde_json::to_string(&envelope).unwrap_or_default();
+        if let Err(e) = record_outbound_queue_sent(data_dir, ulid, alias, &envelope_json) {
+            tracing::warn!(error = %e, msg_ulid = %ulid, "record_outbound_queue_sent 실패 (ACK 추적 불가, send 자체는 성공)");
+        }
     }
 
     // rc.217 V11 — routing_rules apply: sender alias matches from_pattern AND
@@ -510,6 +639,9 @@ pub async fn run_peer_broadcast(
             sender_transport_url: bcast_sender_transport_url.clone(),
             sender_pubkey_hex: bcast_sender_pubkey_hex.clone(),
             recipient_alias: Some(alias.clone()),
+            envelope_type: None,
+            ack_for_ulid: None,
+            ack_status: None,
         };
         match route {
             SendRoute::Http(url) => {
@@ -686,6 +818,13 @@ mod tests {
             signature_hex: "00".repeat(64),
             nonce: Some("nonce-x".into()),
             conversation_id: None,
+            sender_alias: None,
+            sender_transport_url: None,
+            sender_pubkey_hex: None,
+            recipient_alias: None,
+            envelope_type: None,
+            ack_for_ulid: None,
+            ack_status: None,
         };
 
         // sink 가 relay 에 먼저 연결 (안정적인 publish 순서)
@@ -755,6 +894,13 @@ mod tests {
             signature_hex: "00".repeat(64),
             nonce: Some("n1".into()),
             conversation_id: None,
+            sender_alias: None,
+            sender_transport_url: None,
+            sender_pubkey_hex: None,
+            recipient_alias: None,
+            envelope_type: None,
+            ack_for_ulid: None,
+            ack_status: None,
         };
         send_via_nostr(&sink, &sender_keys, &ws_url, &peer_pubkey, &env)
             .await

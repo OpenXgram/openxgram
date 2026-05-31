@@ -54,6 +54,13 @@ fn make_envelope(
         signature_hex: hex::encode(signature),
         nonce: None,
         conversation_id: None,
+        sender_alias: None,
+        sender_transport_url: None,
+        sender_pubkey_hex: None,
+        recipient_alias: None,
+        envelope_type: None,
+        ack_for_ulid: None,
+        ack_status: None,
     }
 }
 
@@ -182,6 +189,13 @@ fn invalid_signature_drops_envelope() {
         signature_hex: hex::encode(&bogus_sig),
         nonce: None,
         conversation_id: None,
+        sender_alias: None,
+        sender_transport_url: None,
+        sender_pubkey_hex: None,
+        recipient_alias: None,
+        envelope_type: None,
+        ack_for_ulid: None,
+        ack_status: None,
     };
 
     process_inbound(&data_dir, &[env]).unwrap();
@@ -217,6 +231,13 @@ fn unknown_peer_drops_envelope() {
         signature_hex: hex::encode([0u8; 64]),
         nonce: None,
         conversation_id: None,
+        sender_alias: None,
+        sender_transport_url: None,
+        sender_pubkey_hex: None,
+        recipient_alias: None,
+        envelope_type: None,
+        ack_for_ulid: None,
+        ack_status: None,
     };
     process_inbound(&data_dir, &[env]).unwrap();
 

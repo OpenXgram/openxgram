@@ -28,16 +28,24 @@ interface MessageDto {
  ack_via?: string;
 }
 
-// rc.154 — ack badge helper
+// rc.154 — ack badge helper. rc.219 — outbound_queue.ack_status 도 함께 매핑.
 function ackBadge(m: MessageDto) {
  const s = m.ack_status;
  if (!s || s === "sent") return null;
  const map: Record<string, {bg: string; label: string; title: string}> = {
+ // rc.153 message-level
  delivered: {bg: "#3a4a6a", label: "✓ delivered", title: "전달됨"},
  read: {bg: "#2a5b8a", label: "✓✓ read", title: "읽음"},
  processing: {bg: "#7a5a00", label: "⏳ processing", title: "처리 중"},
  done: {bg: "#238636", label: "✓ done", title: "처리 완료"},
  failed: {bg: "#a02828", label: "✗ failed", title: "실패"},
+ // rc.219 outbound_queue ACK envelope status
+ pending: {bg: "#5a5a5a", label: "⏳ pending", title: "미전송"},
+ inbox_stored: {bg: "#3a8a3a", label: "✓ stored", title: "receiver inbox 저장 완료 (tmux 매칭 X)"},
+ tmux_injected: {bg: "#238636", label: "✓✓ delivered", title: "receiver tmux 화면 inject 완료"},
+ both: {bg: "#238636", label: "✓✓ delivered", title: "receiver tmux 화면 inject 완료"},
+ fail: {bg: "#a02828", label: "✗ failed", title: "ACK 실패"},
+ ack_timeout_max: {bg: "#a02828", label: "✗ ack-timeout", title: "ACK 30분 + 3회 재발송 후 실패"},
  };
  const v = map[s];
  if (!v) return null;

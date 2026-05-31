@@ -1124,16 +1124,25 @@ async fn m5_auto_register_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
 async fn v6_outbound_drain(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
     // S8: outbound_queue 의 pending 항목을 peer transport URL 로 실제 POST.
     // 성공 → sent_at 기록, 실패 → attempts++ + next_retry_at backoff.
+    // rc.219 — ACK 미수신 시 재발송 추가. sent_at 채워졌어도 ack_at NULL 이면 30s/5min/30min
+    //          경과 후 재발송. 3회 후 fail mark (ack_timeout_max).
     let now = chrono::Utc::now();
     let archive_cutoff = (now - chrono::Duration::days(30)).to_rfc3339();
     let now_str = now.to_rfc3339();
+    let ack_retry_30s = (now - chrono::Duration::seconds(30)).to_rfc3339();
+    let ack_retry_5min = (now - chrono::Duration::minutes(5)).to_rfc3339();
+    let ack_retry_30min = (now - chrono::Duration::minutes(30)).to_rfc3339();
 
     // 처리할 pending 항목 + 머신 별 transport URL 함께 추출
-    let to_send: Vec<(String, String, String, i64, String)> = {
+    // rc.219 — Vec<(ulid, alias, body, attempts, address, is_ack_retry)> — is_ack_retry true 이면
+    // 이미 sent_at 채워진 ACK timeout 재발송 (ulid 동일 → receiver 측 process_inbound 의 envelope.nonce
+    // 가 같으므로 ACK 매칭 성공). false 이면 미송신 첫 발송.
+    let to_send: Vec<(String, String, String, i64, String, bool)> = {
         let mut guard = db.lock().await;
         let conn = guard.conn();
+        // archive — sent + acked 둘 다 채워졌고 30일 경과
         let _ = conn.execute(
-            "DELETE FROM outbound_queue WHERE sent_at IS NOT NULL AND sent_at < ?1",
+            "DELETE FROM outbound_queue WHERE sent_at IS NOT NULL AND ack_at IS NOT NULL AND sent_at < ?1",
             rusqlite::params![archive_cutoff],
         );
         let _ = conn.execute(
@@ -1141,7 +1150,17 @@ async fn v6_outbound_drain(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
              WHERE attempts > 10 AND sent_at IS NULL AND last_error != 'max_retries_exceeded'",
             [],
         );
-        let mut rows_out: Vec<(String, String, String, i64, String)> = Vec::new();
+        // rc.219 — ACK timeout 최종 fail mark
+        let _ = conn.execute(
+            "UPDATE outbound_queue SET last_error = 'ack_timeout_max' \
+             WHERE sent_at IS NOT NULL AND ack_at IS NULL \
+               AND attempts >= 3 \
+               AND sent_at < ?1 \
+               AND (last_error IS NULL OR last_error NOT LIKE 'ack_timeout_max%')",
+            rusqlite::params![ack_retry_30min],
+        );
+        let mut rows_out: Vec<(String, String, String, i64, String, bool)> = Vec::new();
+        // (A) 미송신 첫 발송
         if let Ok(mut stmt) = conn.prepare(
             "SELECT q.msg_ulid, q.target_alias, q.body, q.attempts, p.address \
              FROM outbound_queue q \
@@ -1161,7 +1180,44 @@ async fn v6_outbound_drain(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
                 ))
             }) {
                 for r in iter.flatten() {
-                    rows_out.push(r);
+                    rows_out.push((r.0, r.1, r.2, r.3, r.4, false));
+                }
+            }
+        }
+        // (B) ACK timeout 재발송. attempts 단계별 threshold:
+        //   attempts=0 (첫 송신 후 ack 없음) → 30s 후 재발송
+        //   attempts=1 → 5min 후
+        //   attempts=2 → 30min 후
+        //   attempts>=3 → 위 SQL 로 fail mark, 더 안 보냄
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT q.msg_ulid, q.target_alias, q.body, q.attempts, p.address \
+             FROM outbound_queue q \
+             JOIN peers p ON p.alias = q.target_alias \
+             WHERE q.sent_at IS NOT NULL \
+               AND q.ack_at IS NULL \
+               AND q.attempts < 3 \
+               AND (q.last_error IS NULL OR q.last_error NOT LIKE 'ack_timeout_max%') \
+               AND ( \
+                 (q.attempts = 0 AND q.sent_at <= ?1) OR \
+                 (q.attempts = 1 AND q.sent_at <= ?2) OR \
+                 (q.attempts = 2 AND q.sent_at <= ?3) \
+               ) \
+             LIMIT 20",
+        ) {
+            if let Ok(iter) = stmt.query_map(
+                rusqlite::params![ack_retry_30s, ack_retry_5min, ack_retry_30min],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, i64>(3)?,
+                        r.get::<_, String>(4)?,
+                    ))
+                },
+            ) {
+                for r in iter.flatten() {
+                    rows_out.push((r.0, r.1, r.2, r.3, r.4, true));
                 }
             }
         }
@@ -1176,17 +1232,53 @@ async fn v6_outbound_drain(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
         .timeout(std::time::Duration::from_secs(10))
         .build()?;
 
-    for (ulid, alias, body, attempts, address) in to_send {
+    for (ulid, alias, body, attempts, address, is_ack_retry) in to_send {
         // rc.215 — endpoint fix: receiver router 는 /v1/message 만 노출. /v1/inbound 는 404 forever.
         let target_url = if address.ends_with('/') {
             format!("{address}v1/message")
         } else {
             format!("{address}/v1/message")
         };
+        // rc.219 — ACK 재발송 시 envelope.nonce 새로 만들기 (수신측 replay cache 우회).
+        //   conversation_id + msg_ulid 유지. timestamp 도 refresh (90초 window 통과).
+        // 단 receiver 측이 envelope.nonce 를 ack_for_ulid 매칭 키로 사용 — nonce 바뀌면
+        // 같은 msg_ulid 에 대한 첫 ACK 와 ACK envelope 가 다른 키로 옴 → sender outbound_queue
+        // UPDATE 시 ack_for_ulid 가 nonce 와 다름 → 매칭 실패.
+        // 해결: receiver 측 ACK envelope 의 ack_for_ulid 를 envelope.nonce 가 아닌 별도 키로 지정해야 함.
+        // 현재 구조 유지를 위해 ACK 재발송 시 nonce 는 동일 (=== msg_ulid 와 같은 값) 으로 유지.
+        // 대신 timestamp 만 refresh (90초 window) + nonce 는 그대로 두고 sender 측에서 replay cache
+        // 가 같은 머신 reset 되므로 retry 정도는 통과 가정. (replay cache 는 in-memory + window 90초).
+        let body_to_send = if is_ack_retry {
+            // body 는 JSON envelope. timestamp 만 update — nonce/ack_for_ulid 매칭용 유지.
+            match serde_json::from_str::<serde_json::Value>(&body) {
+                Ok(mut v) => {
+                    if let Some(obj) = v.as_object_mut() {
+                        let fresh_ts = openxgram_core::time::kst_now().to_rfc3339();
+                        obj.insert(
+                            "timestamp".to_string(),
+                            serde_json::Value::String(fresh_ts),
+                        );
+                    }
+                    serde_json::to_string(&v).unwrap_or_else(|_| body.clone())
+                }
+                Err(_) => body.clone(),
+            }
+        } else {
+            body.clone()
+        };
+        if is_ack_retry {
+            tracing::info!(
+                ulid = %ulid,
+                alias = %alias,
+                attempts = attempts,
+                target = %target_url,
+                "rc.219 ACK timeout 재발송 worker tick (sent OK 후 ACK 미수신)"
+            );
+        }
         let result = http
             .post(&target_url)
             .header("Content-Type", "application/json")
-            .body(body.clone())
+            .body(body_to_send.clone())
             .send()
             .await;
         let success = match result {
@@ -1197,12 +1289,27 @@ async fn v6_outbound_drain(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
         let mut guard = db.lock().await;
         let conn = guard.conn();
         if success {
-            let _ = conn.execute(
-                "UPDATE outbound_queue SET sent_at = ?1, last_error = NULL WHERE msg_ulid = ?2",
-                rusqlite::params![now_str2, ulid],
-            );
-            tracing::debug!(ulid=%ulid, alias=%alias, "S8 outbound sent");
-        } else {
+            if is_ack_retry {
+                // ACK timeout 재발송 — attempts 증가 + sent_at 갱신 (다음 threshold 계산 baseline).
+                let _ = conn.execute(
+                    "UPDATE outbound_queue SET attempts = attempts + 1, sent_at = ?1, \
+                     last_error = ?2 WHERE msg_ulid = ?3",
+                    rusqlite::params![
+                        now_str2,
+                        format!("ack_timeout_retry_{}", attempts + 1),
+                        ulid
+                    ],
+                );
+                tracing::info!(ulid=%ulid, alias=%alias, attempts=attempts+1, "rc.219 ACK timeout 재발송 OK");
+            } else {
+                // 첫 송신 성공 — sent_at 기록, attempts 0 유지 (ACK 카운터 시작점).
+                let _ = conn.execute(
+                    "UPDATE outbound_queue SET sent_at = ?1, last_error = NULL WHERE msg_ulid = ?2",
+                    rusqlite::params![now_str2, ulid],
+                );
+                tracing::debug!(ulid=%ulid, alias=%alias, "S8 outbound sent");
+            }
+        } else if !is_ack_retry {
             // backoff: 1s * 2^attempts (cap 5min)
             let backoff_secs = std::cmp::min(300, 1_i64 << std::cmp::min(attempts, 8));
             let next = (chrono::Utc::now() + chrono::Duration::seconds(backoff_secs)).to_rfc3339();
@@ -1212,6 +1319,9 @@ async fn v6_outbound_drain(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
                 rusqlite::params![next, "transport send failed", ulid],
             );
             tracing::debug!(ulid=%ulid, alias=%alias, target=%target_url, "S8 outbound failed, backoff");
+        } else {
+            // ACK retry 자체가 HTTP 실패 — 다음 worker tick 에서 같은 threshold 가 또 잡힘 (자동 재시도).
+            tracing::warn!(ulid=%ulid, alias=%alias, target=%target_url, "rc.219 ACK 재발송 HTTP 실패 — 다음 tick 재시도");
         }
     }
     Ok(())

@@ -4614,6 +4614,9 @@ async fn gui_peer_send_unsigned(
         sender_transport_url,
         sender_pubkey_hex,
         recipient_alias: Some(alias.clone()),
+        envelope_type: None,
+        ack_for_ulid: None,
+        ack_status: None,
     };
     let envelope_json = serde_json::to_string(&envelope).map_err(|e| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{
@@ -4621,7 +4624,12 @@ async fn gui_peer_send_unsigned(
         }))
     })?;
 
-    let envelope_id = uuid::Uuid::new_v4().to_string();
+    // rc.219 — msg_ulid = envelope.nonce 로 통일 (receiver 측 ACK ack_for_ulid 매칭 키와 동일).
+    // envelope.nonce 가 항상 부여됨 (위에서 Some(uuid)) → unwrap 안전.
+    let envelope_id = envelope
+        .nonce
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let now_str = chrono::Utc::now().to_rfc3339();
     let mut db = state.db.lock().await;
     db.conn().execute(
@@ -5427,8 +5435,33 @@ async fn gui_peer_conversation(
         let cc_prefix = format!("Claude Code · {} · ", variant);
 
         // outbox/inbox/Peer 는 정확 매칭, Claude Code 는 prefix LIKE 매칭.
+        // rc.219 — self:* (outbox) 메시지의 경우 outbound_queue.ack_status / ack_at 를 우선 표시.
+        //   매칭 키: m.signature == JSON 안에 들어 있어서 직접 JOIN 불가 →
+        //   대신 같은 conversation_id + target_alias + 최신 enqueued_at order 로 fallback 표시.
+        //   COALESCE 로 message.ack_status (rc.153) 가 비어있을 때 outbound_queue.ack_status 사용.
         let sql = "SELECT m.id, m.session_id, m.sender, m.body, m.timestamp, \
-                          m.conversation_id, m.ack_status, m.acked_at, m.ack_via \
+                          m.conversation_id, \
+                          COALESCE(m.ack_status, ( \
+                              SELECT CASE \
+                                       WHEN q.ack_status IS NOT NULL THEN q.ack_status \
+                                       WHEN q.last_error = 'ack_timeout_max' THEN 'ack_timeout_max' \
+                                       WHEN q.sent_at IS NULL THEN 'pending' \
+                                       WHEN q.sent_at IS NOT NULL AND q.ack_at IS NULL THEN 'sent' \
+                                       ELSE NULL END \
+                              FROM outbound_queue q \
+                              WHERE q.target_alias = ?6 \
+                                AND ((m.conversation_id IS NOT NULL AND q.body LIKE '%' || m.conversation_id || '%') \
+                                     OR q.body LIKE '%' || substr(m.body, 1, 60) || '%') \
+                              ORDER BY q.enqueued_at DESC LIMIT 1 \
+                          )) as ack_status, \
+                          COALESCE(m.acked_at, ( \
+                              SELECT q.ack_at FROM outbound_queue q \
+                              WHERE q.target_alias = ?6 \
+                                AND ((m.conversation_id IS NOT NULL AND q.body LIKE '%' || m.conversation_id || '%') \
+                                     OR q.body LIKE '%' || substr(m.body, 1, 60) || '%') \
+                              ORDER BY q.enqueued_at DESC LIMIT 1 \
+                          )) as acked_at, \
+                          m.ack_via \
                    FROM sessions s JOIN messages m ON m.session_id = s.id \
                    WHERE s.title = ?1 OR s.title = ?2 OR s.title = ?3 OR s.title LIKE ?4 \
                    ORDER BY m.timestamp ASC \
@@ -5440,7 +5473,8 @@ async fn gui_peer_conversation(
             .map_err(|e| internal(&format!("prep peer_conv: {e}")))?;
         let rows = stmt
             .query_map(
-                rusqlite::params![outbox, inbox, peer_session, cc_like, limit as i64],
+                // rc.219 — ?6 = variant (outbound_queue.target_alias 매칭용).
+                rusqlite::params![outbox, inbox, peer_session, cc_like, limit as i64, variant],
                 |r| {
                     Ok(GuiMessageDto {
                         id: r.get::<_, String>(0)?,

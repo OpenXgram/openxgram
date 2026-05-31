@@ -1432,6 +1432,11 @@ enum PeerCli {
         /// sender 주소 (생략 시 master 주소)
         #[arg(long)]
         sender: Option<String>,
+        /// rc.219 — ACK 대기 (receiver 측 inbox_stored / tmux_injected 확인). 미지정 = fire-and-forget.
+        /// 형식: `--wait-ack 30s` 또는 `--wait-ack 60` (초). `--wait-ack 500ms` 도 허용.
+        /// ACK 수신 시 exit 0 + latency 출력, timeout 시 exit 1.
+        #[arg(long)]
+        wait_ack: Option<String>,
     },
     /// 여러 peer 에 동시 전송 (concurrent, 부분 실패 격리)
     Broadcast {
@@ -2663,9 +2668,35 @@ async fn main() -> anyhow::Result<()> {
                     alias,
                     body,
                     sender,
+                    wait_ack,
                 } => {
                     let pw = openxgram_core::env::require_password()?;
-                    peer_send::run_peer_send(&dir, &alias, sender.as_deref(), &body, &pw).await?;
+                    // rc.219 — --wait-ack 지정 시 ACK 대기, 미지정 시 fire-and-forget (기존 동작).
+                    match wait_ack {
+                        Some(spec) => {
+                            let timeout = peer_send::parse_wait_ack_duration(&spec)?;
+                            let exit_code = peer_send::run_peer_send_with_ack_wait(
+                                &dir,
+                                &alias,
+                                sender.as_deref(),
+                                &body,
+                                &pw,
+                                timeout,
+                            )
+                            .await?;
+                            std::process::exit(exit_code);
+                        }
+                        None => {
+                            peer_send::run_peer_send(
+                                &dir,
+                                &alias,
+                                sender.as_deref(),
+                                &body,
+                                &pw,
+                            )
+                            .await?;
+                        }
+                    }
                 }
                 PeerCli::Broadcast { aliases, body } => {
                     let pw = openxgram_core::env::require_password()?;

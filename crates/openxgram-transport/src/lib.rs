@@ -64,6 +64,22 @@ pub struct Envelope {
     /// 받는 측 process_inbound 가 envelope.to pubkey 매핑 실패 시 이 hint 로 tmux session resolve.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recipient_alias: Option<String>,
+    /// rc.219 — envelope 종류. None / "message" = 일반 메시지 (default).
+    /// "ack" = receiver → sender 응답. ACK 시 ack_for_ulid + ack_status 필수.
+    /// process_inbound 가 envelope_type="ack" 받으면 inbox 저장 X + outbound_queue.ack_at UPDATE.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub envelope_type: Option<String>,
+    /// rc.219 — ACK envelope 의 원본 msg_ulid (sender outbound_queue 의 row 매칭).
+    /// envelope_type="ack" 일 때 필수.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ack_for_ulid: Option<String>,
+    /// rc.219 — ACK 의 처리 결과 status:
+    ///   "inbox_stored" — DB insert 만 성공 (tmux 매칭 실패).
+    ///   "tmux_injected" — tmux 매칭 + inject 성공 (inbox_stored 도 포함).
+    ///   "both" — 모두 성공 (== tmux_injected, 호환).
+    ///   "fail" — DB insert 실패.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ack_status: Option<String>,
 }
 
 #[derive(Debug, Error)]
