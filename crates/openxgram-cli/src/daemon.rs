@@ -606,9 +606,10 @@ async fn register_workflow_cron_jobs(
 }
 
 /// rc.196 — retroactive register agents.
-/// messenger_enabled=1 인 모든 agent 가 sub-keystore + peer 등록되어 있는지 보장.
-/// rc.192 fix (UI 토글 시 자동 등록) 이전에 등록된 옛 agent 들이 mock 상태였던 본질 결함 해결.
-/// daemon startup 시 한 번 실행 (idempotent).
+/// rc.200 — owner 식별: 자기 머신 tmux session 에 매칭되는 agent 만 등록.
+/// 마스터의 본질: peer = 머신 X, peer = 터미널 (각 tmux session) O.
+/// 각 머신 daemon 가 자기 owner agent (자기 머신 tmux session 에 매칭) 만 sub-keystore generate.
+/// 다른 머신 owner 의 agent 는 sender hint (rc.193) 로 자동 upsert (receive 시).
 fn retroactive_register_agents(data_dir: &std::path::Path) -> anyhow::Result<usize> {
     let pw = match openxgram_core::env::require_password() {
         Ok(p) => p,
@@ -648,9 +649,42 @@ fn retroactive_register_agents(data_dir: &std::path::Path) -> anyhow::Result<usi
         return Ok(0);
     }
 
+    // rc.200 — owner 식별: 자기 머신 의 tmux session list 가져옴.
+    // 자기 머신 tmux 에 매칭되는 alias 만 sub-keystore generate (owner).
+    // 다른 머신 owner agent 는 sender hint receive 시 자동 upsert.
+    let local_tmux_sessions: std::collections::HashSet<String> = {
+        let mut s = std::collections::HashSet::new();
+        // sync 함수에서 async tokio Command 회피 — std::process::Command 사용.
+        // Windows daemon 가 wsl tmux 호출 가능하게 cross-platform.
+        let (cmd, base_arg) = if cfg!(windows) {
+            ("wsl", Some("tmux"))
+        } else {
+            ("tmux", None)
+        };
+        let mut c = std::process::Command::new(cmd);
+        if let Some(a) = base_arg {
+            c.arg(a);
+        }
+        if let Ok(out) = c
+            .args(["list-sessions", "-F", "#{session_name}"])
+            .output()
+        {
+            if out.status.success() {
+                for line in String::from_utf8_lossy(&out.stdout).lines() {
+                    s.insert(line.trim().to_string());
+                }
+            }
+        }
+        s
+    };
+    tracing::info!(
+        local_tmux_count = local_tmux_sessions.len(),
+        "rc.200 owner check: 자기 머신 tmux session list 수집"
+    );
+
     tracing::info!(
         count = candidates.len(),
-        "rc.196 retroactive: 옛 messenger_enabled=1 agent → sub-keystore + peer 자동 등록 시작"
+        "rc.196 retroactive: 옛 messenger_enabled=1 agent → sub-keystore + peer 자동 등록 시작 (owner filter 적용)"
     );
 
     use openxgram_keystore::{FsKeystore, Keystore};
@@ -662,6 +696,19 @@ fn retroactive_register_agents(data_dir: &std::path::Path) -> anyhow::Result<usi
         // 'null', 'star [aoe-window]' 같은 invalid alias skip
         if alias == "null" || alias.contains('[') || alias.contains('\n') {
             continue;
+        }
+        // rc.200 owner check — 자기 머신 tmux session 에 매칭되는 alias 만 등록.
+        // local_tmux_sessions 가 비어있으면 owner check skip (tmux 없는 머신).
+        if !local_tmux_sessions.is_empty() {
+            let is_owner = local_tmux_sessions.iter().any(|sn| {
+                sn == alias
+                    || sn.starts_with(&format!("aoe_{alias}_"))
+                    || sn.contains(alias.as_str())
+            });
+            if !is_owner {
+                tracing::debug!(alias = %alias, "rc.200 owner check: skip — 자기 머신 tmux 에 없음");
+                continue;
+            }
         }
         let kp = match ks.load(alias, &pw) {
             Ok(k) => k,
