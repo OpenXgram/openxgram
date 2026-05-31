@@ -278,11 +278,164 @@ pub async fn run_peer_send_with_conv(
         tracing::warn!(error = %e, alias = %alias, "record_outbox 실패 (send 자체는 성공)");
     }
 
+    // rc.217 V11 — routing_rules apply: sender alias matches from_pattern AND
+    // body 가 forward marker prefix 없을 때만 (loop 방지). action=forward 만 구현.
+    // 매칭 syntax: simple glob — `*` (모두), `prefix*` (prefix match), `*suffix` (suffix),
+    // `exact` (exact match). action=summarize_and_send / block 은 stub (forward 처럼 동작 or skip).
+    if !body.starts_with("[forwarded-via:") {
+        if let Err(e) = apply_routing_rules(
+            data_dir,
+            &log_alias,
+            alias,
+            body,
+            password,
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "routing_rules apply 실패 (send 자체는 성공)");
+        }
+    }
+
     println!(
         "✓ peer {alias} 에 메시지 전송 (size={} bytes)",
         envelope.payload_hex.len() / 2
     );
     Ok(())
+}
+
+/// rc.217 V11 — routing_rules forward 적용. send 성공 후 호출.
+/// from_pattern 가 sender alias 매칭 + scope='Internal' + active=1 인 rule 의 to_pattern
+/// 매칭 peer 들에 같은 body 를 forward (loop 방지 marker prefix 부착).
+/// summarize_and_send, block 은 stub.
+async fn apply_routing_rules(
+    data_dir: &Path,
+    sender_alias: &str,
+    original_to: &str,
+    body: &str,
+    password: &str,
+) -> Result<()> {
+    // 1. rules + peer aliases 조회 (단일 DB scope, 모두 끝나면 drop).
+    let rules: Vec<(String, String, String, String)> = {
+        let mut db = open_db(data_dir)?;
+        let conn = db.conn();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, from_pattern, to_pattern, action FROM routing_rules \
+                 WHERE scope='Internal' AND active=1",
+            )
+            .context("routing_rules SELECT 준비 실패")?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            })
+            .context("routing_rules query_map 실패")?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.context("routing_rules row 변환 실패")?);
+        }
+        out
+    };
+    if rules.is_empty() {
+        return Ok(());
+    }
+
+    // 2. all peer aliases (to_pattern 매칭용).
+    let all_aliases: Vec<String> = {
+        let mut db = open_db(data_dir)?;
+        let mut store = PeerStore::new(&mut db);
+        store
+            .list()
+            .context("peer list 조회 실패")?
+            .into_iter()
+            .map(|p| p.alias)
+            .collect()
+    };
+
+    for (rule_id, from_pattern, to_pattern, action) in rules {
+        if !glob_match(&from_pattern, sender_alias) {
+            continue;
+        }
+        match action.as_str() {
+            "forward" => {
+                for target in &all_aliases {
+                    // self 또는 original 수신자에게 다시 안 보냄.
+                    if target == sender_alias || target == original_to {
+                        continue;
+                    }
+                    if !glob_match(&to_pattern, target) {
+                        continue;
+                    }
+                    let fwd_body = format!(
+                        "[forwarded-via:{}] from={} original_to={} :: {}",
+                        rule_id, sender_alias, original_to, body
+                    );
+                    tracing::info!(
+                        rule = %rule_id,
+                        from = %sender_alias,
+                        to = %target,
+                        "routing_rule forward 적용"
+                    );
+                    // recursive — marker prefix 가 다음 호출의 routing 차단.
+                    if let Err(e) = Box::pin(run_peer_send_with_conv(
+                        data_dir, target, None, &fwd_body, password, None,
+                    ))
+                    .await
+                    {
+                        tracing::warn!(error = %e, rule = %rule_id, target = %target, "forward send 실패");
+                    }
+                }
+            }
+            "summarize_and_send" => {
+                // stub — 첫 200자 truncate fallback.
+                let truncated: String = body.chars().take(200).collect();
+                let sum_body = format!(
+                    "[forwarded-via:{}] summary from={} :: {}",
+                    rule_id, sender_alias, truncated
+                );
+                for target in &all_aliases {
+                    if target == sender_alias || target == original_to {
+                        continue;
+                    }
+                    if !glob_match(&to_pattern, target) {
+                        continue;
+                    }
+                    if let Err(e) = Box::pin(run_peer_send_with_conv(
+                        data_dir, target, None, &sum_body, password, None,
+                    ))
+                    .await
+                    {
+                        tracing::warn!(error = %e, rule = %rule_id, target = %target, "summarize_and_send 실패");
+                    }
+                }
+            }
+            "block" => {
+                tracing::info!(rule = %rule_id, from = %sender_alias, "routing_rule block 매칭 (send 는 이미 완료 — 후속 forward 만 차단)");
+            }
+            other => {
+                tracing::warn!(rule = %rule_id, action = %other, "지원 안 되는 action");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// simple glob — `*` (모두), `prefix*`, `*suffix`, exact.
+fn glob_match(pattern: &str, value: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    if let Some(prefix) = pattern.strip_suffix('*') {
+        return value.starts_with(prefix);
+    }
+    if let Some(suffix) = pattern.strip_prefix('*') {
+        return value.ends_with(suffix);
+    }
+    pattern == value
 }
 
 /// 다중 alias 에 동시 전송. 결과는 (alias, Ok|Err) 리스트로 반환.
