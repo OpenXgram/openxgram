@@ -787,26 +787,28 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         .map(|m| m.machine.alias.clone())
                         .unwrap_or_else(|_| "anon".to_string());
                     let injected = format!("[Peer:{}] ⮕ {}", from_alias, body);
-                    let handle = tokio::runtime::Handle::current();
                     let alias_clone = alias.clone();
-                    let result = handle.block_on(async move {
-                        let (session, idx) = crate::notify::resolve_alias_to_tmux(&alias_clone).await
-                            .ok_or_else(|| format!("alias '{}' → tmux 매핑 실패", alias_clone))?;
-                        let target = format!("{}:{}", session, idx);
-                        let wrapped = format!("\x1b[200~{}\x1b[201~", injected);
-                        let out = tokio::process::Command::new("tmux")
-                            .args(["send-keys", "-t", &target, "-l", &wrapped])
-                            .output().await.map_err(|e| format!("tmux paste: {}", e))?;
-                        if !out.status.success() {
-                            return Err(format!("tmux paste 실패: {}", String::from_utf8_lossy(&out.stderr)));
-                        }
-                        let out2 = tokio::process::Command::new("tmux")
-                            .args(["send-keys", "-t", &target, "Enter"])
-                            .output().await.map_err(|e| format!("tmux Enter: {}", e))?;
-                        if !out2.status.success() {
-                            return Err(format!("tmux Enter 실패: {}", String::from_utf8_lossy(&out2.stderr)));
-                        }
-                        Ok::<_, String>(session)
+                    // rc.197 — block_on → block_in_place (tokio runtime panic 우회)
+                    let result = tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(async move {
+                            let (session, idx) = crate::notify::resolve_alias_to_tmux(&alias_clone).await
+                                .ok_or_else(|| format!("alias '{}' → tmux 매핑 실패", alias_clone))?;
+                            let target = format!("{}:{}", session, idx);
+                            let wrapped = format!("\x1b[200~{}\x1b[201~", injected);
+                            let out = tokio::process::Command::new("tmux")
+                                .args(["send-keys", "-t", &target, "-l", &wrapped])
+                                .output().await.map_err(|e| format!("tmux paste: {}", e))?;
+                            if !out.status.success() {
+                                return Err(format!("tmux paste 실패: {}", String::from_utf8_lossy(&out.stderr)));
+                            }
+                            let out2 = tokio::process::Command::new("tmux")
+                                .args(["send-keys", "-t", &target, "Enter"])
+                                .output().await.map_err(|e| format!("tmux Enter: {}", e))?;
+                            if !out2.status.success() {
+                                return Err(format!("tmux Enter 실패: {}", String::from_utf8_lossy(&out2.stderr)));
+                            }
+                            Ok::<_, String>(session)
+                        })
                     }).map_err(internal)?;
                     return Ok(json!({
                         "sent": true,

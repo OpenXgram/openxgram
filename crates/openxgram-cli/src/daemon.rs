@@ -439,6 +439,54 @@ pub fn process_inbound(
             continue;
         }
         tracing::info!(session_id=%session.id, sender=%sender_label, body_len=body.len(), "process_inbound: 메시지 inbox 저장 완료");
+
+        // rc.197 본질 push 알림 — DB INSERT 만 ≠ 통신.
+        // receiver 측 머신의 active tmux session (master alias 또는 envelope.to 매칭 peer) 에
+        // 즉시 bracket-paste inject. 그 tmux 의 LLM 이 화면에서 메시지 확인.
+        let recv_alias = PeerStore::new(&mut db)
+            .get_by_public_key(&env.to)
+            .ok()
+            .flatten()
+            .map(|p| p.alias)
+            .or_else(|| {
+                openxgram_manifest::InstallManifest::read(
+                    openxgram_core::paths::manifest_path(data_dir),
+                )
+                .ok()
+                .map(|m| m.machine.alias)
+            });
+        if let Some(target_alias) = recv_alias {
+            let injected = format!("[INBOX from {}] {}", sender_label, body);
+            let target_clone = target_alias.clone();
+            let injected_clone = injected.clone();
+            // process_inbound 는 sync — block_in_place + block_on 으로 async tmux send-keys 호출
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async move {
+                    if let Some((session, idx)) =
+                        crate::notify::resolve_alias_to_tmux(&target_clone).await
+                    {
+                        let target = format!("{}:{}", session, idx);
+                        let wrapped = format!("\x1b[200~{}\x1b[201~", injected_clone);
+                        let _ = tokio::process::Command::new("tmux")
+                            .args(["send-keys", "-t", &target, "-l", &wrapped])
+                            .output()
+                            .await;
+                        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                        let _ = tokio::process::Command::new("tmux")
+                            .args(["send-keys", "-t", &target, "Enter"])
+                            .output()
+                            .await;
+                        tracing::info!(
+                            alias = %target_clone,
+                            tmux_session = %session,
+                            "rc.197 inbound push → tmux LLM 화면에 inject"
+                        );
+                    } else {
+                        tracing::debug!(alias = %target_clone, "rc.197 inbound push: tmux 매칭 안 됨 (silent)");
+                    }
+                })
+            });
+        }
         // dummy peer var for legacy code paths below (payment receipt, touch).
         let peer = match peer_opt {
             Some(p) => p,
