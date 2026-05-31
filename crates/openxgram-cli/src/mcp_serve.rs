@@ -416,13 +416,13 @@ impl ToolDispatcher for OpenxgramDispatcher {
         // 항상 노출 + handler 가 keystore unlock fail 시 runtime error.
         tools.push(ToolSpec {
             name: "peer_send".into(),
-            description: "지정한 peer alias 에게 message 송신 (daemon 의 master 키로 서명, caller env 무관).".into(),
+            description: "Fire-and-forget send. Returns immediately. Reply (if any) auto-arrives in your tmux via push notification. DO NOT poll, DO NOT loop wait — replies inject automatically. 즉시 send + return. 답장 자동 tmux push, polling 금지.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "alias": {"type": "string", "description": "받는 peer 의 alias (peers table)"},
                     "body": {"type": "string", "description": "메시지 본문"},
-                    "conversation_id": {"type": "string", "description": "(선택) 대화 thread id"}
+                    "conversation_id": {"type": "string", "description": "(선택) 대화 thread id — 미지정 시 daemon 이 자동 UUID 부여하여 reply auto-correlate"}
                 },
                 "required": ["alias", "body"]
             }),
@@ -818,21 +818,35 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         "via": "local_binding",
                         "tmux_session": result,
                         "from": from_alias,
+                        "delivery_mode": "fire_and_forget",
+                        "reply_behavior": "auto_push_to_inbox_on_arrival",
+                        "next_step": "Continue your work. Reply will auto-inject when peer responds. DO NOT poll.",
                     }));
                 }
                 // 외부 peer (다른 머신) — primary: P2P transport
                 let pw = self.require_vault()?.to_string();
+                // rc.207 본질 fix — conversation_id 미지정 시 daemon 이 자동 UUID 부여.
+                // 이로써 reply 가 auto-correlate 되고, LLM polling 시도 자체가 무의미해짐.
                 let conv = args
                     .get("conversation_id")
                     .and_then(|v| v.as_str())
-                    .map(str::to_string);
+                    .map(str::to_string)
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                 let data_dir = self.data_dir.clone();
                 let handle = tokio::runtime::Handle::current();
                 let p2p_result = handle.block_on(crate::peer_send::run_peer_send_with_conv(
-                    &data_dir, &alias, None, &body, &pw, conv.clone(),
+                    &data_dir, &alias, None, &body, &pw, Some(conv.clone()),
                 ));
                 match p2p_result {
-                    Ok(_) => Ok(json!({"sent": true, "alias": alias, "via": "remote_peer"})),
+                    Ok(_) => Ok(json!({
+                        "sent": true,
+                        "alias": alias,
+                        "via": "remote_peer",
+                        "conversation_id": conv,
+                        "delivery_mode": "fire_and_forget",
+                        "reply_behavior": "auto_push_to_inbox_on_arrival",
+                        "next_step": "Continue your work. Reply will auto-inject when peer responds. DO NOT poll.",
+                    })),
                     Err(p2p_err) => {
                         // rc.152 — multi-transport fallback: P2P fail → Discord 봇으로 backup
                         let p2p_err_str = format!("{}", p2p_err);
@@ -860,6 +874,10 @@ impl ToolDispatcher for OpenxgramDispatcher {
                                         "via": "discord_backup",
                                         "discord_bot": bot_alias,
                                         "p2p_error": p2p_err_str,
+                                        "conversation_id": conv,
+                                        "delivery_mode": "fire_and_forget",
+                                        "reply_behavior": "auto_push_to_inbox_on_arrival",
+                                        "next_step": "Continue your work. Reply will auto-inject when peer responds. DO NOT poll.",
                                     }));
                                 }
                             }

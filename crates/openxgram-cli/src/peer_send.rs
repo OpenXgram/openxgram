@@ -143,6 +143,7 @@ pub async fn run_peer_send(
 }
 
 /// 1.9.1.3 / 2.3.4 — conversation_id 동봉 버전. 메인 진입점은 `run_peer_send` (None) 호출.
+/// rc.207 — 호출자가 conversation_id 미지정 시 자동 UUID 부여 (reply auto-correlate 보장).
 pub async fn run_peer_send_with_conv(
     data_dir: &Path,
     alias: &str,
@@ -151,6 +152,11 @@ pub async fn run_peer_send_with_conv(
     password: &str,
     conversation_id: Option<String>,
 ) -> Result<()> {
+    // rc.207 — None 이면 자동 UUID 부여. 모든 outbound envelope 가 conversation_id 보유 →
+    // 수신측 inject 형식에 conv:<id> 포함 → LLM 가 자기 send 와 시각적 link (polling 무의미).
+    let conversation_id = Some(
+        conversation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+    );
     let mut db = open_db(data_dir)?;
     let mut store = PeerStore::new(&mut db);
     let peer = store

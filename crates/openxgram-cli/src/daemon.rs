@@ -470,7 +470,18 @@ pub fn process_inbound(
                 .map(|m| m.machine.alias)
             });
         if let Some(target_alias) = recv_alias {
-            let injected = format!("[INBOX from {}] {}", sender_label, body);
+            // rc.207 본질 fix — inject 형식에 conversation_id 의 앞 8자 포함.
+            // LLM 가 자기 peer_send 의 conversation_id 와 시각적 link → polling 무의미.
+            // conv 가 없으면 [INBOX from X] (legacy), 있으면 [INBOX from X conv:abcd1234].
+            let conv_suffix = env
+                .conversation_id
+                .as_ref()
+                .map(|c| {
+                    let short: String = c.chars().take(8).collect();
+                    format!(" conv:{}", short)
+                })
+                .unwrap_or_default();
+            let injected = format!("[INBOX from {}{}] {}", sender_label, conv_suffix, body);
             let target_clone = target_alias.clone();
             let injected_clone = injected.clone();
             // process_inbound 는 sync — block_in_place + block_on 으로 async tmux send-keys 호출
