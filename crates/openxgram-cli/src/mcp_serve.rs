@@ -409,22 +409,24 @@ impl ToolDispatcher for OpenxgramDispatcher {
             },
         ];
 
-        // peer_send — keystore 패스워드 필요 (서명용). vault 패스워드와 동일 가정.
-        if self.vault_password.is_some() {
-            tools.push(ToolSpec {
-                name: "peer_send".into(),
-                description: "지정한 peer alias 에게 message 송신 (master 키로 서명)".into(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "alias": {"type": "string"},
-                        "body": {"type": "string"},
-                        "conversation_id": {"type": "string"}
-                    },
-                    "required": ["alias", "body"]
-                }),
-            });
-        }
+        // peer_send — master keystore (XGRAM_KEYSTORE_PASSWORD env) 로 서명.
+        // rc.205 본질 fix: vault_password 조건부 제거. peer_send 가 vault 와 무관하게 master 키만
+        // 사용. 이전 조건부였던 게 sub-agent LLM 의 자율 통신 불가의 root cause —
+        // MCP client list_tools 응답에서 peer_send 누락 → 도구 사용 불가.
+        // 항상 노출 + handler 가 keystore unlock fail 시 runtime error.
+        tools.push(ToolSpec {
+            name: "peer_send".into(),
+            description: "지정한 peer alias 에게 message 송신 (daemon 의 master 키로 서명, caller env 무관).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "alias": {"type": "string", "description": "받는 peer 의 alias (peers table)"},
+                    "body": {"type": "string", "description": "메시지 본문"},
+                    "conversation_id": {"type": "string", "description": "(선택) 대화 thread id"}
+                },
+                "required": ["alias", "body"]
+            }),
+        });
 
         // rc.151 — ack tracking. receiver 가 메시지 처리 상태 보고, sender 가 조회.
         tools.push(ToolSpec {
