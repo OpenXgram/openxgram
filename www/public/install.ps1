@@ -344,82 +344,141 @@ if ($stoppedTasks.Count -gt 0 -or $stoppedSvcs.Count -gt 0) {
 }
 
 
-# 8.5 (rc.187+) NSSM service 등록 — Windows daemon standard.
-#      NSSM 가 process 죽으면 자동 restart (built-in). start=auto = 재부팅 후 자동.
-#      옛 wrapper.cmd + Scheduled Task 접근 폐기 — 비표준 + edge case 많음.
+# 8.5 (rc.203+) User Logon Scheduled Task — daemon runs in user session.
+#      RATIONALE: NSSM service runs in LogonType:SERVICE session (no user token).
+#                 → `wsl tmux ...` calls fail (no user session) → auto-seed (local tmux
+#                 registration) + push notification (tmux inject) both broken on Zalman.
+#      FIX: Run daemon in interactive user session via Scheduled Task (AtLogOn trigger).
+#           User token is present → wsl.exe inherits user env → tmux session reachable.
+#      Migration: stop + remove any pre-existing NSSM 'OpenXgram-Daemon' service.
 $serviceName = 'OpenXgram-Daemon'
+$taskName    = 'OpenXgram-Daemon-User'
 $dataDir = Join-Path $env:USERPROFILE '.openxgram'
 $daemonLog = Join-Path $dataDir 'daemon.log'
+if (-not (Test-Path $dataDir)) { New-Item -ItemType Directory -Path $dataDir -Force | Out-Null }
 Write-Host ''
-Write-Host '==> Step 8.5: NSSM service register (Windows daemon standard)' -ForegroundColor Cyan
+Write-Host '==> Step 8.5: register User Logon Scheduled Task (daemon in user session)' -ForegroundColor Cyan
 
-# NSSM 자동 install (winget) — 없으면.
-$nssmPath = (Get-Command nssm.exe -ErrorAction SilentlyContinue).Source
-if (-not $nssmPath) {
-    # 표준 winget 경로 시도
-    $candidates = @(
-        "$env:LOCALAPPDATA\Microsoft\WinGet\Links\nssm.exe",
-        "$env:ProgramFiles\nssm\nssm.exe",
-        "${env:ProgramFiles(x86)}\nssm\nssm.exe"
-    )
-    foreach ($c in $candidates) {
-        if (Test-Path $c) { $nssmPath = $c; break }
-    }
-}
-if (-not $nssmPath) {
-    Write-Host '    -> NSSM not found, installing via winget...'
-    try {
-        & winget install --id NSSM.NSSM --silent --accept-source-agreements --accept-package-agreements 2>$null | Out-Null
-        Start-Sleep 2
+# rc.203: Whole block under EAP=Continue (Scheduled Task cmdlets occasionally emit non-fatal stderr).
+$oldEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    # --- 1) Graceful migration: stop + remove legacy NSSM service if present ---
+    $legacySvc = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+    if ($legacySvc) {
+        Write-Host "    -> legacy NSSM service '$serviceName' detected — migrating to User Logon Task"
         $nssmPath = (Get-Command nssm.exe -ErrorAction SilentlyContinue).Source
-        if (-not $nssmPath) { $nssmPath = "$env:LOCALAPPDATA\Microsoft\WinGet\Links\nssm.exe" }
-    } catch {}
-}
-
-if ($nssmPath -and (Test-Path $nssmPath)) {
-    Write-Host "    -> NSSM: $nssmPath"
-    # rc.188: nssm 의 native stderr 가 $ErrorActionPreference='Stop' 트리거 → 전체 block 을 EAP=Continue 로 wrapping.
-    $oldEAP = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        # 옛 service 제거 (있으면 — Can't open service 는 정상)
-        cmd /c "`"$nssmPath`" stop $serviceName" 2>&1 | Out-Null
-        cmd /c "`"$nssmPath`" remove $serviceName confirm" 2>&1 | Out-Null
-        Start-Sleep -Milliseconds 800
-
-        # 등록 + 설정 (모든 nssm set 명령 cmd /c 로 wrapping → stderr swallow)
-        cmd /c "`"$nssmPath`" install $serviceName `"$INSTALL\xgram.exe`"" 2>&1 | Out-Null
-        cmd /c "`"$nssmPath`" set $serviceName AppParameters `"daemon --data-dir `\"C:\\Users\\User\\.openxgram`\" --bind 0.0.0.0:47300 --gui-bind 0.0.0.0:47302`"" 2>&1 | Out-Null
-        cmd /c "`"$nssmPath`" set $serviceName AppDirectory `"$INSTALL`"" 2>&1 | Out-Null
-        cmd /c "`"$nssmPath`" set $serviceName AppStdout `"$daemonLog`"" 2>&1 | Out-Null
-        cmd /c "`"$nssmPath`" set $serviceName AppStderr `"$daemonLog.err`"" 2>&1 | Out-Null
-        cmd /c "`"$nssmPath`" set $serviceName AppExit Default Restart" 2>&1 | Out-Null
-        cmd /c "`"$nssmPath`" set $serviceName AppRestartDelay 3000" 2>&1 | Out-Null
-        cmd /c "`"$nssmPath`" set $serviceName Start SERVICE_AUTO_START" 2>&1 | Out-Null
-        if ($env:XGRAM_KEYSTORE_PASSWORD) {
-            cmd /c "`"$nssmPath`" set $serviceName AppEnvironmentExtra `"XGRAM_KEYSTORE_PASSWORD=$env:XGRAM_KEYSTORE_PASSWORD`"" 2>&1 | Out-Null
+        if (-not $nssmPath) {
+            $candidates = @(
+                "$env:LOCALAPPDATA\Microsoft\WinGet\Links\nssm.exe",
+                "$env:ProgramFiles\nssm\nssm.exe",
+                "${env:ProgramFiles(x86)}\nssm\nssm.exe"
+            )
+            foreach ($c in $candidates) { if (Test-Path $c) { $nssmPath = $c; break } }
         }
-
-        # Firewall rule (admin 권한 필요 — install.ps1 self-elevate 했으므로 admin)
-        $fwExists = Get-NetFirewallRule -DisplayName 'OpenXgram' -ErrorAction SilentlyContinue
-        if (-not $fwExists) {
-            New-NetFirewallRule -DisplayName 'OpenXgram' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 47300,47301,47302,17302,47312,27302 -Program "$INSTALL\xgram.exe" -ErrorAction SilentlyContinue | Out-Null
+        if ($nssmPath -and (Test-Path $nssmPath)) {
+            cmd /c "`"$nssmPath`" stop $serviceName" 2>&1 | Out-Null
+            cmd /c "`"$nssmPath`" remove $serviceName confirm" 2>&1 | Out-Null
+            Start-Sleep -Milliseconds 800
+            Write-Host "    [OK] legacy NSSM service removed"
+        } else {
+            # Fallback: sc.exe (NSSM gone but service entry lingering)
+            cmd /c "sc.exe stop $serviceName" 2>&1 | Out-Null
+            cmd /c "sc.exe delete $serviceName" 2>&1 | Out-Null
+            Write-Host "    [OK] legacy service deleted via sc.exe"
         }
-
-        # service start
-        cmd /c "`"$nssmPath`" start $serviceName" 2>&1 | Out-Null
-        Start-Sleep -Seconds 2
-
-        Write-Host "    [OK] NSSM service '$serviceName' registered + started (auto-restart, auto-boot, firewall allowed)"
-
-        # 옛 Scheduled Task + wrapper.cmd 정리 (clean migration)
-        Unregister-ScheduledTask -TaskName $serviceName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-        Remove-Item (Join-Path $INSTALL 'openxgram-daemon-wrapper.cmd') -Force -ErrorAction SilentlyContinue | Out-Null
-    } finally {
-        $ErrorActionPreference = $oldEAP
     }
-} else {
-    Write-Host '    [WARN] NSSM not available — daemon auto-restart not configured. Manual: winget install NSSM.NSSM' -ForegroundColor Yellow
+
+    # --- 2) Firewall rule (admin 권한 필요 — install.ps1 self-elevate) ---
+    $fwExists = Get-NetFirewallRule -DisplayName 'OpenXgram' -ErrorAction SilentlyContinue
+    if (-not $fwExists) {
+        New-NetFirewallRule -DisplayName 'OpenXgram' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 47300,47301,47302,17302,47312,27302 -Program "$INSTALL\xgram.exe" -ErrorAction SilentlyContinue | Out-Null
+    }
+
+    # --- 3) Windows Defender exclusion (Norton: no API — manual prompt below) ---
+    try {
+        Add-MpPreference -ExclusionPath "$INSTALL\xgram.exe" -ErrorAction SilentlyContinue
+        Add-MpPreference -ExclusionPath $dataDir -ErrorAction SilentlyContinue
+        Write-Host "    [OK] Defender exclusion added ($INSTALL\xgram.exe, $dataDir)"
+    } catch {
+        Write-Host "    [WARN] Defender exclusion skipped (non-Defender AV or insufficient privilege)" -ForegroundColor Yellow
+    }
+
+    # --- 4) Estimate Tailscale public URL (best-effort) ---
+    $tailscaleIp = $null
+    try {
+        $tsCmd = Get-Command tailscale.exe -ErrorAction SilentlyContinue
+        if ($tsCmd) {
+            $tsOut = & tailscale.exe ip -4 2>$null
+            if ($LASTEXITCODE -eq 0 -and $tsOut) {
+                $tailscaleIp = ($tsOut | Select-Object -First 1).Trim()
+            }
+        }
+        if (-not $tailscaleIp) {
+            $tsIface = Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias '*Tailscale*' -ErrorAction SilentlyContinue
+            if ($tsIface) { $tailscaleIp = ($tsIface | Select-Object -First 1).IPAddress }
+        }
+    } catch {}
+    $transportPublicUrl = if ($tailscaleIp) { "http://${tailscaleIp}:47300" } else { $env:XGRAM_TRANSPORT_PUBLIC_URL }
+
+    # --- 5) Build daemon args + env ---
+    $daemonArgs = "daemon --data-dir `"$dataDir`" --bind 0.0.0.0:47300 --gui-bind 0.0.0.0:47302"
+    $envArr = @()
+    if ($env:XGRAM_KEYSTORE_PASSWORD) { $envArr += "XGRAM_KEYSTORE_PASSWORD=$env:XGRAM_KEYSTORE_PASSWORD" }
+    if ($transportPublicUrl) { $envArr += "XGRAM_TRANSPORT_PUBLIC_URL=$transportPublicUrl" }
+
+    # --- 6) Register Scheduled Task: AtLogOn, Interactive (user desktop), Highest privilege ---
+    # Existing task?  Replace cleanly.
+    $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if ($existing) {
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+    }
+
+    $action    = New-ScheduledTaskAction -Execute "$INSTALL\xgram.exe" -Argument $daemonArgs -WorkingDirectory $INSTALL
+    $trigger   = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+    # RestartCount=5, RestartInterval=1m → daemon crash 후 자동 부활.
+    $settings  = New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -StartWhenAvailable `
+        -RestartCount 5 `
+        -RestartInterval (New-TimeSpan -Minutes 1) `
+        -ExecutionTimeLimit ([TimeSpan]::Zero) `
+        -MultipleInstances IgnoreNew
+    # Interactive = user desktop session (token으로 WSL/tmux 접근 가능). Highest = admin elevate.
+    $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Highest
+
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'OpenXgram daemon (user session, WSL/tmux reachable)' -Force | Out-Null
+
+    # --- 7) Env vars via XML patch (Register-ScheduledTask cmdlet doesn't expose env directly) ---
+    if ($envArr.Count -gt 0) {
+        try {
+            $task = Get-ScheduledTask -TaskName $taskName
+            # New-ScheduledTaskAction has no Environment param; persist via process-wide env (user-scope).
+            foreach ($pair in $envArr) {
+                $k,$v = $pair -split '=',2
+                [Environment]::SetEnvironmentVariable($k, $v, 'User')
+            }
+            Write-Host "    [OK] env vars persisted to User scope ($($envArr.Count) keys)"
+        } catch {
+            Write-Host "    [WARN] env var persist failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+
+    # --- 8) Run task immediately (don't wait for next logon) ---
+    Start-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    Write-Host "    [OK] Scheduled Task '$taskName' registered + started (AtLogOn, Interactive, RunLevel=Highest, RestartCount=5)"
+    if ($transportPublicUrl) { Write-Host "    -> XGRAM_TRANSPORT_PUBLIC_URL = $transportPublicUrl" }
+    Write-Host "    NOTE: If using Norton/3rd-party AV, manually exclude: $INSTALL\xgram.exe" -ForegroundColor DarkGray
+
+    # --- 9) Cleanup legacy wrapper artifacts ---
+    Remove-Item (Join-Path $INSTALL 'openxgram-daemon-wrapper.cmd') -Force -ErrorAction SilentlyContinue | Out-Null
+} catch {
+    Write-Host "    [WARN] Scheduled Task register failed: $($_.Exception.Message)" -ForegroundColor Yellow
+    Write-Host "    Manual: schtasks /create /tn $taskName /tr `"$INSTALL\xgram.exe daemon`" /sc onlogon /rl highest" -ForegroundColor Yellow
+} finally {
+    $ErrorActionPreference = $oldEAP
 }
 
 # 8.6 (rc.174+) WSL warm-up on logon (if wsl.exe available).
