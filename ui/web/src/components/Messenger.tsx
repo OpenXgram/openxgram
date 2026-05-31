@@ -98,6 +98,8 @@ interface PeerDto {
  // rc.92 D2 — agent_capabilities JOIN
  description?: string | null;
  capabilities?: string[];
+ // rc.214 — agent list 한눈 view: role 필드 (peers.role enum: primary/worker/...)
+ role?: string | null;
 }
 
 interface NotifyStatusDto {
@@ -794,6 +796,51 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  })()}
  </span>
  <span class="messenger-friend-sub">{f.subtitle}</span>
+ {(() => {
+   // rc.214 — agent list 한눈 view: peer 행에 role + capabilities inline 표시.
+   // 마스터가 40+ agent 의 role/capabilities 를 click 없이 한눈에 본다.
+   // hover tooltip: description + capabilities 전체.
+   if (f.kind !== "peer" || !f.meta) return null;
+   const role = (f.meta.role || "").trim();
+   const caps = Array.isArray(f.meta.capabilities) ? f.meta.capabilities : [];
+   const desc = (f.meta.description || "").trim();
+   if (!role && caps.length === 0 && !desc) return null;
+   const capsShown = caps.slice(0, 4);
+   const capsRest = caps.length > 4 ? ` +${caps.length - 4}` : "";
+   const tooltip =
+     (role ? `role: ${role}\n` : "") +
+     (desc ? `description: ${desc}\n` : "") +
+     (caps.length > 0 ? `capabilities: ${caps.join(", ")}` : "");
+   const roleBg: Record<string, string> = {
+     "primary": "#7b61ff",
+     "worker": "#06c",
+     "channel": "#26A5E4",
+     "service": "#5a9",
+   };
+   return (
+     <span
+       class="messenger-friend-caps"
+       title={tooltip}
+       style="display:block; font-size:10px; opacity:0.85; margin-top:2px; line-height:1.3; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+     >
+       {role ? (
+         <span
+           style={`display:inline-block; padding:0 5px; margin-right:5px; background:${roleBg[role.toLowerCase()] || "#555"}; color:#fff; border-radius:3px; font-size:9px; font-weight:bold; text-transform:uppercase;`}
+         >
+           {role}
+         </span>
+       ) : null}
+       {desc ? (
+         <span style="opacity:0.9; margin-right:6px;">{desc.length > 22 ? desc.slice(0, 22) + "…" : desc}</span>
+       ) : null}
+       {capsShown.length > 0 ? (
+         <span style="opacity:0.75;">
+           {capsShown.join(" · ")}{capsRest}
+         </span>
+       ) : null}
+     </span>
+   );
+ })()}
  </span>
  </>
  );
