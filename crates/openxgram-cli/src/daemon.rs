@@ -818,10 +818,121 @@ async fn register_workflow_cron_jobs(
     Ok(registered)
 }
 
+/// rc.232 — sync LLM-검증: tmux session 의 pane 프로세스 트리에 실제 LLM 이 도는지 검사.
+/// 마스터의 본질: peer = portal 작동중 LLM 터미널 (claude/gemini/codex/ollama/aider).
+/// LLM 안 도는 tmux (`-bash`, 빈 pane, `xgramd`, `starian` 같은 운영 shell) 은 peer 아님.
+/// daemon startup 의 sync context 에서 호출되므로 std::process::Command 사용
+/// (daemon_gui.rs 의 detect_llm_in_subtree async 버전과 동일 키워드, sync 재구현).
+/// 검출 실패 시 false 반환 (그 session 은 peer 등록 skip — silent X, 호출부에서 log).
+fn tmux_session_runs_llm(session: &str) -> bool {
+    // pane PID 조회 (자기 머신 tmux. Windows = wsl tmux).
+    let (cmd, base_arg) = if cfg!(windows) {
+        ("wsl", Some("tmux"))
+    } else {
+        ("tmux", None)
+    };
+    let pane_pid: u32 = {
+        let mut c = std::process::Command::new(cmd);
+        if let Some(a) = base_arg {
+            c.arg(a);
+        }
+        match c
+            .args([
+                "display-message",
+                "-p",
+                "-t",
+                &format!("{session}:0"),
+                "#{pane_pid}",
+            ])
+            .output()
+        {
+            Ok(out) if out.status.success() => {
+                match String::from_utf8_lossy(&out.stdout).trim().parse::<u32>() {
+                    Ok(p) => p,
+                    Err(_) => return false,
+                }
+            }
+            _ => return false,
+        }
+    };
+
+    // pane_pid 자체 + 자식 process tree BFS (최대 깊이 4) — LLM 키워드 매칭.
+    let is_llm_line = |line: &str| -> bool {
+        let hay = line.to_lowercase();
+        // daemon_gui.rs match_llm_in_line 과 동일 후보 + api 클라이언트 false-positive 제외.
+        ((hay.contains("claude")) && !hay.contains("claude-api"))
+            || (hay.contains("gemini") && !hay.contains("gemini-api"))
+            || hay.contains("codex")
+            || hay.contains("ollama")
+            || hay.contains("aider")
+            || hay.contains("cursor-agent")
+            || hay.contains("cursor agent")
+            || (hay.contains("continue") && hay.contains("dev"))
+            || hay.contains("cline")
+    };
+
+    // 0회차 — pane_pid 자체.
+    if let Ok(out) = std::process::Command::new("ps")
+        .args(["-o", "pid=,comm=,args=", "-p", &pane_pid.to_string()])
+        .output()
+    {
+        if out.status.success() {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            for line in stdout.lines() {
+                if is_llm_line(line) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    let mut frontier: Vec<u32> = vec![pane_pid];
+    let mut visited: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    visited.insert(pane_pid);
+    for _depth in 0..4 {
+        if frontier.is_empty() {
+            break;
+        }
+        let pids_csv = frontier
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let out = match std::process::Command::new("ps")
+            .args(["-o", "pid=,comm=,args=", "--ppid", &pids_csv])
+            .output()
+        {
+            Ok(o) if o.status.success() => o,
+            _ => break,
+        };
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let mut next_frontier: Vec<u32> = vec![];
+        for line in stdout.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Some(pid_s) = trimmed.split_whitespace().next() {
+                if let Ok(child_pid) = pid_s.parse::<u32>() {
+                    if visited.insert(child_pid) {
+                        next_frontier.push(child_pid);
+                    }
+                }
+            }
+            if is_llm_line(trimmed) {
+                return true;
+            }
+        }
+        frontier = next_frontier;
+    }
+    false
+}
+
 /// rc.201 — auto-seed: 자기 머신 의 tmux session 을 agent_capabilities 자동 등록.
 /// 마스터의 본질: peer = 터미널 (각 tmux). daemon startup 시 자기 머신 tmux session list
 /// 가져와서 각 session_name 의 alias 추출 → agent_capabilities INSERT OR IGNORE.
 /// 그 다음 retroactive_register_agents 가 sub-keystore + peer 자동 등록.
+/// rc.232 — LLM 검증 게이트: LLM 안 도는 tmux (shell/placeholder) 는 seed skip.
 fn auto_seed_local_tmux_agents(data_dir: &std::path::Path) -> anyhow::Result<usize> {
     // 자기 머신 tmux list-sessions
     let local_sessions: Vec<String> = {
@@ -864,6 +975,18 @@ fn auto_seed_local_tmux_agents(data_dir: &std::path::Path) -> anyhow::Result<usi
             sn.clone()
         };
         if alias.is_empty() || alias == "null" || alias.contains('[') {
+            continue;
+        }
+        // rc.232 — subagent worktree session (sv_aoe_*, sv_*) 와 순수 숫자 alias 는 peer 아님.
+        // 이들은 부모 LLM 의 pane 을 공유하므로 LLM 검증을 통과해도 독립 peer 가 아님 → skip.
+        if sn.starts_with("sv_") || alias.chars().all(|c| c.is_ascii_digit()) {
+            tracing::debug!(alias = %alias, tmux = %sn, "rc.232 auto-seed skip — subagent/numeric (peer 아님)");
+            continue;
+        }
+        // rc.232 — LLM 검증 게이트: pane 에 실제 LLM 안 도는 tmux session 은 peer 아님 → seed skip.
+        // term_*, starian, xgramd 같은 운영 shell 부활 방지. silent X — debug log.
+        if !tmux_session_runs_llm(sn) {
+            tracing::debug!(alias = %alias, tmux = %sn, "rc.232 auto-seed skip — pane 에 LLM 미검출 (shell/placeholder)");
             continue;
         }
         // INSERT OR IGNORE — 이미 있으면 messenger_enabled 만 1 로 update (auto-enable).
@@ -976,15 +1099,26 @@ fn retroactive_register_agents(data_dir: &std::path::Path) -> anyhow::Result<usi
         }
         // rc.200 owner check — 자기 머신 tmux session 에 매칭되는 alias 만 등록.
         // local_tmux_sessions 가 비어있으면 owner check skip (tmux 없는 머신).
+        // rc.232 — 매칭 session 이 실제 LLM 도는지까지 검증. shell/placeholder 부활 방지.
         if !local_tmux_sessions.is_empty() {
-            let is_owner = local_tmux_sessions.iter().any(|sn| {
-                sn == alias
+            let matched_session: Option<&String> = local_tmux_sessions.iter().find(|sn| {
+                sn.as_str() == alias
                     || sn.starts_with(&format!("aoe_{alias}_"))
                     || sn.contains(alias.as_str())
             });
-            if !is_owner {
-                tracing::debug!(alias = %alias, "rc.200 owner check: skip — 자기 머신 tmux 에 없음");
-                continue;
+            match matched_session {
+                None => {
+                    tracing::debug!(alias = %alias, "rc.200 owner check: skip — 자기 머신 tmux 에 없음");
+                    continue;
+                }
+                Some(sn) => {
+                    // rc.232 — 매칭된 tmux session 의 pane 에 실제 LLM 이 도는지 검증.
+                    // LLM 안 도는 운영 shell (term_*, xgramd, starian) 부활 차단.
+                    if !tmux_session_runs_llm(sn) {
+                        tracing::info!(alias = %alias, tmux = %sn, "rc.232 retroactive skip — pane 에 LLM 미검출 (shell/placeholder 부활 차단)");
+                        continue;
+                    }
+                }
             }
         }
         let kp = match ks.load(alias, &pw) {
