@@ -1,4 +1,4 @@
-import { createMemo, createResource, createSignal, For, Show, onCleanup} from "solid-js";
+import { createMemo, createResource, createSignal, createEffect, For, Show, onCleanup, onMount} from "solid-js";
 import { invoke} from "@/api/client";
 import { useI18n} from "../i18n";
 import { AgentSidePanel} from "./AgentSidePanel";
@@ -1034,6 +1034,10 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  return messages() ?? [];
 });
 
+ // rc.224 — peer view 안 탭 (대화 / 화면). peer alias = tmux session name 1:1 매핑.
+ // 기본 = "conv" 대화. "screen" 선택 시 TmuxPreview (5초 polling, capture-pane text).
+ const [peerTab, setPeerTab] = createSignal<"conv" | "screen">("conv");
+
  return (
  <>
  <header class="messenger-thread-head">
@@ -1046,8 +1050,31 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  ? ` · ${fingerprint(f().meta!.public_key_hex)}`
  : ""}
  </small>
+ {/* rc.224 — peer 친구만 탭 노출 (alias = tmux session name 매핑). */}
+ <Show when={f().kind === "peer"}>
+ <div class="messenger-peer-tabs" style="display:flex; gap:4px; margin-top:8px;">
+ <button
+ type="button"
+ onClick={() => setPeerTab("conv")}
+ style={`padding:4px 12px; font-size:12px; cursor:pointer; border:1px solid var(--border); border-radius:4px; background:${peerTab() === "conv" ? "rgba(58, 130, 246, 0.25)" : "transparent"}; color:inherit;`}
+ >
+ 대화
+ </button>
+ <button
+ type="button"
+ onClick={() => setPeerTab("screen")}
+ title="이 피어의 tmux 세션 화면 (5초 polling)"
+ style={`padding:4px 12px; font-size:12px; cursor:pointer; border:1px solid var(--border); border-radius:4px; background:${peerTab() === "screen" ? "rgba(58, 130, 246, 0.25)" : "transparent"}; color:inherit;`}
+ >
+ 화면
+ </button>
+ </div>
+ </Show>
  </header>
  <section class="messenger-thread-body">
+ <Show
+ when={f().kind === "peer" && peerTab() === "screen"}
+ fallback={
  <Show
  when={(filtered() ?? []).length > 0}
  fallback={
@@ -1091,6 +1118,11 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  }}
  </For>
  </ul>
+ </Show>
+}
+ >
+ {/* rc.224 — tmux 화면 preview. alias = tmux session name. */}
+ <TmuxPreview alias={f().display} />
  </Show>
  </section>
  <PeerInput
@@ -1154,6 +1186,160 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  </Show>
  </div>
 );
+}
+
+// ── rc.224 TmuxPreview — peer card 안 tmux 세션 inline preview ─────────────
+// peer alias = tmux session name 1:1 매핑 (auto-seed mechanism).
+// backend GET /v1/gui/sessions/{alias}/screen 5초 polling.
+// dead session 시 polling stop + 명시 표시.
+// xterm.js 안 쓰고 simple plain text (capture-pane 출력). monospace dark.
+function TmuxPreview(props: { alias: string}) {
+ const [content, setContent] = createSignal<string>("");
+ const [lines, setLines] = createSignal<number>(0);
+ const [sourceNote, setSourceNote] = createSignal<string>("");
+ const [fetchedAt, setFetchedAt] = createSignal<string>("");
+ const [error, setError] = createSignal<string | null>(null);
+ const [dead, setDead] = createSignal<boolean>(false);
+ const [autoPoll, setAutoPoll] = createSignal<boolean>(true);
+ let pollTimer: number | undefined;
+
+ interface SessionScreenDto {
+ identifier: string;
+ kind: string;
+ display: string;
+ content: string;
+ lines: number;
+ source_note: string;
+ fetched_at: string;
+ }
+
+ // ANSI escape sequence (CSI / OSC / 단독 ESC) 를 plain text 로 strip.
+ // capture-pane -e 출력에는 컬러 코드가 포함 — preview 는 단순 텍스트.
+ function stripAnsi(s: string): string {
+ // CSI: ESC [ ... letter
+ // OSC: ESC ] ... BEL or ESC \
+ return s
+ .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+ .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+ .replace(/\x1b[@-Z\\-_]/g, "");
+ }
+
+ async function refresh() {
+ try {
+ const dto = await invoke<SessionScreenDto>("session_screen", {
+ identifier: props.alias,
+ });
+ setContent(stripAnsi(dto.content || ""));
+ setLines(dto.lines || 0);
+ setSourceNote(dto.source_note || "");
+ setFetchedAt(dto.fetched_at || "");
+ setError(null);
+ setDead(false);
+ } catch (e) {
+ const msg = String(e);
+ setError(msg);
+ // 404 / not found / session not exist → dead. polling stop.
+ if (/not.?found|404|no such|exist/i.test(msg)) {
+ setDead(true);
+ if (pollTimer) {
+ clearInterval(pollTimer);
+ pollTimer = undefined;
+ }
+ }
+ }
+ }
+
+ function startPolling() {
+ if (pollTimer) clearInterval(pollTimer);
+ if (!autoPoll() || dead()) return;
+ pollTimer = setInterval(() => void refresh(), 5000) as unknown as number;
+ }
+
+ onMount(() => {
+ void refresh();
+ startPolling();
+ });
+ onCleanup(() => {
+ if (pollTimer) clearInterval(pollTimer);
+ });
+
+ // alias 가 변경되면 reset (다른 peer 카드로 전환 시).
+ createEffect(() => {
+ const a = props.alias;
+ if (!a) return;
+ setDead(false);
+ setError(null);
+ setContent("");
+ void refresh();
+ startPolling();
+ });
+
+ // autoPoll toggle 시 polling 재시작.
+ createEffect(() => {
+ const on = autoPoll();
+ if (pollTimer) {
+ clearInterval(pollTimer);
+ pollTimer = undefined;
+ }
+ if (on && !dead()) startPolling();
+ });
+
+ // 마지막 ~30 줄만 표시 (preview 목적).
+ const tailContent = createMemo<string>(() => {
+ const c = content();
+ if (!c) return "";
+ const allLines = c.split(/\r?\n/);
+ const tail = allLines.slice(-30);
+ return tail.join("\n");
+ });
+
+ return (
+ <div class="tmux-preview-wrap" style="padding:12px; display:flex; flex-direction:column; gap:8px;">
+ <div class="tmux-preview-toolbar" style="display:flex; gap:8px; align-items:center; font-size:12px; opacity:0.85;">
+ <strong>tmux: {props.alias}</strong>
+ <span style="opacity:0.6;">{sourceNote()}</span>
+ <span style="margin-left:auto; display:flex; gap:6px; align-items:center;">
+ <button
+ type="button"
+ onClick={() => void refresh()}
+ style="padding:2px 8px; font-size:11px; cursor:pointer; border:1px solid var(--border); border-radius:3px; background:transparent; color:inherit;"
+ >
+ Refresh
+ </button>
+ <label style="display:flex; gap:4px; align-items:center; cursor:pointer;">
+ <input
+ type="checkbox"
+ checked={autoPoll()}
+ onChange={(e) => setAutoPoll(e.currentTarget.checked)}
+ />
+ auto (5s)
+ </label>
+ </span>
+ </div>
+ <Show when={dead()}>
+ <div
+ style="padding:12px; background:rgba(248, 81, 73, 0.12); border:1px solid rgba(248, 81, 73, 0.4); border-radius:4px; font-size:12px;"
+ >
+ tmux session not found — "{props.alias}" 세션이 머신에 없거나 종료됨. polling 중지.
+ </div>
+ </Show>
+ <Show when={!dead() && error()}>
+ <div
+ style="padding:8px; background:rgba(210, 153, 34, 0.12); border:1px solid rgba(210, 153, 34, 0.4); border-radius:4px; font-size:11px; opacity:0.8;"
+ >
+ fetch error: {error()}
+ </div>
+ </Show>
+ <pre
+ class="tmux-preview"
+ style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size:12px; background:#0a0a0a; color:#e6edf3; padding:12px; border-radius:4px; white-space:pre; overflow:auto; max-height:500px; margin:0;"
+ >{tailContent() || (dead() ? "" : "(loading…)")}</pre>
+ <div style="font-size:10px; opacity:0.5; text-align:right;">
+ {lines() > 0 ? `${lines()} lines total · tail 30 · ` : ""}
+ {fetchedAt() ? `fetched ${fmtTime(fetchedAt())}` : ""}
+ </div>
+ </div>
+ );
 }
 
 // ── L5 Hand-off 모달 ──────────────────────────────────────────────
