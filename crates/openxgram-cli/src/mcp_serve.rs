@@ -414,9 +414,12 @@ impl ToolDispatcher for OpenxgramDispatcher {
         // 사용. 이전 조건부였던 게 sub-agent LLM 의 자율 통신 불가의 root cause —
         // MCP client list_tools 응답에서 peer_send 누락 → 도구 사용 불가.
         // 항상 노출 + handler 가 keystore unlock fail 시 runtime error.
+        // rc.223 본질 fix: MCP subprocess 에 XGRAM_KEYSTORE_PASSWORD 없어도 작동.
+        // primary path = daemon HTTP /v1/gui/peers/{alias}/send-unsigned (daemon 자체 unlock 상태).
+        // XGRAM_MCP_TOKEN env 있으면 daemon HTTP 사용, 없으면 CLI path fallback.
         tools.push(ToolSpec {
             name: "peer_send".into(),
-            description: "Fire-and-forget send. Returns immediately. Reply (if any) auto-arrives in your tmux via push notification. DO NOT poll, DO NOT loop wait — replies inject automatically. 즉시 send + return. 답장 자동 tmux push, polling 금지.".into(),
+            description: "Fire-and-forget send. Returns immediately. Reply (if any) auto-arrives in your tmux via push notification. DO NOT poll, DO NOT loop wait — replies inject automatically. 즉시 send + return. 답장 자동 tmux push, polling 금지. (rc.223 — daemon HTTP path 사용 시 password env 불필요)".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -823,8 +826,7 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         "next_step": "Continue your work. Reply will auto-inject when peer responds. DO NOT poll.",
                     }));
                 }
-                // 외부 peer (다른 머신) — primary: P2P transport
-                let pw = self.require_vault()?.to_string();
+                // 외부 peer (다른 머신) — primary: daemon HTTP path (rc.223).
                 // rc.207 본질 fix — conversation_id 미지정 시 daemon 이 자동 UUID 부여.
                 // 이로써 reply 가 auto-correlate 되고, LLM polling 시도 자체가 무의미해짐.
                 let conv = args
@@ -834,6 +836,69 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                 let data_dir = self.data_dir.clone();
                 let handle = tokio::runtime::Handle::current();
+
+                // rc.223 본질 fix — daemon HTTP path 우선.
+                // MCP subprocess 가 XGRAM_KEYSTORE_PASSWORD 없어도 daemon (자기 unlock) 이 sign.
+                // XGRAM_MCP_TOKEN env 있을 때만 시도. 없으면 CLI path 폴백.
+                let daemon_token = std::env::var("XGRAM_MCP_TOKEN").ok();
+                if let Some(token) = daemon_token.as_ref() {
+                    let daemon_url = std::env::var("XGRAM_DAEMON_GUI_URL")
+                        .unwrap_or_else(|_| "http://127.0.0.1:47302".to_string());
+                    let url = format!(
+                        "{}/v1/gui/peers/{}/send-unsigned",
+                        daemon_url.trim_end_matches('/'),
+                        urlencoding::encode(&alias),
+                    );
+                    let payload = json!({"body": body, "conversation_id": conv});
+                    let token_clone = token.clone();
+                    let url_clone = url.clone();
+                    let payload_clone = payload.clone();
+                    let http_res: std::result::Result<(reqwest::StatusCode, String), reqwest::Error> =
+                        handle.block_on(async move {
+                            let client = reqwest::Client::new();
+                            let resp = client
+                                .post(&url_clone)
+                                .header("Authorization", format!("Bearer {}", token_clone))
+                                .header("Content-Type", "application/json")
+                                .json(&payload_clone)
+                                .send()
+                                .await?;
+                            let status = resp.status();
+                            let text = resp.text().await.unwrap_or_default();
+                            Ok((status, text))
+                        });
+                    match http_res {
+                        Ok((status, text)) if status.is_success() => {
+                            let parsed: serde_json::Value =
+                                serde_json::from_str(&text).unwrap_or_else(|_| json!({"raw": text}));
+                            return Ok(json!({
+                                "sent": true,
+                                "alias": alias,
+                                "via": "daemon_http",
+                                "msg_ulid": parsed.get("queued").cloned().unwrap_or(json!(null)),
+                                "to_alias": parsed.get("to_alias").cloned().unwrap_or(json!(alias.clone())),
+                                "conversation_id": conv,
+                                "delivery_mode": "fire_and_forget",
+                                "reply_behavior": "auto_push_to_inbox_on_arrival",
+                                "next_step": "Continue your work. Reply will auto-inject when peer responds. DO NOT poll.",
+                            }));
+                        }
+                        Ok((status, text)) => {
+                            // rc.223 — 명시 error 반환 (silent fallback 금지).
+                            return Err(internal(format!(
+                                "daemon HTTP {} from {}: {}",
+                                status, url, text
+                            )));
+                        }
+                        Err(e) => {
+                            return Err(internal(format!("daemon HTTP request 실패 ({}): {}", url, e)));
+                        }
+                    }
+                }
+
+                // XGRAM_MCP_TOKEN 미설정 — 기존 CLI path (XGRAM_KEYSTORE_PASSWORD 필요).
+                // xgram peer send CLI 명령 backward compat 보장. 마스터 직접 호출 시 작동.
+                let pw = self.require_vault()?.to_string();
                 let p2p_result = handle.block_on(crate::peer_send::run_peer_send_with_conv(
                     &data_dir, &alias, None, &body, &pw, Some(conv.clone()),
                 ));
