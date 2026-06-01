@@ -26,35 +26,82 @@ interface MessageDto {
  ack_status?: string;
  acked_at?: string;
  ack_via?: string;
+ // rc.227 — application-level ACK (conversation_id 매칭 답신).
+ app_ack_status?: string; // 'processed' | 'blocked' | undefined (대기 중)
+ app_ack_at?: string;
 }
 
 // rc.154 — ack badge helper. rc.219 — outbound_queue.ack_status 도 함께 매핑.
+// rc.227 — application-level ACK badge 도 transport badge 옆에 함께 렌더.
 function ackBadge(m: MessageDto) {
  const s = m.ack_status;
- if (!s || s === "sent") return null;
- const map: Record<string, {bg: string; label: string; title: string}> = {
- // rc.153 message-level
- delivered: {bg: "#3a4a6a", label: "✓ delivered", title: "전달됨"},
- read: {bg: "#2a5b8a", label: "✓✓ read", title: "읽음"},
- processing: {bg: "#7a5a00", label: "⏳ processing", title: "처리 중"},
- done: {bg: "#238636", label: "✓ done", title: "처리 완료"},
- failed: {bg: "#a02828", label: "✗ failed", title: "실패"},
- // rc.219 outbound_queue ACK envelope status
- pending: {bg: "#5a5a5a", label: "⏳ pending", title: "미전송"},
- inbox_stored: {bg: "#3a8a3a", label: "✓ stored", title: "receiver inbox 저장 완료 (tmux 매칭 X)"},
- tmux_injected: {bg: "#238636", label: "✓✓ delivered", title: "receiver tmux 화면 inject 완료"},
- both: {bg: "#238636", label: "✓✓ delivered", title: "receiver tmux 화면 inject 완료"},
- fail: {bg: "#a02828", label: "✗ failed", title: "ACK 실패"},
- ack_timeout_max: {bg: "#a02828", label: "✗ ack-timeout", title: "ACK 30분 + 3회 재발송 후 실패"},
- };
- const v = map[s];
- if (!v) return null;
- const via = m.ack_via ? ` · ${m.ack_via}` : "";
+ // transport ACK badge
+ let transportEl: any = null;
+ if (s && s !== "sent") {
+  const map: Record<string, {bg: string; label: string; title: string}> = {
+   // rc.153 message-level
+   delivered: {bg: "#3a4a6a", label: "✓ delivered", title: "전달됨"},
+   read: {bg: "#2a5b8a", label: "✓✓ read", title: "읽음"},
+   processing: {bg: "#7a5a00", label: "⏳ processing", title: "처리 중"},
+   done: {bg: "#238636", label: "✓ done", title: "처리 완료"},
+   failed: {bg: "#a02828", label: "✗ failed", title: "실패"},
+   // rc.219 outbound_queue ACK envelope status (transport-level)
+   pending: {bg: "#5a5a5a", label: "⏳ pending", title: "미전송"},
+   inbox_stored: {bg: "#3a8a3a", label: "✓ stored", title: "receiver inbox 저장 완료 (tmux 매칭 X)"},
+   tmux_injected: {bg: "#238636", label: "✓✓ delivered", title: "receiver tmux 화면 inject 완료"},
+   both: {bg: "#238636", label: "✓✓ delivered", title: "receiver tmux 화면 inject 완료"},
+   fail: {bg: "#a02828", label: "✗ failed", title: "ACK 실패"},
+   ack_timeout_max: {bg: "#a02828", label: "✗ ack-timeout", title: "ACK 30분 + 3회 재발송 후 실패"},
+  };
+  const v = map[s];
+  if (v) {
+   const via = m.ack_via ? ` · ${m.ack_via}` : "";
+   transportEl = (
+    <span title={`${v.title}${via}${m.acked_at ? " · " + m.acked_at.slice(0, 19) : ""}`}
+     style={`margin-left:6px; padding:1px 5px; background:${v.bg}; color:#fff; border-radius:3px; font-size:9px; font-weight:bold;`}>
+     {v.label}
+    </span>
+   );
+  }
+ }
+
+ // rc.227 — application-level ACK badge.
+ // app_ack_status: 'processed' = LLM 답신 도착, 'blocked' = 5분 timeout (응답 없음).
+ // undefined + ack_status set = 대기 중 (transport OK, 답신 대기).
+ let appAckEl: any = null;
+ const isOutboundLike = (m.ack_status || "") !== "" && m.ack_status !== "delivered_inbound";
+ if (isOutboundLike) {
+  if (m.app_ack_status === "processed") {
+   appAckEl = (
+    <span title={`receiver 답신 도착 (app_ack_at=${(m.app_ack_at || "").slice(0, 19)})`}
+     style="margin-left:4px; padding:1px 5px; background:#1f6f3a; color:#fff; border-radius:3px; font-size:9px; font-weight:bold;">
+     ✓✓ processed
+    </span>
+   );
+  } else if (m.app_ack_status === "blocked") {
+   appAckEl = (
+    <span title="5분 안에 receiver 답신 없음 — LLM 처리 안 됨 (survey prompt / context full / 비활성 등)"
+     style="margin-left:4px; padding:1px 5px; background:#a02828; color:#fff; border-radius:3px; font-size:9px; font-weight:bold;">
+     ⚠ no-reply
+    </span>
+   );
+  } else if (transportEl) {
+   // transport OK + app_ack 아직 미수신 → 대기 중 표시.
+   appAckEl = (
+    <span title="receiver 답신 대기 중 (5분 timeout)"
+     style="margin-left:4px; padding:1px 5px; background:#7a5a00; color:#fff; border-radius:3px; font-size:9px; font-weight:bold;">
+     ⏱ awaiting-reply
+    </span>
+   );
+  }
+ }
+
+ if (!transportEl && !appAckEl) return null;
  return (
- <span title={`${v.title}${via}${m.acked_at ? " · " + m.acked_at.slice(0, 19) : ""}`}
- style={`margin-left:6px; padding:1px 5px; background:${v.bg}; color:#fff; border-radius:3px; font-size:9px; font-weight:bold;`}>
- {v.label}
- </span>
+  <>
+   {transportEl}
+   {appAckEl}
+  </>
  );
 }
 

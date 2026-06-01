@@ -830,7 +830,231 @@ pub fn spawn_all(db: Arc<Mutex<Db>>) {
             }
         }
     });
-    tracing::info!("daemon workers spawned (M-2, M-4, M-5, M-6, L6, V6)");
+    // rc.227 — application-level ACK timeout drain (60s tick).
+    // sent_at OK + app_ack_check_after < NOW + app_ack_at IS NULL → 'blocked' 마킹.
+    let db_app_ack = db.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            if let Err(e) = app_ack_timeout_drain(&db_app_ack).await {
+                tracing::warn!("rc.227 app_ack_timeout_drain error: {e}");
+            }
+        }
+    });
+    // rc.228 — tmux health worker (60s tick). opt-in via XGRAM_TMUX_HEALTH_ENABLE=1.
+    // Anthropic survey y/n/d auto-dismiss + context-full auto-clear.
+    if std::env::var("XGRAM_TMUX_HEALTH_ENABLE").as_deref() == Ok("1") {
+        let db_tmux = db.clone();
+        tokio::spawn(async move {
+            tracing::info!("rc.228 tmux_health worker enabled (XGRAM_TMUX_HEALTH_ENABLE=1)");
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                if let Err(e) = tmux_health_tick(&db_tmux).await {
+                    tracing::warn!("rc.228 tmux_health_tick error: {e}");
+                }
+            }
+        });
+    } else {
+        tracing::info!("rc.228 tmux_health worker disabled (set XGRAM_TMUX_HEALTH_ENABLE=1 to opt-in)");
+    }
+    tracing::info!("daemon workers spawned (M-2, M-4, M-5, M-6, L6, V6, app_ack, tmux_health?)");
+}
+
+/// rc.227 — application-level ACK timeout worker (60s tick).
+/// outbound_queue 의 sent_at OK + app_ack_check_after < NOW + app_ack_at IS NULL
+/// → app_ack_status = 'blocked' 마킹. 명시 log + (선택적으로 escalation).
+async fn app_ack_timeout_drain(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
+    let mut db = db.lock().await;
+    let conn = db.conn();
+    let now_str = chrono::Utc::now().to_rfc3339();
+
+    // detect blocked candidates first (log 용)
+    let mut blocked: Vec<(String, String, Option<String>)> = Vec::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT msg_ulid, target_alias, conversation_id FROM outbound_queue \
+         WHERE app_ack_at IS NULL \
+           AND app_ack_status IS NULL \
+           AND app_ack_check_after IS NOT NULL \
+           AND app_ack_check_after < ?1",
+    ) {
+        if let Ok(iter) = stmt.query_map(rusqlite::params![now_str], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+            ))
+        }) {
+            for row in iter.flatten() {
+                blocked.push(row);
+            }
+        }
+    }
+
+    if blocked.is_empty() {
+        return Ok(());
+    }
+
+    let rows = conn.execute(
+        "UPDATE outbound_queue \
+         SET app_ack_status = 'blocked' \
+         WHERE app_ack_at IS NULL \
+           AND app_ack_status IS NULL \
+           AND app_ack_check_after IS NOT NULL \
+           AND app_ack_check_after < ?1",
+        rusqlite::params![now_str],
+    )?;
+    for (ulid, alias, conv) in &blocked {
+        tracing::warn!(
+            msg_ulid = %ulid,
+            target_alias = %alias,
+            conversation_id = ?conv,
+            "rc.227 app_ack BLOCKED — 5분 안에 답신 없음 (receiver LLM 처리 안 됨/대기 prompt 등)"
+        );
+    }
+    tracing::info!(rows = rows, count = blocked.len(), "rc.227 app_ack_timeout_drain: marked blocked");
+    Ok(())
+}
+
+/// rc.228 — tmux health worker (60s tick, opt-in via XGRAM_TMUX_HEALTH_ENABLE=1).
+///
+/// 각 active tmux session 의 capture-pane 결과를 검사하여:
+///   1. Anthropic survey y/n/d prompt 자동 dismiss (`0` send-keys).
+///   2. Context-full warning + low-context auto-compact (`/compact` send-keys).
+///   3. Idle detection (log only).
+///
+/// `* Thinking...` / `Cogitating...` 상태면 health action 전부 skip (LLM in-flight 방해 X).
+async fn tmux_health_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
+    // active tmux session 목록 = `tmux list-sessions -F "#S"`.
+    let list_out = std::process::Command::new("tmux")
+        .args(["list-sessions", "-F", "#S"])
+        .output();
+    let session_names: Vec<String> = match list_out {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+        Ok(out) => {
+            tracing::debug!(
+                stderr = %String::from_utf8_lossy(&out.stderr).trim(),
+                "rc.228 tmux list-sessions 실패 (tmux 미실행?) — skip"
+            );
+            return Ok(());
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, "rc.228 tmux 미설치 또는 실행 불가 — skip");
+            return Ok(());
+        }
+    };
+
+    // DB lock 은 logging 용도만 (action 자체는 외부 process call).
+    let _db_guard = db.lock().await;
+
+    for sname in session_names {
+        // capture-pane 의 마지막 200 줄.
+        let cap_out = std::process::Command::new("tmux")
+            .args(["capture-pane", "-t", &sname, "-p", "-S", "-200"])
+            .output();
+        let screen = match cap_out {
+            Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
+            Ok(out) => {
+                tracing::debug!(
+                    session = %sname,
+                    stderr = %String::from_utf8_lossy(&out.stderr).trim(),
+                    "rc.228 tmux capture-pane 실패 — skip session"
+                );
+                continue;
+            }
+            Err(e) => {
+                tracing::debug!(session = %sname, error = %e, "rc.228 capture-pane 실패");
+                continue;
+            }
+        };
+
+        // LLM thinking 중이면 모든 action skip — in-flight 방해 X.
+        let thinking = screen.contains("Thinking...")
+            || screen.contains("Cogitating...")
+            || screen.contains("✶ Thinking")
+            || screen.contains("* Thinking");
+        if thinking {
+            tracing::debug!(session = %sname, "rc.228 tmux_health: LLM thinking 중 — action skip");
+            continue;
+        }
+
+        // (1) Anthropic survey y/n/d prompt detect.
+        let has_survey = screen.contains("How is Claude doing this session?")
+            || (screen.contains("1: Bad")
+                && screen.contains("2: Fine")
+                && screen.contains("0: Dismiss"));
+        if has_survey {
+            let res = std::process::Command::new("tmux")
+                .args(["send-keys", "-t", &sname, "0", "Enter"])
+                .output();
+            match res {
+                Ok(out) if out.status.success() => tracing::info!(
+                    session = %sname,
+                    action = "survey_dismiss",
+                    "rc.228 tmux_health: Anthropic survey auto-dismiss (sent '0')"
+                ),
+                Ok(out) => tracing::warn!(
+                    session = %sname,
+                    stderr = %String::from_utf8_lossy(&out.stderr).trim(),
+                    "rc.228 tmux_health: survey dismiss send-keys 실패"
+                ),
+                Err(e) => tracing::warn!(
+                    session = %sname,
+                    error = %e,
+                    "rc.228 tmux_health: survey dismiss send-keys 실행 실패"
+                ),
+            }
+            continue;
+        }
+
+        // (2) Context-full / low-context auto-compact.
+        let has_low_context = screen.contains("Context Remaining: 0%")
+            || screen.contains("Context Remaining: 1%")
+            || screen.contains("Context Remaining: 2%")
+            || screen.contains("compact previous conversation");
+        if has_low_context {
+            // /compact 입력 + Enter.
+            let res1 = std::process::Command::new("tmux")
+                .args(["send-keys", "-t", &sname, "/compact"])
+                .output();
+            // 별도 Enter 송신 (텍스트 + Enter 분리, tmux send-keys 패턴 안전성).
+            let res2 = std::process::Command::new("tmux")
+                .args(["send-keys", "-t", &sname, "Enter"])
+                .output();
+            let ok1 = res1.as_ref().map(|o| o.status.success()).unwrap_or(false);
+            let ok2 = res2.as_ref().map(|o| o.status.success()).unwrap_or(false);
+            if ok1 && ok2 {
+                tracing::info!(
+                    session = %sname,
+                    action = "compact",
+                    "rc.228 tmux_health: low context detected → /compact auto-clear"
+                );
+            } else {
+                tracing::warn!(
+                    session = %sname,
+                    "rc.228 tmux_health: /compact send-keys 부분 실패"
+                );
+            }
+            continue;
+        }
+
+        // (3) idle detection: 5분 동안 변화 없음. log only (자동 action X).
+        // 현재 tick 의 hash 만 기록 (다음 tick 비교) — 간단하게 length+last 200 chars.
+        let _signature: u64 = {
+            let mut h: u64 = 1469598103934665603; // FNV-1a 초기값
+            for b in screen.as_bytes().iter().rev().take(400) {
+                h ^= *b as u64;
+                h = h.wrapping_mul(1099511628211);
+            }
+            h
+        };
+        // 본 tick 에서는 hash 만 계산 — persistent state 추가는 후속 rc (행위 변화 X).
+    }
+
+    Ok(())
 }
 
 /// W-5 message_trigger: workflows.message_trigger (json: {"pattern": "..."}) 가 최근 60s 메시지 body 매칭 시 workflow 자동 실행.

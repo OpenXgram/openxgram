@@ -1437,6 +1437,12 @@ enum PeerCli {
         /// ACK 수신 시 exit 0 + latency 출력, timeout 시 exit 1.
         #[arg(long)]
         wait_ack: Option<String>,
+        /// rc.227 — application-level ACK 대기 (receiver LLM 답신 도착 확인).
+        /// 매칭 키 = conversation_id. 형식: `--wait-app-ack 5m` 또는 `300s`.
+        /// app_ack 수신 시 exit 0, timeout 시 exit 1 (worker 가 'blocked' 마킹).
+        /// `--wait-ack` 와 동시 지정 시 `--wait-app-ack` 우선.
+        #[arg(long)]
+        wait_app_ack: Option<String>,
     },
     /// 여러 peer 에 동시 전송 (concurrent, 부분 실패 격리)
     Broadcast {
@@ -2669,9 +2675,24 @@ async fn main() -> anyhow::Result<()> {
                     body,
                     sender,
                     wait_ack,
+                    wait_app_ack,
                 } => {
                     let pw = openxgram_core::env::require_password()?;
-                    // rc.219 — --wait-ack 지정 시 ACK 대기, 미지정 시 fire-and-forget (기존 동작).
+                    // rc.227 — --wait-app-ack 우선 (application-level), 다음 --wait-ack (transport).
+                    // 둘 다 미지정 시 fire-and-forget (기존 동작).
+                    if let Some(spec) = wait_app_ack {
+                        let timeout = peer_send::parse_wait_ack_duration(&spec)?;
+                        let exit_code = peer_send::run_peer_send_with_app_ack_wait(
+                            &dir,
+                            &alias,
+                            sender.as_deref(),
+                            &body,
+                            &pw,
+                            timeout,
+                        )
+                        .await?;
+                        std::process::exit(exit_code);
+                    }
                     match wait_ack {
                         Some(spec) => {
                             let timeout = peer_send::parse_wait_ack_duration(&spec)?;

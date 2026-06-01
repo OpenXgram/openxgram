@@ -58,27 +58,45 @@ fn record_outbox(
 /// peer_send 의 직접 HTTP 송신 path 가 outbound_queue 를 거치지 않으므로 별도 INSERT.
 /// msg_ulid = envelope.nonce (== receiver 측 ACK 의 ack_for_ulid 매칭 키).
 /// 이후 v6_outbound_drain worker 가 ack_at IS NULL + sent_at threshold 도달 시 자동 재발송.
+///
+/// rc.227 — application-level ACK 추가. conversation_id 저장 + app_ack_check_after = NOW + 5min.
+/// receiver 측 daemon.process_inbound 이 같은 conversation_id 의 envelope 도착 시 app_ack_at UPDATE.
+/// 5min 안에 답신 없으면 app_ack_timeout_drain worker 가 app_ack_status='blocked' 마킹.
 fn record_outbound_queue_sent(
     data_dir: &Path,
     msg_ulid: &str,
     target_alias: &str,
     envelope_json: &str,
+    conversation_id: Option<&str>,
 ) -> Result<()> {
     let mut db = open_db(data_dir)?;
     let conn = db.conn();
-    let now_str = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now();
+    let now_str = now.to_rfc3339();
+    // rc.227 — app_ack timeout = 송신 + 5분 (receiver LLM 답신 기대 시한).
+    let check_after_str = (now + chrono::Duration::minutes(5)).to_rfc3339();
     // 이미 송신 직후 — sent_at = now, attempts = 0 (ACK 카운터 시작점).
     conn.execute(
         "INSERT OR IGNORE INTO outbound_queue \
-         (msg_ulid, target_machine, target_alias, body, attempts, enqueued_at, sent_at) \
-         VALUES (?1, '', ?2, ?3, 0, ?4, ?4)",
-        rusqlite::params![msg_ulid, target_alias, envelope_json, now_str],
+         (msg_ulid, target_machine, target_alias, body, attempts, enqueued_at, sent_at, \
+          conversation_id, app_ack_check_after) \
+         VALUES (?1, '', ?2, ?3, 0, ?4, ?4, ?5, ?6)",
+        rusqlite::params![
+            msg_ulid,
+            target_alias,
+            envelope_json,
+            now_str,
+            conversation_id,
+            check_after_str
+        ],
     )
     .with_context(|| format!("outbound_queue INSERT 실패 (msg_ulid={msg_ulid})"))?;
     tracing::info!(
         msg_ulid = %msg_ulid,
         target_alias = %target_alias,
-        "rc.219 record_outbound_queue_sent: ACK 추적용 row INSERT (sent_at=now, ack_at=NULL)"
+        conversation_id = ?conversation_id,
+        app_ack_check_after = %check_after_str,
+        "rc.227 record_outbound_queue_sent: ACK 추적용 row INSERT (sent_at=now, ack_at=NULL, app_ack_check_after=+5min)"
     );
     Ok(())
 }
@@ -172,6 +190,7 @@ pub async fn run_peer_send(
 }
 
 /// rc.219 — `--wait-ack` 지원. `30s`, `60`, `500ms` 형식 파싱.
+/// rc.227 — `5m` (분) 도 허용 — `--wait-app-ack` 가 5분 단위 timeout 을 자주 씀.
 pub fn parse_wait_ack_duration(spec: &str) -> Result<std::time::Duration> {
     let s = spec.trim().to_lowercase();
     if let Some(rest) = s.strip_suffix("ms") {
@@ -181,11 +200,18 @@ pub fn parse_wait_ack_duration(spec: &str) -> Result<std::time::Duration> {
             .with_context(|| format!("--wait-ack ms 파싱 실패: '{spec}'"))?;
         return Ok(std::time::Duration::from_millis(n));
     }
+    if let Some(rest) = s.strip_suffix('m') {
+        let n: u64 = rest
+            .trim()
+            .parse()
+            .with_context(|| format!("--wait-ack 분 파싱 실패: '{spec}'"))?;
+        return Ok(std::time::Duration::from_secs(n * 60));
+    }
     let stripped = s.strip_suffix('s').unwrap_or(&s);
     let n: u64 = stripped
         .trim()
         .parse()
-        .with_context(|| format!("--wait-ack 초 파싱 실패: '{spec}' (지원 형식: '30s', '60', '500ms')"))?;
+        .with_context(|| format!("--wait-ack 초 파싱 실패: '{spec}' (지원 형식: '30s', '60', '500ms', '5m')"))?;
     Ok(std::time::Duration::from_secs(n))
 }
 
@@ -251,6 +277,79 @@ pub async fn run_peer_send_with_ack_wait(
             let status = status_opt.unwrap_or_else(|| "(unknown)".to_string());
             println!(
                 "✓ delivered (ack_status={status}, latency={:.1}s, ack_at={ack_at})",
+                latency.as_secs_f64()
+            );
+            return Ok(0);
+        }
+    }
+}
+
+/// rc.227 — `xgram peer send --wait-app-ack` 진입점.
+/// send + outbound_queue.app_ack_at 폴링 (2s 간격). transport ACK 가 아닌 application 답신 대기.
+/// 매칭 키 = conversation_id (receiver 측 daemon.process_inbound 가 같은 conv 답신 INSERT 시 UPDATE).
+/// 반환: process exit code (0=app_ack 수신, 1=timeout(blocked 마킹), 2=send 자체 실패).
+pub async fn run_peer_send_with_app_ack_wait(
+    data_dir: &Path,
+    alias: &str,
+    sender: Option<&str>,
+    body: &str,
+    password: &str,
+    timeout: std::time::Duration,
+) -> Result<i32> {
+    let start = std::time::Instant::now();
+    // 1. 일반 send (자동 UUID conversation_id) — record_outbound_queue_sent 가 conv 저장.
+    if let Err(e) = run_peer_send_with_conv(data_dir, alias, sender, body, password, None).await {
+        eprintln!("✗ send 실패: {e}");
+        return Ok(2);
+    }
+    // 2. 가장 최근 outbound_queue row (alias 매칭) 조회 — conv_id + msg_ulid.
+    let (msg_ulid, conv_id_opt): (String, Option<String>) = {
+        let mut db = open_db(data_dir)?;
+        let conn = db.conn();
+        conn.query_row(
+            "SELECT msg_ulid, conversation_id FROM outbound_queue \
+             WHERE target_alias = ?1 ORDER BY enqueued_at DESC LIMIT 1",
+            rusqlite::params![alias],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+        )
+        .with_context(|| format!("outbound_queue 의 최근 row 조회 실패 (alias={alias})"))?
+    };
+    println!(
+        "⏳ app_ack 대기 중 (msg_ulid={msg_ulid}, conversation_id={:?}, timeout={:?})",
+        conv_id_opt, timeout
+    );
+
+    // 3. 2초 간격 폴링.
+    loop {
+        let elapsed = start.elapsed();
+        if elapsed >= timeout {
+            println!(
+                "⚠ app_ack timeout — receiver 가 같은 conversation_id 로 답신 안 함 ({:?}). msg_ulid={msg_ulid}",
+                timeout
+            );
+            return Ok(1);
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        let ack: Option<(Option<String>, Option<String>)> = {
+            let mut db = open_db(data_dir)?;
+            let conn = db.conn();
+            conn.query_row(
+                "SELECT app_ack_at, app_ack_status FROM outbound_queue WHERE msg_ulid = ?1",
+                rusqlite::params![msg_ulid],
+                |r| {
+                    Ok((
+                        r.get::<_, Option<String>>(0)?,
+                        r.get::<_, Option<String>>(1)?,
+                    ))
+                },
+            )
+            .ok()
+        };
+        if let Some((Some(app_ack_at), status_opt)) = ack {
+            let latency = start.elapsed();
+            let status = status_opt.unwrap_or_else(|| "(unknown)".to_string());
+            println!(
+                "✓✓ processed (app_ack_status={status}, latency={:.1}s, app_ack_at={app_ack_at})",
                 latency.as_secs_f64()
             );
             return Ok(0);
@@ -419,9 +518,16 @@ pub async fn run_peer_send_with_conv(
     // rc.219 — ACK 추적용 outbound_queue INSERT.
     // msg_ulid = envelope.nonce (receiver 측 ACK 의 ack_for_ulid 매칭 키).
     // sent_at = now (이미 송신 성공), ack_at = NULL.
+    // rc.227 — conversation_id 도 함께 저장 (application-level ACK 매칭 키).
     if let Some(ulid) = envelope.nonce.as_deref() {
         let envelope_json = serde_json::to_string(&envelope).unwrap_or_default();
-        if let Err(e) = record_outbound_queue_sent(data_dir, ulid, alias, &envelope_json) {
+        if let Err(e) = record_outbound_queue_sent(
+            data_dir,
+            ulid,
+            alias,
+            &envelope_json,
+            envelope.conversation_id.as_deref(),
+        ) {
             tracing::warn!(error = %e, msg_ulid = %ulid, "record_outbound_queue_sent 실패 (ACK 추적 불가, send 자체는 성공)");
         }
     }

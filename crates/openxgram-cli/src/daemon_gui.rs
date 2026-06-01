@@ -4810,12 +4810,17 @@ async fn gui_peer_send_unsigned(
         .nonce
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let now_str = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now();
+    let now_str = now.to_rfc3339();
+    // rc.227 — conversation_id 와 app_ack_check_after (+5min) 동시 저장.
+    let check_after_str = (now + chrono::Duration::minutes(5)).to_rfc3339();
+    let conv_id_for_q = envelope.conversation_id.clone();
     let mut db = state.db.lock().await;
     db.conn().execute(
-        "INSERT INTO outbound_queue (msg_ulid, target_machine, target_alias, body, attempts, enqueued_at) \
-         VALUES (?1, '', ?2, ?3, 0, ?4)",
-        rusqlite::params![envelope_id, alias, envelope_json, now_str],
+        "INSERT INTO outbound_queue (msg_ulid, target_machine, target_alias, body, attempts, enqueued_at, \
+                                     conversation_id, app_ack_check_after) \
+         VALUES (?1, '', ?2, ?3, 0, ?4, ?5, ?6)",
+        rusqlite::params![envelope_id, alias, envelope_json, now_str, conv_id_for_q, check_after_str],
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("enqueue: {e}")})))?;
     Ok(Json(serde_json::json!({"queued": envelope_id, "to_alias": alias})))
 }
@@ -5492,6 +5497,11 @@ struct GuiMessageDto {
     acked_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ack_via: Option<String>,
+    // rc.227 — application-level ACK (conversation_id 매칭 답신 추적)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    app_ack_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    app_ack_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -5531,10 +5541,21 @@ async fn gui_messages_recent(
     // rc.153 — ack tracking 포함 직접 SELECT (MessageStore 의 list_recent 는 ack 컬럼 미포함).
     // GUI 가 메시지 옆에 ack badge 표시 → sender 가 처리 상태 직접 확인.
     let fetch_limit = (limit * 4) as i64;
+    // rc.227 — outbound_queue 의 app_ack_* 도 LEFT JOIN (conversation_id 매칭).
     let mut stmt = db.conn().prepare(
-        "SELECT id, session_id, sender, body, timestamp, conversation_id, \
-                ack_status, acked_at, ack_via \
-         FROM messages ORDER BY timestamp DESC LIMIT ?1"
+        "SELECT m.id, m.session_id, m.sender, m.body, m.timestamp, m.conversation_id, \
+                m.ack_status, m.acked_at, m.ack_via, \
+                ( \
+                    SELECT q.app_ack_status FROM outbound_queue q \
+                    WHERE q.conversation_id = m.conversation_id \
+                    ORDER BY q.enqueued_at DESC LIMIT 1 \
+                ) as app_ack_status, \
+                ( \
+                    SELECT q.app_ack_at FROM outbound_queue q \
+                    WHERE q.conversation_id = m.conversation_id \
+                    ORDER BY q.enqueued_at DESC LIMIT 1 \
+                ) as app_ack_at \
+         FROM messages m ORDER BY m.timestamp DESC LIMIT ?1"
     ).map_err(|e| internal(&format!("prep: {e}")))?;
     let rows = stmt.query_map(rusqlite::params![fetch_limit], |r| {
         Ok(GuiMessageDto {
@@ -5547,6 +5568,8 @@ async fn gui_messages_recent(
             ack_status: r.get::<_, Option<String>>(6)?,
             acked_at: r.get::<_, Option<String>>(7)?,
             ack_via: r.get::<_, Option<String>>(8)?,
+            app_ack_status: r.get::<_, Option<String>>(9)?,
+            app_ack_at: r.get::<_, Option<String>>(10)?,
         })
     }).map_err(|e| internal(&format!("q: {e}")))?;
     let items: Vec<GuiMessageDto> = rows
@@ -5623,6 +5646,7 @@ async fn gui_peer_conversation(
         //   매칭 키: m.signature == JSON 안에 들어 있어서 직접 JOIN 불가 →
         //   대신 같은 conversation_id + target_alias + 최신 enqueued_at order 로 fallback 표시.
         //   COALESCE 로 message.ack_status (rc.153) 가 비어있을 때 outbound_queue.ack_status 사용.
+        // rc.227 — app_ack_status / app_ack_at 추가. conversation_id 직접 매칭 (sender 측 outbound).
         let sql = "SELECT m.id, m.session_id, m.sender, m.body, m.timestamp, \
                           m.conversation_id, \
                           COALESCE(m.ack_status, ( \
@@ -5645,7 +5669,21 @@ async fn gui_peer_conversation(
                                      OR q.body LIKE '%' || substr(m.body, 1, 60) || '%') \
                               ORDER BY q.enqueued_at DESC LIMIT 1 \
                           )) as acked_at, \
-                          m.ack_via \
+                          m.ack_via, \
+                          ( \
+                              SELECT q.app_ack_status FROM outbound_queue q \
+                              WHERE q.target_alias = ?6 \
+                                AND m.conversation_id IS NOT NULL \
+                                AND q.conversation_id = m.conversation_id \
+                              ORDER BY q.enqueued_at DESC LIMIT 1 \
+                          ) as app_ack_status, \
+                          ( \
+                              SELECT q.app_ack_at FROM outbound_queue q \
+                              WHERE q.target_alias = ?6 \
+                                AND m.conversation_id IS NOT NULL \
+                                AND q.conversation_id = m.conversation_id \
+                              ORDER BY q.enqueued_at DESC LIMIT 1 \
+                          ) as app_ack_at \
                    FROM sessions s JOIN messages m ON m.session_id = s.id \
                    WHERE s.title = ?1 OR s.title = ?2 OR s.title = ?3 OR s.title LIKE ?4 \
                    ORDER BY m.timestamp ASC \
@@ -5670,6 +5708,8 @@ async fn gui_peer_conversation(
                         ack_status: r.get::<_, Option<String>>(6)?,
                         acked_at: r.get::<_, Option<String>>(7)?,
                         ack_via: r.get::<_, Option<String>>(8)?,
+                        app_ack_status: r.get::<_, Option<String>>(9)?,
+                        app_ack_at: r.get::<_, Option<String>>(10)?,
                     })
                 },
             )

@@ -234,6 +234,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "outbound_queue_ack",
         sql: include_str!("../migrations/0044_outbound_queue_ack.sql"),
     },
+    Migration {
+        version: 45,
+        name: "app_ack",
+        sql: include_str!("../migrations/0045_app_ack.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

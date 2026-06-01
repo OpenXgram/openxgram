@@ -487,6 +487,47 @@ pub fn process_inbound(
         }
         tracing::info!(session_id=%session.id, sender=%sender_label, body_len=body.len(), "process_inbound: 메시지 inbox 저장 완료");
 
+        // rc.227 — application-level ACK hook.
+        // 이 envelope 가 자기 가 보낸 peer_send 의 답신 (같은 conversation_id) 이면
+        // outbound_queue.app_ack_at UPDATE (가장 최근 미답신 row 만).
+        // single-sender 의 같은 conv 의 최근 outbound 만 update — multi 답신 case 회피.
+        if let Some(conv_id) = env.conversation_id.as_deref() {
+            if !conv_id.is_empty() {
+                let now_str = chrono::Utc::now().to_rfc3339();
+                let conn = db.conn();
+                // 같은 conversation_id 의 가장 최근 미답신 outbound row 1건만 UPDATE.
+                // SQLite 는 UPDATE...LIMIT 미지원 → rowid 서브쿼리.
+                let updated = conn.execute(
+                    "UPDATE outbound_queue \
+                     SET app_ack_at = ?1, app_ack_status = 'processed' \
+                     WHERE rowid = ( \
+                         SELECT rowid FROM outbound_queue \
+                         WHERE conversation_id = ?2 \
+                           AND app_ack_at IS NULL \
+                         ORDER BY enqueued_at DESC LIMIT 1 \
+                     )",
+                    rusqlite::params![now_str, conv_id],
+                );
+                match updated {
+                    Ok(rows) if rows > 0 => tracing::info!(
+                        conversation_id = %conv_id,
+                        from = %env.from,
+                        rows = rows,
+                        "rc.227 app_ack: 같은 conv 의 답신 도착 → outbound_queue.app_ack_at UPDATE (processed)"
+                    ),
+                    Ok(_) => tracing::debug!(
+                        conversation_id = %conv_id,
+                        "rc.227 app_ack: 매칭 outbound row 없음 (자기가 안 보낸 conv 또는 이미 처리됨)"
+                    ),
+                    Err(e) => tracing::warn!(
+                        error = %e,
+                        conversation_id = %conv_id,
+                        "rc.227 app_ack UPDATE 실패 (silent X)"
+                    ),
+                }
+            }
+        }
+
         // rc.197 본질 push 알림 — DB INSERT 만 ≠ 통신.
         // rc.199 — envelope.recipient_alias hint 우선 (송신측 명시). 그래야 cross-machine 시
         // 받는 측 peers 에 receiver alias 등록 안 됐어도 tmux 매핑 가능.
