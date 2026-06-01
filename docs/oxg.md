@@ -245,6 +245,43 @@ role 은 자유 텍스트. 자연어 의미 매칭으로 충분.
    **정당 형식** (마스터 호출 시):
    - "Starian peer 에게 진단 받았고 X·Y 시도. Z 결과 → 마스터 결정 필요 (A: 빠른 우회 / B: 본질 fix)?"
 
+7. **🔥 Cross-machine 통신 = 그 머신의 primary 만 entry point (강제)**
+
+   각 머신마다 primary agent 1개. cross-machine 통신 시:
+   - 다른 머신의 sub-agent (예: `aoe_studio_*`, `aoe_ibkids_*`, `aoe_voice_*`) 에게 **직접 peer_send 금지**
+   - 그 머신의 primary 에게 peer_send → primary 가 자기 머신 안 sub-agent 에게 위임
+
+   머신별 primary:
+   - **server-seoul**: `star` (또는 Starian — 마스터 의 master alias)
+   - **zalman**: `aoe_zalman-wsl_7f27e90b` (zalman 머신 의 본 LLM)
+   - (다른 머신 추가 시: 그 머신 의 primary alias 명시)
+
+   이유:
+   - sub-agent alias 가 cross-machine 자동 sync 안 됨 (peer table 분리)
+   - primary 만 자기 머신 의 sub-agent map 정확히 보유
+   - routing 일관 + 작업 분배 단일 entry
+
+8. **🔥 Primary 책임 — 위임 + 모니터링 + 마스터 보고 (강제)**
+
+   각 머신 의 primary 가 작업 요청 (cross-machine peer 또는 마스터) 받으면:
+
+   1. **분석** — 요청 내용 + 필요 capability 식별
+   2. **매칭** — 자기 머신 안 sub-agent 중 적합한 것 찾기 (role/capability)
+   3. **연결** — 매칭 없으면 새 agent 생성 (tmux session spawn + `register_subagent`) 또는 마스터에게 명시 보고 ("이 작업 가능 agent 없음 — 신규 생성? 또는 다른 머신 위임?")
+   4. **위임** — sub-agent 에게 작업 description + 마감 + 우선순위 peer_send
+   5. **모니터링** — 연결 상태 (peer.last_seen, tmux session alive), 작업 진행 정도 (sub-agent 답신·화면 capture) 추적
+   6. **보고** — 마스터에게 정기적 (15분 간격 권장) 또는 수시 (큰 변경 시·블로커 발생 시) 보고
+
+   보고 형식 (마스터에게):
+   - 작업: `<task>`
+   - 위임된 agent: `<alias>`
+   - 진행: pending / in_progress / blocked / completed
+   - 연결상태: alive / disconnected (`last_seen=<time>`)
+   - 다음 step: `<description>`
+   - blocker 있으면 명시 + 마스터 결정 요청
+
+   primary 가 위임만 하고 모니터링·보고 안 하면 = 책임 회피 안티패턴.
+
 ---
 
 ## 7. 환경 호환성
