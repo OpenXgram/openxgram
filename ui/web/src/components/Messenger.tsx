@@ -108,6 +108,10 @@ interface PeerDto {
  capabilities?: string[];
  // rc.214 — agent list 한눈 view: role 필드 (peers.role enum: primary/worker/...)
  role?: string | null;
+ // rc.226 — peer entity = 1 project folder = 1 tmux session = 1 LLM 의 본질 inline
+ project_folder?: string | null;
+ llm_type?: string | null;
+ llm_version?: string | null;
 }
 
 interface NotifyStatusDto {
@@ -806,18 +810,35 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  <span class="messenger-friend-sub">{f.subtitle}</span>
  {(() => {
    // rc.214 — agent list 한눈 view: peer 행에 role + capabilities inline 표시.
-   // 마스터가 40+ agent 의 role/capabilities 를 click 없이 한눈에 본다.
-   // hover tooltip: description + capabilities 전체.
+   // rc.226 — 추가로 4-metadata (project_folder · tmux session · LLM · machine) 표시.
+   // peer entity = 1 project folder = 1 tmux session = 1 LLM 의 본질 inline.
    if (f.kind !== "peer" || !f.meta) return null;
    const role = (f.meta.role || "").trim();
    const caps = Array.isArray(f.meta.capabilities) ? f.meta.capabilities : [];
    const desc = (f.meta.description || "").trim();
-   if (!role && caps.length === 0 && !desc) return null;
+   const projectFolder = (f.meta.project_folder || "").trim();
+   const llmType = (f.meta.llm_type || "").trim();
+   const llmVersion = (f.meta.llm_version || "").trim();
+   const machine = (f.meta.machine || "").trim();
+   const tmuxSession = (f.meta.alias || "").trim();
+   const hasMeta226 = !!(projectFolder || llmType || machine);
+   if (!role && caps.length === 0 && !desc && !hasMeta226) return null;
    const capsShown = caps.slice(0, 4);
    const capsRest = caps.length > 4 ? ` +${caps.length - 4}` : "";
+   // project_folder 의 home prefix 단축 (~/)
+   const shortFolder = projectFolder
+     ? projectFolder.replace(/^\/home\/[^/]+/, "~").replace(/^\/Users\/[^/]+/, "~")
+     : "";
+   const llmDisplay = llmType && llmVersion
+     ? `${llmType} ${llmVersion}`
+     : (llmType || "");
    const tooltip =
      (role ? `role: ${role}\n` : "") +
      (desc ? `description: ${desc}\n` : "") +
+     (projectFolder ? `project: ${projectFolder}\n` : "") +
+     (tmuxSession ? `tmux: ${tmuxSession}\n` : "") +
+     (llmDisplay ? `llm: ${llmDisplay}\n` : "") +
+     (machine ? `machine: ${machine}\n` : "") +
      (caps.length > 0 ? `capabilities: ${caps.join(", ")}` : "");
    const roleBg: Record<string, string> = {
      "primary": "#7b61ff",
@@ -829,21 +850,46 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
      <span
        class="messenger-friend-caps"
        title={tooltip}
-       style="display:block; font-size:10px; opacity:0.85; margin-top:2px; line-height:1.3; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+       style="display:block; font-size:10px; opacity:0.85; margin-top:2px; line-height:1.3; max-width:100%;"
      >
-       {role ? (
-         <span
-           style={`display:inline-block; padding:0 5px; margin-right:5px; background:${roleBg[role.toLowerCase()] || "#555"}; color:#fff; border-radius:3px; font-size:9px; font-weight:bold; text-transform:uppercase;`}
-         >
-           {role}
+       {/* line 1: role badge + description + capabilities */}
+       {(role || desc || capsShown.length > 0) ? (
+         <span style="display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+           {role ? (
+             <span
+               style={`display:inline-block; padding:0 5px; margin-right:5px; background:${roleBg[role.toLowerCase()] || "#555"}; color:#fff; border-radius:3px; font-size:9px; font-weight:bold; text-transform:uppercase;`}
+             >
+               {role}
+             </span>
+           ) : null}
+           {desc ? (
+             <span style="opacity:0.9; margin-right:6px;">{desc.length > 22 ? desc.slice(0, 22) + "…" : desc}</span>
+           ) : null}
+           {capsShown.length > 0 ? (
+             <span style="opacity:0.75;">
+               {capsShown.join(" · ")}{capsRest}
+             </span>
+           ) : null}
          </span>
        ) : null}
-       {desc ? (
-         <span style="opacity:0.9; margin-right:6px;">{desc.length > 22 ? desc.slice(0, 22) + "…" : desc}</span>
-       ) : null}
-       {capsShown.length > 0 ? (
-         <span style="opacity:0.75;">
-           {capsShown.join(" · ")}{capsRest}
+       {/* rc.226 line 2: 4-metadata inline — 📁 project · 📟 tmux · 🤖 LLM · 🏠 machine */}
+       {hasMeta226 ? (
+         <span style="display:block; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:9.5px; color:#9ca3af; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:1px;">
+           {shortFolder ? (
+             <span style="margin-right:8px;" title={`project_folder: ${projectFolder}`}>📁 {shortFolder}</span>
+           ) : null}
+           {tmuxSession ? (
+             <span style="margin-right:8px;" title={`tmux session: ${tmuxSession}`}>📟 {tmuxSession}</span>
+           ) : null}
+           {llmDisplay ? (
+             <span
+               style={`margin-right:8px; color:${llmType === "unknown" ? "#6b7280" : "#a78bfa"};`}
+               title={`llm: ${llmDisplay}`}
+             >🤖 {llmDisplay}</span>
+           ) : null}
+           {machine ? (
+             <span style="color:#60a5fa;" title={`machine: ${machine}`}>🏠 {machine}</span>
+           ) : null}
          </span>
        ) : null}
      </span>

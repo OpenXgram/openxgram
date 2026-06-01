@@ -67,6 +67,19 @@ pub struct PeerDto {
     /// rc.92 D2 — agent_capabilities JOIN
     pub description: Option<String>,
     pub capabilities: Vec<String>,
+    /// rc.226 — peer entity = 1 project folder = 1 tmux session = 1 LLM 의 본질 inline.
+    /// tmux pane current_path (local peer 만; cross-machine 은 None V1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_folder: Option<String>,
+    /// LLM type: "Claude Code" / "Gemini" / "Codex" / "Ollama" / "unknown".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_type: Option<String>,
+    /// LLM version string (--version 결과 또는 binary path 추출).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_version: Option<String>,
+    /// install-manifest 의 machine.alias (이 daemon 의 머신; cross-machine 은 None V1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -595,24 +608,191 @@ async fn gui_peers(
             }),
         )
     })?;
-    let dtos: Vec<PeerDto> = rows
-        .into_iter()
-        .map(|p| {
-            let (description, capabilities) = caps_map.get(&p.alias).cloned().unwrap_or((None, vec![]));
-            PeerDto {
-                id: p.id,
-                alias: p.alias,
-                address: p.address,
-                public_key_hex: p.public_key_hex,
-                role: p.role.as_str().to_string(),
-                created_at: p.created_at.to_rfc3339(),
-                last_seen: p.last_seen.map(|t| t.to_rfc3339()),
-                description,
-                capabilities,
-            }
-        })
-        .collect();
+    drop(db); // unlock — enrichment 가 async tmux/ps 호출 다수
+    // rc.226 — local machine.alias 한 번만 (install-manifest)
+    let local_machine: Option<String> = InstallManifest::read(manifest_path(&state.data_dir))
+        .ok()
+        .map(|m| m.machine.alias);
+    // rc.226 — local tmux session set (1-shot list-sessions) → cross-machine peer skip 판단
+    let local_tmux_sessions: std::collections::HashSet<String> =
+        tokio::process::Command::new("tmux")
+            .args(["list-sessions", "-F", "#{session_name}"])
+            .output().await
+            .ok()
+            .map(|o| {
+                if o.status.success() {
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                } else { Default::default() }
+            })
+            .unwrap_or_default();
+    let mut dtos: Vec<PeerDto> = Vec::with_capacity(rows.len());
+    for p in rows.into_iter() {
+        let (description, capabilities) = caps_map.get(&p.alias).cloned().unwrap_or((None, vec![]));
+        // rc.226 — 4-metadata enrichment.
+        // local peer 판정: alias 가 직접 tmux session 이거나 aoe_<alias>_* prefix 매칭.
+        let is_local = local_tmux_sessions.contains(&p.alias)
+            || local_tmux_sessions.iter().any(|s| s.starts_with(&format!("aoe_{}_", p.alias)))
+            || p.alias == "Starian"; // self
+        let (project_folder, llm_type, llm_version, machine_field) = if is_local {
+            let (pf, lt, lv) = enrich_peer_metadata(&p.alias).await;
+            (pf, lt, lv, local_machine.clone())
+        } else {
+            // cross-machine — V1: 모두 None (V2 backlog: peer 의 daemon /v1/gui/peers/self enrich)
+            (None, None, None, None)
+        };
+        dtos.push(PeerDto {
+            id: p.id,
+            alias: p.alias,
+            address: p.address,
+            public_key_hex: p.public_key_hex,
+            role: p.role.as_str().to_string(),
+            created_at: p.created_at.to_rfc3339(),
+            last_seen: p.last_seen.map(|t| t.to_rfc3339()),
+            description,
+            capabilities,
+            project_folder,
+            llm_type,
+            llm_version,
+            machine: machine_field,
+        });
+    }
     Ok(Json(dtos))
+}
+
+/// rc.226 — peer alias 의 4-metadata 자동 detect (tmux + process tree).
+/// 반환: (project_folder, llm_type, llm_version). detect 실패 = "unknown" 명시.
+async fn enrich_peer_metadata(alias: &str) -> (Option<String>, Option<String>, Option<String>) {
+    // 1) alias → tmux session 매칭 (notify::resolve_alias_to_tmux 재사용)
+    let session = match crate::notify::resolve_alias_to_tmux(alias).await {
+        Some((s, _)) => s,
+        None => return (None, None, None), // tmux 미설치 또는 peer 가 cross-machine
+    };
+    // 2) project_folder = pane_current_path
+    let project_folder = tokio::process::Command::new("tmux")
+        .args(["display-message", "-p", "-t", &format!("{}:0", session), "#{pane_current_path}"])
+        .output().await
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                if s.is_empty() { None } else { Some(s) }
+            } else { None }
+        });
+    // 3) pane PID → 자식 process tree 에서 LLM 키워드 매칭
+    let pane_pid = tokio::process::Command::new("tmux")
+        .args(["display-message", "-p", "-t", &format!("{}:0", session), "#{pane_pid}"])
+        .output().await
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8_lossy(&o.stdout).trim().parse::<u32>().ok()
+            } else { None }
+        });
+    let (llm_type, llm_version) = match pane_pid {
+        Some(pid) => detect_llm_in_subtree(pid).await,
+        None => (Some("unknown".to_string()), None),
+    };
+    (project_folder, llm_type, llm_version)
+}
+
+/// rc.226 — pane PID + 그 자식 프로세스 트리에서 LLM 종류 자동 detect.
+/// 후보: claude / gemini / codex / ollama / aider / cursor / continue / cline.
+/// pane_pid 자체가 LLM 일 수도 있음 (예: tmux 가 직접 `claude` 실행).
+async fn detect_llm_in_subtree(pane_pid: u32) -> (Option<String>, Option<String>) {
+    // 1) pane PID 자체 + 자식들 BFS (최대 깊이 4)
+    let mut frontier: Vec<u32> = vec![pane_pid];
+    let mut visited: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    visited.insert(pane_pid);
+    // 0회차 = pane_pid 자체 검사
+    let self_out = tokio::process::Command::new("ps")
+        .args(["-o", "pid=,comm=,args=", "-p", &pane_pid.to_string()])
+        .output().await;
+    if let Ok(out) = self_out {
+        if out.status.success() {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            for line in stdout.lines() {
+                if let Some(found) = match_llm_in_line(line).await {
+                    return found;
+                }
+            }
+        }
+    }
+    for _depth in 0..4 {
+        if frontier.is_empty() { break; }
+        let pids_csv = frontier.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(",");
+        let out = tokio::process::Command::new("ps")
+            .args(["-o", "pid=,comm=,args=", "--ppid", &pids_csv])
+            .output().await;
+        let Ok(out) = out else { break; };
+        if !out.status.success() { break; }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let mut next_frontier: Vec<u32> = vec![];
+        for line in stdout.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() { continue; }
+            let mut parts = trimmed.splitn(3, char::is_whitespace);
+            let pid_s = parts.next().unwrap_or("");
+            let Ok(child_pid) = pid_s.parse::<u32>() else { continue; };
+            if !visited.insert(child_pid) { continue; }
+            next_frontier.push(child_pid);
+            if let Some(found) = match_llm_in_line(trimmed).await {
+                return found;
+            }
+        }
+        frontier = next_frontier;
+    }
+    // 자식 트리 에 LLM 미검출 → 명시 unknown
+    (Some("unknown".to_string()), None)
+}
+
+/// rc.226 — ps line ("PID COMM ARGS...") 에서 LLM 키워드 매칭 + --version 추출.
+async fn match_llm_in_line(line: &str) -> Option<(Option<String>, Option<String>)> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() { return None; }
+    let mut parts = trimmed.splitn(3, char::is_whitespace);
+    let _pid = parts.next().unwrap_or("");
+    let comm = parts.next().unwrap_or("");
+    let args = parts.next().unwrap_or("");
+    let hay = format!("{} {}", comm, args).to_lowercase();
+    // 키워드 매칭 — comm + args 합쳐 검사
+    let (llm_name, version_cmd): (&str, Option<&str>) = if (hay.contains("claude") || comm == "claude") && !hay.contains("claude-api") {
+        ("Claude Code", Some("claude"))
+    } else if (hay.contains("gemini") || comm == "gemini") && !hay.contains("gemini-api") {
+        ("Gemini", Some("gemini"))
+    } else if hay.contains("codex") || comm == "codex" {
+        ("Codex", Some("codex"))
+    } else if hay.contains("ollama") || comm == "ollama" {
+        ("Ollama", Some("ollama"))
+    } else if hay.contains("aider") || comm == "aider" {
+        ("Aider", Some("aider"))
+    } else if hay.contains("cursor-agent") || hay.contains("cursor agent") {
+        ("Cursor", None)
+    } else if hay.contains("continue") && hay.contains("dev") {
+        ("Continue", None)
+    } else if hay.contains("cline") {
+        ("Cline", None)
+    } else {
+        return None;
+    };
+    let version: Option<String> = if let Some(vcmd) = version_cmd {
+        tokio::time::timeout(
+            std::time::Duration::from_millis(800),
+            tokio::process::Command::new(vcmd).arg("--version").output(),
+        ).await
+            .ok()
+            .and_then(|r| r.ok())
+            .and_then(|o| {
+                if o.status.success() {
+                    let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    if s.is_empty() { None } else { Some(s.lines().next().unwrap_or("").to_string()) }
+                } else { None }
+            })
+    } else { None };
+    Some((Some(llm_name.to_string()), version))
 }
 
 /// `GET /v1/gui/sessions` — 머신×세션 통합 detector (UI-MESSENGER-SPEC v1.3 §3.2 M-1).
@@ -5136,6 +5316,10 @@ async fn gui_peer_add(
         last_seen: p.last_seen.map(|t| t.to_rfc3339()),
         description: None,
         capabilities: vec![],
+        project_folder: None,
+        llm_type: None,
+        llm_version: None,
+        machine: None,
     }))
 }
 
