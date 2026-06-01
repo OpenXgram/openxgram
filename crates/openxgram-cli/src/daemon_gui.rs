@@ -1121,7 +1121,10 @@ async fn gui_sessions(
             }
         }
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(2))
+            // rc.229 fix#2 — connect_timeout 0.9s: hang/방화벽 peer 가 overall timeout 까지
+            //   안 기다리고 ~0.9s 에 fail-fast. reachable peer 는 정상 (connect <30ms).
+            .connect_timeout(std::time::Duration::from_millis(900))
+            .timeout(std::time::Duration::from_millis(1500))
             .build().ok();
         if let Some(http) = client {
             // 각 base 를 독립 future 로 — unlock → sessions → remote json 반환.
