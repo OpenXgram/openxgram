@@ -80,6 +80,43 @@ pub struct PeerDto {
     /// install-manifest 의 machine.alias (이 daemon 의 머신; cross-machine 은 None V1).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub machine: Option<String>,
+    /// rc.228 — peer 의 git worktree 목록 (project_folder 의 `git worktree list`).
+    /// local peer 만 enrich, cross-machine 은 빈 vec.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub worktrees: Vec<WorktreeEntry>,
+    /// rc.228 — peer 의 subagents (project_folder 의 agents/ 와 .claude/agents/ scan).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subagents: Vec<SubagentEntry>,
+    /// rc.228 — 이 peer 와 대화한 다른 peer 들 (inbox/outbox session 기준 집계).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ex_peers: Vec<ExPeerEntry>,
+}
+
+/// rc.228 — peer 의 git worktree entry.
+#[derive(Debug, Serialize, Clone)]
+pub struct WorktreeEntry {
+    pub path: String,
+    /// HEAD branch 또는 ref short 표시.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+}
+
+/// rc.228 — peer 의 subagent definition entry.
+#[derive(Debug, Serialize, Clone)]
+pub struct SubagentEntry {
+    pub name: String,
+    pub path: String,
+    /// "claude_agents" (= `.claude/agents/`) / "project_agents" (= `agents/`).
+    pub kind: String,
+}
+
+/// rc.228 — self_alias 와 대화한 다른 peer entry (inbox/outbox session 기준 집계).
+#[derive(Debug, Serialize, Clone)]
+pub struct ExPeerEntry {
+    pub alias: String,
+    pub msg_count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_msg_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -371,6 +408,11 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // rc.212 — peer conversation unified view. 한 peer 와의 전 session (outbox/inbox/Peer·/Claude Code·) 합쳐서 시간순.
         .route("/v1/gui/peer_conversation/{alias}", get(gui_peer_conversation))
         .route("/v1/gui/peers/{alias}/send", post(gui_peer_send))
+        // rc.228 — ex Peer thread 삭제. self_alias↔other_alias 의 outbox/inbox sessions + messages + outbound_queue.
+        .route(
+            "/v1/gui/peer/{self_alias}/ex_peer/{other_alias}",
+            axum::routing::delete(gui_peer_ex_peer_delete),
+        )
         // rc.155 — portal × OpenXgram 통합. starian-portal 의 send 후 메시지 mirror.
         // portal 가 sendKeys 한 직후 POST → messages 테이블에 INSERT.
         // ack_status='delivered' 자동, via='portal_mirror'. GUI 의 ack badge 가 표시.
@@ -644,6 +686,24 @@ async fn gui_peers(
             // cross-machine — V1: 모두 None (V2 backlog: peer 의 daemon /v1/gui/peers/self enrich)
             (None, None, None, None)
         };
+        // rc.228 — sub-resource enrichment: worktrees + subagents + ex_peers.
+        //   local + LLM 도는 peer 만 (project_folder + llm_type Some 일 때) enrich.
+        //   cross-machine or LLM 미감지 = 빈 vec (silent X — 본질 정합).
+        let (worktrees, subagents) = if is_local && project_folder.is_some() && llm_type.is_some() {
+            let pf = project_folder.as_deref().unwrap();
+            let wt = enrich_worktrees(pf).await;
+            let sa = enrich_subagents(pf).await;
+            (wt, sa)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        // ex_peers: local peer 만 (그 peer 가 다른 peer 와 한 대화 thread).
+        // V1 — Starian (self) 만 ex_peers 채움. 다른 peer 는 그 머신 의 daemon 이 책임.
+        let ex_peers = if is_local && p.alias == "Starian" {
+            collect_ex_peers(&state).await.unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         dtos.push(PeerDto {
             id: p.id,
             alias: p.alias,
@@ -658,9 +718,228 @@ async fn gui_peers(
             llm_type,
             llm_version,
             machine: machine_field,
+            worktrees,
+            subagents,
+            ex_peers,
         });
     }
     Ok(Json(dtos))
+}
+
+/// rc.228 — `git -C <project_folder> worktree list --porcelain` 파싱.
+/// porcelain 형식: 빈 줄 사이 record. record 안에 `worktree <path>`, `HEAD <sha>`, `branch <ref>` 라인.
+async fn enrich_worktrees(project_folder: &str) -> Vec<WorktreeEntry> {
+    let out = match tokio::process::Command::new("git")
+        .args(["-C", project_folder, "worktree", "list", "--porcelain"])
+        .output().await
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut entries: Vec<WorktreeEntry> = Vec::new();
+    let mut cur_path: Option<String> = None;
+    let mut cur_branch: Option<String> = None;
+    for line in stdout.lines() {
+        let line = line.trim_end();
+        if line.is_empty() {
+            if let Some(p) = cur_path.take() {
+                entries.push(WorktreeEntry { path: p, branch: cur_branch.take() });
+            }
+            cur_branch = None;
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("worktree ") {
+            cur_path = Some(rest.to_string());
+        } else if let Some(rest) = line.strip_prefix("branch ") {
+            // refs/heads/main → main
+            let short = rest.strip_prefix("refs/heads/").unwrap_or(rest).to_string();
+            cur_branch = Some(short);
+        } else if line == "detached" && cur_branch.is_none() {
+            cur_branch = Some("(detached)".to_string());
+        }
+    }
+    if let Some(p) = cur_path.take() {
+        entries.push(WorktreeEntry { path: p, branch: cur_branch.take() });
+    }
+    entries
+}
+
+/// rc.228 — `<project_folder>/agents/` + `<project_folder>/.claude/agents/` scan.
+/// 폴더 = subagent (entry.name). 파일도 포함 (`.md` 등 Claude Code agent definition).
+async fn enrich_subagents(project_folder: &str) -> Vec<SubagentEntry> {
+    let mut out: Vec<SubagentEntry> = Vec::new();
+    for (subpath, kind) in [
+        (".claude/agents", "claude_agents"),
+        ("agents", "project_agents"),
+    ] {
+        let full = format!("{}/{}", project_folder.trim_end_matches('/'), subpath);
+        let mut rd = match tokio::fs::read_dir(&full).await {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        while let Ok(Some(entry)) = rd.next_entry().await {
+            let name = match entry.file_name().into_string() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            // hidden / shared / CLAUDE.md 류 metadata 는 skip.
+            if name.starts_with('.') {
+                continue;
+            }
+            let path = entry.path().display().to_string();
+            out.push(SubagentEntry { name, path, kind: kind.to_string() });
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+/// rc.228 — Starian (self) 가 대화한 다른 peer 들 집계.
+/// sessions.title LIKE 'outbox-to-%' 또는 'inbox-from-%' 인 session 의 messages COUNT + MAX(timestamp).
+/// alias 추출: title 의 prefix 제거 후 (outbox-to-X → X / inbox-from-X → X).
+async fn collect_ex_peers(
+    state: &GuiServerState,
+) -> Result<Vec<ExPeerEntry>, rusqlite::Error> {
+    use std::collections::HashMap;
+    let mut db = state.db.lock().await;
+    let conn = db.conn();
+    let mut agg: HashMap<String, (i64, Option<String>)> = HashMap::new();
+    let sql = "SELECT s.title, COUNT(m.id) as cnt, MAX(m.timestamp) as last_at \
+               FROM sessions s LEFT JOIN messages m ON m.session_id = s.id \
+               WHERE s.title LIKE 'outbox-to-%' OR s.title LIKE 'inbox-from-%' \
+               GROUP BY s.title";
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, Option<String>>(2)?,
+        ))
+    })?;
+    for row in rows.flatten() {
+        let (title, cnt, last_at) = row;
+        let alias = if let Some(rest) = title.strip_prefix("outbox-to-") {
+            rest.to_string()
+        } else if let Some(rest) = title.strip_prefix("inbox-from-") {
+            rest.to_string()
+        } else {
+            continue;
+        };
+        // alias variant root 통합: aoe_<root>_<hash> → <root>.
+        let root = if let Some(rest) = alias.strip_prefix("aoe_") {
+            rest.split('_').next().unwrap_or(&alias).to_string()
+        } else {
+            alias.clone()
+        };
+        let key = root;
+        let entry = agg.entry(key).or_insert((0, None));
+        entry.0 += cnt;
+        match (&entry.1, &last_at) {
+            (None, Some(_)) => entry.1 = last_at.clone(),
+            (Some(prev), Some(cur)) if cur > prev => entry.1 = last_at.clone(),
+            _ => {}
+        }
+    }
+    drop(stmt);
+    drop(db);
+    let mut out: Vec<ExPeerEntry> = agg
+        .into_iter()
+        .filter(|(_, (c, _))| *c > 0)
+        .map(|(alias, (msg_count, last_msg_at))| ExPeerEntry {
+            alias,
+            msg_count,
+            last_msg_at,
+        })
+        .collect();
+    // 최신 활동 순.
+    out.sort_by(|a, b| b.last_msg_at.cmp(&a.last_msg_at));
+    Ok(out)
+}
+
+/// rc.228 — `DELETE /v1/gui/peer/{self_alias}/ex_peer/{other_alias}`
+/// ex Peer thread 삭제: self↔other 의 outbox/inbox sessions + 그 안 messages + outbound_queue rows.
+/// backup first: 삭제 전 archived_at metadata 만 표시할지 vs hard delete — V1 = hard delete (관리 단순).
+async fn gui_peer_ex_peer_delete(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path((self_alias, other_alias)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    // V1 — Starian self 만 처리. 다른 self_alias 는 명시적으로 reject.
+    if self_alias != "Starian" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorDto {
+                error: format!("ex_peer delete: only self='Starian' supported in V1 (got '{}')", self_alias),
+            }),
+        ));
+    }
+    let mut db = state.db.lock().await;
+    let conn = db.conn();
+    // alias variants: peers table 에서 other_alias substring 매칭.
+    let mut variants: Vec<String> = vec![other_alias.clone()];
+    {
+        let pattern = format!("%{}%", other_alias);
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT alias FROM peers WHERE alias LIKE ?1 OR ?2 LIKE '%' || alias || '%'"
+        ) {
+            if let Ok(rows) = stmt.query_map(rusqlite::params![pattern, other_alias], |r| {
+                r.get::<_, String>(0)
+            }) {
+                for row in rows.flatten() {
+                    if !variants.contains(&row) {
+                        variants.push(row);
+                    }
+                }
+            }
+        }
+    }
+    // sessions.title 목록 build: outbox-to-<v> / inbox-from-<v>.
+    let mut titles: Vec<String> = Vec::new();
+    for v in &variants {
+        titles.push(format!("outbox-to-{}", v));
+        titles.push(format!("inbox-from-{}", v));
+    }
+    let mut deleted_sessions = 0i64;
+    let mut deleted_messages = 0i64;
+    let mut deleted_queue = 0i64;
+    let tx = conn.unchecked_transaction().map_err(|e| {
+        internal(&format!("ex_peer delete tx: {e}"))
+    })?;
+    for title in &titles {
+        // messages count first (CASCADE 가 자동 삭제하지만 회계용).
+        let mut cnt: i64 = 0;
+        if let Ok(c) = tx.query_row(
+            "SELECT COUNT(*) FROM messages WHERE session_id IN (SELECT id FROM sessions WHERE title = ?1)",
+            rusqlite::params![title],
+            |r| r.get::<_, i64>(0),
+        ) { cnt = c; }
+        deleted_messages += cnt;
+        // session delete (ON DELETE CASCADE 로 messages 도 sweep).
+        let n = tx.execute(
+            "DELETE FROM sessions WHERE title = ?1",
+            rusqlite::params![title],
+        ).map_err(|e| internal(&format!("ex_peer sessions del: {e}")))?;
+        deleted_sessions += n as i64;
+    }
+    // outbound_queue 의 target_alias 매칭 row 삭제.
+    for v in &variants {
+        let n = tx.execute(
+            "DELETE FROM outbound_queue WHERE target_alias = ?1",
+            rusqlite::params![v],
+        ).map_err(|e| internal(&format!("ex_peer queue del: {e}")))?;
+        deleted_queue += n as i64;
+    }
+    tx.commit().map_err(|e| internal(&format!("ex_peer commit: {e}")))?;
+    Ok(Json(serde_json::json!({
+        "self_alias": self_alias,
+        "other_alias": other_alias,
+        "variants": variants,
+        "deleted_sessions": deleted_sessions,
+        "deleted_messages": deleted_messages,
+        "deleted_queue": deleted_queue,
+    })))
 }
 
 /// rc.226 — peer alias 의 4-metadata 자동 detect (tmux + process tree).
@@ -5325,6 +5604,9 @@ async fn gui_peer_add(
         llm_type: None,
         llm_version: None,
         machine: None,
+        worktrees: Vec::new(),
+        subagents: Vec::new(),
+        ex_peers: Vec::new(),
     }))
 }
 

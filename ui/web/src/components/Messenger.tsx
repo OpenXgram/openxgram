@@ -159,6 +159,10 @@ interface PeerDto {
  project_folder?: string | null;
  llm_type?: string | null;
  llm_version?: string | null;
+ // rc.228 — peer sub-resources (3-level tree).
+ worktrees?: { path: string; branch?: string | null}[];
+ subagents?: { name: string; path: string; kind: string}[];
+ ex_peers?: { alias: string; msg_count: number; last_msg_at?: string | null}[];
 }
 
 interface NotifyStatusDto {
@@ -258,7 +262,8 @@ const UNKNOWN_CONV = "_no_conversation_";
 
 export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  const { t} = useI18n();
- const [peers] = createResource(fetchPeers);
+ // rc.228 — refetchPeers 노출 (ex_peer 삭제 후 peer 목록 즉시 갱신).
+ const [peers, { refetch: refetchPeers}] = createResource(fetchPeers);
  const [notifyStatus] = createResource(fetchNotifyStatus);
  // v1.3 §3.2 — 이 머신의 tmux + Claude Code projects + xgram sessions 통합.
  const [sessions, { refetch: refetchSessions}] = createResource(fetchSessions);
@@ -339,6 +344,27 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  const [sortMode, setSortMode] = createSignal<SortMode>("activity");
  const [connFilter, setConnFilter] = createSignal<ConnFilter>("all");
  const [collapsed, setCollapsed] = createSignal<Record<string, boolean>>({});
+ // rc.228 — peer card 의 3 sub-section (worktree / subagents / ex_peers) expand 상태.
+ //   key = `${peer.alias}::${section}` (section: "card"|"worktrees"|"subagents"|"ex_peers").
+ //   default: card collapsed (▶), 각 section 도 collapsed.
+ const [peerExpand, setPeerExpand] = createSignal<Record<string, boolean>>({});
+ function togglePeerExpand(key: string) {
+   setPeerExpand((prev) => ({ ...prev, [key]: !prev[key]}));
+ }
+ // rc.228 — ex Peer thread 삭제 핸들러. confirm dialog 후 DELETE 호출 + refetch.
+ async function deleteExPeer(selfAlias: string, otherAlias: string) {
+   const ok = window.confirm(
+     `정말 '${otherAlias}' 와의 대화 thread (outbox/inbox + messages + outbound_queue) 를 삭제할까요?\n되돌릴 수 없습니다.`
+   );
+   if (!ok) return;
+   try {
+     await invoke("ex_peer_delete", { self_alias: selfAlias, other_alias: otherAlias});
+     // peer 목록 새로고침 (ex_peers 갱신).
+     void refetchPeers();
+   } catch (e) {
+     window.alert(`ex Peer 삭제 실패: ${e}`);
+   }
+ }
 
  // 3초 간격 메시지 폴링 — 활동 흐름 모니터링.
  const pollTimer = setInterval(() => {
@@ -922,6 +948,13 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
        {/* rc.226 line 2: 4-metadata inline — 📁 project · 📟 tmux · 🤖 LLM · 🏠 machine */}
        {hasMeta226 ? (
          <span style="display:block; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:9.5px; color:#9ca3af; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:1px;">
+           <span
+             style="cursor:pointer; margin-right:4px; color:#7b61ff; font-weight:bold;"
+             onClick={(e) => { e.stopPropagation(); togglePeerExpand(`${f.meta!.alias}::card`);}}
+             title="3 sub-resource (worktree · subagents · ex Peer) 펼치기/접기"
+           >
+             {peerExpand()[`${f.meta!.alias}::card`] ? "▼" : "▶"}
+           </span>
            {shortFolder ? (
              <span style="margin-right:8px;" title={`project_folder: ${projectFolder}`}>📁 {shortFolder}</span>
            ) : null}
@@ -939,6 +972,89 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
            ) : null}
          </span>
        ) : null}
+       {/* rc.228 — 3-level tree: worktree / Subagents / ex Peer. card expand 시만 보임. */}
+       {hasMeta226 && peerExpand()[`${f.meta!.alias}::card`] ? (() => {
+         const wts = Array.isArray(f.meta!.worktrees) ? f.meta!.worktrees : [];
+         const sas = Array.isArray(f.meta!.subagents) ? f.meta!.subagents : [];
+         const exs = Array.isArray(f.meta!.ex_peers) ? f.meta!.ex_peers : [];
+         const subHeaderStyle = "display:block; cursor:pointer; padding:1px 0 1px 16px; font-style:italic; font-size:10px; color:#cbd5e1;";
+         const entryStyle = "display:block; padding:0 0 0 28px; font-size:9.5px; color:#9ca3af; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;";
+         const wtKey = `${f.meta!.alias}::worktrees`;
+         const saKey = `${f.meta!.alias}::subagents`;
+         const exKey = `${f.meta!.alias}::ex_peers`;
+         return (
+           <span style="display:block; margin-top:2px;">
+             {/* 🌿 worktree */}
+             <span
+               style={subHeaderStyle}
+               onClick={(e) => { e.stopPropagation(); togglePeerExpand(wtKey);}}
+               title="git worktree list"
+             >
+               {peerExpand()[wtKey] ? "▼" : "▶"} 🌿 worktree ({wts.length})
+             </span>
+             {peerExpand()[wtKey] && wts.length === 0 ? (
+               <span style={entryStyle}>(없음)</span>
+             ) : null}
+             {peerExpand()[wtKey] ? (
+               <For each={wts}>
+                 {(w) => (
+                   <span style={entryStyle} title={w.path}>
+                     {w.branch ? `[${w.branch}] ` : ""}{w.path.replace(/^\/home\/[^/]+/, "~")}
+                   </span>
+                 )}
+               </For>
+             ) : null}
+             {/* 🤖 Subagents */}
+             <span
+               style={subHeaderStyle}
+               onClick={(e) => { e.stopPropagation(); togglePeerExpand(saKey);}}
+               title=".claude/agents/ + agents/ scan"
+             >
+               {peerExpand()[saKey] ? "▼" : "▶"} 🤖 Subagents ({sas.length})
+             </span>
+             {peerExpand()[saKey] && sas.length === 0 ? (
+               <span style={entryStyle}>(없음)</span>
+             ) : null}
+             {peerExpand()[saKey] ? (
+               <For each={sas}>
+                 {(s) => (
+                   <span style={entryStyle} title={`${s.kind}: ${s.path}`}>
+                     {s.kind === "claude_agents" ? "🅒 " : "🅟 "}{s.name}
+                   </span>
+                 )}
+               </For>
+             ) : null}
+             {/* 💬 ex Peer (per-peer thread, 삭제 가능) */}
+             <span
+               style={subHeaderStyle}
+               onClick={(e) => { e.stopPropagation(); togglePeerExpand(exKey);}}
+               title="이 peer 가 대화한 다른 peer thread"
+             >
+               {peerExpand()[exKey] ? "▼" : "▶"} 💬 ex Peer ({exs.length})
+             </span>
+             {peerExpand()[exKey] && exs.length === 0 ? (
+               <span style={entryStyle}>(없음)</span>
+             ) : null}
+             {peerExpand()[exKey] ? (
+               <For each={exs}>
+                 {(x) => (
+                   <span style="display:flex; padding:0 0 0 28px; font-size:9.5px; color:#9ca3af; align-items:center; gap:4px;">
+                     <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                       {x.alias} · {x.msg_count}msg
+                       {x.last_msg_at ? ` · ${x.last_msg_at.slice(0, 16)}` : ""}
+                     </span>
+                     <span
+                       style="cursor:pointer; padding:0 4px; color:#f87171; font-weight:bold;"
+                       onClick={(e) => { e.stopPropagation(); void deleteExPeer(f.meta!.alias, x.alias);}}
+                       title={`'${x.alias}' 와의 thread 삭제`}
+                     >×</span>
+                   </span>
+                 )}
+               </For>
+             ) : null}
+           </span>
+         );
+       })() : null}
      </span>
    );
  })()}

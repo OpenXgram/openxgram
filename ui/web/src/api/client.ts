@@ -332,6 +332,8 @@ const ROUTES: Record<string, Route> = {
  peer_conversation: { method: "GET", path: "/peer_conversation/{alias}", emptyAs: []},
  peer_send: { method: "POST", path: "/peers/{alias}/send", body: true},
  peer_send_unsigned: { method: "POST", path: "/peers/{alias}/send-unsigned", body: true},
+ // rc.228 — ex Peer thread 삭제 (self_alias↔other_alias 의 outbox/inbox sessions + messages + outbound_queue).
+ ex_peer_delete: { method: "DELETE", path: "/peer/{self_alias}/ex_peer/{other_alias}"},
  attachment_upload: { method: "POST", path: "/attachments", body: true},
  attachment_get: { method: "GET", path: "/attachments/{hash}"},
  workflow_approve_run: { method: "POST", path: "/workflows/runs/{run_id}/approve", body: true},
