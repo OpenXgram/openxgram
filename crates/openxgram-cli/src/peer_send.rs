@@ -318,6 +318,25 @@ pub async fn run_peer_send_with_conv(
                 .as_ref()
                 .and_then(|m| m.machine.tailscale_ip.clone())
                 .map(|ip| format!("http://{ip}:47300"))
+        })
+        .or_else(|| {
+            // rc.221 — manifest tailscale_ip null 시 동적 검출 (silent fallback 아님: WARN log)
+            match openxgram_transport::tailscale::local_ipv4() {
+                Ok(ip) => {
+                    tracing::info!(
+                        ip = %ip,
+                        "rc.221 sender_transport_url: env/manifest 없음 → tailscale ip --4 동적 검출"
+                    );
+                    Some(format!("http://{ip}:47300"))
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "rc.221 sender_transport_url 동적 검출 실패 — ACK 비활성 (env XGRAM_TRANSPORT_PUBLIC_URL 또는 manifest tailscale_ip 권장)"
+                    );
+                    None
+                }
+            }
         });
     let sender_pubkey_hex = Some(hex::encode(master.public_key_bytes()));
 
@@ -598,6 +617,25 @@ pub async fn run_peer_broadcast(
                 .as_ref()
                 .and_then(|m| m.machine.tailscale_ip.clone())
                 .map(|ip| format!("http://{ip}:47300"))
+        })
+        .or_else(|| {
+            // rc.221 — manifest tailscale_ip null 시 동적 검출 (broadcast 경로)
+            match openxgram_transport::tailscale::local_ipv4() {
+                Ok(ip) => {
+                    tracing::info!(
+                        ip = %ip,
+                        "rc.221 broadcast sender_transport_url: env/manifest 없음 → tailscale ip --4 동적 검출"
+                    );
+                    Some(format!("http://{ip}:47300"))
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "rc.221 broadcast sender_transport_url 동적 검출 실패 — ACK 비활성"
+                    );
+                    None
+                }
+            }
         });
     let bcast_sender_pubkey_hex = Some(hex::encode(master.public_key_bytes()));
 
