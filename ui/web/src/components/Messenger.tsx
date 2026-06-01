@@ -249,6 +249,27 @@ function fingerprint(pubkeyHex: string): string {
  return `${trimmed.slice(0, 8)}…${trimmed.slice(-8)}`;
 }
 
+// rc.231 — entity dedup key. session display "akashic" 와 peer alias
+// "aoe_akashic_5054a80a" 가 같은 entity (포털 작동중 터미널 = 하나의 peer) 이므로
+// 둘을 같은 정규화 key 로 묶어 flat list 중복 0 으로 만든다.
+// 매칭 규칙: [machine] prefix + aoe_/term_ prefix 제거 + _<hexid> suffix 제거 → 핵심 이름만.
+//   "aoe_akashic_5054a80a"    → "akashic"
+//   "akashic"                 → "akashic"
+//   "term_teeup"              → "teeup"
+//   "aoe_zalman-wsl_7f27e90b" → "zalman-wsl"
+// 과매칭 방지:
+//   - prefix/suffix 만 떼고 가운데 이름은 그대로 유지 (다른 프로젝트 병합 X).
+//   - hexid suffix 는 8자 이상 16진수만 (짧은 숫자·일반 단어 보호).
+//   - sv_aoe_<숫자>_<13자리 timestamp> 류 service peer 는 핵심 이름이 숫자라
+//     어떤 터미널과도 안 묶임 → orphan row 로 유지 (의도된 동작).
+function normalizeAlias(raw: string): string {
+ let s = (raw || "").trim().toLowerCase();
+ s = s.replace(/^\[[^\]]+\]\s*/, "");      // [zalman] prefix
+ s = s.replace(/^(?:aoe|term)[_-]/, "");    // aoe_ / term_ prefix
+ s = s.replace(/[_-][0-9a-f]{8,}$/i, "");   // _<hexid> suffix (8+ hex digits)
+ return s.trim();
+}
+
 type SortMode = "name" | "activity";
 type ConnFilter = "all" | "connected" | "offline";
 type LeftMode = "agent" | "thread" | "workflow";
@@ -454,12 +475,14 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  const parts = s.identifier.split(":");
  if (parts.length >= 2) machineTag = machineFromAddress(parts[1]) || parts[1];
  }
- // dedup key = aoe_/portal/tmux name 또는 display.
+ // rc.231 — dedup key = 정규화된 entity 이름. peer alias 와 collide 시키려고
+ // aoe_/portal/tmux name 또는 display 를 normalizeAlias 로 통일.
  const aoeM = s.identifier.match(/aoe_[a-zA-Z0-9_-]+/);
  const portalM = s.identifier.match(/(?:^|:)portal:([^:]+)/);
  const tmuxM = s.identifier.match(/(?:^|:)tmux:([^:]+)/);
  const dispClean = s.display.replace(/^\[[^\]]+\]\s*/, "");
- const key = aoeM ? aoeM[0] : (portalM ? portalM[1] : (tmuxM ? tmuxM[1] : dispClean));
+ const rawKey = aoeM ? aoeM[0] : (portalM ? portalM[1] : (tmuxM ? tmuxM[1] : dispClean));
+ const key = normalizeAlias(rawKey) || rawKey;
  byAlias.set(key, {
  kind: s.kind as FriendKind,
  id: `session:${s.identifier}`,
@@ -493,8 +516,19 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  meta: p,
  machineTag,
 };
- // 같은 alias 의 session row 가 이미 있으면 peer 는 건너뜀 (dedup). 없으면 추가.
- if (!byAlias.has(p.alias)) byAlias.set(p.alias, friend);
+ // rc.231 — 정규화 key 로 session row 와 같은 entity 인지 판정.
+ //   같은 entity → 로컬 session 이 진짜 entity 이므로 session row 로 흡수
+ //   (peer 의 address/machine 태그만 병합, peer row 따로 안 보임).
+ //   매칭 session 없으면 (원격 zalman peer 등) peer row 로 추가.
+ const nkey = normalizeAlias(p.alias) || p.alias;
+ const existing = byAlias.get(nkey);
+ if (existing) {
+ // session row 에 peer 메타 병합 (address/machine 태그 + on-demand detail 용 meta).
+ if (!existing.meta) existing.meta = p;
+ if (!existing.machineTag && machineTag) existing.machineTag = machineTag;
+ } else {
+ byAlias.set(nkey, friend);
+ }
 }
 
  // 정렬
