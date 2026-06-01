@@ -228,6 +228,22 @@ role 은 자유 텍스트. 자연어 의미 매칭으로 충분.
 3. **Discord/Telegram 발신은 사용자 의도 명시 후만** — 자동 echo 안 함
 4. **메시지에 비밀번호·토큰 평문 금지** — vault 사용
 5. **`openxgram` 가 아닌 임의 도구로 peer 와 직접 통신 시도 금지** — 신원·서명 깨짐
+6. **🔥 자율 해결 우선 — 자체 시스템 이슈는 peer 메신저로 먼저 (강제)**
+
+   OpenXgram·MCP·daemon·vault·keystore·peer·tmux·Discord auto-echo 등 **자체 시스템 이슈** 발생 시 다음 순서로 처리:
+
+   - **1단계 (필수)**: 같은 시스템 사용 중인 다른 peer 에게 `peer_send` 로 진단·해결책 요청.
+     - 예: `peer_send(alias="Starian", body="내 MCP 의 peer_send 가 -32602 fail. vault password env 부재 추정. 너의 환경에서는? 해결 path 추천?")`
+   - **2단계**: peer 의 답신 + 자기 환경 진단 결과 종합 → 시도.
+   - **3단계 (마지막)**: 위 두 단계 모두 fail 시에만 마스터에게 명확한 상황 + 결정 요청.
+
+   **금지 안티패턴**:
+   - "마스터, env 박아주세요" 같은 1차 의존 요청 X
+   - peer 통신 없이 추측만으로 마스터에게 보고 X
+   - 마스터 = 최종 결정권자, 1차 troubleshooter 가 아님.
+
+   **정당 형식** (마스터 호출 시):
+   - "Starian peer 에게 진단 받았고 X·Y 시도. Z 결과 → 마스터 결정 필요 (A: 빠른 우회 / B: 본질 fix)?"
 
 ---
 
