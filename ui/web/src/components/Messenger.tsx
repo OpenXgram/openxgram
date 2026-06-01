@@ -180,6 +180,18 @@ interface Friend {
  subtitle: string; // 화면 보조 (주소·last_seen·"connected" 등)
  meta?: PeerDto; // peer일 경우 원본 데이터
  sessionMeta?: DetectedSession; // session 일 경우
+ machineTag?: string; // rc.230 — flat list 의 inline 머신 태그 (group header 아님, 그냥 tag)
+}
+
+// rc.230 — 머신 group header 폐기. 머신은 카테고리가 아니라 row 의 inline 태그.
+// address IP → 머신명 매핑. peer.address(또는 last_seen endpoint) 의 IP 로 판별.
+// session(로컬) 은 server-seoul. 매핑 안 되면 undefined → 태그 생략.
+function machineFromAddress(addr?: string | null): string | undefined {
+ if (!addr) return undefined;
+ if (addr.includes("100.101.237.9")) return "server-seoul";
+ if (addr.includes("100.87.11.8")) return "zalman";
+ if (addr.includes("100.80.35.17")) return "zalman";
+ return undefined;
 }
 
 // v1.3 §3.2 — /v1/gui/sessions 응답 (M-1 통합 detector).
@@ -259,6 +271,8 @@ interface ThreadSummary {
 
 const UNKNOWN_MACHINE = "(unknown)";
 const UNKNOWN_CONV = "_no_conversation_";
+// rc.230 — flat list sentinel: 이 machine 키의 group 은 머신 헤더 없이 렌더.
+const FLAT_GROUP = "__flat__";
 
 export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  const { t} = useI18n();
@@ -405,38 +419,19 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  return Date.now() - ts < 60 * 60 * 1000;
 }
 
- // peer 만 머신 그룹화 + 채널은 별 "채널" 가짜 머신.
+ // rc.230 — 머신 group header 폐기. peer + session 을 단일 flat list 로 병합.
+ //   머신은 카테고리가 아니라 row 의 inline 태그 (machineTag). 채널만 별 group 유지.
+ //   FLAT_GROUP = 머신 헤더 없이 렌더되는 sentinel machine 키.
  const groups = createMemo<MachineGroup[]>(() => {
- const byMachine = new Map<string, Friend[]>();
+ // alias → Friend 로 dedup (session 우선, peer 가 같은 alias 면 session 의 meta 보강).
+ const byAlias = new Map<string, Friend>();
 
- for (const p of peers() ?? []) {
- if (connFilter() === "connected" && !isConnected(p)) continue;
- if (connFilter() === "offline" && isConnected(p)) continue;
- // rc.138 — peers schema 에 machine 컬럼 없음 → alias 를 머신명 fallback 으로 사용.
- // zalman / 다른 peer 가 (unknown) 그룹 대신 각자 머신 그룹으로 표시.
- const m = (p.machine?.trim() || p.alias?.trim() || UNKNOWN_MACHINE);
- const friend: Friend = {
- kind: "peer",
- id: `peer:${p.alias}`,
- display: p.alias,
- // L2 4-tuple: alias · machine · address(short) · fingerprint
- subtitle:
- `${(p.address || "").slice(0, 10)} · ${fingerprint(p.public_key_hex)}` +
- (p.last_seen ? ` · ${p.last_seen}` : ""),
- meta: p,
-};
- if (!byMachine.has(m)) byMachine.set(m, []);
- byMachine.get(m)!.push(friend);
-}
-
- // 이 머신의 tmux + Claude Code projects + xgram sessions (M-1).
- // sessions.machine.alias 를 머신 그룹으로 사용 — peers 의 machine 과 중복 시 같은 그룹에 추가.
+ // (1) 로컬 sessions (포털 작동중 터미널) — flat list 의 핵심.
  const sess = sessions();
  if (sess) {
- const localMachine = sess.machine.alias || sess.machine.hostname || UNKNOWN_MACHINE;
- // rc.141 — portal:/aoe: 가 같은 tmux session 가리키면 portal: 만 유지.
- // zalman daemon 의 /api/terminals + /api/aoe/sessions 가 같은 aoe_xxx tmux 를 2번 detect → 중복.
- // selectedFriend 가 polling 마다 두 identifier 사이에서 깜빡거리는 문제 해결.
+ const localIp = sess.machine.tailscale_ip || "";
+ const localMachine = machineFromAddress(localIp) || sess.machine.alias || sess.machine.hostname || "server-seoul";
+ // rc.141 — portal:/aoe: 가 같은 tmux session 가리키면 portal: 만 유지 (중복 제거).
  const tmuxNameRe = /aoe_[a-z0-9_-]+/i;
  const portalTmux = new Set<string>();
  for (const s of sess.sessions) {
@@ -449,24 +444,27 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  return true;
  });
  for (const s of dedup) {
+ if (s.kind === "claude_project") continue; // rc.139 — claude_project 숨김 유지
  const conn = s.status === "attached" || s.status === "active";
  if (connFilter() === "connected" && !conn) continue;
  if (connFilter() === "offline" && conn) continue;
- // identifier "peer:<alias>:..." 면 그 alias 머신으로 분리, 아니면 local 머신.
- let machine = localMachine;
+ // identifier "peer:<alias>:..." 면 원격 머신, 아니면 local.
+ let machineTag = localMachine;
  if (s.identifier.startsWith("peer:")) {
  const parts = s.identifier.split(":");
- if (parts.length >= 2) machine = parts[1]; // peer alias 자체가 머신명
+ if (parts.length >= 2) machineTag = machineFromAddress(parts[1]) || parts[1];
  }
- const arr = byMachine.get(machine) ?? [];
- arr.push({
+ // dedup key = aoe_/portal/tmux name 또는 display.
+ const aoeM = s.identifier.match(/aoe_[a-zA-Z0-9_-]+/);
+ const portalM = s.identifier.match(/(?:^|:)portal:([^:]+)/);
+ const tmuxM = s.identifier.match(/(?:^|:)tmux:([^:]+)/);
+ const dispClean = s.display.replace(/^\[[^\]]+\]\s*/, "");
+ const key = aoeM ? aoeM[0] : (portalM ? portalM[1] : (tmuxM ? tmuxM[1] : dispClean));
+ byAlias.set(key, {
  kind: s.kind as FriendKind,
  id: `session:${s.identifier}`,
- display: s.display.replace(/^\[[^\]]+\]\s*/, ""), // [zalman] prefix 제거 (이미 머신 그룹으로 분리됨)
- subtitle:
- // rc.171 — tmux jargon (attached/detached/N win) 제거. portal capture-pane 이라 tmux 입장에선 항상 detached → 마스터 혼란.
- // rc.172 — Invalid Date fix: getTime() isNaN check + 빈 string 처리.
- (() => {
+ display: dispClean, // [zalman] prefix 제거
+ subtitle: (() => {
    const ts = s.last_active_at;
    if (!ts) return "";
    const d = new Date(ts);
@@ -474,36 +472,50 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
    return `최근 활동: ${d.toLocaleString()}`;
  })(),
  sessionMeta: s,
+ machineTag,
  });
- byMachine.set(machine, arr);
  }
+}
+
+ // (2) peers (원격 포함) — 같은 alias session 이 없으면 flat list 에 합류.
+ //   현재 머신 group 으로 흩어져 화면에서 사라진 zalman peer 들을 머신 태그로 표시.
+ for (const p of peers() ?? []) {
+ if (connFilter() === "connected" && !isConnected(p)) continue;
+ if (connFilter() === "offline" && isConnected(p)) continue;
+ const machineTag = machineFromAddress(p.address) || p.machine?.trim() || undefined;
+ const friend: Friend = {
+ kind: "peer",
+ id: `peer:${p.alias}`,
+ display: p.alias,
+ subtitle:
+ `${(p.address || "").slice(0, 10)} · ${fingerprint(p.public_key_hex)}` +
+ (p.last_seen ? ` · ${p.last_seen}` : ""),
+ meta: p,
+ machineTag,
+};
+ // 같은 alias 의 session row 가 이미 있으면 peer 는 건너뜀 (dedup). 없으면 추가.
+ if (!byAlias.has(p.alias)) byAlias.set(p.alias, friend);
 }
 
  // 정렬
  const sorter = (a: Friend, b: Friend) => {
  if (sortMode() === "name") return a.display.localeCompare(b.display);
- // activity: meta.last_seen DESC (없으면 뒤로)
- const ta = a.meta?.last_seen ? Date.parse(a.meta.last_seen) : 0;
- const tb = b.meta?.last_seen ? Date.parse(b.meta.last_seen) : 0;
- return tb - ta;
+ // activity: meta.last_seen / sessionMeta.last_active_at DESC.
+ const aT = a.meta?.last_seen ? Date.parse(a.meta.last_seen)
+   : (a.sessionMeta?.last_active_at ? Date.parse(a.sessionMeta.last_active_at) : 0);
+ const bT = b.meta?.last_seen ? Date.parse(b.meta.last_seen)
+   : (b.sessionMeta?.last_active_at ? Date.parse(b.sessionMeta.last_active_at) : 0);
+ return (isNaN(bT) ? 0 : bT) - (isNaN(aT) ? 0 : aT);
 };
- for (const arr of byMachine.values()) arr.sort(sorter);
+ const flat = Array.from(byAlias.values()).sort(sorter);
 
  const out: MachineGroup[] = [];
- // 머신 정렬: 이름순. UNKNOWN_MACHINE 은 마지막.
- const machines = Array.from(byMachine.keys()).sort((a, b) => {
- if (a === UNKNOWN_MACHINE) return 1;
- if (b === UNKNOWN_MACHINE) return -1;
- return a.localeCompare(b);
-});
- for (const m of machines) {
- const friends = byMachine.get(m)!;
+ // 단일 flat group — 머신 헤더 없이 렌더 (machine === FLAT_GROUP).
  out.push({
- machine: m,
- friends,
- connected: friends.filter((f) => f.meta && isConnected(f.meta)).length,
-});
-}
+ machine: FLAT_GROUP,
+ friends: flat,
+ connected: flat.filter((f) => f.meta && isConnected(f.meta)).length,
+ });
 
  // 채널 그룹
  const ns = notifyStatus();
@@ -695,9 +707,12 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  <div class="messenger-friend-list">
  <For each={groups()}>
  {(g) => {
- const isCollapsed = () => collapsed()[g.machine] === true;
+ const isFlat = g.machine === FLAT_GROUP;
+ const isCollapsed = () => !isFlat && collapsed()[g.machine] === true;
  return (
  <div class="messenger-machine-group">
+ {/* rc.230 — 채널 group 만 헤더. flat list(peer/터미널) 는 머신 헤더 없음. */}
+ <Show when={!isFlat}>
  <div
  class="messenger-machine-header"
  style="cursor:pointer; display:flex; align-items:center; gap:6px;"
@@ -708,73 +723,24 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  </span>
  {(g.machine || "(unknown)").replace(/\.c\.[a-z0-9-]+\.internal$/, " (GCP)").replace(/\.tail[a-z0-9]+\.ts\.net$/, " (Tailscale)")}{" "}
  <span style="font-weight:400; color:var(--text-3); font-size:12px;">
- {(() => {
- const t = g.friends.filter(f => f.kind === "tmux").length;
- const att = g.friends.filter(f => f.kind === "tmux" && f.sessionMeta?.attached).length;
- const c = g.friends.filter(f => f.kind === "claude_project").length;
- const p = g.friends.filter(f => f.kind === "peer").length;
- const parts: string[] = [];
- if (t > 0) parts.push(`tmux ${att}/${t} 접속 (local)`);
- if (c > 0) parts.push(`Claude Code ${c} (local)`);
- if (p > 0) parts.push(`P2P peer ${g.connected}/${p} 연결`);
- return `(${parts.join(" · ") || g.friends.length})`;
- })()}
+ ({g.friends.length})
  </span>
  </span>
- <button class="link-btn" title="이 머신 sessions 즉시 새로고침 (자동 10초)"
+ <button class="link-btn" title="sessions 즉시 새로고침 (자동 10초)"
  style="font-size:11px; padding:2px 6px;"
  onClick={(e) => { e.stopPropagation(); refetchSessions();}}>↻</button>
  </div>
+ </Show>
  <Show when={!isCollapsed()}>
  {(() => {
- // 사용자 의도 기준 4그룹. tmux raw attached/detached 구분 폐기.
- type Sub = { key: string; label: string; items: Friend[]};
- const subs: Sub[] = [
- { key: "portal", label: "터미널 (포털 등록)", items: []},
- { key: "claude-active", label: "Claude Code · 최근 24h", items: []},
- { key: "claude-old", label: "Claude Code · 오래됨", items: []},
- { key: "peer", label: "다른 머신 (peer)", items: []},
- { key: "channel", label: "채널 (Discord/Telegram)", items: []},
- { key: "other", label: "기타", items: []},
- ];
- for (const f of g.friends) {
- const id = f.id || "";
- // rc.139 — claude_project 완전 숨김 (사용자 결정 A).
- // ~/.claude/projects 의 36+ 디렉토리 자동 detect 가 사용자 의도와 다름.
- // 메신저 = 활성 터미널만. claude 디렉토리 history 노출 X.
- if (f.kind === "claude_project") continue;
- // portal:* (옛 portal 등록 터미널) + aoe:* (AoE 세션) + tmux:* (portal 없는 머신 fallback)
- if (id.startsWith("portal:") || id.startsWith("aoe:") || f.kind === "tmux") {
- subs[0].items.push(f);
- } else if (f.kind === "peer") {
- subs[3].items.push(f);
- } else if (f.kind === "discord" || f.kind === "telegram") {
- subs[4].items.push(f);
- } else {
- subs[5].items.push(f);
- }
- }
+ // rc.230 — sub-section 폐기. flat group 은 머신 헤더·sub-header 없이 단일 ul.
+ //   claude_project 는 backend 단계에서 이미 제외됨 (groups() 에서 skip).
+ const items = g.friends;
  return (
- <For each={subs.filter(s => s.items.length > 0)}>
+ <For each={[{ items}]}>
  {(sub) => {
- const subKey = `${g.machine}::${sub.key}`;
- // default: 터미널 (포털 등록) 만 펼침, 나머지는 접힘. 사용자 클릭하면 명시값 유지.
- const subCollapsed = () => {
- const v = collapsed()[subKey];
- if (v !== undefined) return v;
- return sub.key !== "portal";
- };
  return (
  <div>
- <div
- onClick={() => setCollapsed(p => ({...p, [subKey]: !p[subKey]}))}
- style="cursor:pointer; padding:5px 12px 5px 18px; font-size:11px; color:var(--text-3); display:flex; align-items:center; gap:4px; background:rgba(255,255,255,0.02); border-top:1px solid var(--border);"
- >
- <span>{subCollapsed() ? "▸" : "▾"}</span>
- <span style="flex:1;">{sub.label}</span>
- <span style="opacity:0.7;">{sub.items.length}</span>
- </div>
- <Show when={!subCollapsed()}>
  <ul style="margin:0; padding:0;">
  <For each={sub.items}>
  {(f) => (
@@ -896,6 +862,13 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
     );
   });
  })()}
+ {/* rc.230 — 머신 inline 태그 (group header 아님, 그냥 태그 수준). */}
+ {f.machineTag && f.kind !== "discord" && f.kind !== "telegram" ? (
+   <span title={`머신: ${f.machineTag}`}
+     style="margin-left:5px; padding:0 5px; background:rgba(96,165,250,0.15); color:#60a5fa; border-radius:3px; font-size:9px;">
+     🏠 {f.machineTag}
+   </span>
+ ) : null}
  </span>
  <span class="messenger-friend-sub">{f.subtitle}</span>
  {(() => {
@@ -1173,7 +1146,6 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  )}
  </For>
  </ul>
- </Show>
  </div>
  );
  }}
