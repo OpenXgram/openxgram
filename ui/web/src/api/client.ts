@@ -91,6 +91,8 @@ const ROUTES: Record<string, Route> = {
  // Peers
  peers_list: { method: "GET", path: "/peers", emptyAs: []},
  peer_add: { method: "POST", path: "/peers", body: true},
+ // rc.229 fix#3 — on-demand 단일 agent enrich (4-metadata + worktree/subagent/ex_peer)
+ agent_detail: { method: "GET", path: "/agent/{alias}/detail"},
 
  // Messenger v1.3 §3.2 — 머신×세션 통합 detector (M-1)
  sessions: { method: "GET", path: "/sessions"},

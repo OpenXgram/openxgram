@@ -257,6 +257,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/status", get(gui_status))
         .route("/v1/gui/initialized", get(gui_initialized))
         .route("/v1/gui/peers", get(gui_peers).post(gui_peer_add))
+        // rc.229 fix#3 — on-demand 1-agent enrich (4-metadata + worktree/subagent/ex_peer tree).
+        .route("/v1/gui/agent/{alias}/detail", get(gui_agent_detail))
         // 메신저 v1.3 §3.2 — 머신×세션 통합 detector (M-1).
         .route("/v1/gui/sessions", get(gui_sessions))
         .route("/v1/gui/sessions/{identifier}/screen", get(gui_session_screen))
@@ -650,60 +652,14 @@ async fn gui_peers(
             }),
         )
     })?;
-    drop(db); // unlock — enrichment 가 async tmux/ps 호출 다수
-    // rc.226 — local machine.alias 한 번만 (install-manifest)
-    let local_machine: Option<String> = InstallManifest::read(manifest_path(&state.data_dir))
-        .ok()
-        .map(|m| m.machine.alias);
-    // rc.226 — local tmux session set (1-shot list-sessions) → cross-machine peer skip 판단
-    let local_tmux_sessions: std::collections::HashSet<String> =
-        tokio::process::Command::new("tmux")
-            .args(["list-sessions", "-F", "#{session_name}"])
-            .output().await
-            .ok()
-            .map(|o| {
-                if o.status.success() {
-                    String::from_utf8_lossy(&o.stdout)
-                        .lines()
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect()
-                } else { Default::default() }
-            })
-            .unwrap_or_default();
+    drop(db); // unlock
+    // rc.229 — fix#1: per-peer subprocess enrichment 전부 제거 (8.7s → <200ms).
+    //   project_folder/llm_type/llm_version/worktrees/subagents/ex_peers 는 모두
+    //   on-demand `/v1/gui/agent/{alias}/detail` 에서 1개씩 enrich (fix#3).
+    //   여기는 기본 필드만 — tmux/ps/git/ls subprocess 호출 0회.
     let mut dtos: Vec<PeerDto> = Vec::with_capacity(rows.len());
     for p in rows.into_iter() {
         let (description, capabilities) = caps_map.get(&p.alias).cloned().unwrap_or((None, vec![]));
-        // rc.226 — 4-metadata enrichment.
-        // local peer 판정: alias 가 직접 tmux session 이거나 aoe_<alias>_* prefix 매칭.
-        let is_local = local_tmux_sessions.contains(&p.alias)
-            || local_tmux_sessions.iter().any(|s| s.starts_with(&format!("aoe_{}_", p.alias)))
-            || p.alias == "Starian"; // self
-        let (project_folder, llm_type, llm_version, machine_field) = if is_local {
-            let (pf, lt, lv) = enrich_peer_metadata(&p.alias).await;
-            (pf, lt, lv, local_machine.clone())
-        } else {
-            // cross-machine — V1: 모두 None (V2 backlog: peer 의 daemon /v1/gui/peers/self enrich)
-            (None, None, None, None)
-        };
-        // rc.228 — sub-resource enrichment: worktrees + subagents + ex_peers.
-        //   local + LLM 도는 peer 만 (project_folder + llm_type Some 일 때) enrich.
-        //   cross-machine or LLM 미감지 = 빈 vec (silent X — 본질 정합).
-        let (worktrees, subagents) = if is_local && project_folder.is_some() && llm_type.is_some() {
-            let pf = project_folder.as_deref().unwrap();
-            let wt = enrich_worktrees(pf).await;
-            let sa = enrich_subagents(pf).await;
-            (wt, sa)
-        } else {
-            (Vec::new(), Vec::new())
-        };
-        // ex_peers: local peer 만 (그 peer 가 다른 peer 와 한 대화 thread).
-        // V1 — Starian (self) 만 ex_peers 채움. 다른 peer 는 그 머신 의 daemon 이 책임.
-        let ex_peers = if is_local && p.alias == "Starian" {
-            collect_ex_peers(&state).await.unwrap_or_default()
-        } else {
-            Vec::new()
-        };
         dtos.push(PeerDto {
             id: p.id,
             alias: p.alias,
@@ -714,16 +670,65 @@ async fn gui_peers(
             last_seen: p.last_seen.map(|t| t.to_rfc3339()),
             description,
             capabilities,
-            project_folder,
-            llm_type,
-            llm_version,
-            machine: machine_field,
-            worktrees,
-            subagents,
-            ex_peers,
+            project_folder: None,
+            llm_type: None,
+            llm_version: None,
+            machine: None,
+            worktrees: Vec::new(),
+            subagents: Vec::new(),
+            ex_peers: Vec::new(),
         });
     }
     Ok(Json(dtos))
+}
+
+/// rc.229 fix#3 — on-demand 단일 agent enrichment.
+/// alias = tmux session 이름 또는 peer alias. 그 1개만 enrich:
+///   4-metadata (project_folder / llm_type / llm_version / machine)
+///   + worktrees + subagents + ex_peers.
+/// gui_peers 에서 제거된 무거운 subprocess enrichment 를 클릭 시 1회만 수행 (~300ms).
+async fn gui_agent_detail(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    // local machine.alias (install-manifest) — 1회.
+    let local_machine: Option<String> = InstallManifest::read(manifest_path(&state.data_dir))
+        .ok()
+        .map(|m| m.machine.alias);
+    // 4-metadata: enrich_peer_metadata 가 alias → tmux session 매칭 + project_folder + LLM detect.
+    let (project_folder, llm_type, llm_version) = enrich_peer_metadata(&alias).await;
+    // tmux session 매칭이 됐으면 local 로 간주 → machine 채움.
+    let machine: Option<String> = if project_folder.is_some() || llm_type.is_some() {
+        local_machine
+    } else {
+        None
+    };
+    // worktrees + subagents: project_folder 가 있을 때만.
+    let (worktrees, subagents) = if let Some(pf) = project_folder.as_deref() {
+        let wt = enrich_worktrees(pf).await;
+        let sa = enrich_subagents(pf).await;
+        (wt, sa)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    // ex_peers: self (Starian) 에 대해서만 (다른 머신 의 daemon 이 그 peer 의 ex_peers 책임).
+    let ex_peers = if alias == "Starian" {
+        collect_ex_peers(&state).await.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    Ok(Json(serde_json::json!({
+        "alias": alias,
+        "project_folder": project_folder,
+        "llm_type": llm_type,
+        "llm_version": llm_version,
+        "machine": machine,
+        "worktrees": worktrees,
+        "subagents": subagents,
+        "ex_peers": ex_peers,
+    })))
 }
 
 /// rc.228 — `git -C <project_folder> worktree list --porcelain` 파싱.
@@ -1103,31 +1108,52 @@ async fn gui_sessions(
     if !peer_targets.is_empty() {
         // 각 peer 의 daemon 에 unlock 해서 그 머신의 토큰 받기 (같은 keystore env password 가정).
         let local_pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").unwrap_or_default();
+        // rc.229 fix#2 — 이전: peer 마다 sequential unlock+sessions (3s timeout 누적 → 3s+).
+        //   이제: (1) base address dedup — 같은 daemon 가리키는 peer row 중복 제거 (alias 만 다름).
+        //         (2) per-request 2s timeout + 전체 fan-out concurrent (join_all) → wall time ≈ 1 peer.
+        //   본질(cross-machine merge) 유지 — 단지 병렬화·중복제거로 빠르게.
+        let mut seen_base: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut deduped: Vec<(String, String)> = Vec::new();
+        for (alias, address) in peer_targets {
+            let base = address.trim_end_matches('/').to_string();
+            if seen_base.insert(base.clone()) {
+                deduped.push((alias, base));
+            }
+        }
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(3))
+            .timeout(std::time::Duration::from_secs(2))
             .build().ok();
         if let Some(http) = client {
-            for (alias, address) in peer_targets {
-                let base = address.trim_end_matches('/');
-                // 1) peer 에 unlock → peer 의 session_token
-                let unlock_resp = http.post(format!("{base}/v1/auth/unlock"))
-                    .json(&serde_json::json!({"password": local_pw}))
-                    .send().await;
-                let peer_token: String = match unlock_resp {
-                    Ok(r) => match r.json::<serde_json::Value>().await {
-                        Ok(v) => v.get("session_token").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+            // 각 base 를 독립 future 로 — unlock → sessions → remote json 반환.
+            let fetches = deduped.into_iter().map(|(alias, base)| {
+                let http = http.clone();
+                let local_pw = local_pw.clone();
+                async move {
+                    let unlock_resp = http.post(format!("{base}/v1/auth/unlock"))
+                        .json(&serde_json::json!({"password": local_pw}))
+                        .send().await;
+                    let peer_token: String = match unlock_resp {
+                        Ok(r) => match r.json::<serde_json::Value>().await {
+                            Ok(v) => v.get("session_token").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+                            Err(_) => String::new(),
+                        },
                         Err(_) => String::new(),
-                    },
-                    Err(_) => String::new(),
-                };
-                if peer_token.is_empty() { continue; }
-                // 2) peer sessions 호출
-                let url = format!("{base}/v1/gui/sessions");
-                let resp = http.get(&url)
-                    .header("Authorization", format!("Bearer {peer_token}"))
-                    .send().await;
-                if let Ok(r) = resp {
-                    if let Ok(remote_json) = r.json::<serde_json::Value>().await {
+                    };
+                    if peer_token.is_empty() { return (alias, None); }
+                    let url = format!("{base}/v1/gui/sessions");
+                    let resp = http.get(&url)
+                        .header("Authorization", format!("Bearer {peer_token}"))
+                        .send().await;
+                    let json = match resp {
+                        Ok(r) => r.json::<serde_json::Value>().await.ok(),
+                        Err(_) => None,
+                    };
+                    (alias, json)
+                }
+            });
+            let results = futures_util::future::join_all(fetches).await;
+            for (alias, maybe_json) in results {
+                if let Some(remote_json) = maybe_json {
                         let remote_arr = remote_json.get("sessions").and_then(|s| s.as_array()).cloned().unwrap_or_default();
                         for item in remote_arr {
                             // 최소 필드만 가져와서 DetectedSession 직접 구성
@@ -1161,7 +1187,6 @@ async fn gui_sessions(
                                 agent_id: None,
                             });
                         }
-                    }
                 }
             }
         }

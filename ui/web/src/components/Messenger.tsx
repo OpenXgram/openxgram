@@ -351,6 +351,23 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  function togglePeerExpand(key: string) {
    setPeerExpand((prev) => ({ ...prev, [key]: !prev[key]}));
  }
+ // rc.229 fix#3 — session row (터미널 group) on-demand detail.
+ //   화면이 보여주는 건 sessions() 인데 rc.226/228 enrich 는 peers() 에 붙어 안 보였음.
+ //   session row expand 시 그 alias 로 agent_detail 호출 → 4-metadata + worktree/subagent/ex_peer tree.
+ //   key = session alias. 값: undefined(미요청) | "loading" | AgentDetail | "error".
+ const [agentDetails, setAgentDetails] = createSignal<Record<string, unknown>>({});
+ async function loadAgentDetail(alias: string) {
+   if (!alias) return;
+   const cur = agentDetails()[alias];
+   if (cur === "loading" || (cur && typeof cur === "object")) return; // 이미 로딩/완료
+   setAgentDetails((prev) => ({ ...prev, [alias]: "loading"}));
+   try {
+     const d = await invoke<Record<string, unknown>>("agent_detail", { alias});
+     setAgentDetails((prev) => ({ ...prev, [alias]: d}));
+   } catch {
+     setAgentDetails((prev) => ({ ...prev, [alias]: "error"}));
+   }
+ }
  // rc.228 — ex Peer thread 삭제 핸들러. confirm dialog 후 DELETE 호출 + refetch.
  async function deleteExPeer(selfAlias: string, otherAlias: string) {
    const ok = window.confirm(
@@ -1055,6 +1072,96 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
            </span>
          );
        })() : null}
+     </span>
+   );
+ })()}
+ {(() => {
+   // rc.229 fix#3 — session row (터미널 group) 의 on-demand 4-metadata + tree.
+   //   화면이 실제 보여주는 건 sessions() row. 클릭/expand 시 agent_detail 로 enrich.
+   if (f.kind === "peer" || !f.sessionMeta) return null;
+   // alias 추출: identifier 의 aoe_<...> tmux session name, 없으면 display.
+   const ident = f.sessionMeta.identifier || "";
+   const aoeM = ident.match(/aoe_[a-zA-Z0-9_-]+/);
+   const portalM = ident.match(/(?:^|:)portal:([^:]+)/);
+   const tmuxM = ident.match(/(?:^|:)tmux:([^:]+)/);
+   const alias = aoeM ? aoeM[0]
+     : (portalM ? portalM[1]
+     : (tmuxM ? tmuxM[1] : (f.display || "").trim()));
+   if (!alias) return null;
+   const cardKey = `sess::${alias}::card`;
+   const open = peerExpand()[cardKey];
+   const detail = agentDetails()[alias];
+   const loading = detail === "loading";
+   const err = detail === "error";
+   const d = (detail && typeof detail === "object") ? (detail as Record<string, unknown>) : null;
+   const projectFolder = (d?.["project_folder"] as string | null) || "";
+   const llmType = (d?.["llm_type"] as string | null) || "";
+   const llmVersion = (d?.["llm_version"] as string | null) || "";
+   const machine = (d?.["machine"] as string | null) || "";
+   const shortFolder = projectFolder
+     ? projectFolder.replace(/^\/home\/[^/]+/, "~").replace(/^\/Users\/[^/]+/, "~")
+     : "";
+   const llmDisplay = llmType && llmVersion ? `${llmType} ${llmVersion}` : (llmType || "");
+   const wts = Array.isArray(d?.["worktrees"]) ? (d!["worktrees"] as Array<Record<string, string>>) : [];
+   const sas = Array.isArray(d?.["subagents"]) ? (d!["subagents"] as Array<Record<string, string>>) : [];
+   const exs = Array.isArray(d?.["ex_peers"]) ? (d!["ex_peers"] as Array<Record<string, unknown>>) : [];
+   const subHeaderStyle = "display:block; cursor:pointer; padding:1px 0 1px 16px; font-style:italic; font-size:10px; color:#cbd5e1;";
+   const entryStyle = "display:block; padding:0 0 0 28px; font-size:9.5px; color:#9ca3af; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;";
+   const wtKey = `sess::${alias}::worktrees`;
+   const saKey = `sess::${alias}::subagents`;
+   const exKey = `sess::${alias}::ex_peers`;
+   return (
+     <span class="messenger-friend-caps" style="display:block; font-size:10px; margin-top:2px; max-width:100%;">
+       <span style="display:block; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:9.5px; color:#9ca3af; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+         <span
+           style="cursor:pointer; margin-right:4px; color:#7b61ff; font-weight:bold;"
+           onClick={(e) => { e.stopPropagation(); togglePeerExpand(cardKey); if (!open) void loadAgentDetail(alias);}}
+           title="에이전트 상세 (project · LLM · machine · worktree · Subagents · ex Peer) 펼치기/접기"
+         >
+           {open ? "▼" : "▶"}
+         </span>
+         {open && loading ? <span style="color:#a78bfa;">⏳ 로딩…</span> : null}
+         {open && err ? <span style="color:#f87171;">상세 로드 실패</span> : null}
+         {open && d ? (
+           <>
+             {shortFolder ? <span style="margin-right:8px;" title={`project_folder: ${projectFolder}`}>📁 {shortFolder}</span> : null}
+             {alias ? <span style="margin-right:8px;" title={`tmux session: ${alias}`}>📟 {alias}</span> : null}
+             {llmDisplay ? <span style={`margin-right:8px; color:${llmType === "unknown" ? "#6b7280" : "#a78bfa"};`} title={`llm: ${llmDisplay}`}>🤖 {llmDisplay}</span> : null}
+             {machine ? <span style="color:#60a5fa;" title={`machine: ${machine}`}>🏠 {machine}</span> : null}
+           </>
+         ) : null}
+       </span>
+       {open && d ? (
+         <span style="display:block; margin-top:2px;">
+           <span style={subHeaderStyle} onClick={(e) => { e.stopPropagation(); togglePeerExpand(wtKey);}} title="git worktree list">
+             {peerExpand()[wtKey] ? "▼" : "▶"} 🌿 worktree ({wts.length})
+           </span>
+           {peerExpand()[wtKey] && wts.length === 0 ? <span style={entryStyle}>(없음)</span> : null}
+           {peerExpand()[wtKey] ? (
+             <For each={wts}>{(w) => (
+               <span style={entryStyle} title={w.path}>{w.branch ? `[${w.branch}] ` : ""}{(w.path || "").replace(/^\/home\/[^/]+/, "~")}</span>
+             )}</For>
+           ) : null}
+           <span style={subHeaderStyle} onClick={(e) => { e.stopPropagation(); togglePeerExpand(saKey);}} title=".claude/agents/ + agents/ scan">
+             {peerExpand()[saKey] ? "▼" : "▶"} 🤖 Subagents ({sas.length})
+           </span>
+           {peerExpand()[saKey] && sas.length === 0 ? <span style={entryStyle}>(없음)</span> : null}
+           {peerExpand()[saKey] ? (
+             <For each={sas}>{(s) => (
+               <span style={entryStyle} title={`${s.kind}: ${s.path}`}>{s.kind === "claude_agents" ? "🅒 " : "🅟 "}{s.name}</span>
+             )}</For>
+           ) : null}
+           <span style={subHeaderStyle} onClick={(e) => { e.stopPropagation(); togglePeerExpand(exKey);}} title="이 에이전트가 대화한 다른 peer thread">
+             {peerExpand()[exKey] ? "▼" : "▶"} 💬 ex Peer ({exs.length})
+           </span>
+           {peerExpand()[exKey] && exs.length === 0 ? <span style={entryStyle}>(없음)</span> : null}
+           {peerExpand()[exKey] ? (
+             <For each={exs}>{(x) => (
+               <span style={entryStyle}>{String(x["alias"])} · {String(x["msg_count"])}msg{x["last_msg_at"] ? ` · ${String(x["last_msg_at"]).slice(0, 16)}` : ""}</span>
+             )}</For>
+           ) : null}
+         </span>
+       ) : null}
      </span>
    );
  })()}
