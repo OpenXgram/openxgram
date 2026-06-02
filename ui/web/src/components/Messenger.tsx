@@ -681,6 +681,14 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  >
  오케스트레이션
  </button>
+ <button
+ type="button"
+ onClick={toggleSettings}
+ title={showSettings() ? "설정 패널 닫기 (2단)" : "설정 패널 열기 (3단)"}
+ style={`flex:0 0 auto; padding:0 10px; border-radius:4px; cursor:pointer; background:${showSettings() ? "rgba(58, 130, 246, 0.3)" : "var(--surface-2)"}; color:var(--text-1); border:1px solid var(--border);`}
+ >
+ ⚙
+ </button>
  </div>
  {/* L1b — 액션 (RoutingRule + Whitelist) 2 버튼 */}
  <div class="messenger-sidebar-actions" style="display:flex; gap:4px; padding:0 8px 6px; border-bottom:1px solid var(--border);">
