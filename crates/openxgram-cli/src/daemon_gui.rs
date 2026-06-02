@@ -1223,64 +1223,118 @@ async fn gui_session_screen(
     Path(identifier): Path<String>,
 ) -> Result<Json<crate::daemon_gui_sessions::SessionScreenDto>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    // peer:<alias>:<inner-id> 형태면 해당 peer 의 daemon 에 fan-out
+    // peer:<alias>[:<inner-id>] 형태면 해당 peer 의 daemon 에 cross-machine proxy.
+    //   rc.237 — inner-id 가 없으면(peer:<alias>) 그 peer 의 첫 active session 을 자동 선택.
+    //   peer unreachable 시 silent X — 명시적 "remote terminal unavailable" content 반환.
     if let Some(rest) = identifier.strip_prefix("peer:") {
-        if let Some(idx) = rest.find(':') {
-            let alias = &rest[..idx];
-            let inner = &rest[idx + 1..];
-            // peer address 조회 — rc.167+: gui_address 있으면 우선 (7302 GUI), 없으면 address (7300 transport).
-            let address: String = {
-                let mut db = state.db.lock().await;
-                db.conn().query_row(
-                    "SELECT COALESCE(gui_address, address) FROM peers WHERE alias = ?1",
-                    rusqlite::params![alias],
-                    |r| r.get(0),
-                ).unwrap_or_default()
-            };
-            if !address.is_empty() && address.starts_with("http") {
-                let local_pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").unwrap_or_default();
-                let client = reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(5))
-                    .build()
-                    .map_err(|e| internal(&format!("http: {e}")))?;
-                let base = address.trim_end_matches('/');
-                // peer 의 unlock → token
-                let unlock = client.post(format!("{base}/v1/auth/unlock"))
-                    .json(&serde_json::json!({"password": local_pw}))
-                    .send().await
-                    .map_err(|e| internal(&format!("peer unlock: {e}")))?;
-                let token = unlock.json::<serde_json::Value>().await.ok()
-                    .and_then(|v| v.get("session_token").and_then(|t| t.as_str()).map(String::from))
-                    .unwrap_or_default();
-                if token.is_empty() {
-                    return Err(internal(&format!("peer {alias} unlock failed")));
-                }
-                // peer screen
-                let resp = client.get(format!("{base}/v1/gui/sessions/{}/screen", urlencoding::encode(inner)))
-                    .header("Authorization", format!("Bearer {token}"))
-                    .send().await
-                    .map_err(|e| internal(&format!("peer screen: {e}")))?;
-                let v: serde_json::Value = resp.json().await
-                    .map_err(|e| internal(&format!("peer screen json: {e}")))?;
-                let kind_str = v.get("kind").and_then(|x| x.as_str()).unwrap_or("tmux");
-                let kind = match kind_str {
-                    "tmux" => crate::daemon_gui_sessions::SessionKind::Tmux,
-                    "claude_project" => crate::daemon_gui_sessions::SessionKind::ClaudeProject,
-                    _ => crate::daemon_gui_sessions::SessionKind::XgramSession,
-                };
-                let dto = crate::daemon_gui_sessions::SessionScreenDto {
-                    identifier: v.get("identifier").and_then(|x| x.as_str()).unwrap_or(inner).into(),
-                    kind,
-                    display: v.get("display").and_then(|x| x.as_str()).unwrap_or("?").into(),
-                    content: v.get("content").and_then(|x| x.as_str()).unwrap_or("").into(),
-                    lines: v.get("lines").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
-                    source_note: format!("[via peer {alias}] {}", v.get("source_note").and_then(|x| x.as_str()).unwrap_or("")),
-                    fetched_at: v.get("fetched_at").and_then(|x| x.as_str()).unwrap_or("").into(),
-                };
-                return Ok(Json(dto));
-            }
-            return Err(internal(&format!("peer {alias} has no http address")));
+        let (alias, inner_opt): (&str, Option<&str>) = match rest.find(':') {
+            Some(idx) => (&rest[..idx], Some(&rest[idx + 1..])),
+            None => (rest, None),
+        };
+        // peer address 조회 — rc.167+: gui_address 있으면 우선 (7302 GUI), 없으면 address (7300 transport).
+        let address: String = {
+            let mut db = state.db.lock().await;
+            db.conn().query_row(
+                "SELECT COALESCE(gui_address, address) FROM peers WHERE alias = ?1",
+                rusqlite::params![alias],
+                |r| r.get(0),
+            ).unwrap_or_default()
+        };
+        // 명시적 unavailable DTO helper (silent X — 빈 화면 대신 사유 노출).
+        let unavailable = |reason: &str| -> Json<crate::daemon_gui_sessions::SessionScreenDto> {
+            Json(crate::daemon_gui_sessions::SessionScreenDto {
+                identifier: identifier.clone(),
+                kind: crate::daemon_gui_sessions::SessionKind::Tmux,
+                display: format!("[{alias}] (원격)"),
+                content: format!("⚠ remote terminal unavailable\npeer: {alias}\n사유: {reason}"),
+                lines: 0,
+                source_note: format!("[via peer {alias}] unavailable"),
+                fetched_at: String::new(),
+            })
+        };
+        if address.is_empty() || !address.starts_with("http") {
+            return Ok(unavailable("peer has no http address (gui_address/address 미설정)"));
         }
+        let local_pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").unwrap_or_default();
+        let client = match reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_millis(1200))
+            .timeout(std::time::Duration::from_secs(5))
+            .build() {
+            Ok(c) => c,
+            Err(e) => return Ok(unavailable(&format!("http client: {e}"))),
+        };
+        let base = address.trim_end_matches('/');
+        // peer 의 unlock → token (password 평문 로그 금지).
+        let unlock = match client.post(format!("{base}/v1/auth/unlock"))
+            .json(&serde_json::json!({"password": local_pw}))
+            .send().await {
+            Ok(r) => r,
+            Err(e) => return Ok(unavailable(&format!("peer unreachable (unlock): {e}"))),
+        };
+        let token = unlock.json::<serde_json::Value>().await.ok()
+            .and_then(|v| v.get("session_token").and_then(|t| t.as_str()).map(String::from))
+            .unwrap_or_default();
+        if token.is_empty() {
+            return Ok(unavailable("peer unlock failed (keystore password 불일치 가능)"));
+        }
+        // inner-id 결정: 명시되면 그대로, 없으면 peer 의 첫 session 자동 선택.
+        let inner: String = match inner_opt {
+            Some(s) => s.to_string(),
+            None => {
+                let list = match client.get(format!("{base}/v1/gui/sessions"))
+                    .header("Authorization", format!("Bearer {token}"))
+                    .send().await {
+                    Ok(r) => r,
+                    Err(e) => return Ok(unavailable(&format!("peer unreachable (sessions): {e}"))),
+                };
+                let lv: serde_json::Value = match list.json().await {
+                    Ok(v) => v,
+                    Err(e) => return Ok(unavailable(&format!("peer sessions json: {e}"))),
+                };
+                let arr = lv.get("sessions").and_then(|s| s.as_array()).cloned().unwrap_or_default();
+                // 우선순위: status=active > attached > 첫 항목. (그 peer 의 self 원격 peer 항목 제외)
+                let pick = arr.iter()
+                    .filter(|it| {
+                        let id = it.get("identifier").and_then(|v| v.as_str()).unwrap_or("");
+                        !id.starts_with("peer:") // 재귀 cross-machine 항목 제외
+                    })
+                    .max_by_key(|it| match it.get("status").and_then(|v| v.as_str()).unwrap_or("") {
+                        "active" => 3, "attached" => 2, _ => 1,
+                    })
+                    .and_then(|it| it.get("identifier").and_then(|v| v.as_str()).map(String::from));
+                match pick {
+                    Some(id) => id,
+                    None => return Ok(unavailable("peer 에 표시 가능한 터미널 세션 없음")),
+                }
+            }
+        };
+        // peer screen proxy fetch.
+        let resp = match client.get(format!("{base}/v1/gui/sessions/{}/screen", urlencoding::encode(&inner)))
+            .header("Authorization", format!("Bearer {token}"))
+            .send().await {
+            Ok(r) => r,
+            Err(e) => return Ok(unavailable(&format!("peer unreachable (screen): {e}"))),
+        };
+        let v: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => return Ok(unavailable(&format!("peer screen json: {e}"))),
+        };
+        let kind_str = v.get("kind").and_then(|x| x.as_str()).unwrap_or("tmux");
+        let kind = match kind_str {
+            "tmux" => crate::daemon_gui_sessions::SessionKind::Tmux,
+            "claude_project" => crate::daemon_gui_sessions::SessionKind::ClaudeProject,
+            _ => crate::daemon_gui_sessions::SessionKind::XgramSession,
+        };
+        let dto = crate::daemon_gui_sessions::SessionScreenDto {
+            identifier: v.get("identifier").and_then(|x| x.as_str()).unwrap_or(&inner).into(),
+            kind,
+            display: v.get("display").and_then(|x| x.as_str()).unwrap_or("?").into(),
+            content: v.get("content").and_then(|x| x.as_str()).unwrap_or("").into(),
+            lines: v.get("lines").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
+            source_note: format!("[via peer {alias}] {}", v.get("source_note").and_then(|x| x.as_str()).unwrap_or("")),
+            fetched_at: v.get("fetched_at").and_then(|x| x.as_str()).unwrap_or("").into(),
+        };
+        return Ok(Json(dto));
     }
     Ok(Json(crate::daemon_gui_sessions::capture_session(&identifier)))
 }

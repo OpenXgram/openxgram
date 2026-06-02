@@ -384,6 +384,23 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
 
  // 좌측 컨트롤
  const [sortMode, setSortMode] = createSignal<SortMode>("activity");
+ // rc.237 B — 사용자 수동 pin 순서. pin 한 alias 는 list 최상단(pin 순서대로) 고정.
+ //   pin 안 한 것은 기존 sortMode(활동순/이름순). localStorage 영구.
+ const [pinnedAliases, setPinnedAliases] = createSignal<string[]>((() => {
+   try {
+     const raw = localStorage.getItem("messenger.pinned_aliases");
+     const arr = raw ? JSON.parse(raw) : [];
+     return Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : [];
+   } catch { return []; }
+ })());
+ function togglePin(alias: string) {
+   if (!alias) return;
+   setPinnedAliases((prev) => {
+     const next = prev.includes(alias) ? prev.filter((a) => a !== alias) : [...prev, alias];
+     try { localStorage.setItem("messenger.pinned_aliases", JSON.stringify(next)); } catch {}
+     return next;
+   });
+ }
  const [connFilter, setConnFilter] = createSignal<ConnFilter>("all");
  const [collapsed, setCollapsed] = createSignal<Record<string, boolean>>({});
  // rc.228 — peer card 의 3 sub-section (worktree / subagents / ex_peers) expand 상태.
@@ -534,7 +551,21 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
 }
 
  // 정렬
+ const pins = pinnedAliases();
+ // rc.237 B — pin index (없으면 -1). pin 한 것은 pin 순서대로 최상단.
+ const pinIdx = (f: Friend) => {
+   const a = f.meta?.alias || f.display;
+   const i = pins.indexOf(a);
+   return i; // -1 if not pinned
+ };
  const sorter = (a: Friend, b: Friend) => {
+ // (0) pin 우선 — pin 한 것끼리는 pin 순서, pin vs non-pin 은 pin 이 위.
+ const pa = pinIdx(a), pb = pinIdx(b);
+ if (pa !== -1 || pb !== -1) {
+   if (pa === -1) return 1;      // a non-pin → 뒤로
+   if (pb === -1) return -1;     // b non-pin → a 가 앞
+   return pa - pb;               // 둘 다 pin → pin 순서
+ }
  if (sortMode() === "name") return a.display.localeCompare(b.display);
  // activity: meta.last_seen / sessionMeta.last_active_at DESC.
  const aT = a.meta?.last_seen ? Date.parse(a.meta.last_seen)
@@ -919,6 +950,21 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
      {f.machineTag}
    </span>
  ) : null}
+ {/* rc.237 B — ★ pin 토글. pin 한 alias 는 list 최상단 고정 (localStorage 영구).
+     채널(discord/telegram)은 pin 대상 아님. */}
+ {f.kind !== "discord" && f.kind !== "telegram" ? (() => {
+   const alias = f.meta?.alias || f.display;
+   const pinned = pinnedAliases().includes(alias);
+   return (
+     <span
+       title={pinned ? "고정 해제" : "최상단 고정 (pin)"}
+       onClick={(e) => { e.stopPropagation(); togglePin(alias); }}
+       style={`flex:0 0 auto; ${f.machineTag ? "" : "margin-left:auto;"} margin-right:2px; padding:0 4px; font-size:12px; cursor:pointer; color:${pinned ? "#f0b429" : "var(--text-3)"}; opacity:${pinned ? "1" : "0.45"};`}
+     >
+       {pinned ? "★" : "☆"}
+     </span>
+   );
+ })() : null}
  {/* rc.236 bug1 — ▶ chevron 클릭 시 on-demand 상세 아코디언 toggle.
      peer → `${alias}::card`, session → `sess::${alias}::card` + agent_detail fetch.
      기본 row 는 한 줄 유지(rc.235), 펼쳤을 때만 아래 상세 블록 노출. */}
@@ -1495,8 +1541,17 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  </Show>
 }
  >
- {/* rc.224 — tmux 화면 preview. alias = tmux session name. */}
- <TmuxPreview alias={f.display} />
+ {/* rc.224 — tmux 화면 preview. alias = tmux session name.
+     rc.237 — cross-machine peer 면 `peer:<alias>` identifier 로 backend proxy
+     (그 peer daemon 의 첫 active session 자동 선택). local 이면 alias 그대로. */}
+ <TmuxPreview alias={(() => {
+   const addr = f.meta?.address;
+   const remoteMachine = machineFromAddress(addr);
+   const localMachine = sessions()?.machine?.alias || sessions()?.machine?.hostname;
+   const isRemote = !!addr && addr.startsWith("http")
+     && (!!remoteMachine && remoteMachine !== localMachine);
+   return isRemote ? `peer:${f.meta!.alias}` : f.display;
+ })()} />
  </Show>
  </section>
  <PeerInput
