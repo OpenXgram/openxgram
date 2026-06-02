@@ -341,7 +341,7 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  const [selectedThread, setSelectedThread] = createSignal<string | null>(null); // conversation_id
  const [leftMode, setLeftMode] = createSignal<LeftMode>("agent"); // L1
  // 컬럼 너비 — drag 로 조절, localStorage 영구
- const initialSidebar = (() => { const v = parseInt(localStorage.getItem("messenger.sidebar_w") || "240"); return isNaN(v) ? 240 : v; })();
+ const initialSidebar = (() => { const v = parseInt(localStorage.getItem("messenger.sidebar_w") || "280"); return isNaN(v) ? 280 : v; })();
  const initialSidepanel = (() => { const v = parseInt(localStorage.getItem("messenger.sidepanel_w") || "320"); return isNaN(v) ? 320 : v; })();
  const [sidebarW, setSidebarW] = createSignal(initialSidebar);
  const [sidepanelW, setSidepanelW] = createSignal(initialSidepanel);
@@ -494,13 +494,8 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  kind: s.kind as FriendKind,
  id: `session:${s.identifier}`,
  display: dispClean, // [zalman] prefix 제거
- subtitle: (() => {
-   const ts = s.last_active_at;
-   if (!ts) return "";
-   const d = new Date(ts);
-   if (isNaN(d.getTime())) return "";
-   return `최근 활동: ${d.toLocaleString()}`;
- })(),
+ // rc.235 — subtitle 제거: peer/session row 통일(한 줄 truncate). 상세는 우측 패널.
+ subtitle: "",
  sessionMeta: s,
  machineTag,
  });
@@ -517,9 +512,9 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  kind: "peer",
  id: `peer:${p.alias}`,
  display: p.alias,
- subtitle:
- `${(p.address || "").slice(0, 10)} · ${fingerprint(p.public_key_hex)}` +
- (p.last_seen ? ` · ${p.last_seen}` : ""),
+ // rc.235 — subtitle(address·fingerprint·last_seen) 제거: 좁은 sidebar 에서 겹침 주범.
+ //   상세(address/fingerprint/role/last_seen/capabilities)는 우측 detail 패널(rc.229)에서.
+ subtitle: "",
  meta: p,
  machineTag,
 };
@@ -924,12 +919,17 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
      {f.machineTag}
    </span>
  ) : null}
+ {/* rc.235 — ▶ chevron (상세는 클릭 → 우측 detail 패널). */}
+ <span style="flex:0 0 auto; margin-left:6px; color:var(--text-3); font-size:11px; opacity:0.5;">▶</span>
  </span>
- <span class="messenger-friend-sub">{f.subtitle}</span>
+ {/* rc.235 — peer/session inline 상세 블록 제거 (좁은 sidebar 겹침 주범).
+     상세(address/fingerprint/role/last_seen/capabilities/worktree/subagents/ex_peer)는
+     row 클릭 시 우측 detail 패널(rc.229)에서. row 는 dot + alias + machine tag + ▶ 한 줄 고정. */}
  {(() => {
    // rc.214 — agent list 한눈 view: peer 행에 role + capabilities inline 표시.
    // rc.226 — 추가로 4-metadata (project_folder · tmux session · LLM · machine) 표시.
-   // peer entity = 1 project folder = 1 tmux session = 1 LLM 의 본질 inline.
+   // rc.235 — row 에서 제거 (겹침). 상세는 우측 패널.
+   if (true) return null;
    if (f.kind !== "peer" || !f.meta) return null;
    const role = (f.meta.role || "").trim();
    const caps = Array.isArray(f.meta.capabilities) ? f.meta.capabilities : [];
@@ -1106,6 +1106,8 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  {(() => {
    // rc.229 fix#3 — session row (터미널 group) 의 on-demand 4-metadata + tree.
    //   화면이 실제 보여주는 건 sessions() row. 클릭/expand 시 agent_detail 로 enrich.
+   // rc.235 — row 에서 제거 (겹침). 상세는 우측 detail 패널.
+   if (true) return null;
    if (f.kind === "peer" || !f.sessionMeta) return null;
    // alias 추출: identifier 의 aoe_<...> tmux session name, 없으면 display.
    const ident = f.sessionMeta.identifier || "";

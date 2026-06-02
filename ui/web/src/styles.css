@@ -555,10 +555,10 @@ input:focus-visible {
   background: #0f0f0f;
 }
 .messenger-shell-2 {
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 280px minmax(0, 1fr);
 }
 .messenger-shell-3 {
-  grid-template-columns: 240px minmax(0, 1fr) 320px;
+  grid-template-columns: 280px minmax(0, 1fr) 320px;
 }
 /* 컬럼 사이 drag 리사이저 (5px 너비, hover 시 표시) */
 .messenger-resizer {
@@ -646,12 +646,16 @@ input:focus-visible {
   overflow-y: auto;
   flex: 1;
 }
-/* rc.146 — compact friend row (스크롤 줄임) */
+/* rc.235 — peer/session row 통일: 한 줄 고정(겹침 제거).
+   구조: ● dot + alias(bold, truncate) + machine tag(우측, muted) + ▶ chevron.
+   상세(address/fingerprint/role/last_seen/caps)는 우측 detail 패널에서. */
 .messenger-friend {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
+  gap: 8px;
+  height: 36px;
+  padding: 4px 10px;
+  overflow: hidden;
   border-bottom: 1px solid #1c1c1c;
   cursor: pointer;
 }
@@ -663,16 +667,20 @@ input:focus-visible {
   border-radius: 50%;
   font-weight: bold;
   font-size: 11px;
+  flex: 0 0 auto;
 }
 .messenger-friend-icon.kind-peer { background: #2a3a55; color: #b6d4ff; }
 .messenger-friend-icon.kind-discord { background: #4f4789; color: #d8d6ff; }
 .messenger-friend-icon.kind-telegram { background: #2c5a7a; color: #b6e1ff; }
-.messenger-friend-text { display: flex; flex-direction: row; align-items: baseline; gap: 8px; min-width: 0; flex: 1; }
-.messenger-friend-name { font-size: 14px; color: #e6e6e6; display: flex; align-items: center; flex: 1; min-width: 0; }
-.messenger-friend-sub {
-  font-size: 10px; color: #777;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;
+/* 한 줄 고정 — 줄바꿈 금지, alias 가 ellipsis truncate */
+.messenger-friend-text { display: flex; flex-direction: row; align-items: center; gap: 8px; min-width: 0; flex: 1; overflow: hidden; }
+.messenger-friend-name {
+  flex: 1; min-width: 0;
+  font-weight: 600; font-size: 14px; color: #e6e6e6;
+  display: flex; align-items: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.messenger-friend-sub { display: none; }
 .messenger-empty { padding: 18px 14px; color: #777; font-size: 12px; }
 
 .messenger-thread {
