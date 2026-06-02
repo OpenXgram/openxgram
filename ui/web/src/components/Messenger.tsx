@@ -919,8 +919,34 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
      {f.machineTag}
    </span>
  ) : null}
- {/* rc.235 — ▶ chevron (상세는 클릭 → 우측 detail 패널). */}
- <span style="flex:0 0 auto; margin-left:6px; color:var(--text-3); font-size:11px; opacity:0.5;">▶</span>
+ {/* rc.236 bug1 — ▶ chevron 클릭 시 on-demand 상세 아코디언 toggle.
+     peer → `${alias}::card`, session → `sess::${alias}::card` + agent_detail fetch.
+     기본 row 는 한 줄 유지(rc.235), 펼쳤을 때만 아래 상세 블록 노출. */}
+ {(() => {
+   // 이 row 의 expand key + (session 인 경우) detail loader 결정.
+   let cardKey = "";
+   let onToggle = () => {};
+   if (f.kind === "peer" && f.meta) {
+     cardKey = `${f.meta.alias}::card`;
+     onToggle = () => togglePeerExpand(cardKey);
+   } else if (f.kind !== "peer" && f.sessionMeta) {
+     const ident = f.sessionMeta.identifier || "";
+     const aoeM = ident.match(/aoe_[a-zA-Z0-9_-]+/);
+     const portalM = ident.match(/(?:^|:)portal:([^:]+)/);
+     const tmuxM = ident.match(/(?:^|:)tmux:([^:]+)/);
+     const alias = aoeM ? aoeM[0] : (portalM ? portalM[1] : (tmuxM ? tmuxM[1] : (f.display || "").trim()));
+     cardKey = `sess::${alias}::card`;
+     onToggle = () => { const open = peerExpand()[cardKey]; togglePeerExpand(cardKey); if (!open) void loadAgentDetail(alias);};
+   }
+   const open = cardKey ? peerExpand()[cardKey] : false;
+   return (
+     <span
+       style="flex:0 0 auto; margin-left:6px; color:var(--text-3); font-size:11px; opacity:0.6; cursor:pointer;"
+       title="상세 펼치기/접기 (project · LLM · machine · worktree · Subagents · ex Peer)"
+       onClick={(e) => { e.stopPropagation(); onToggle();}}
+     >{open ? "▼" : "▶"}</span>
+   );
+ })()}
  </span>
  {/* rc.235 — peer/session inline 상세 블록 제거 (좁은 sidebar 겹침 주범).
      상세(address/fingerprint/role/last_seen/capabilities/worktree/subagents/ex_peer)는
@@ -928,9 +954,9 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  {(() => {
    // rc.214 — agent list 한눈 view: peer 행에 role + capabilities inline 표시.
    // rc.226 — 추가로 4-metadata (project_folder · tmux session · LLM · machine) 표시.
-   // rc.235 — row 에서 제거 (겹침). 상세는 우측 패널.
-   if (true) return null;
+   // rc.236 bug1 — ▶ 클릭(=`${alias}::card`) 펼쳤을 때만 노출. 접힘 = 한 줄 유지(rc.235).
    if (f.kind !== "peer" || !f.meta) return null;
+   if (!peerExpand()[`${f.meta.alias}::card`]) return null;
    const role = (f.meta.role || "").trim();
    const caps = Array.isArray(f.meta.capabilities) ? f.meta.capabilities : [];
    const desc = (f.meta.description || "").trim();
@@ -993,13 +1019,6 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
        {/* rc.226 line 2: 4-metadata inline — 📁 project · 📟 tmux · 🤖 LLM · 🏠 machine */}
        {hasMeta226 ? (
          <span style="display:block; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:9.5px; color:#9ca3af; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:1px;">
-           <span
-             style="cursor:pointer; margin-right:4px; color:#7b61ff; font-weight:bold;"
-             onClick={(e) => { e.stopPropagation(); togglePeerExpand(`${f.meta!.alias}::card`);}}
-             title="3 sub-resource (worktree · subagents · ex Peer) 펼치기/접기"
-           >
-             {peerExpand()[`${f.meta!.alias}::card`] ? "▼" : "▶"}
-           </span>
            {shortFolder ? (
              <span style="margin-right:8px;" title={`project_folder: ${projectFolder}`}>📁 {shortFolder}</span>
            ) : null}
@@ -1017,8 +1036,8 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
            ) : null}
          </span>
        ) : null}
-       {/* rc.228 — 3-level tree: worktree / Subagents / ex Peer. card expand 시만 보임. */}
-       {hasMeta226 && peerExpand()[`${f.meta!.alias}::card`] ? (() => {
+       {/* rc.228 — 3-level tree: worktree / Subagents / ex Peer. rc.236 — card 펼침 시 항상 노출. */}
+       {hasMeta226 ? (() => {
          const wts = Array.isArray(f.meta!.worktrees) ? f.meta!.worktrees : [];
          const sas = Array.isArray(f.meta!.subagents) ? f.meta!.subagents : [];
          const exs = Array.isArray(f.meta!.ex_peers) ? f.meta!.ex_peers : [];
@@ -1106,8 +1125,7 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  {(() => {
    // rc.229 fix#3 — session row (터미널 group) 의 on-demand 4-metadata + tree.
    //   화면이 실제 보여주는 건 sessions() row. 클릭/expand 시 agent_detail 로 enrich.
-   // rc.235 — row 에서 제거 (겹침). 상세는 우측 detail 패널.
-   if (true) return null;
+   // rc.236 bug1 — ▶ 클릭(`sess::${alias}::card`) 펼쳤을 때만 노출. 접힘 = 한 줄(rc.235).
    if (f.kind === "peer" || !f.sessionMeta) return null;
    // alias 추출: identifier 의 aoe_<...> tmux session name, 없으면 display.
    const ident = f.sessionMeta.identifier || "";
@@ -1120,6 +1138,7 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
    if (!alias) return null;
    const cardKey = `sess::${alias}::card`;
    const open = peerExpand()[cardKey];
+   if (!open) return null; // rc.236 — 접힘 시 한 줄 유지. ▶ 는 main row chevron 이 담당.
    const detail = agentDetails()[alias];
    const loading = detail === "loading";
    const err = detail === "error";
@@ -1143,16 +1162,9 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
    return (
      <span class="messenger-friend-caps" style="display:block; font-size:10px; margin-top:2px; max-width:100%;">
        <span style="display:block; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:9.5px; color:#9ca3af; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-         <span
-           style="cursor:pointer; margin-right:4px; color:#7b61ff; font-weight:bold;"
-           onClick={(e) => { e.stopPropagation(); togglePeerExpand(cardKey); if (!open) void loadAgentDetail(alias);}}
-           title="에이전트 상세 (project · LLM · machine · worktree · Subagents · ex Peer) 펼치기/접기"
-         >
-           {open ? "▼" : "▶"}
-         </span>
-         {open && loading ? <span style="color:#a78bfa;">⏳ 로딩…</span> : null}
-         {open && err ? <span style="color:#f87171;">상세 로드 실패</span> : null}
-         {open && d ? (
+         {loading ? <span style="color:#a78bfa;">⏳ 로딩…</span> : null}
+         {err ? <span style="color:#f87171;">상세 로드 실패</span> : null}
+         {d ? (
            <>
              {shortFolder ? <span style="margin-right:8px;" title={`project_folder: ${projectFolder}`}>📁 {shortFolder}</span> : null}
              {alias ? <span style="margin-right:8px;" title={`tmux session: ${alias}`}>📟 {alias}</span> : null}
@@ -1161,7 +1173,7 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
            </>
          ) : null}
        </span>
-       {open && d ? (
+       {d ? (
          <span style="display:block; margin-top:2px;">
            <span style={subHeaderStyle} onClick={(e) => { e.stopPropagation(); togglePeerExpand(wtKey);}} title="git worktree list">
              {peerExpand()[wtKey] ? "▼" : "▶"} 🌿 worktree ({wts.length})
@@ -1348,14 +1360,20 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  </Show>
 }
  >
+ {(sf) => (
+ // rc.236 bug2/bug3 — 비-keyed Show 의 render 콜백이 selectedFriend 변경 시
+ //   재실행되지 않아 (A→B 둘 다 truthy) session↔peer 분기가 첫 클릭 그대로 고정되고,
+ //   고정된 session 분기가 peer(sessionMeta 없음) 에서 f().sessionMeta!.identifier 접근 →
+ //   TypeError(reading 'identifier'). 내부에 keyed Show 를 두어 f.id 변경마다 subtree 재생성.
+ <Show when={sf()} keyed>
  {(f) => {
  // 세션 친구 (tmux/claude_project/xgram_session) → SessionScreen (xterm.js, S5).
  const sessionKinds = new Set(["tmux", "claude_project", "xgram_session"]);
- if (sessionKinds.has(f().kind) && f().sessionMeta) {
+ if (sessionKinds.has(f.kind) && f.sessionMeta) {
  return (
  <SessionScreen
- identifier={f().sessionMeta!.identifier}
- display={f().display}
+ identifier={f.sessionMeta.identifier}
+ display={f.display}
  />
 );
 }
@@ -1363,17 +1381,17 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  // 마스터 발 메시지 (sender=self:*) + peer reply (sender=peer:*) + LLM session (user/assistant) 모두.
  // 3초 폴링.
  const [peerConv, { refetch: refetchPeerConv}] = createResource(
- () => f().kind === "peer" ? f().display : null,
+ () => f.kind === "peer" ? f.display : null,
  (alias) => fetchPeerConversation(alias as string),
  );
  const convPollTimer = setInterval(() => {
- if (f().kind === "peer") void refetchPeerConv();
+ if (f.kind === "peer") void refetchPeerConv();
  }, 3000);
  onCleanup(() => clearInterval(convPollTimer));
 
  // filtered 계산: peer 면 peerConv (timestamp ASC 정렬됨), 아니면 messages 전체.
  const filtered = createMemo<MessageDto[]>(() => {
- if (f().kind === "peer") {
+ if (f.kind === "peer") {
  return peerConv() ?? [];
  }
  return messages() ?? [];
@@ -1387,7 +1405,7 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  <>
  <header class="messenger-thread-head">
  <div style="display:flex; align-items:center; gap:10px;">
- <h2 style="margin:0;"> {f().display}</h2>
+ <h2 style="margin:0;"> {f.display}</h2>
  {/* rc.233 — 설정(⚙) 토글: 우측 상세/설정 패널(3단) on/off. */}
  <button
  type="button"
@@ -1400,14 +1418,14 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  </div>
  {/* L2 4-tuple — alias · machine · address · fingerprint */}
  <small>
- {f().meta?.machine ? `${f().meta?.machine} · ` : ""}
- {f().meta?.address?.slice(0, 18) || ""}
- {f().meta?.public_key_hex
- ? ` · ${fingerprint(f().meta!.public_key_hex)}`
+ {f.meta?.machine ? `${f.meta?.machine} · ` : ""}
+ {f.meta?.address?.slice(0, 18) || ""}
+ {f.meta?.public_key_hex
+ ? ` · ${fingerprint(f.meta.public_key_hex)}`
  : ""}
  </small>
  {/* rc.224 — peer 친구만 탭 노출. rc.233 — 화면(tmux) 기본, 대화 보조. */}
- <Show when={f().kind === "peer"}>
+ <Show when={f.kind === "peer"}>
  <div class="messenger-peer-tabs" style="display:flex; gap:4px; margin-top:8px;">
  <button
  type="button"
@@ -1429,20 +1447,20 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  </header>
  <section class="messenger-thread-body">
  <Show
- when={f().kind === "peer" && peerTab() === "screen"}
+ when={f.kind === "peer" && peerTab() === "screen"}
  fallback={
  <Show
  when={(filtered() ?? []).length > 0}
  fallback={
  <div class="messenger-placeholder">
  {t("messenger.thread-empty") ||
- `${f().display} 의 메시지 없음 — daemon 가동 + 메시지 도착 시 3초 내 표시됩니다.`}
+ `${f.display} 의 메시지 없음 — daemon 가동 + 메시지 도착 시 3초 내 표시됩니다.`}
  </div>
 }
  >
  {/* rc.212 — peer 면 timestamp ASC (오래된 → 최신 아래). 아니면 기존 reverse. */}
  <ul class="messenger-thread-list">
- <For each={f().kind === "peer" ? filtered() : filtered().slice().reverse()}>
+ <For each={f.kind === "peer" ? filtered() : filtered().slice().reverse()}>
  {(m) => {
  const self = isSelfSender(m.sender);
  // rc.212 — sender 측 (마스터) = 오른쪽 정렬 + 파란 톤. peer/assistant = 왼쪽 + 회색 톤.
@@ -1478,19 +1496,21 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
 }
  >
  {/* rc.224 — tmux 화면 preview. alias = tmux session name. */}
- <TmuxPreview alias={f().display} />
+ <TmuxPreview alias={f.display} />
  </Show>
  </section>
  <PeerInput
- friend={f()}
+ friend={f}
  onSent={() => {
  void refetchMessages();
- if (f().kind === "peer") void refetchPeerConv();
+ if (f.kind === "peer") void refetchPeerConv();
 }}
  />
  </>
 );
 }}
+ </Show>
+)}
  </Show>
  </main>
 
