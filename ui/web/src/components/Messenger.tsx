@@ -345,6 +345,13 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  const initialSidepanel = (() => { const v = parseInt(localStorage.getItem("messenger.sidepanel_w") || "320"); return isNaN(v) ? 320 : v; })();
  const [sidebarW, setSidebarW] = createSignal(initialSidebar);
  const [sidepanelW, setSidepanelW] = createSignal(initialSidepanel);
+ // rc.233 — 설정 패널(우측 sidepanel) 토글. 기본 숨김(2단) → 설정 버튼 클릭 시 3단.
+ const [showSettings, setShowSettings] = createSignal(localStorage.getItem("messenger.show_settings") === "1");
+ function toggleSettings() {
+   const v = !showSettings();
+   setShowSettings(v);
+   localStorage.setItem("messenger.show_settings", v ? "1" : "0");
+ }
  function startResize(which: "left" | "right", e: MouseEvent) {
  e.preventDefault();
  const startX = e.clientX;
@@ -627,7 +634,9 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  return list;
 });
 
+ // rc.233 — sidepanel(상세/설정) 은 설정 버튼 토글(showSettings) 시만. 기본 2단.
  const hasSidepanel = () =>
+ showSettings() &&
  leftMode() === "agent" &&
  !!selectedFriend() &&
  (selectedFriend()!.kind === "peer" ||
@@ -704,6 +713,16 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  {leftMode() === "agent" ? " 에이전트·봇" : " 스레드"}
  </strong>
  <Show when={leftMode() === "agent"}>
+ <span style="display:flex; gap:6px; align-items:center;">
+ {/* rc.233 — 설정(⚙) 토글: 우측 상세/설정 패널(3단) on/off. 모든 친구 종류에서 작동. */}
+ <button
+ type="button"
+ onClick={toggleSettings}
+ title={showSettings() ? "설정 패널 닫기 (2단)" : "설정 패널 열기 (3단)"}
+ style={`padding:4px 9px; border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:13px; background:${showSettings() ? "rgba(58, 130, 246, 0.25)" : "var(--surface-2)"}; color:var(--text-1);`}
+ >
+ ⚙ 설정
+ </button>
  <button
  type="button"
  class="messenger-add-btn"
@@ -713,6 +732,7 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  >
  + 추가
  </button>
+ </span>
  </Show>
  </header>
 
@@ -812,21 +832,16 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  } else if (f.kind === "discord" || f.kind === "telegram") {
  dotColor = "#06c"; dotTitle = "채널 (항상 enable)";
  }
+ // rc.233 — P/$ 색배지 아이콘 제거. status dot 1개 + 작은 kind 글리프(muted)로 정리.
+ const isConn = dotColor !== "#666";
  return (
  <>
  <span
- class="messenger-friend-icon"
- title={info.label}
- style={`background:${info.bg}; color:${info.color}; width:18px; height:18px; border-radius:3px; display:inline-flex; align-items:center; justify-content:center; font-size:11px; font-weight:bold; margin-right:6px;`}
- >
- {info.icon}
- </span>
- <span
- title={dotTitle}
- style={`display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; background:${dotColor};`}
+ title={`${dotTitle}${isConn ? "" : " · ○ 미연결"}`}
+ style={`display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:7px; flex:none; background:${dotColor};`}
  />
  <span class="messenger-friend-text">
- <span class="messenger-friend-name">
+ <span class="messenger-friend-name" style="font-size:14px;" title={info.label}>
  {f.display}
  {(() => {
  // rc.162 — peer 친구도 display name 으로 명시 등록 시 ✓ MSG 표시.
@@ -839,10 +854,8 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  // peer 친구는 display name 매칭만 (false positive 줄임)
  if (set && f.display && set.has(f.display)) {
  return (
- <span title="메신저 등록됨 (peer)"
- style="margin-left:5px; padding:0 5px; background:#238636; color:white; border-radius:3px; font-size:9px; font-weight:bold;">
- ✓ MSG
- </span>
+ <span title="메신저 등록됨 (peer) — 다른 peer 의 list_peers 에 노출"
+ style="display:inline-block; width:6px; height:6px; border-radius:50%; margin-left:6px; background:#238636;" />
  );
  }
  return null;
@@ -861,9 +874,7 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  const reg = set && name && set.has(name);
  return reg ? (
  <span title="메신저 등록됨 — 다른 peer 의 list_peers 에 노출"
- style="margin-left:5px; padding:0 5px; background:#238636; color:white; border-radius:3px; font-size:9px; font-weight:bold;">
- ✓ MSG
- </span>
+ style="display:inline-block; width:6px; height:6px; border-radius:50%; margin-left:6px; background:#238636;" />
  ) : null;
  })()}
  {(() => {
@@ -875,6 +886,8 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
   return matches.map((b) => {
     // rc.170+: transient(first_setup) / edge(no_assistant_messages) 는 chip 숨김 — 마스터 무관심.
     if (b.match_status === "first_setup" || b.match_status === "no_assistant_messages") return null;
+    // rc.233 polish — 정상(up_to_date) 도 chip 숨김. fix 필요(no_match)·발송예정(pending) 만 노출.
+    if (b.match_status === "up_to_date") return null;
     const colorByStatus: Record<string, string> = {
       "no_match": "#b00020",        // ✗ 빨강 — fix 필요
       "pending_echo": "#3a82f6",     // → 파랑 — 60초 안 Discord 발송 예정
@@ -899,8 +912,8 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  {/* rc.230 — 머신 inline 태그 (group header 아님, 그냥 태그 수준). */}
  {f.machineTag && f.kind !== "discord" && f.kind !== "telegram" ? (
    <span title={`머신: ${f.machineTag}`}
-     style="margin-left:5px; padding:0 5px; background:rgba(96,165,250,0.15); color:#60a5fa; border-radius:3px; font-size:9px;">
-     🏠 {f.machineTag}
+     style="margin-left:auto; padding:0 6px; color:var(--text-3); font-size:10px; opacity:0.7; white-space:nowrap;">
+     {f.machineTag}
    </span>
  ) : null}
  </span>
@@ -1357,13 +1370,24 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
 });
 
  // rc.224 — peer view 안 탭 (대화 / 화면). peer alias = tmux session name 1:1 매핑.
- // 기본 = "conv" 대화. "screen" 선택 시 TmuxPreview (5초 polling, capture-pane text).
- const [peerTab, setPeerTab] = createSignal<"conv" | "screen">("conv");
+ // rc.233 — 기본 = "screen" (터미널 화면). 클릭 즉시 그 세션 tmux capture 표시.
+ const [peerTab, setPeerTab] = createSignal<"conv" | "screen">("screen");
 
  return (
  <>
  <header class="messenger-thread-head">
- <h2> {f().display}</h2>
+ <div style="display:flex; align-items:center; gap:10px;">
+ <h2 style="margin:0;"> {f().display}</h2>
+ {/* rc.233 — 설정(⚙) 토글: 우측 상세/설정 패널(3단) on/off. */}
+ <button
+ type="button"
+ onClick={toggleSettings}
+ title={showSettings() ? "설정 패널 닫기 (2단)" : "설정 패널 열기 (3단)"}
+ style={`margin-left:auto; padding:4px 10px; font-size:13px; cursor:pointer; border:1px solid var(--border); border-radius:4px; background:${showSettings() ? "rgba(58, 130, 246, 0.25)" : "transparent"}; color:inherit;`}
+ >
+ ⚙ 설정
+ </button>
+ </div>
  {/* L2 4-tuple — alias · machine · address · fingerprint */}
  <small>
  {f().meta?.machine ? `${f().meta?.machine} · ` : ""}
@@ -1372,16 +1396,9 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  ? ` · ${fingerprint(f().meta!.public_key_hex)}`
  : ""}
  </small>
- {/* rc.224 — peer 친구만 탭 노출 (alias = tmux session name 매핑). */}
+ {/* rc.224 — peer 친구만 탭 노출. rc.233 — 화면(tmux) 기본, 대화 보조. */}
  <Show when={f().kind === "peer"}>
  <div class="messenger-peer-tabs" style="display:flex; gap:4px; margin-top:8px;">
- <button
- type="button"
- onClick={() => setPeerTab("conv")}
- style={`padding:4px 12px; font-size:12px; cursor:pointer; border:1px solid var(--border); border-radius:4px; background:${peerTab() === "conv" ? "rgba(58, 130, 246, 0.25)" : "transparent"}; color:inherit;`}
- >
- 대화
- </button>
  <button
  type="button"
  onClick={() => setPeerTab("screen")}
@@ -1389,6 +1406,13 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  style={`padding:4px 12px; font-size:12px; cursor:pointer; border:1px solid var(--border); border-radius:4px; background:${peerTab() === "screen" ? "rgba(58, 130, 246, 0.25)" : "transparent"}; color:inherit;`}
  >
  화면
+ </button>
+ <button
+ type="button"
+ onClick={() => setPeerTab("conv")}
+ style={`padding:4px 12px; font-size:12px; cursor:pointer; border:1px solid var(--border); border-radius:4px; background:${peerTab() === "conv" ? "rgba(58, 130, 246, 0.25)" : "transparent"}; color:inherit;`}
+ >
+ 대화
  </button>
  </div>
  </Show>
@@ -1467,6 +1491,7 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  {/* 우: 12 탭 사이드 패널 (사양 §5 — peer 또는 session friend 선택 시) */}
  <Show
  when={
+ showSettings() &&
  leftMode() === "agent" &&
  selectedFriend() &&
  (selectedFriend()!.kind === "peer" ||
@@ -1523,6 +1548,8 @@ function TmuxPreview(props: { alias: string}) {
  const [error, setError] = createSignal<string | null>(null);
  const [dead, setDead] = createSignal<boolean>(false);
  const [autoPoll, setAutoPoll] = createSignal<boolean>(true);
+ // rc.233 — 첫 fetch 전 loading spinner. 클릭 즉시 1회 fetch → < 1s 목표.
+ const [loading, setLoading] = createSignal<boolean>(true);
  let pollTimer: number | undefined;
 
  interface SessionScreenDto {
@@ -1557,7 +1584,9 @@ function TmuxPreview(props: { alias: string}) {
  setFetchedAt(dto.fetched_at || "");
  setError(null);
  setDead(false);
+ setLoading(false);
  } catch (e) {
+ setLoading(false);
  const msg = String(e);
  setError(msg);
  // 404 / not found / session not exist → dead. polling stop.
@@ -1592,6 +1621,7 @@ function TmuxPreview(props: { alias: string}) {
  setDead(false);
  setError(null);
  setContent("");
+ setLoading(true);
  void refresh();
  startPolling();
  });
@@ -1606,17 +1636,17 @@ function TmuxPreview(props: { alias: string}) {
  if (on && !dead()) startPolling();
  });
 
- // 마지막 ~30 줄만 표시 (preview 목적).
+ // rc.233 — 중앙 메인 화면 = tail 60 줄 (preview 보다 넉넉히).
  const tailContent = createMemo<string>(() => {
  const c = content();
  if (!c) return "";
  const allLines = c.split(/\r?\n/);
- const tail = allLines.slice(-30);
+ const tail = allLines.slice(-60);
  return tail.join("\n");
  });
 
  return (
- <div class="tmux-preview-wrap" style="padding:12px; display:flex; flex-direction:column; gap:8px;">
+ <div class="tmux-preview-wrap" style="padding:12px; display:flex; flex-direction:column; gap:8px; height:100%; box-sizing:border-box;">
  <div class="tmux-preview-toolbar" style="display:flex; gap:8px; align-items:center; font-size:12px; opacity:0.85;">
  <strong>tmux: {props.alias}</strong>
  <span style="opacity:0.6;">{sourceNote()}</span>
@@ -1652,10 +1682,17 @@ function TmuxPreview(props: { alias: string}) {
  fetch error: {error()}
  </div>
  </Show>
+ <Show when={loading() && !content() && !dead()}>
+ <div style="flex:1; display:flex; align-items:center; justify-content:center; color:#7b61ff; font-size:13px; gap:8px;">
+ <span style="display:inline-block; width:14px; height:14px; border:2px solid #7b61ff; border-top-color:transparent; border-radius:50%; animation:tmux-spin 0.7s linear infinite;" />
+ 화면 불러오는 중…
+ </div>
+ <style>{`@keyframes tmux-spin{to{transform:rotate(360deg)}}`}</style>
+ </Show>
  <pre
  class="tmux-preview"
- style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size:12px; background:#0a0a0a; color:#e6edf3; padding:12px; border-radius:4px; white-space:pre; overflow:auto; max-height:500px; margin:0;"
- >{tailContent() || (dead() ? "" : "(loading…)")}</pre>
+ style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size:12px; background:#0a0a0a; color:#e6edf3; padding:12px; border-radius:4px; white-space:pre; overflow:auto; flex:1; min-height:0; margin:0;"
+ >{tailContent()}</pre>
  <div style="font-size:10px; opacity:0.5; text-align:right;">
  {lines() > 0 ? `${lines()} lines total · tail 30 · ` : ""}
  {fetchedAt() ? `fetched ${fmtTime(fetchedAt())}` : ""}

@@ -668,7 +668,7 @@ input:focus-visible {
 .messenger-friend-icon.kind-discord { background: #4f4789; color: #d8d6ff; }
 .messenger-friend-icon.kind-telegram { background: #2c5a7a; color: #b6e1ff; }
 .messenger-friend-text { display: flex; flex-direction: row; align-items: baseline; gap: 8px; min-width: 0; flex: 1; }
-.messenger-friend-name { font-size: 13px; color: #e6e6e6; }
+.messenger-friend-name { font-size: 14px; color: #e6e6e6; display: flex; align-items: center; flex: 1; min-width: 0; }
 .messenger-friend-sub {
   font-size: 10px; color: #777;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;
