@@ -14,6 +14,7 @@ pub mod replay;
 pub mod tailscale;
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::{
@@ -102,6 +103,10 @@ pub type Result<T> = std::result::Result<T, TransportError>;
 pub struct ServerHandle {
     pub bound_addr: SocketAddr,
     received: Arc<Mutex<Vec<Envelope>>>,
+    /// rc.238 — inbound_processor 가 매 tick 마다 update 하는 마지막 tick 시각 (unix epoch secs).
+    /// health endpoint 가 `last_inbound_tick_secs_ago` 로 노출 → 외부 watchdog 가 stuck 감지.
+    /// 0 = 아직 한 번도 tick 안 함.
+    last_inbound_tick: Arc<AtomicI64>,
     join: JoinHandle<()>,
 }
 
@@ -109,6 +114,18 @@ impl ServerHandle {
     /// 지금까지 수신한 모든 envelope (clone). 큐에서 제거 안 함.
     pub fn received(&self) -> Vec<Envelope> {
         self.received.lock().expect("poisoned").clone()
+    }
+
+    /// rc.238 — inbound_processor 가 매 tick 마다 호출. 현재 unix epoch secs 기록.
+    /// health endpoint 가 이를 읽어 `last_inbound_tick_secs_ago` 계산.
+    pub fn mark_inbound_tick(&self) {
+        let now = chrono::Utc::now().timestamp();
+        self.last_inbound_tick.store(now, Ordering::Relaxed);
+    }
+
+    /// rc.238 — 공유 AtomicI64 핸들 반환 (별도 task 에서 mark 하고 싶을 때).
+    pub fn inbound_tick_handle(&self) -> Arc<AtomicI64> {
+        self.last_inbound_tick.clone()
     }
 
     /// 큐를 비우고 모든 envelope 반환. 처리 중 빈 큐 보장.
@@ -133,6 +150,8 @@ struct AppState {
     metrics: Option<MetricsProvider>,
     replay: Arc<replay::ReplayCache>,
     rate_limiter: Arc<rate_limit::RateLimiter>,
+    /// rc.238 — inbound_processor 의 마지막 tick (unix epoch secs). 0 = 미tick.
+    last_inbound_tick: Arc<AtomicI64>,
 }
 
 pub async fn spawn_server(bind_addr: SocketAddr) -> Result<ServerHandle> {
@@ -176,12 +195,14 @@ async fn spawn_server_inner(
     rate_limiter: Arc<rate_limit::RateLimiter>,
 ) -> Result<ServerHandle> {
     let received = Arc::new(Mutex::new(Vec::new()));
+    let last_inbound_tick = Arc::new(AtomicI64::new(0));
     let state = AppState {
         received: received.clone(),
         started_at: std::time::Instant::now(),
         metrics,
         replay: Arc::new(replay::ReplayCache::default()),
         rate_limiter,
+        last_inbound_tick: last_inbound_tick.clone(),
     };
 
     let app = Router::new()
@@ -203,6 +224,7 @@ async fn spawn_server_inner(
     Ok(ServerHandle {
         bound_addr,
         received,
+        last_inbound_tick,
         join,
     })
 }
@@ -219,6 +241,11 @@ pub struct HealthResponse {
     pub tailscale_state: Option<String>,
     /// Tailscale 노드 IPv4 (있을 때).
     pub tailscale_ipv4: Option<String>,
+    /// rc.238 — inbound_processor 의 마지막 tick 이후 경과 (초).
+    /// inbound_processor 가 stuck 이면 이 값이 계속 증가 → 외부 watchdog 가 120초+ 면 restart.
+    /// None = daemon 가 inbound_processor 와 연결 안 됨 (아직 첫 tick 전 또는 미연동).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_inbound_tick_secs_ago: Option<u64>,
 }
 
 async fn health_check(State(state): State<AppState>) -> Json<HealthResponse> {
@@ -231,6 +258,14 @@ async fn health_check(State(state): State<AppState>) -> Json<HealthResponse> {
     } else {
         (None, None)
     };
+    // rc.238 — inbound_processor 마지막 tick 으로부터 경과 (초). 0 = 미tick (아직 None).
+    let last_tick = state.last_inbound_tick.load(Ordering::Relaxed);
+    let last_inbound_tick_secs_ago = if last_tick > 0 {
+        let now = chrono::Utc::now().timestamp();
+        Some((now - last_tick).max(0) as u64)
+    } else {
+        None
+    };
     Json(HealthResponse {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
@@ -238,6 +273,7 @@ async fn health_check(State(state): State<AppState>) -> Json<HealthResponse> {
         received_count,
         tailscale_state,
         tailscale_ipv4,
+        last_inbound_tick_secs_ago,
     })
 }
 

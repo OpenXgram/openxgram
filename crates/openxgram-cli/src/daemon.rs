@@ -124,6 +124,9 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
         loop {
             interval.tick().await;
             tick_count += 1;
+            // rc.238 — 매 tick 마다 health 의 last_inbound_tick update. 외부 watchdog 가 stuck 감지.
+            // drain + process 전에 mark → tick 자체가 돌고 있음을 보장 (process 가 느려도 tick 진행).
+            received_for_task.mark_inbound_tick();
             let envelopes = received_for_task.drain_received();
             if tick_count % 60 == 0 {
                 tracing::debug!(tick=tick_count, "inbound_processor: heartbeat (no envelopes recently)");
@@ -132,9 +135,13 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
                 continue;
             }
             tracing::info!(count=envelopes.len(), tick=tick_count, "inbound_processor: envelopes drained, calling process_inbound");
+            // rc.238 — process_inbound 는 내부에서 envelope 별 독립 처리 + hang point(tmux/ACK send)
+            // 마다 timeout 적용. 따라서 batch 전체가 hang 하지 않음. 결과는 envelope 단위 skip 누적.
+            // process_inbound 자체는 block_in_place 사용 → 여기 async task 의 worker thread 에서 직접 호출
+            // (spawn_blocking 안에서는 block_in_place 가 panic 하므로 직접 호출 유지).
             match process_inbound(&data_dir_clone, &envelopes) {
                 Ok(_) => tracing::info!(count=envelopes.len(), "inbound_processor: process_inbound 성공"),
-                Err(e) => tracing::warn!(error = %e, "inbound_processor: process_inbound 실패"),
+                Err(e) => tracing::warn!(error = %e, "inbound_processor: process_inbound 실패 (tick 계속)"),
             }
         }
     });
@@ -577,50 +584,66 @@ pub fn process_inbound(
             let injected_clone = injected.clone();
             // process_inbound 는 sync — block_in_place + block_on 으로 async tmux send-keys 호출
             // rc.219 — return bool 로 tmux inject 성공/실패 명시 (silent debug 제거).
+            // rc.238 — 전체 tmux inject 를 5초 timeout 으로 감쌈. tmux send-keys / list-sessions /
+            // resolve_alias_to_tmux 중 하나라도 hang 하면 inbound_processor tick 전체가 멈추던
+            // 근본 버그(23:47 stuck) 해결. timeout 시 이 envelope inject 만 포기 + WARN, 다음 진행.
             tmux_injected = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async move {
-                    if let Some((session, idx)) =
-                        crate::notify::resolve_alias_to_tmux(&target_clone).await
-                    {
-                        let target = format!("{}:{}", session, idx);
-                        let wrapped = format!("\x1b[200~{}\x1b[201~", injected_clone);
-                        // rc.198 — Windows daemon → wsl tmux 자동 wrap
-                        let _ = crate::notify::tmux_command_async()
-                            .args(["send-keys", "-t", &target, "-l", &wrapped])
-                            .output()
-                            .await;
-                        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-                        let _ = crate::notify::tmux_command_async()
-                            .args(["send-keys", "-t", &target, "Enter"])
-                            .output()
-                            .await;
-                        tracing::info!(
-                            alias = %target_clone,
-                            tmux_session = %session,
-                            "rc.197 inbound push → tmux LLM 화면에 inject"
-                        );
-                        true
-                    } else {
-                        // rc.219 — silent debug 승격 → WARN. tmux session list 도 함께 log.
-                        let sessions_listed = crate::notify::tmux_command_async()
-                            .args(["list-sessions", "-F", "#{session_name}"])
-                            .output()
-                            .await
-                            .ok()
-                            .and_then(|o| {
-                                if o.status.success() {
-                                    Some(String::from_utf8_lossy(&o.stdout).to_string())
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or_else(|| "(tmux list-sessions 실패 또는 tmux 미설치)".to_string());
-                        tracing::warn!(
-                            target_alias = %target_clone,
-                            tmux_sessions = %sessions_listed.replace('\n', ","),
-                            "rc.219 tmux 매칭 안 됨 — alias → tmux session resolve 실패"
-                        );
-                        false
+                    let inject_fut = async move {
+                        if let Some((session, idx)) =
+                            crate::notify::resolve_alias_to_tmux(&target_clone).await
+                        {
+                            let target = format!("{}:{}", session, idx);
+                            let wrapped = format!("\x1b[200~{}\x1b[201~", injected_clone);
+                            // rc.198 — Windows daemon → wsl tmux 자동 wrap
+                            let _ = crate::notify::tmux_command_async()
+                                .args(["send-keys", "-t", &target, "-l", &wrapped])
+                                .output()
+                                .await;
+                            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                            let _ = crate::notify::tmux_command_async()
+                                .args(["send-keys", "-t", &target, "Enter"])
+                                .output()
+                                .await;
+                            tracing::info!(
+                                alias = %target_clone,
+                                tmux_session = %session,
+                                "rc.197 inbound push → tmux LLM 화면에 inject"
+                            );
+                            true
+                        } else {
+                            // rc.219 — silent debug 승격 → WARN. tmux session list 도 함께 log.
+                            let sessions_listed = crate::notify::tmux_command_async()
+                                .args(["list-sessions", "-F", "#{session_name}"])
+                                .output()
+                                .await
+                                .ok()
+                                .and_then(|o| {
+                                    if o.status.success() {
+                                        Some(String::from_utf8_lossy(&o.stdout).to_string())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or_else(|| "(tmux list-sessions 실패 또는 tmux 미설치)".to_string());
+                            tracing::warn!(
+                                target_alias = %target_clone,
+                                tmux_sessions = %sessions_listed.replace('\n', ","),
+                                "rc.219 tmux 매칭 안 됨 — alias → tmux session resolve 실패"
+                            );
+                            false
+                        }
+                    };
+                    // rc.238 — 5초 timeout. tmux 명령 hang 시 tick 멈춤 근본 fix.
+                    match tokio::time::timeout(std::time::Duration::from_secs(5), inject_fut).await {
+                        Ok(injected) => injected,
+                        Err(_elapsed) => {
+                            tracing::warn!(
+                                target_alias = %target_alias,
+                                "rc.238 tmux inject TIMEOUT (5s) — 이 envelope inject 포기, 다음 진행 (tick stuck 회피)"
+                            );
+                            false
+                        }
                     }
                 })
             });
@@ -673,25 +696,38 @@ pub fn process_inbound(
                 };
                 let ulid_for_log = ack_ulid.clone();
                 let url_clone = url.clone();
+                // rc.238 — ACK 송신도 5초 timeout. send_envelope (reqwest) 가 hang 하면
+                // inbound_processor tick 전체가 멈추던 hang point. timeout 시 ACK 포기 + WARN, 다음 진행.
                 tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(async move {
-                        match openxgram_transport::send_envelope(&url_clone, &ack_envelope).await {
-                            Ok(()) => {
-                                tracing::info!(
-                                    ack_for_ulid = %ulid_for_log,
-                                    ack_status = %ack_status_val,
-                                    target_url = %url_clone,
-                                    "rc.219 ACK envelope 송신 OK"
-                                );
+                        let send_fut = async {
+                            match openxgram_transport::send_envelope(&url_clone, &ack_envelope).await {
+                                Ok(()) => {
+                                    tracing::info!(
+                                        ack_for_ulid = %ulid_for_log,
+                                        ack_status = %ack_status_val,
+                                        target_url = %url_clone,
+                                        "rc.219 ACK envelope 송신 OK"
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        error = %e,
+                                        ack_for_ulid = %ulid_for_log,
+                                        target_url = %url_clone,
+                                        "rc.219 ACK envelope 송신 실패 (sender 측 ack_at UPDATE 못 함)"
+                                    );
+                                }
                             }
-                            Err(e) => {
-                                tracing::warn!(
-                                    error = %e,
-                                    ack_for_ulid = %ulid_for_log,
-                                    target_url = %url_clone,
-                                    "rc.219 ACK envelope 송신 실패 (sender 측 ack_at UPDATE 못 함)"
-                                );
-                            }
+                        };
+                        if tokio::time::timeout(std::time::Duration::from_secs(5), send_fut)
+                            .await
+                            .is_err()
+                        {
+                            tracing::warn!(
+                                ack_for_ulid = %ack_ulid,
+                                "rc.238 ACK 송신 TIMEOUT (5s) — ACK 포기, 다음 envelope 진행 (tick stuck 회피)"
+                            );
                         }
                     })
                 });
