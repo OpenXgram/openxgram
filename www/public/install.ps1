@@ -389,34 +389,80 @@ set XGRAM_TRANSPORT_PUBLIC_URL=$transportUrl
 "@
 [System.IO.File]::WriteAllText($batPath, $batContent, [System.Text.Encoding]::ASCII)
 
-# Kill 옛 daemon + WMI detached spawn (parent process tree separation)
+# Kill 옛 daemon (NSSM 으로 영속화하므로 detached spawn 불필요)
 Get-Process xgram -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
 Start-Sleep 1
-$wmi = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList "cmd /c `"$batPath`"" 2>&1
+
+# rc.239 (이슈 #66) — NSSM Windows service 자동 등록 (영속 boot + auto-restart).
+#   기존엔 zalman 등 수동 등록 → install.ps1 에 박아 재발 방지.
+Write-Host ''
+Write-Host '==> Step 8.6 (rc.239): NSSM Windows service 자동 등록 (영속 boot)' -ForegroundColor Cyan
+$nssm = (Get-Command nssm -EA SilentlyContinue).Source
+if (-not $nssm) {
+    Write-Host '    nssm 미설치 — winget 으로 자동 설치 시도' -ForegroundColor Yellow
+    try {
+        winget install --id NSSM.NSSM -e --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
+        $nssm = (Get-Command nssm -EA SilentlyContinue).Source
+    } catch { }
+}
+$nssmOk = $false
+if ($nssm) {
+    try {
+        # 기존 서비스 정리 후 재등록 (idempotent)
+        & $nssm stop OpenXgram 2>$null | Out-Null
+        & $nssm remove OpenXgram confirm 2>$null | Out-Null
+        & $nssm install OpenXgram "$INSTALL\xgram.exe" | Out-Null
+        & $nssm set OpenXgram AppParameters "daemon --data-dir `"$dataDir`" --bind 0.0.0.0:47300 --gui-bind 0.0.0.0:47302" | Out-Null
+        & $nssm set OpenXgram AppEnvironmentExtra "XGRAM_KEYSTORE_PASSWORD=$keystorePw" "XGRAM_TRANSPORT_PUBLIC_URL=$transportUrl" | Out-Null
+        & $nssm set OpenXgram AppStdout "$dataDir\daemon.log" | Out-Null
+        & $nssm set OpenXgram AppStderr "$dataDir\daemon.log" | Out-Null
+        & $nssm set OpenXgram Start SERVICE_AUTO_START | Out-Null
+        & $nssm start OpenXgram | Out-Null
+        $nssmOk = $true
+        Write-Host '    [OK] NSSM 서비스 OpenXgram 등록 + 시작 (재부팅 후 자동 가동)' -ForegroundColor Green
+    } catch {
+        Write-Host "    [WARN] NSSM 등록 실패: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+if (-not $nssmOk) {
+    # NSSM 불가 시 WMI detached spawn fallback (1회 가동)
+    Write-Host '    NSSM 불가 — WMI detached spawn fallback (영속화 X, 1회 가동)' -ForegroundColor Yellow
+    Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList "cmd /c `"$batPath`"" 2>&1 | Out-Null
+}
 Start-Sleep 5
 
 # Health verify
 try {
     $h = Invoke-WebRequest -Uri http://127.0.0.1:47300/v1/health -UseBasicParsing -TimeoutSec 3 -EA Stop
-    Write-Host "    [OK] daemon 47300 health 응답 (pid=$($wmi.ProcessId))" -ForegroundColor Green
+    Write-Host "    [OK] daemon 47300 health 응답" -ForegroundColor Green
 } catch {
     Write-Host "    [WARN] daemon 47300 응답 안 함: $($_.Exception.Message)" -ForegroundColor Yellow
     Write-Host "           log: $dataDir\daemon.log" -ForegroundColor DarkGray
 }
 
+# rc.239 (이슈 #66) — WSL daemon 도 영속화: WSL 안 install.sh 자동 실행 (systemd user service 등록).
 Write-Host ''
-Write-Host '==> Step 8.6: 영속 boot 수동 안내' -ForegroundColor Cyan
-Write-Host '    재부팅 후 daemon 다시 띄우려면:' -ForegroundColor White
-Write-Host "        $batPath" -ForegroundColor Yellow
-Write-Host ''
-Write-Host '    자동 boot 필요 시 NSSM (Windows Service Manager, 선택):' -ForegroundColor White
-Write-Host "        nssm install OpenXgram $INSTALL\xgram.exe" -ForegroundColor Yellow
-Write-Host "        nssm set OpenXgram AppParameters daemon --data-dir `"$dataDir`" --bind 0.0.0.0:47300 --gui-bind 0.0.0.0:47302" -ForegroundColor Yellow
-Write-Host "        nssm set OpenXgram AppEnvironmentExtra XGRAM_KEYSTORE_PASSWORD=$keystorePw" -ForegroundColor Yellow
-Write-Host "        nssm start OpenXgram" -ForegroundColor Yellow
-Write-Host ''
-Write-Host '    WSL daemon (있을 때) 수동:' -ForegroundColor White
-Write-Host "        wsl -- bash -lc 'export XGRAM_KEYSTORE_PASSWORD=... && setsid nohup ~/.local/bin/xgram daemon --bind 0.0.0.0:17400 --gui-bind 0.0.0.0:17402 > ~/.openxgram/wsl-daemon.log 2>&1 < /dev/null & disown'" -ForegroundColor Yellow
+Write-Host '==> Step 8.7 (rc.239): WSL daemon systemd 영속화 (install.sh 자동 실행)' -ForegroundColor Cyan
+$wslExe = (Get-Command wsl -EA SilentlyContinue).Source
+if ($wslExe) {
+    try {
+        $wslDistros = (& wsl --list --quiet 2>$null) | Where-Object { $_ -and $_.Trim() }
+        if ($wslDistros) {
+            Write-Host '    WSL detect — install.sh (systemd user service) 자동 실행' -ForegroundColor White
+            # keystore password 를 env 로 넘겨 WSL install.sh 가 EnvironmentFile 작성
+            $wslCmd = "export XGRAM_KEYSTORE_PASSWORD='$keystorePw'; curl -fsSL https://openxgram.org/install.sh | bash -s -- --full"
+            & wsl -- bash -lc $wslCmd 2>&1 | ForEach-Object { Write-Host "      $_" -ForegroundColor DarkGray }
+            Write-Host '    [OK] WSL daemon systemd 등록 시도 완료 (openxgram-wsl-daemon.service)' -ForegroundColor Green
+        } else {
+            Write-Host '    (WSL distro 없음 — Step 8.7 skip)' -ForegroundColor DarkGray
+        }
+    } catch {
+        Write-Host "    [WARN] WSL install.sh 실행 실패: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "    수동: wsl -- bash -lc 'curl -fsSL https://openxgram.org/install.sh | bash -s -- --full'" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host '    (wsl.exe 없음 — Step 8.7 skip)' -ForegroundColor DarkGray
+}
 
 # 9. Auto MCP + identity + SessionStart hook (rc.169+).
 #    Claude Code 가 깔려있으면 (~/.claude.json 존재) 자동으로 mcp-install --full 실행.

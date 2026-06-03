@@ -262,6 +262,14 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // 메신저 v1.3 §3.2 — 머신×세션 통합 detector (M-1).
         .route("/v1/gui/sessions", get(gui_sessions))
         .route("/v1/gui/sessions/{identifier}/screen", get(gui_session_screen))
+        // rc.239 (이슈 #66) — cross-machine tmux 화면 read-only 미러.
+        //   unlock 불필요 (auth X) — keystore password 불일치/M-8 lockout 제거.
+        //   tailnet(Tailscale 100.x/CGNAT) 또는 localhost 에서만 응답 (allow_anonymous_screen).
+        //   tmux 화면 capture 만 반환 — password/vault/메시지 내용 노출 X.
+        .route(
+            "/v1/gui/public/session-screen/{identifier}",
+            get(gui_public_session_screen),
+        )
         .route("/v1/gui/sessions/{identifier}/input", post(gui_session_input))
         // UI-MEMORY-SPEC v1.1 §K7 / §1.2 — L0 raw API + 5층 stats
         .route("/v1/gui/memory/l0", post(gui_memory_l0_save).get(gui_memory_l0_list))
@@ -531,7 +539,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
     println!("  ✓ GUI HTTP API bound: http://{bound}");
 
     tokio::spawn(async move {
-        if let Err(e) = axum::serve(listener, app).await {
+        // rc.239 — ConnectInfo<SocketAddr> 주입 (anonymous screen endpoint 의 tailnet IP 체크용).
+        let svc = app.into_make_service_with_connect_info::<SocketAddr>();
+        if let Err(e) = axum::serve(listener, svc).await {
             tracing::error!(error = %e, "daemon-gui server stopped");
         }
     });
@@ -1264,6 +1274,42 @@ async fn gui_session_screen(
             Err(e) => return Ok(unavailable(&format!("http client: {e}"))),
         };
         let base = address.trim_end_matches('/');
+        // rc.239 (이슈 #66) — 먼저 anonymous read-only screen 시도 (unlock 불필요).
+        //   peer 가 rc.239+ 이면 /v1/gui/public/session-screen 가 auth 없이 tmux 화면 반환.
+        //   keystore password 불일치/M-8 lockout 회피. inner-id 가 없으면 "0" 으로 첫 세션.
+        {
+            let inner_for_anon = inner_opt.unwrap_or("0");
+            let anon_url = format!(
+                "{base}/v1/gui/public/session-screen/{}",
+                urlencoding::encode(inner_for_anon)
+            );
+            if let Ok(r) = client.get(&anon_url).send().await {
+                if r.status().is_success() {
+                    if let Ok(v) = r.json::<serde_json::Value>().await {
+                        let kind_str = v.get("kind").and_then(|x| x.as_str()).unwrap_or("tmux");
+                        let kind = match kind_str {
+                            "tmux" => crate::daemon_gui_sessions::SessionKind::Tmux,
+                            "claude_project" => crate::daemon_gui_sessions::SessionKind::ClaudeProject,
+                            _ => crate::daemon_gui_sessions::SessionKind::XgramSession,
+                        };
+                        let content = v.get("content").and_then(|x| x.as_str()).unwrap_or("");
+                        // 빈 content 가 아니면 anonymous 경로 성공 — unlock 단계 skip.
+                        if !content.is_empty() {
+                            return Ok(Json(crate::daemon_gui_sessions::SessionScreenDto {
+                                identifier: v.get("identifier").and_then(|x| x.as_str()).unwrap_or(inner_for_anon).into(),
+                                kind,
+                                display: v.get("display").and_then(|x| x.as_str()).unwrap_or("?").into(),
+                                content: content.into(),
+                                lines: v.get("lines").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
+                                source_note: format!("[via peer {alias} · anon] {}", v.get("source_note").and_then(|x| x.as_str()).unwrap_or("")),
+                                fetched_at: v.get("fetched_at").and_then(|x| x.as_str()).unwrap_or("").into(),
+                            }));
+                        }
+                    }
+                }
+            }
+            // anonymous 실패 (peer 가 구버전 rc.238- 이거나 미응답) → 아래 unlock fallback.
+        }
         // peer 의 unlock → token (password 평문 로그 금지).
         let unlock = match client.post(format!("{base}/v1/auth/unlock"))
             .json(&serde_json::json!({"password": local_pw}))
@@ -1337,6 +1383,75 @@ async fn gui_session_screen(
         return Ok(Json(dto));
     }
     Ok(Json(crate::daemon_gui_sessions::capture_session(&identifier)))
+}
+
+/// rc.239 (이슈 #66) — anonymous read-only tmux 화면 미러.
+///
+/// 본질: cross-machine proxy 가 remote daemon 의 `/v1/auth/unlock` 을 호출하면
+/// keystore password 불일치 시 M-8 lockout 이 누적됐다 (zalman-wsl 사례).
+/// 이 endpoint 는 **unlock 없이** tmux capture 만 반환 — auth 단계 제거로 lockout 소멸.
+///
+/// 보안: tailnet(Tailscale 100.64.0.0/10 CGNAT) 또는 localhost 에서만 응답.
+///   - 반환은 tmux 화면 capture 뿐 (`capture_session`). password/vault/메시지 내용 노출 X.
+///   - `XGRAM_ANON_SCREEN=0` 으로 명시 차단 가능 (기본 활성).
+async fn gui_public_session_screen(
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<SocketAddr>,
+    Path(identifier): Path<String>,
+) -> Result<Json<crate::daemon_gui_sessions::SessionScreenDto>, (StatusCode, Json<ErrorDto>)> {
+    if std::env::var("XGRAM_ANON_SCREEN").as_deref() == Ok("0") {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorDto {
+                error: "anonymous screen disabled (XGRAM_ANON_SCREEN=0)".into(),
+            }),
+        ));
+    }
+    if !is_tailnet_or_local(peer.ip()) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorDto {
+                error: format!("anonymous screen 은 tailnet/localhost 전용 (src={})", peer.ip()),
+            }),
+        ));
+    }
+    // cross-machine proxy 재귀 차단 — peer:* identifier 는 여기서 처리 안 함.
+    if identifier.starts_with("peer:") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorDto {
+                error: "anonymous screen 은 로컬 세션만 (peer:* 불가)".into(),
+            }),
+        ));
+    }
+    Ok(Json(crate::daemon_gui_sessions::capture_session(&identifier)))
+}
+
+/// 요청 src IP 가 tailnet(Tailscale CGNAT 100.64.0.0/10) 또는 localhost 인지 판정.
+/// anonymous screen endpoint 의 접근 통제 (tmux 화면만이라도 외부 공개 X).
+fn is_tailnet_or_local(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let o = v4.octets();
+            // localhost
+            if v4.is_loopback() {
+                return true;
+            }
+            // Tailscale CGNAT 100.64.0.0/10 (100.64.x.x ~ 100.127.x.x)
+            if o[0] == 100 && (64..=127).contains(&o[1]) {
+                return true;
+            }
+            // private LAN (같은 머신 WSL ↔ Windows 브리지 등) — RFC1918
+            if v4.is_private() {
+                return true;
+            }
+            false
+        }
+        std::net::IpAddr::V6(v6) => v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(is_tailnet_or_local_v4),
+    }
+}
+
+fn is_tailnet_or_local_v4(v4: std::net::Ipv4Addr) -> bool {
+    is_tailnet_or_local(std::net::IpAddr::V4(v4))
 }
 
 #[derive(serde::Deserialize)]

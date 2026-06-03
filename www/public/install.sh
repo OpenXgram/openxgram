@@ -417,31 +417,83 @@ if [ "$PREBUILT_OK" = "1" ]; then
   done
 
   # rc.209 — WSL 도 standalone daemon 정상 가동 (rc.208 symlink-skip 폐기)
-  # 4. daemon 백그라운드 가동 (이미 떠 있으면 skip)
-  if ! pgrep -f "$INSTALL_DIR/xgram daemon" >/dev/null 2>&1; then
-    echo "==> xgram daemon 가동 (Tailscale IP 에 bind, nohup background)"
-    mkdir -p "$DATA_DIR"
-    if [ -n "${PW:-}" ]; then
-      XGRAM_KEYSTORE_PASSWORD="$PW" nohup "$INSTALL_DIR/xgram" daemon \
-        --bind "$TS_IP:47300" --gui-bind "$TS_IP:47302" \
-        > "$DATA_DIR/daemon.log" 2>&1 &
+  # rc.239 (이슈 #66) — WSL daemon 을 systemd user service 로 영속화.
+  #   manual nohup spawn 은 ssh 끊김/재부팅 시 죽음 (반복 발생) → systemd Restart=always.
+  # 4. keystore password 확보 (systemd EnvironmentFile / nohup 양쪽 공통)
+  mkdir -p "$DATA_DIR"
+  if [ -z "${PW:-}" ] && [ -r /dev/tty ]; then
+    printf "    keystore 패스워드 (daemon 가동용): " >/dev/tty
+    stty -echo </dev/tty 2>/dev/null
+    read -r PW </dev/tty
+    stty echo </dev/tty 2>/dev/null
+    printf "\n"
+  fi
+
+  # 4a. WSL + systemd 활성 → user service 등록 (영속화, 핵심 fix)
+  XGRAM_PERSISTED=0
+  if [ "$WSL_DETECTED" = "1" ] && command -v systemctl >/dev/null 2>&1 \
+     && systemctl --user show-environment >/dev/null 2>&1; then
+    echo "==> WSL systemd detect — openxgram-wsl-daemon.service 등록 (영속 + auto-restart)"
+    SVC_DIR="$HOME/.config/systemd/user"
+    ENV_FILE="$DATA_DIR/openxgram.env"
+    mkdir -p "$SVC_DIR"
+    # EnvironmentFile (0600) — keystore password 안전 주입
+    umask 077
+    {
+      echo "# OpenXgram WSL daemon EnvironmentFile (rc.239) — chmod 0600"
+      [ -n "${PW:-}" ] && echo "XGRAM_KEYSTORE_PASSWORD=$PW"
+    } > "$ENV_FILE"
+    chmod 0600 "$ENV_FILE"
+    umask 022
+    cat > "$SVC_DIR/openxgram-wsl-daemon.service" <<EOF
+# OpenXgram WSL standalone daemon (rc.239 이슈 #66 영속화)
+[Unit]
+Description=OpenXgram WSL standalone daemon
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-$ENV_FILE
+ExecStart=$INSTALL_DIR/xgram daemon --bind 0.0.0.0:17400 --gui-bind 0.0.0.0:17402
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+    # 옛 nohup daemon 정리 (port 충돌 방지)
+    pkill -f "$INSTALL_DIR/xgram daemon" 2>/dev/null || true
+    systemctl --user daemon-reload
+    if systemctl --user enable --now openxgram-wsl-daemon.service; then
+      sleep 2
+      systemctl --user --quiet is-active openxgram-wsl-daemon.service && XGRAM_PERSISTED=1
+      echo "    ✓ openxgram-wsl-daemon.service enable + start (재부팅/ssh 끊김 후에도 영속)"
+      echo "      bind=0.0.0.0:17400 gui-bind=0.0.0.0:17402  (Restart=always)"
+      echo "      ⚠ 재부팅 후에도 뜨려면: loginctl enable-linger \$USER (1회)"
+      loginctl enable-linger "$USER" 2>/dev/null || true
     else
-      printf "    keystore 패스워드 (daemon 가동용): " >/dev/tty
-      stty -echo </dev/tty 2>/dev/null
-      read -r PW </dev/tty
-      stty echo </dev/tty 2>/dev/null
-      printf "\n"
-      XGRAM_KEYSTORE_PASSWORD="$PW" nohup "$INSTALL_DIR/xgram" daemon \
-        --bind "$TS_IP:47300" --gui-bind "$TS_IP:47302" \
-        > "$DATA_DIR/daemon.log" 2>&1 &
+      echo "    ⚠ systemd user service 등록 실패 — nohup fallback 으로 전환"
     fi
+  fi
+
+  # 4b. systemd 미사용/실패 시 nohup fallback (이미 떠 있으면 skip)
+  if [ "$XGRAM_PERSISTED" != "1" ] && ! pgrep -f "$INSTALL_DIR/xgram daemon" >/dev/null 2>&1; then
+    if [ "$WSL_DETECTED" = "1" ]; then
+      echo "==> xgram daemon 가동 (nohup fallback — systemd 미활성)"
+      echo "    ⚠ 영속화 안 됨: WSL2 systemd 활성화 권장 (/etc/wsl.conf 에 [boot] systemd=true)"
+    else
+      echo "==> xgram daemon 가동 (Tailscale IP 에 bind, nohup background)"
+    fi
+    XGRAM_KEYSTORE_PASSWORD="${PW:-}" nohup "$INSTALL_DIR/xgram" daemon \
+      --bind "$TS_IP:47300" --gui-bind "$TS_IP:47302" \
+      > "$DATA_DIR/daemon.log" 2>&1 &
     sleep 2
     if ! pgrep -f "$INSTALL_DIR/xgram daemon" >/dev/null 2>&1; then
       echo "[중단] daemon 시작 실패. log 확인: $DATA_DIR/daemon.log"
       exit 1
     fi
     echo "    ✓ daemon 가동 (log: $DATA_DIR/daemon.log)"
-  else
+  elif [ "$XGRAM_PERSISTED" != "1" ]; then
     echo "    (daemon 이미 가동 중 — 건너뜀)"
   fi
 
