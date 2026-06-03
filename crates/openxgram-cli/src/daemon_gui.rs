@@ -1294,7 +1294,9 @@ async fn gui_session_screen(
                         };
                         let content = v.get("content").and_then(|x| x.as_str()).unwrap_or("");
                         // 빈 content 가 아니면 anonymous 경로 성공 — unlock 단계 skip.
-                        if !content.is_empty() {
+                        // rc.241 — 구버전 peer 가 "0" 을 unsupported 로 응답하는 에러 문자열은
+                        //   성공으로 오인하지 않도록 제외 → unlock+첫세션 fallback 으로 넘어감.
+                        if !content.is_empty() && !content.contains("unsupported identifier") {
                             return Ok(Json(crate::daemon_gui_sessions::SessionScreenDto {
                                 identifier: v.get("identifier").and_then(|x| x.as_str()).unwrap_or(inner_for_anon).into(),
                                 kind,
@@ -1423,7 +1425,27 @@ async fn gui_public_session_screen(
             }),
         ));
     }
-    Ok(Json(crate::daemon_gui_sessions::capture_session(&identifier)))
+    // rc.241 (이슈 #66) — cross-machine proxy 는 inner-id 가 없으면 "0" 을 보낸다.
+    //   capture_session("0") 은 unsupported 라, "0"/빈 식별자면 첫 active 로컬 세션을 자동 선택.
+    let resolved: String = if identifier == "0" || identifier.is_empty() {
+        match tokio::task::spawn_blocking(crate::daemon_gui_sessions::collect_sessions).await {
+            Ok(dto) => dto
+                .sessions
+                .into_iter()
+                .max_by_key(|s| match s.status {
+                    crate::daemon_gui_sessions::SessionStatus::Active => 3,
+                    crate::daemon_gui_sessions::SessionStatus::Attached => 2,
+                    crate::daemon_gui_sessions::SessionStatus::Detached => 1,
+                    crate::daemon_gui_sessions::SessionStatus::Stale => 0,
+                })
+                .map(|s| s.identifier)
+                .unwrap_or_else(|| identifier.clone()),
+            Err(_) => identifier.clone(),
+        }
+    } else {
+        identifier.clone()
+    };
+    Ok(Json(crate::daemon_gui_sessions::capture_session(&resolved)))
 }
 
 /// 요청 src IP 가 tailnet(Tailscale CGNAT 100.64.0.0/10) 또는 localhost 인지 판정.

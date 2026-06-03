@@ -476,7 +476,62 @@ EOF
     fi
   fi
 
-  # 4b. systemd 미사용/실패 시 nohup fallback (이미 떠 있으면 skip)
+  # 4a-mac. macOS → launchd LaunchAgent 등록 (영속 + KeepAlive auto-restart)
+  #   rc.241 — macOS 는 systemd 가 없어 nohup 으로 떨어졌고 로그아웃/재부팅 시 죽었음
+  #   (WSL 과 같은 반복 문제). launchd 로 RunAtLoad + KeepAlive 영속화.
+  if [ "$XGRAM_PERSISTED" != "1" ] && [ "$OS" = "darwin" ] && command -v launchctl >/dev/null 2>&1; then
+    echo "==> macOS launchd — us.starian.openxgram.daemon 등록 (영속 + auto-restart)"
+    LA_DIR="$HOME/Library/LaunchAgents"
+    PLIST="$LA_DIR/us.starian.openxgram.daemon.plist"
+    mkdir -p "$LA_DIR"
+    # 옛 nohup daemon 정리 (port 충돌 방지)
+    pkill -f "$INSTALL_DIR/xgram daemon" 2>/dev/null || true
+    umask 077
+    cat > "$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>us.starian.openxgram.daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$INSTALL_DIR/xgram</string>
+    <string>daemon</string>
+    <string>--bind</string><string>$TS_IP:47300</string>
+    <string>--gui-bind</string><string>$TS_IP:47302</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>XGRAM_KEYSTORE_PASSWORD</key><string>${PW:-}</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$DATA_DIR/daemon.log</string>
+  <key>StandardErrorPath</key><string>$DATA_DIR/daemon.log</string>
+</dict>
+</plist>
+EOF
+    chmod 0600 "$PLIST"
+    umask 022
+    GUI_UID="$(id -u)"
+    # 재등록 위해 기존 것 bootout (없으면 무시) 후 bootstrap. 구형 fallback: load -w.
+    launchctl bootout "gui/$GUI_UID" "$PLIST" 2>/dev/null || true
+    if launchctl bootstrap "gui/$GUI_UID" "$PLIST" 2>/dev/null || launchctl load -w "$PLIST" 2>/dev/null; then
+      sleep 2
+      if launchctl print "gui/$GUI_UID/us.starian.openxgram.daemon" >/dev/null 2>&1 \
+         || pgrep -f "$INSTALL_DIR/xgram daemon" >/dev/null 2>&1; then
+        XGRAM_PERSISTED=1
+        echo "    ✓ launchd LaunchAgent 등록 (로그인 시 자동 시작 + 죽으면 자동 재시작)"
+        echo "      bind=$TS_IP:47300 gui-bind=$TS_IP:47302  (KeepAlive)"
+      else
+        echo "    ⚠ launchd 등록했으나 daemon 미확인 — nohup fallback 으로 전환"
+      fi
+    else
+      echo "    ⚠ launchctl 등록 실패 — nohup fallback 으로 전환"
+    fi
+  fi
+
+  # 4b. systemd/launchd 미사용/실패 시 nohup fallback (이미 떠 있으면 skip)
   if [ "$XGRAM_PERSISTED" != "1" ] && ! pgrep -f "$INSTALL_DIR/xgram daemon" >/dev/null 2>&1; then
     if [ "$WSL_DETECTED" = "1" ]; then
       echo "==> xgram daemon 가동 (nohup fallback — systemd 미활성)"
