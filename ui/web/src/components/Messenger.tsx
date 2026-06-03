@@ -627,10 +627,13 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  const selectedFriend = createMemo(() => {
  const id = selected();
  if (!id) { lastSelectedFriend = null; return null;}
+ // 같은 id 면 캐시된 객체 reference 를 그대로 반환 → keyed Show 의 identity 유지.
+ // friends().find 는 sessions 폴링(10s)마다 새 객체를 만들어 identity 가 바뀌므로,
+ // 그대로 쓰면 keyed Show 가 SessionScreen(xterm) 을 폴링마다 dispose/재생성 → 깜빡임(이슈 #68).
+ // id 가 실제로 바뀔 때(다른 터미널 선택)만 새 객체로 교체한다.
+ if (lastSelectedFriend && lastSelectedFriend.id === id) return lastSelectedFriend;
  const found = friends().find((f) => f.id === id);
  if (found) { lastSelectedFriend = found; return found;}
- // 일시적으로 못 찾으면 캐시 사용 (sessions polling 중)
- if (lastSelectedFriend && lastSelectedFriend.id === id) return lastSelectedFriend;
  return null;
 });
 

@@ -34,10 +34,11 @@ export function SessionScreen(props: { identifier: string; display: string}) {
 });
  setMeta(dto);
  setError(null);
- // 단순 전략: 매 polling 마다 clear + write 전체. xterm 자체 scrollback 에서 보존.
+ // 매 polling 마다 전체 갱신. clear()+write() 를 나누면 두 렌더 사이 빈 프레임이
+ // 보여 깜빡임(이슈 #68). cursor-home + erase-screen + erase-scrollback 이스케이프를
+ // 본문과 한 번의 write 로 합쳐 단일 렌더로 처리 → blank 프레임 제거.
  if (dto.content !== lastContent && term) {
- term.clear();
- term.write(dto.content.replace(/\n/g, "\r\n"));
+ term.write("\x1b[H\x1b[2J\x1b[3J" + dto.content.replace(/\n/g, "\r\n"));
  lastContent = dto.content;
 }
 } catch (e) {
