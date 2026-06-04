@@ -1460,21 +1460,39 @@ async fn gui_public_session_screen(
                 //   (1) 세션 이름이 머신 자기 alias 와 일치 (그 머신의 primary 에이전트 세션)
                 //   (2) attached=true (사용자/portal 이 실제 attach 한 세션)
                 //   (3) status (Active>Attached>Detached>Stale)
-                let m_alias = dto.machine.alias.clone();
+                // rc.246 — tmux 세션 이름이 재생성마다 바뀌어(aoe_zalman-wsl_7f27e90b →
+                //   aoe_zalman_1d825afa) full-alias 매칭이 깨지고, volatile "active" status 에
+                //   의존해 폴링마다 흔들리던 문제. 해결: machine alias 를 stem 으로 정규화해
+                //   (wsl-zalman → zalman) 세션 이름에 stem 포함 여부로 매칭 + active status
+                //   의존 제거 + 결정적 tie-break(같은 점수면 항상 같은 세션) → 폴링마다 안 흔들림.
+                let stem = {
+                    let mut x = dto.machine.alias.trim().to_lowercase();
+                    for p in ["wsl-", "wsl_", "aoe-", "aoe_", "term-", "term_"] {
+                        if let Some(r) = x.strip_prefix(p) { x = r.to_string(); break; }
+                    }
+                    if let Some(pos) = x.rfind(['_', '-']) {
+                        let suf = &x[pos + 1..];
+                        if suf.len() >= 8 && suf.chars().all(|c| c.is_ascii_hexdigit()) {
+                            x.truncate(pos);
+                        }
+                    }
+                    x
+                };
                 dto.sessions
                     .into_iter()
+                    .filter(|s| !s.identifier.starts_with("peer:")) // cross-machine 재귀 제외
                     .max_by_key(|s| {
-                        let alias_match = if !m_alias.is_empty()
-                            && (s.identifier.contains(&m_alias) || s.display.contains(&m_alias))
-                        { 100 } else { 0 };
-                        let attached_bonus = if s.attached == Some(true) { 10 } else { 0 };
-                        let status_score = match s.status {
-                            crate::daemon_gui_sessions::SessionStatus::Active => 3,
-                            crate::daemon_gui_sessions::SessionStatus::Attached => 2,
-                            crate::daemon_gui_sessions::SessionStatus::Detached => 1,
-                            crate::daemon_gui_sessions::SessionStatus::Stale => 0,
-                        };
-                        alias_match + attached_bonus + status_score
+                        let idl = s.identifier.to_lowercase();
+                        // (1) 이 머신의 본 에이전트 세션 — 이름에 머신 stem 포함 (가장 강한 신호)
+                        let stem_match = if !stem.is_empty() && idl.contains(&stem) { 500 } else { 0 };
+                        // (2) 실제 attach 된 세션 (사용자가 보고 있는 live 터미널)
+                        let attached_bonus = if s.attached == Some(true) { 100 } else { 0 };
+                        // (3) 임시 sv_ 세션 비선호
+                        let not_temp = if !idl.contains("sv_") { 30 } else { 0 };
+                        // (4) 인터랙티브 tmux 선호 (claude jsonl·portal 보다)
+                        let tmux_bonus = if matches!(s.kind, crate::daemon_gui_sessions::SessionKind::Tmux) { 10 } else { 0 };
+                        // 결정적 tie-break — 같은 점수면 항상 같은 세션 선택 (폴링마다 동일)
+                        (stem_match + attached_bonus + not_temp + tmux_bonus, s.identifier.clone())
                     })
                     .map(|s| s.identifier)
                     .unwrap_or_else(|| identifier.clone())
