@@ -282,6 +282,7 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         //   세션을 가져와 머신의 개별 에이전트를 각각 peer 카드로 노출.
         .route("/v1/gui/public/sessions", get(gui_public_sessions))
         .route("/v1/gui/sessions/{identifier}/input", post(gui_session_input))
+        .route("/v1/gui/public/sessions/{identifier}/input", post(gui_public_session_input))
         // UI-MEMORY-SPEC v1.1 §K7 / §1.2 — L0 raw API + 5층 stats
         .route("/v1/gui/memory/l0", post(gui_memory_l0_save).get(gui_memory_l0_list))
         .route("/v1/gui/memory/stats", get(gui_memory_stats))
@@ -1584,52 +1585,81 @@ async fn gui_session_input(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
 
-    // ── (1) peer fan-out ──────────────────────────────────────────
+    // ── (1) peer fan-out — 원격 머신 세션은 그 머신의 PUBLIC 입력 엔드포인트로 (무인증, tailnet 게이트).
+    //   rc.256 — 이전: peer keystore 를 LOCAL 비번으로 unlock → authed POST. 그러나 머신마다 keystore
+    //   비번이 달라(예: server-seoul ≠ macmini) unlock 실패 → 500 + M-8 lockout. 읽기 경로(rc.247)처럼
+    //   anon public 입력으로 보낸다. transport 포트(address) 가 아닌 gui_address(COALESCE) 사용.
     if let Some(rest) = identifier.strip_prefix("peer:") {
         if let Some(idx) = rest.find(':') {
-            let alias = &rest[..idx];
-            let inner = &rest[idx + 1..];
-            let address: String = {
+            let alias = rest[..idx].to_string();
+            let inner = rest[idx + 1..].to_string();
+            let gui_base: String = {
                 let mut db = state.db.lock().await;
                 db.conn().query_row(
-                    "SELECT address FROM peers WHERE alias = ?1",
+                    "SELECT COALESCE(gui_address, address) FROM peers WHERE alias = ?1",
                     rusqlite::params![alias],
                     |r| r.get(0),
                 ).unwrap_or_default()
             };
-            if !address.is_empty() && address.starts_with("http") {
-                let local_pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").unwrap_or_default();
-                let client = reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(5))
-                    .build()
-                    .map_err(|e| internal(&format!("http: {e}")))?;
-                let base = address.trim_end_matches('/');
-                let unlock = client.post(format!("{base}/v1/auth/unlock"))
-                    .json(&serde_json::json!({"password": local_pw}))
-                    .send().await
-                    .map_err(|e| internal(&format!("peer unlock: {e}")))?;
-                let token = unlock.json::<serde_json::Value>().await.ok()
-                    .and_then(|v| v.get("session_token").and_then(|t| t.as_str()).map(String::from))
-                    .unwrap_or_default();
-                if token.is_empty() {
-                    return Err(internal(&format!("peer {alias} unlock failed")));
-                }
-                let resp = client.post(format!("{base}/v1/gui/sessions/{}/input", urlencoding::encode(inner)))
-                    .header("Authorization", format!("Bearer {token}"))
-                    .json(&serde_json::json!({"data": body.data}))
-                    .send().await
-                    .map_err(|e| internal(&format!("peer input: {e}")))?;
-                if !resp.status().is_success() {
-                    let s = resp.status();
-                    let t = resp.text().await.unwrap_or_default();
-                    return Err(bad_request(&format!("peer input HTTP {s}: {t}")));
-                }
-                return Ok(Json(serde_json::json!({"ok": true, "via": format!("peer:{alias}"), "bytes_sent": body.data.len()})));
+            if gui_base.is_empty() || !gui_base.starts_with("http") {
+                return Err(internal(&format!("peer {alias} has no http gui address")));
             }
-            return Err(internal(&format!("peer {alias} has no http address")));
+            let base = gui_base.trim_end_matches('/');
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .map_err(|e| internal(&format!("http: {e}")))?;
+            // anon public 입력 우선 (무인증). 구버전 peer 는 404/405 → unlock fallback.
+            let anon = client
+                .post(format!("{base}/v1/gui/public/sessions/{}/input", urlencoding::encode(&inner)))
+                .json(&serde_json::json!({"data": body.data}))
+                .send().await;
+            if let Ok(resp) = anon {
+                let st = resp.status();
+                if st.is_success() {
+                    return Ok(Json(serde_json::json!({"ok": true, "via": format!("peer:{alias}:public"), "bytes_sent": body.data.len()})));
+                }
+                if st != reqwest::StatusCode::NOT_FOUND && st != reqwest::StatusCode::METHOD_NOT_ALLOWED {
+                    let t = resp.text().await.unwrap_or_default();
+                    return Err(bad_request(&format!("peer public input HTTP {st}: {t}")));
+                }
+            }
+            // fallback: 구버전 peer (public 입력 엔드포인트 없음) — 같은 비번 가정 unlock + authed.
+            let local_pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").unwrap_or_default();
+            let unlock = client.post(format!("{base}/v1/auth/unlock"))
+                .json(&serde_json::json!({"password": local_pw}))
+                .send().await
+                .map_err(|e| internal(&format!("peer unlock: {e}")))?;
+            let token = unlock.json::<serde_json::Value>().await.ok()
+                .and_then(|v| v.get("session_token").and_then(|t| t.as_str()).map(String::from))
+                .unwrap_or_default();
+            if token.is_empty() {
+                return Err(internal(&format!("peer {alias} unlock failed (비번 불일치 — peer 를 rc.256+ 로 올려 public 입력 사용)")));
+            }
+            let resp = client.post(format!("{base}/v1/gui/sessions/{}/input", urlencoding::encode(&inner)))
+                .header("Authorization", format!("Bearer {token}"))
+                .json(&serde_json::json!({"data": body.data}))
+                .send().await
+                .map_err(|e| internal(&format!("peer input: {e}")))?;
+            if !resp.status().is_success() {
+                let s = resp.status();
+                let t = resp.text().await.unwrap_or_default();
+                return Err(bad_request(&format!("peer input HTTP {s}: {t}")));
+            }
+            return Ok(Json(serde_json::json!({"ok": true, "via": format!("peer:{alias}"), "bytes_sent": body.data.len()})));
         }
     }
 
+    // ── (2)+(3) 로컬 입력 (portal / tmux send-keys) — 공용 헬퍼 ──
+    do_local_session_input(&identifier, &body.data).await.map(Json)
+}
+
+/// 로컬 입력 주입 — `portal:`/`aoe:` → portal API, `tmux:`/bare → tmux send-keys.
+/// gui_session_input(인증) 과 gui_public_session_input(tailnet anon) 공용 (rc.256).
+async fn do_local_session_input(
+    identifier: &str,
+    data: &str,
+) -> Result<serde_json::Value, (StatusCode, Json<ErrorDto>)> {
     // ── (2) portal:<tmuxSession>:<idx> + aoe:<tmuxSession>:... → portal-new /api/tmux/send ──
     let portal_target: Option<(String, u32)> = if let Some(rest) = identifier.strip_prefix("portal:") {
         let mut parts = rest.splitn(2, ':');
@@ -1658,8 +1688,8 @@ async fn gui_session_input(
             .map_err(|e| internal(&format!("http: {e}")))?;
         // Enter (CR/LF) 처리 — portal 의 -l literal 모드는 줄바꿈을 키로 해석 못 함.
         // data 끝의 \r/\n 제거 + enter=true 플래그 전송.
-        let trailing_enter = body.data.ends_with('\r') || body.data.ends_with('\n');
-        let text_clean = body.data.trim_end_matches(|c: char| c == '\r' || c == '\n');
+        let trailing_enter = data.ends_with('\r') || data.ends_with('\n');
+        let text_clean = data.trim_end_matches(|c: char| c == '\r' || c == '\n');
         let mut payload = serde_json::json!({"session": session, "window": idx});
         if !text_clean.is_empty() {
             payload["text"] = serde_json::Value::String(text_clean.to_string());
@@ -1682,25 +1712,25 @@ async fn gui_session_input(
             let t = resp.text().await.unwrap_or_default();
             return Err(bad_request(&format!("portal send HTTP {s}: {t}")));
         }
-        return Ok(Json(serde_json::json!({"ok": true, "via": format!("portal:{session}:{idx}"), "bytes_sent": body.data.len()})));
+        return Ok(serde_json::json!({"ok": true, "via": format!("portal:{session}:{idx}"), "bytes_sent": data.len()}));
     }
 
     // ── (3) local tmux fallback (tmux:<name>) ─────────────────────
     let target = identifier
         .strip_prefix("tmux:")
-        .unwrap_or(&identifier)
+        .unwrap_or(identifier)
         .to_string();
     if target.is_empty() {
         return Err(bad_request("empty identifier"));
     }
-    let data = body.data.clone();
+    let send_data = data.to_string();
     let result = tokio::task::spawn_blocking(move || -> std::io::Result<std::process::Output> {
         std::process::Command::new("tmux")
             .arg("send-keys")
             .arg("-t")
             .arg(&target)
             .arg("-l")
-            .arg(&data)
+            .arg(&send_data)
             .output()
     })
     .await
@@ -1710,10 +1740,31 @@ async fn gui_session_input(
         let stderr = String::from_utf8_lossy(&result.stderr).to_string();
         return Err(bad_request(&format!("tmux send-keys: {stderr}")));
     }
-    Ok(Json(serde_json::json!({
+    Ok(serde_json::json!({
         "ok": true,
-        "bytes_sent": body.data.len()
-    })))
+        "bytes_sent": data.len()
+    }))
+}
+
+/// `POST /v1/gui/public/sessions/:identifier/input` — rc.256. 인증 없이 로컬 세션에 입력 주입
+/// (tailnet/localhost 전용). cross-machine 입력 fan-out 이 keystore 비번 불일치 머신에도
+/// 보낼 수 있게 — 읽기 경로(public/sessions, public/session-screen)와 동일 패턴.
+/// `peer:*` (재귀) 는 금지 — 로컬 세션만.
+async fn gui_public_session_input(
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<SocketAddr>,
+    Path(identifier): Path<String>,
+    Json(body): Json<SessionInputBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    if std::env::var("XGRAM_ANON_SCREEN").as_deref() == Ok("0") {
+        return Err((StatusCode::FORBIDDEN, Json(ErrorDto { error: "anonymous disabled (XGRAM_ANON_SCREEN=0)".into() })));
+    }
+    if !is_tailnet_or_local(peer.ip()) {
+        return Err((StatusCode::FORBIDDEN, Json(ErrorDto { error: format!("anonymous input 은 tailnet/localhost 전용 (src={})", peer.ip()) })));
+    }
+    if identifier.starts_with("peer:") {
+        return Err(bad_request("public input 은 로컬 세션만 (peer: 재귀 불가)"));
+    }
+    do_local_session_input(&identifier, &body.data).await.map(Json)
 }
 
 /// `POST /v1/gui/memory/l0` — L0 raw 메시지 저장 (UI-MEMORY-SPEC §K7).
