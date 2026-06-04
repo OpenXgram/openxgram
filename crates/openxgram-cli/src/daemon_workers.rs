@@ -144,6 +144,13 @@ pub fn spawn_all_with_data_dir(db: Arc<Mutex<Db>>, data_dir: PathBuf) {
 /// `tailscale status --json` 호출 → tailnet 머신 list → 각 머신의 OpenXgram daemon (7300/47300) health check
 /// → 응답하면 자동 peer add. 사용자 manual peer add 불필요.
 pub async fn tailscale_discovery_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
+    // rc.251 — 비활성화. 이 워커는 tailnet 머신을 hostname + placeholder(zero) pubkey 스텁
+    //   으로 자동 등록했는데, 그게 zero-touch(envelope 기반 실제 신원 등록)와 충돌해 메신저에
+    //   통신 불가 쓰레기 항목(whitegunui-Macmini, whitegun-win 등)을 계속 만들었음.
+    //   실제 peer 등록은 zero-touch 가 담당하므로 discovery 스텁 생성은 순수 노이즈 → 중단.
+    let _ = db;
+    return Ok(());
+    #[allow(unreachable_code)]
     // 1) tailscale status --json (Linux/Windows/macOS 동일 명령)
     let output = tokio::process::Command::new("tailscale")
         .args(["status", "--json"])
