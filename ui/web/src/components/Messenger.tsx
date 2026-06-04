@@ -548,6 +548,13 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  }
 }
 
+ // rc.258 — tmux 에이전트 카드가 이미 있는 머신 집합. 같은 머신을 가리키는 bare
+ //   머신-peer 카드는 중복이므로 숨긴다 (사용자: tmux 보여주는 카드만, 중복 제거).
+ const machinesWithTmux = new Set<string>();
+ for (const f of byAlias.values()) {
+ if (f.sessionMeta?.kind === "tmux" && f.machineTag) machinesWithTmux.add(f.machineTag);
+ }
+
  // (2) peers (원격 포함) — 같은 alias session 이 없으면 flat list 에 합류.
  //   현재 머신 group 으로 흩어져 화면에서 사라진 zalman peer 들을 머신 태그로 표시.
  for (const p of peers() ?? []) {
@@ -574,6 +581,9 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  // session row 에 peer 메타 병합 (address/machine 태그 + on-demand detail 용 meta).
  if (!existing.meta) existing.meta = p;
  if (!existing.machineTag && machineTag) existing.machineTag = machineTag;
+ } else if (machineTag && machinesWithTmux.has(machineTag)) {
+ // rc.258 — 이 머신은 이미 tmux 에이전트 카드로 대표됨 → bare 머신-peer 카드 생략.
+ //   세션 없는 peer-only 머신(zalman 다운 등)은 machinesWithTmux 에 없어 그대로 노출.
  } else {
  byAlias.set(nkey, friend);
  }
