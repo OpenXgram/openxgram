@@ -278,6 +278,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
             "/v1/gui/public/session-screen/{identifier}",
             get(gui_public_session_screen),
         )
+        // rc.247 — 인증 없는 세션 목록 (tailnet 전용). fan-out 이 비번 불일치 머신의
+        //   세션을 가져와 머신의 개별 에이전트를 각각 peer 카드로 노출.
+        .route("/v1/gui/public/sessions", get(gui_public_sessions))
         .route("/v1/gui/sessions/{identifier}/input", post(gui_session_input))
         // UI-MEMORY-SPEC v1.1 §K7 / §1.2 — L0 raw API + 5층 stats
         .route("/v1/gui/memory/l0", post(gui_memory_l0_save).get(gui_memory_l0_list))
@@ -1166,6 +1169,18 @@ async fn gui_sessions(
                 let http = http.clone();
                 let local_pw = local_pw.clone();
                 async move {
+                    // rc.247 — anon sessions 우선 (keystore 비번 불일치 머신도 가져옴).
+                    //   성공 시 unlock 생략 → zalman 처럼 비번 다른 머신의 개별 에이전트도 카드로 노출.
+                    let anon_url = format!("{base}/v1/gui/public/sessions");
+                    if let Ok(r) = http.get(&anon_url).send().await {
+                        if r.status().is_success() {
+                            if let Ok(v) = r.json::<serde_json::Value>().await {
+                                let has = v.get("sessions").and_then(|s| s.as_array()).map(|a| !a.is_empty()).unwrap_or(false);
+                                if has { return (alias, Some(v)); }
+                            }
+                        }
+                    }
+                    // fallback: unlock + sessions (anon 비활성 구버전 peer)
                     let unlock_resp = http.post(format!("{base}/v1/auth/unlock"))
                         .json(&serde_json::json!({"password": local_pw}))
                         .send().await;
@@ -1503,6 +1518,26 @@ async fn gui_public_session_screen(
         identifier.clone()
     };
     Ok(Json(crate::daemon_gui_sessions::capture_session(&resolved)))
+}
+
+/// `GET /v1/gui/public/sessions` — rc.247. 인증 없이 로컬 세션 목록 (tailnet/localhost 전용).
+///   cross-machine fan-out 이 keystore 비번 불일치 머신(zalman 등)의 세션을 가져올 수 있게.
+///   각 원격 세션이 `peer:<alias>:<id>` 카드로 노출 → 머신의 개별 에이전트가 각각 peer 처럼 보임.
+///   peer:* (재귀 cross-machine) 제외 — 로컬 세션만.
+async fn gui_public_sessions(
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<SocketAddr>,
+) -> Result<Json<crate::daemon_gui_sessions::SessionsDto>, (StatusCode, Json<ErrorDto>)> {
+    if std::env::var("XGRAM_ANON_SCREEN").as_deref() == Ok("0") {
+        return Err((StatusCode::FORBIDDEN, Json(ErrorDto { error: "anonymous disabled (XGRAM_ANON_SCREEN=0)".into() })));
+    }
+    if !is_tailnet_or_local(peer.ip()) {
+        return Err((StatusCode::FORBIDDEN, Json(ErrorDto { error: format!("anonymous sessions 는 tailnet/localhost 전용 (src={})", peer.ip()) })));
+    }
+    let mut dto = tokio::task::spawn_blocking(crate::daemon_gui_sessions::collect_sessions)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto { error: format!("collect: {e}") })))?;
+    dto.sessions.retain(|s| !s.identifier.starts_with("peer:"));
+    Ok(Json(dto))
 }
 
 /// 요청 src IP 가 tailnet(Tailscale CGNAT 100.64.0.0/10) 또는 localhost 인지 판정.
