@@ -502,7 +502,10 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  return true;
  });
  for (const s of dedup) {
- if (s.kind === "claude_project") continue; // rc.139 — claude_project 숨김 유지
+ // rc.252 — 로컬 claude_project 는 숨기되(rc.139), cross-machine(peer:) claude 는
+ //   그 머신의 에이전트(예: macmini 는 tmux 가 아니라 claude 로 도는 에이전트들)이므로
+ //   카드로 표시. 안 그러면 macmini 가 개별 카드 없이 aggregate 1개로만 보였음.
+ if (s.kind === "claude_project" && !s.identifier.startsWith("peer:")) continue;
  const conn = s.status === "attached" || s.status === "active";
  if (connFilter() === "connected" && !conn) continue;
  if (connFilter() === "offline" && conn) continue;
