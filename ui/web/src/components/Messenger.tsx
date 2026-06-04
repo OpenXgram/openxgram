@@ -548,11 +548,14 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  }
 }
 
- // rc.258 — tmux 에이전트 카드가 이미 있는 머신 집합. 같은 머신을 가리키는 bare
- //   머신-peer 카드는 중복이므로 숨긴다 (사용자: tmux 보여주는 카드만, 중복 제거).
- const machinesWithTmux = new Set<string>();
+ // rc.259 — peer:<alias>:tmux:* 세션 카드가 있는 peer alias 집합. 그 머신은 이미
+ //   tmux 에이전트 카드로 대표되므로 같은 alias 의 bare peer 카드는 중복 → 숨긴다.
+ //   (rc.258 은 machineTag 로 매칭했으나 session/peer 가 machineFromAddress 입력이 달라
+ //    값 불일치로 미적용됐음. session identifier 의 alias 를 직접 사용.)
+ const aliasesWithTmux = new Set<string>();
  for (const f of byAlias.values()) {
- if (f.sessionMeta?.kind === "tmux" && f.machineTag) machinesWithTmux.add(f.machineTag);
+ const m = f.sessionMeta?.identifier.match(/^peer:([^:]+):tmux:/);
+ if (m) aliasesWithTmux.add(m[1]);
  }
 
  // (2) peers (원격 포함) — 같은 alias session 이 없으면 flat list 에 합류.
@@ -581,9 +584,9 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  // session row 에 peer 메타 병합 (address/machine 태그 + on-demand detail 용 meta).
  if (!existing.meta) existing.meta = p;
  if (!existing.machineTag && machineTag) existing.machineTag = machineTag;
- } else if (machineTag && machinesWithTmux.has(machineTag)) {
- // rc.258 — 이 머신은 이미 tmux 에이전트 카드로 대표됨 → bare 머신-peer 카드 생략.
- //   세션 없는 peer-only 머신(zalman 다운 등)은 machinesWithTmux 에 없어 그대로 노출.
+ } else if (aliasesWithTmux.has(p.alias)) {
+ // rc.259 — 이 peer 는 이미 tmux 에이전트 카드로 대표됨 → bare peer 카드 생략.
+ //   세션 없는 peer-only 머신(zalman 다운 등)은 aliasesWithTmux 에 없어 그대로 노출.
  } else {
  byAlias.set(nkey, friend);
  }
