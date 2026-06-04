@@ -109,7 +109,7 @@ fn detect_tmux() -> Vec<DetectedSession> {
         .args([
             "ls",
             "-F",
-            "#{session_name}|#{session_windows}|#{session_attached}|#{session_created}",
+            "#{session_name}|#{session_windows}|#{session_attached}|#{session_created}|#{session_group}",
         ])
         .output();
     let Ok(out) = out else { return vec![] };
@@ -117,13 +117,24 @@ fn detect_tmux() -> Vec<DetectedSession> {
         return vec![];
     }
     let stdout = String::from_utf8_lossy(&out.stdout);
+    // rc.257 — grouped(mirror) 세션 제외용 실제 세션 이름 집합.
+    let names: std::collections::HashSet<String> = stdout
+        .lines()
+        .filter_map(|l| l.split('|').next().map(|s| s.to_string()))
+        .collect();
     let mut sessions = Vec::new();
     for line in stdout.lines() {
-        let parts: Vec<&str> = line.splitn(4, '|').collect();
+        let parts: Vec<&str> = line.splitn(5, '|').collect();
         if parts.len() < 4 {
             continue;
         }
         let name = parts[0].to_string();
+        // rc.257 — tmux group(mirror) 세션 제외. 원본(name==group)이 따로 있으면 이 세션은
+        //   같은 윈도우를 비추는 복제뷰(예: sv_ws_5 가 starian 그룹) 이므로 숨긴다 (중복 카드 방지).
+        let group = parts.get(4).copied().unwrap_or("");
+        if !group.is_empty() && group != name && names.contains(group) {
+            continue;
+        }
         let windows: u32 = parts[1].parse().unwrap_or(0);
         let attached: bool = parts[2] != "0";
         // tmux session_created = unix epoch seconds

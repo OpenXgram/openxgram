@@ -501,7 +501,15 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  if (m && /(?:^|:)aoe:/.test(s.identifier) && portalTmux.has(m[0])) return false;
  return true;
  });
+ // rc.257 — 윈도우(tmux:<sess>:<idx>)로 분해된 tmux 세션은 세션-레벨 aggregate 카드를 숨긴다.
+ //   윈도우 카드만 보여 macmini 의 starian 이 macmini/root/javis 3 카드로 정확히 뜨게.
+ const hasWindows = new Set<string>();
  for (const s of dedup) {
+ const wm = s.identifier.match(/^(.*tmux:[^:]+):\d+$/);
+ if (wm) hasWindows.add(wm[1]);
+ }
+ for (const s of dedup) {
+ if (hasWindows.has(s.identifier)) continue;
  // rc.252 — 로컬 claude_project 는 숨기되(rc.139), cross-machine(peer:) claude 는
  //   그 머신의 에이전트(예: macmini 는 tmux 가 아니라 claude 로 도는 에이전트들)이므로
  //   카드로 표시. 안 그러면 macmini 가 개별 카드 없이 aggregate 1개로만 보였음.
@@ -522,7 +530,9 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  // aoe_/portal/tmux name 또는 display 를 normalizeAlias 로 통일.
  const aoeM = s.identifier.match(/aoe_[a-zA-Z0-9_-]+/);
  const portalM = s.identifier.match(/(?:^|:)portal:([^:]+)/);
- const tmuxM = s.identifier.match(/(?:^|:)tmux:([^:]+)/);
+ // rc.257 — 윈도우 인덱스까지 포함(tmux:starian:0/1/2)해야 윈도우마다 고유 key.
+ //   이전: tmux:([^:]+) 가 세션명만 잡아 모든 윈도우가 같은 key → 1 카드로 collapse.
+ const tmuxM = s.identifier.match(/(?:^|:)tmux:(.+)$/);
  const dispClean = s.display.replace(/^\[[^\]]+\]\s*/, "");
  const rawKey = aoeM ? aoeM[0] : (portalM ? portalM[1] : (tmuxM ? tmuxM[1] : dispClean));
  const key = normalizeAlias(rawKey) || rawKey;
