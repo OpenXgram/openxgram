@@ -69,7 +69,7 @@ export function setBearer(token: string): void {
 }
 }
 
-type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
+type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
 
 interface Route {
  method: HttpMethod;
@@ -93,6 +93,8 @@ const ROUTES: Record<string, Route> = {
  peer_add: { method: "POST", path: "/peers", body: true},
  // rc.229 fix#3 — on-demand 단일 agent enrich (4-metadata + worktree/subagent/ex_peer)
  agent_detail: { method: "GET", path: "/agent/{alias}/detail"},
+ // rc.245 — 결정적 세션 매핑 사용자 override (PATCH; body.session_identifier = string|null)
+ peer_set_session: { method: "PATCH", path: "/peers/{alias}/session", body: true},
 
  // Messenger v1.3 §3.2 — 머신×세션 통합 detector (M-1)
  sessions: { method: "GET", path: "/sessions"},
@@ -391,12 +393,12 @@ export async function invoke<T>(
 }
 
  let body: string | undefined;
- if (route.body && (route.method === "POST" || route.method === "PUT")) {
+ if (route.body && (route.method === "POST" || route.method === "PUT" || route.method === "PATCH")) {
  headers["Content-Type"] = "application/json";
  body = JSON.stringify(remaining);
 } else if (
  Object.keys(remaining).length > 0 &&
- (route.method === "POST" || route.method === "PUT")
+ (route.method === "POST" || route.method === "PUT" || route.method === "PATCH")
 ) {
  // body:true 가 false 여도 POST/PUT 에 잔여 args 있으면 body 로 전송 (안전 기본).
  headers["Content-Type"] = "application/json";

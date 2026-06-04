@@ -1063,6 +1063,17 @@ fn auto_seed_local_tmux_agents(data_dir: &std::path::Path) -> anyhow::Result<usi
             seeded += 1;
             tracing::info!(alias = %alias, tmux = %sn, "rc.201 auto-seed: agent_capabilities");
         }
+        // rc.245 — 결정적 세션 매핑: peer row 에 명시적 session_identifier 저장.
+        // format 은 collect_sessions(/v1/gui/sessions) 의 local tmux entry 와 동일 ("tmux:<name>").
+        // capture_session 이 이 식별자를 바로 resolve → Messenger.tsx normalizeAlias 추정 불필요.
+        // peer 가 아직 없으면 no-op (retroactive_register_agents 가 peer 생성 후 다음 startup 에 set).
+        // 사용자가 UI 에서 override 한 경우 (session_identifier IS NOT NULL) 는 덮어쓰지 않음.
+        let sid = format!("tmux:{sn}");
+        let _ = db.conn().execute(
+            "UPDATE peers SET session_identifier = ?1 \
+             WHERE alias = ?2 AND (session_identifier IS NULL OR session_identifier = '')",
+            rusqlite::params![&sid, &alias],
+        );
     }
     tracing::info!(seeded = seeded, total_sessions = local_sessions.len(), "rc.201 auto-seed 완료");
     Ok(seeded)
@@ -1160,6 +1171,8 @@ fn retroactive_register_agents(data_dir: &std::path::Path) -> anyhow::Result<usi
         if alias == "null" || alias.contains('[') || alias.contains('\n') {
             continue;
         }
+        // rc.245 — 매칭된 tmux session_name (peer 생성 후 session_identifier set 용).
+        let mut matched_session_name: Option<String> = None;
         // rc.200 owner check — 자기 머신 tmux session 에 매칭되는 alias 만 등록.
         // local_tmux_sessions 가 비어있으면 owner check skip (tmux 없는 머신).
         // rc.232 — 매칭 session 이 실제 LLM 도는지까지 검증. shell/placeholder 부활 방지.
@@ -1181,6 +1194,8 @@ fn retroactive_register_agents(data_dir: &std::path::Path) -> anyhow::Result<usi
                         tracing::info!(alias = %alias, tmux = %sn, "rc.232 retroactive skip — pane 에 LLM 미검출 (shell/placeholder 부활 차단)");
                         continue;
                     }
+                    // rc.245 — 매칭된 tmux session_name 을 기억해 peer 생성 직후 session_identifier set.
+                    matched_session_name = Some(sn.clone());
                 }
             }
         }
@@ -1203,21 +1218,38 @@ fn retroactive_register_agents(data_dir: &std::path::Path) -> anyhow::Result<usi
         let pubkey_hex = hex::encode(kp.public_key_bytes());
         let eth_addr = kp.address.to_string();
 
-        let mut peer_store = openxgram_peer::PeerStore::new(&mut db);
-        match peer_store.add_with_eth(
-            alias,
-            &pubkey_hex,
-            &local_addr,
-            Some(&eth_addr),
-            openxgram_peer::PeerRole::Worker,
-            Some("rc.196 retroactive (옛 messenger_enabled=1 agent 자동 등록)"),
-        ) {
-            Ok(_) => {
-                tracing::info!(alias = %alias, eth = %eth_addr, "retroactive: peer 등록 성공");
-                registered += 1;
+        let add_ok = {
+            let mut peer_store = openxgram_peer::PeerStore::new(&mut db);
+            match peer_store.add_with_eth(
+                alias,
+                &pubkey_hex,
+                &local_addr,
+                Some(&eth_addr),
+                openxgram_peer::PeerRole::Worker,
+                Some("rc.196 retroactive (옛 messenger_enabled=1 agent 자동 등록)"),
+            ) {
+                Ok(_) => {
+                    tracing::info!(alias = %alias, eth = %eth_addr, "retroactive: peer 등록 성공");
+                    registered += 1;
+                    true
+                }
+                Err(e) => {
+                    tracing::debug!(alias = %alias, error = %e, "retroactive: peer add skip (이미 있거나 충돌)");
+                    false
+                }
             }
-            Err(e) => {
-                tracing::debug!(alias = %alias, error = %e, "retroactive: peer add skip (이미 있거나 충돌)");
+        };
+        // rc.245 — 결정적 세션 매핑: 새로 만든 peer 에 session_identifier set.
+        // format 은 collect_sessions local tmux entry 와 동일 ("tmux:<name>").
+        // peer_store drop 후 db 재차용 (borrow 충돌 회피).
+        if add_ok {
+            if let Some(sn) = &matched_session_name {
+                let sid = format!("tmux:{sn}");
+                let _ = db.conn().execute(
+                    "UPDATE peers SET session_identifier = ?1 \
+                     WHERE alias = ?2 AND (session_identifier IS NULL OR session_identifier = '')",
+                    rusqlite::params![&sid, &alias],
+                );
             }
         }
     }

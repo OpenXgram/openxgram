@@ -22,7 +22,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    routing::{get, post},
+    routing::{get, patch, post},
     Json, Router,
 };
 use std::collections::HashMap;
@@ -90,6 +90,12 @@ pub struct PeerDto {
     /// rc.228 — 이 peer 와 대화한 다른 peer 들 (inbox/outbox session 기준 집계).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ex_peers: Vec<ExPeerEntry>,
+    /// rc.245 — 결정적 세션 매핑: 이 peer 의 터미널을 보여줄 명시적 세션 식별자.
+    /// format 은 collect_sessions(/v1/gui/sessions) 의 identifier 와 동일
+    /// (예: "tmux:<name>", "aoe:<...>", "portal:<...>", "claude:<...>").
+    /// NULL 이면 Messenger.tsx 가 기존 normalizeAlias 추정 fallback.
+    /// auto-seed 가 기본값 set, 사용자가 PATCH /v1/gui/peers/{alias}/session 으로 override.
+    pub session_identifier: Option<String>,
 }
 
 /// rc.228 — peer 의 git worktree entry.
@@ -257,6 +263,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/status", get(gui_status))
         .route("/v1/gui/initialized", get(gui_initialized))
         .route("/v1/gui/peers", get(gui_peers).post(gui_peer_add))
+        // rc.245 — 결정적 세션 매핑 사용자 override: peer 의 터미널 세션 식별자 set/clear.
+        .route("/v1/gui/peers/{alias}/session", patch(gui_peer_set_session))
         // rc.229 fix#3 — on-demand 1-agent enrich (4-metadata + worktree/subagent/ex_peer tree).
         .route("/v1/gui/agent/{alias}/detail", get(gui_agent_detail))
         // 메신저 v1.3 §3.2 — 머신×세션 통합 detector (M-1).
@@ -653,6 +661,20 @@ async fn gui_peers(
             }
         }
     }
+    // rc.245 — peers.session_identifier 별도 prefetch (PeerStore.list() 미반환 필드).
+    //   결정적 세션 매핑: Messenger.tsx 가 normalizeAlias 추정 대신 이 값을 직접 사용.
+    let mut sid_map: std::collections::HashMap<String, String> = Default::default();
+    if let Ok(mut stmt) = db.conn().prepare(
+        "SELECT alias, session_identifier FROM peers WHERE session_identifier IS NOT NULL AND session_identifier != ''"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        }) {
+            for row in rows.flatten() {
+                sid_map.insert(row.0, row.1);
+            }
+        }
+    }
     let mut store = PeerStore::new(&mut db);
     let rows = store.list().map_err(|e| {
         (
@@ -670,6 +692,7 @@ async fn gui_peers(
     let mut dtos: Vec<PeerDto> = Vec::with_capacity(rows.len());
     for p in rows.into_iter() {
         let (description, capabilities) = caps_map.get(&p.alias).cloned().unwrap_or((None, vec![]));
+        let session_identifier = sid_map.get(&p.alias).cloned();
         dtos.push(PeerDto {
             id: p.id,
             alias: p.alias,
@@ -687,6 +710,7 @@ async fn gui_peers(
             worktrees: Vec::new(),
             subagents: Vec::new(),
             ex_peers: Vec::new(),
+            session_identifier,
         });
     }
     Ok(Json(dtos))
@@ -5841,7 +5865,42 @@ async fn gui_peer_add(
         worktrees: Vec::new(),
         subagents: Vec::new(),
         ex_peers: Vec::new(),
+        session_identifier: None,
     }))
+}
+
+/// rc.245 — 사용자 override body: { "session_identifier": string | null }.
+#[derive(Debug, serde::Deserialize)]
+struct PeerSessionBody {
+    session_identifier: Option<String>,
+}
+
+/// `PATCH /v1/gui/peers/{alias}/session` — rc.245.
+/// 결정적 세션 매핑 사용자 override: 이 peer 의 터미널이 보여줄 세션 식별자 set/clear.
+///   body.session_identifier = "tmux:<name>" 등 → 그 세션 고정.
+///   body.session_identifier = null → 자동 추정(normalizeAlias)으로 복귀.
+async fn gui_peer_set_session(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+    Json(body): Json<PeerSessionBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    if alias.trim().is_empty() {
+        return Err(bad_request("alias 필수"));
+    }
+    // 빈 문자열은 null 로 정규화 (자동 추정 복귀).
+    let sid: Option<String> = body
+        .session_identifier
+        .and_then(|s| if s.trim().is_empty() { None } else { Some(s) });
+    let mut db = state.db.lock().await;
+    db.conn()
+        .execute(
+            "UPDATE peers SET session_identifier = ?1 WHERE alias = ?2",
+            rusqlite::params![sid, &alias],
+        )
+        .map_err(|e| internal(&format!("session_identifier update: {e}")))?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 /// `GET /v1/gui/vault/pending` — vault 의 pending 승인 요청 목록.

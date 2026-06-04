@@ -163,6 +163,10 @@ interface PeerDto {
  worktrees?: { path: string; branch?: string | null}[];
  subagents?: { name: string; path: string; kind: string}[];
  ex_peers?: { alias: string; msg_count: number; last_msg_at?: string | null}[];
+ // rc.245 — 결정적 세션 매핑: 이 peer 의 터미널이 보여줄 명시적 세션 식별자.
+ //   "tmux:<name>" / "aoe:<...>" / "portal:<...>" / "claude:<...>" 형식.
+ //   설정 시 normalizeAlias 추정 없이 바로 그 세션 capture. null 이면 기존 fallback.
+ session_identifier?: string | null;
 }
 
 interface NotifyStatusDto {
@@ -1575,6 +1579,32 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  >
  대화
  </button>
+ {/* rc.245 — 결정적 세션 매핑 사용자 override: 이 peer 의 터미널이 보여줄
+     로컬 세션을 명시적으로 고정. "(자동)" = null (normalizeAlias 추정 복귀). */}
+ <select
+ title="이 피어 카드가 보여줄 터미널 세션 고정 (자동 추정 override)"
+ value={f.meta?.session_identifier ?? ""}
+ onChange={async (e) => {
+   const v = (e.currentTarget as HTMLSelectElement).value;
+   try {
+     await invoke("peer_set_session", {
+       alias: f.display,
+       session_identifier: v === "" ? null : v,
+     });
+     await refetchPeers();
+   } catch (err) {
+     console.error("peer_set_session 실패", err);
+   }
+ }}
+ style="padding:4px 8px; font-size:12px; cursor:pointer; border:1px solid var(--border); border-radius:4px; background:transparent; color:inherit; max-width:200px;"
+ >
+ <option value="">터미널: (자동)</option>
+ <For each={sessions()?.sessions ?? []}>
+ {(s) => (
+ <option value={s.identifier}>{s.display || s.identifier}</option>
+ )}
+ </For>
+ </select>
  </div>
  </Show>
  </header>
@@ -1632,6 +1662,11 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
      rc.237 — cross-machine peer 면 `peer:<alias>` identifier 로 backend proxy
      (그 peer daemon 의 첫 active session 자동 선택). local 이면 alias 그대로. */}
  <TmuxPreview alias={(() => {
+   // rc.245 — 결정적 세션 매핑 우선: peer row 에 명시적 session_identifier 가 있으면
+   //   normalizeAlias 추정·cross-machine 분기 모두 건너뛰고 그 식별자를 바로 사용.
+   //   (auto-seed 가 기본값 "tmux:<name>" set, 사용자가 ⚙ 터미널 select 로 override.)
+   const explicit = f.meta?.session_identifier;
+   if (explicit && explicit.trim()) return explicit;
    // rc.242 — 하드코딩 IP map(machineFromAddress) 의존 제거. 그 목록에 없는 새 머신
    //   (macmini 등)이 로컬로 오인돼 bare alias 가 backend 로 가 (unsupported identifier)
    //   터미널이 안 떴음. peer 의 http 주소가 로컬 머신 IP/localhost 가 아니면 cross-machine

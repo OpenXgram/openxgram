@@ -239,6 +239,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "app_ack",
         sql: include_str!("../migrations/0045_app_ack.sql"),
     },
+    Migration {
+        version: 46,
+        name: "peer_session_identifier",
+        sql: include_str!("../migrations/0046_peer_session_identifier.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {
