@@ -39,6 +39,22 @@ pub struct DaemonOpts {
 }
 
 pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
+    // rc.253 — 데몬 subprocess(tmux 등)가 launchd/systemd 의 빈약한 PATH 에서도 도구를
+    //   찾도록 공통 bin 경로 보강. macOS Homebrew(/opt/homebrew/bin)·/usr/local/bin 등.
+    //   이게 없으면 macOS launchd 데몬이 `tmux` 를 못 찾아 세션 탐지가 claude 로 폴백했음
+    //   (마스터: "설치하면 자동으로 tmux 목록이 나와야"). 설치만 하면 자동 탐지되게.
+    {
+        let cur = std::env::var("PATH").unwrap_or_default();
+        let extra = [
+            "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+            "/data/data/com.termux/files/usr/bin", // Android Termux
+        ];
+        let missing: Vec<&str> = extra.iter().copied().filter(|p| !cur.split(':').any(|c| c == *p)).collect();
+        if !missing.is_empty() {
+            std::env::set_var("PATH", format!("{}:{}", missing.join(":"), cur));
+        }
+    }
+
     // rc.117 — daemon 첫 시작 시 ~/oxg.md + 전역 CLAUDE.md @~/oxg.md reference 자동 setup.
     // install.sh / cargo build / 무관하게 OpenXgram 깔리는 순간 자동 setup. idempotent.
     if let Err(e) = crate::mcp_install::setup_oxg_md() {

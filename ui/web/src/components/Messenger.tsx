@@ -505,7 +505,10 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  // rc.252 — 로컬 claude_project 는 숨기되(rc.139), cross-machine(peer:) claude 는
  //   그 머신의 에이전트(예: macmini 는 tmux 가 아니라 claude 로 도는 에이전트들)이므로
  //   카드로 표시. 안 그러면 macmini 가 개별 카드 없이 aggregate 1개로만 보였음.
- if (s.kind === "claude_project" && !s.identifier.startsWith("peer:")) continue;
+ // rc.253 — 실제 tmux 터미널에서 도는 LLM 만 표시. claude_project 는
+ //   ~/.claude/projects/*.jsonl 대화 "기록 파일"일 뿐 라이브 터미널이 아니므로
+ //   로컬·cross-machine 불문 전부 제외 (마스터: "이상한 세션 기록 말고 tmux LLM 만").
+ if (s.kind === "claude_project") continue;
  const conn = s.status === "attached" || s.status === "active";
  if (connFilter() === "connected" && !conn) continue;
  if (connFilter() === "offline" && conn) continue;

@@ -88,4 +88,34 @@ BUILD는 CI/CD 자동 증가 — 수동 변경 금지.
 전체 가이드 (peer 통신·발신·오케스트레이션·자동 echo 룰): `@~/oxg.md`
 Peer 목록은 동적 — `openxgram.list_peers` 호출 시 role/description/capabilities 함께 반환.
 
+## 자율 등록 — 시작 시 한 번
+
+각 LLM session 시작 시 자기 정체성을 OpenXgram 에 등록하세요:
+
+```
+mcp__openxgram__register_subagent(
+  alias = "<자기 tmux session 이름 또는 자유 alias>",
+  role = "<자기 역할 한 줄>",
+  description = "<이 agent 가 잘하는 일 1-2 문장>",
+  capabilities = ["<능력1>", "<능력2>", ...],
+  messenger_enabled = true
+)
+```
+
+가이드:
+- **alias**: 자기 tmux session 이름 (예: `aoe_akashic_5054a80a`) 또는 자유 alias
+- **role**: 짧은 자기 역할명 (예: `akashic-keeper`, `portal-dev`, `rust-impl`, `frontend`)
+- **description**: 자기 자신의 1-2 문장 자기소개. `X 영역 담당, Y 잘함`
+- **capabilities**: 자기가 할 수 있는 일 keyword 배열. 다른 agent 가 `request_help(required_capability=*)` 로 자동 매칭
+  예: `['code_review', 'memory_extraction', 'prd_writing', 'rust_implementation', 'frontend_react', 'gamedev_unity', ...]`
+- **messenger_enabled**: `true` 면 `list_peers` 에 노출 + 다른 agent 가 `peer_send` 가능
+
+이미 등록되어 있다면 같은 호출이 idempotent — 매번 시작 시 호출 안전 (UPSERT).
+
+## 통신
+
+- 다른 agent 에게 메시지: `mcp__openxgram__peer_send(alias='target', body='메시지')`
+- 받은 메시지 확인: `mcp__openxgram__recv_messages()`
+- 도움 필요할 때: `mcp__openxgram__request_help(task='...', required_capability='...')` — 자동 적합 agent 매칭 + `peer_send` 위임
+
 <!-- OPENXGRAM:END -->
