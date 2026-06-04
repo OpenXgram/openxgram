@@ -195,6 +195,21 @@ fn detect_starian_portal() -> Vec<DetectedSession> {
         Err(_) => return vec![],
     };
     let mut out: Vec<DetectedSession> = Vec::new();
+    // rc.250 — portal/aoe API 는 fleet 전체의 글로벌 세션 목록을 반환한다. 이 머신에서
+    //   실제로 도는 세션만 포함해야 한다 (예: macmini 는 로컬 tmux 가 없는데 portal 글로벌
+    //   목록의 zalman 에이전트들을 자기 것처럼 보고 → "안 맞음"). 로컬 tmux 에 실제 존재하는
+    //   tmux_session_name 만 통과시킨다.
+    let local_tmux: std::collections::HashSet<String> = {
+        let mut set = std::collections::HashSet::new();
+        if let Ok(o) = Command::new("tmux").args(["ls", "-F", "#{session_name}"]).output() {
+            if o.status.success() {
+                for line in String::from_utf8_lossy(&o.stdout).lines() {
+                    set.insert(line.trim().to_string());
+                }
+            }
+        }
+        set
+    };
     // (1) /api/terminals — tmuxSession + tmuxIndex 사용
     let terms_url = format!("{}/api/terminals?token={}", url_base, token);
     if let Ok(resp) = client.get(&terms_url).send() {
@@ -209,6 +224,8 @@ fn detect_starian_portal() -> Vec<DetectedSession> {
                         let group = t.get("group").and_then(|x| x.as_str()).unwrap_or("");
                         let tmux_session = t.get("tmuxSession").and_then(|x| x.as_str()).unwrap_or("starian");
                         let tmux_index = t.get("tmuxIndex").and_then(|x| x.as_u64()).unwrap_or(0);
+                        // rc.250 — 로컬 tmux 에 없는 세션(다른 머신 것)은 제외.
+                        if !local_tmux.contains(tmux_session) { continue; }
                         out.push(DetectedSession {
                             kind: SessionKind::Tmux,
                             identifier: format!("portal:{}:{}", tmux_session, tmux_index),
@@ -239,6 +256,8 @@ fn detect_starian_portal() -> Vec<DetectedSession> {
                             let status = s.get("status").and_then(|x| x.as_str()).unwrap_or("");
                             let alive = s.get("tmux_alive").and_then(|b| b.as_bool()).unwrap_or(false);
                             let tmux_name = s.get("tmux_session_name").and_then(|x| x.as_str()).unwrap_or("");
+                            // rc.250 — 로컬 tmux 에 없는 aoe 세션(다른 머신 것)은 제외.
+                            if tmux_name.is_empty() || !local_tmux.contains(tmux_name) { continue; }
                             // identifier 에 tmux session 직접 인코딩 — 그 tmux:0 캡쳐로 화면 보임.
                             out.push(DetectedSession {
                                 kind: SessionKind::Tmux,
