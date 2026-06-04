@@ -270,7 +270,7 @@ function normalizeAlias(raw: string): string {
  return s.trim();
 }
 
-type SortMode = "name" | "activity";
+type SortMode = "name" | "name_desc" | "activity" | "connection" | "machine" | "role";
 type ConnFilter = "all" | "connected" | "offline";
 type LeftMode = "agent" | "thread" | "workflow";
 
@@ -383,7 +383,16 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  const [messages, { refetch: refetchMessages}] = createResource(fetchMessages);
 
  // 좌측 컨트롤
- const [sortMode, setSortMode] = createSignal<SortMode>("activity");
+ // rc.243 — 정렬 선택 localStorage 영구 (새로고침에도 유지).
+ const VALID_SORTS: SortMode[] = ["name", "name_desc", "activity", "connection", "machine", "role"];
+ const [sortMode, setSortModeRaw] = createSignal<SortMode>((() => {
+   const s = localStorage.getItem("messenger.sort_mode") as SortMode | null;
+   return s && VALID_SORTS.includes(s) ? s : "activity";
+ })());
+ const setSortMode = (m: SortMode) => {
+   try { localStorage.setItem("messenger.sort_mode", m); } catch {}
+   setSortModeRaw(m);
+ };
  // rc.237 B — 사용자 수동 pin 순서. pin 한 alias 는 list 최상단(pin 순서대로) 고정.
  //   pin 안 한 것은 기존 sortMode(활동순/이름순). localStorage 영구.
  const [pinnedAliases, setPinnedAliases] = createSignal<string[]>((() => {
@@ -558,21 +567,58 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
    const i = pins.indexOf(a);
    return i; // -1 if not pinned
  };
+ // rc.243 — 정렬 helper.
+ const lastSeenMs = (f: Friend) => {
+   const s = f.meta?.last_seen || f.sessionMeta?.last_active_at;
+   const t = s ? Date.parse(s) : 0;
+   return Number.isNaN(t) ? 0 : t;
+ };
+ // 연결상태 티어: 1h 이내 online(2) > 24h 이내(1) > offline(0).
+ const connTier = (f: Friend) => {
+   const t = lastSeenMs(f);
+   if (!t) return 0;
+   const age = Date.now() - t;
+   if (age < 60 * 60 * 1000) return 2;
+   if (age < 24 * 60 * 60 * 1000) return 1;
+   return 0;
+ };
+ const roleRank = (f: Friend) => {
+   switch (f.meta?.role) {
+     case "primary": return 0;
+     case "secondary": return 1;
+     case "worker": return 2;
+     default: return 3;
+   }
+ };
  const sorter = (a: Friend, b: Friend) => {
  // (0) pin 우선 — pin 한 것끼리는 pin 순서, pin vs non-pin 은 pin 이 위.
+ //   ("즐겨찾기처럼 상단 고정" = ★ pin. 아래 모든 정렬 기준 위에서 항상 동작.)
  const pa = pinIdx(a), pb = pinIdx(b);
  if (pa !== -1 || pb !== -1) {
    if (pa === -1) return 1;      // a non-pin → 뒤로
    if (pb === -1) return -1;     // b non-pin → a 가 앞
    return pa - pb;               // 둘 다 pin → pin 순서
  }
- if (sortMode() === "name") return a.display.localeCompare(b.display);
- // activity: meta.last_seen / sessionMeta.last_active_at DESC.
- const aT = a.meta?.last_seen ? Date.parse(a.meta.last_seen)
-   : (a.sessionMeta?.last_active_at ? Date.parse(a.sessionMeta.last_active_at) : 0);
- const bT = b.meta?.last_seen ? Date.parse(b.meta.last_seen)
-   : (b.sessionMeta?.last_active_at ? Date.parse(b.sessionMeta.last_active_at) : 0);
- return (isNaN(bT) ? 0 : bT) - (isNaN(aT) ? 0 : aT);
+ switch (sortMode()) {
+   case "name": return a.display.localeCompare(b.display);
+   case "name_desc": return b.display.localeCompare(a.display);
+   case "connection": {
+     const d = connTier(b) - connTier(a);       // online 먼저
+     return d !== 0 ? d : lastSeenMs(b) - lastSeenMs(a);
+   }
+   case "machine": {
+     // 같은 머신끼리 인접. 머신 태그 없는 것은 뒤(￿). tiebreak 이름순.
+     const ma = a.machineTag || "￿", mb = b.machineTag || "￿";
+     const d = ma.localeCompare(mb);
+     return d !== 0 ? d : a.display.localeCompare(b.display);
+   }
+   case "role": {
+     const d = roleRank(a) - roleRank(b);       // primary→secondary→worker
+     return d !== 0 ? d : a.display.localeCompare(b.display);
+   }
+   default: // activity — 최근 활동순 DESC
+     return lastSeenMs(b) - lastSeenMs(a);
+ }
 };
  const flat = Array.from(byAlias.values()).sort(sorter);
 
@@ -782,7 +828,11 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  title="정렬"
  >
  <option value="activity">활동순</option>
- <option value="name">이름순</option>
+ <option value="connection">연결상태순</option>
+ <option value="name">이름순 ↑</option>
+ <option value="name_desc">이름순 ↓</option>
+ <option value="machine">머신순</option>
+ <option value="role">역할순</option>
  </select>
  <select
  value={connFilter()}
@@ -1450,6 +1500,40 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  // rc.233 — 기본 = "screen" (터미널 화면). 클릭 즉시 그 세션 tmux capture 표시.
  const [peerTab, setPeerTab] = createSignal<"conv" | "screen">("screen");
 
+ // rc.243 (이슈 #73) — 메신저 대화는 열면 최신(맨 아래)이 보여야 한다 (지금은 맨 위 고정).
+ //   bottom-stick: 사용자가 바닥 근처(80px 이내)면 새 메시지 시 따라 내려가고,
+ //   위로 올려 과거를 읽는 중이면 그 위치를 방해하지 않는다.
+ let threadBodyRef: HTMLElement | undefined;
+ let stickBottom = true;
+ const onThreadScroll = () => {
+   if (!threadBodyRef) return;
+   const dist = threadBodyRef.scrollHeight - threadBodyRef.scrollTop - threadBodyRef.clientHeight;
+   stickBottom = dist < 80;
+ };
+ const scrollThreadToBottom = (force = false) => {
+   if (threadBodyRef && (force || stickBottom)) {
+     threadBodyRef.scrollTop = threadBodyRef.scrollHeight;
+   }
+ };
+ // 메시지 목록이 보이는 경우 = (peer 의 대화 탭) 또는 (peer 가 아닌 친구는 항상 목록).
+ //   화면(tmux) 탭일 때만 제외. 이 조건에서 bottom-stick 자동 스크롤.
+ const showsMsgList = () => f.kind !== "peer" || peerTab() === "conv";
+ // 메시지(filtered) 갱신 시 bottom-stick 유지.
+ createEffect(() => {
+   if (showsMsgList()) {
+     filtered();
+     requestAnimationFrame(() => scrollThreadToBottom());
+   }
+ });
+ // 목록으로 전환하거나 친구를 열면 강제로 최신 위치로.
+ createEffect(() => {
+   if (showsMsgList()) {
+     peerTab();
+     stickBottom = true;
+     requestAnimationFrame(() => scrollThreadToBottom(true));
+   }
+ });
+
  return (
  <>
  <header class="messenger-thread-head">
@@ -1494,7 +1578,7 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  </div>
  </Show>
  </header>
- <section class="messenger-thread-body">
+ <section class="messenger-thread-body" ref={(el) => (threadBodyRef = el)} onScroll={onThreadScroll}>
  <Show
  when={f.kind === "peer" && peerTab() === "screen"}
  fallback={
