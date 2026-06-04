@@ -124,6 +124,55 @@ impl<'a> PeerStore<'a> {
             .ok_or_else(|| PeerError::NotFound(format!("just-inserted: {alias}")))
     }
 
+    /// rc.244 zero-touch — envelope sender hint 로 peer 자동 등록/갱신 (idempotent).
+    ///   매번 수동으로 gui_address·중복·주소를 손보지 않도록, 신원(eth→pubkey) 기준으로:
+    ///   - 이미 있으면 address/gui_address/last_seen UPDATE (중복 alias 생성 방지, role·alias 보존)
+    ///   - 없으면 gui_address·role 포함해 신규 insert
+    ///   gui_address 는 cross-machine 터미널 proxy 가 바로 쓰므로 자동 등록의 핵심.
+    pub fn upsert_announce(
+        &mut self,
+        alias: &str,
+        public_key_hex: &str,
+        address: &str,
+        gui_address: Option<&str>,
+        eth_address: &str,
+        default_role: PeerRole,
+    ) -> Result<Peer> {
+        let now_rfc = kst_now().to_rfc3339();
+        // 1) 같은 eth 신원 존재 → UPDATE (alias·role 보존)
+        if let Some(existing) = self.get_by_eth_address(eth_address)? {
+            self.db.conn().execute(
+                "UPDATE peers SET address = ?1, gui_address = COALESCE(?2, gui_address), last_seen = ?3 WHERE eth_address = ?4",
+                rusqlite::params![address, gui_address, now_rfc, eth_address],
+            )?;
+            return self
+                .get_by_alias(&existing.alias)?
+                .ok_or_else(|| PeerError::NotFound(existing.alias.clone()));
+        }
+        // 2) 같은 pubkey 존재 (eth 누락 케이스) → UPDATE + eth 보강
+        if let Some(existing) = self.get_by_public_key(public_key_hex)? {
+            self.db.conn().execute(
+                "UPDATE peers SET address = ?1, gui_address = COALESCE(?2, gui_address), eth_address = ?3, last_seen = ?4 WHERE public_key_hex = ?5",
+                rusqlite::params![address, gui_address, eth_address, now_rfc, public_key_hex],
+            )?;
+            return self
+                .get_by_alias(&existing.alias)?
+                .ok_or_else(|| PeerError::NotFound(existing.alias.clone()));
+        }
+        // 3) 신규 — gui_address + role 포함 insert
+        let id = Uuid::new_v4().to_string();
+        self.db.conn().execute(
+            "INSERT INTO peers (id, alias, public_key_hex, address, gui_address, role, created_at, last_seen, eth_address, notes)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            rusqlite::params![
+                id, alias, public_key_hex, address, gui_address, default_role.as_str(),
+                now_rfc, now_rfc, eth_address, "auto-registered via envelope (zero-touch rc.244)"
+            ],
+        )?;
+        self.get_by_alias(alias)?
+            .ok_or_else(|| PeerError::NotFound(format!("just-inserted: {alias}")))
+    }
+
     /// envelope.from 으로 inbound 매칭. 매칭된 row 수 반환 (0 = 미등록).
     pub fn touch_by_eth_address(&mut self, eth_address: &str) -> Result<usize> {
         let now_rfc = kst_now().to_rfc3339();

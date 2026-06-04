@@ -206,7 +206,25 @@ pub async fn tailscale_discovery_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()>
         let Some(port) = found_port else { continue; };
         let address = format!("http://{}:{}", ip, port);
 
-        // 4) 자기 peers 에 upsert (alias = hostname)
+        // rc.244 zero-touch — envelope 자동 등록(실제 pubkey, by-eth)이 이미 그 머신을
+        //   제대로 등록했으면 hostname placeholder 스텁을 만들지 않는다. 같은 IP 에 peer 가
+        //   하나라도 있으면 skip → whitegunui-Macmini 같은 zero-pubkey 중복 방지.
+        {
+            let mut guard = db.lock().await;
+            let exists: i64 = guard
+                .conn()
+                .query_row(
+                    "SELECT COUNT(*) FROM peers WHERE address LIKE ?1",
+                    rusqlite::params![format!("http://{}:%", ip)],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            if exists > 0 {
+                continue;
+            }
+        }
+
+        // 4) 자기 peers 에 upsert (alias = hostname) — 아직 envelope 안 보낸 신규 머신만
         let id = format!("ts-{}-{}", hostname, &uuid::Uuid::new_v4().to_string()[..8]);
         let pk_placeholder = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001".to_string();
         let mut guard = db.lock().await;

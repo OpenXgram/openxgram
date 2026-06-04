@@ -15,6 +15,16 @@ use std::sync::Arc;
 const DEFAULT_BIND: &str = "127.0.0.1:47300";
 const DEFAULT_GUI_BIND: &str = "127.0.0.1:47302";
 
+/// rc.244 zero-touch — transport URL(http://host:PORT) 에서 GUI URL 파생 (포트 +2 규약).
+///   47300→47302, 17400→17402. 자동 등록 시 gui_address 를 채워 cross-machine 터미널
+///   proxy 가 수동 교정 없이 동작하게 한다. 파싱 실패 시 None.
+fn derive_gui_url(transport_url: &str) -> Option<String> {
+    let idx = transport_url.rfind(':')?;
+    let (head, rest) = transport_url.split_at(idx);
+    let port: u16 = rest[1..].trim_end_matches('/').parse().ok()?;
+    Some(format!("{head}:{}", port + 2))
+}
+
 #[derive(Debug, Clone)]
 pub struct DaemonOpts {
     pub data_dir: PathBuf,
@@ -411,37 +421,54 @@ pub fn process_inbound(
 
         // rc.193 본질 fix — unknown peer + sender hint (alias, pubkey, transport_url) 있으면 자동 등록.
         // 서명 검증 OK 인 경우만 (sender 가 자기 pubkey 로 sign 했는지). 거짓 alias claim 방지.
-        if peer_opt.is_none() {
-            if let (Some(alias), Some(pubkey_hex)) =
-                (env.sender_alias.as_deref(), env.sender_pubkey_hex.as_deref())
-            {
-                if verify_with_pubkey(pubkey_hex, &payload_bytes, &sig_bytes).is_ok() {
-                    let addr = env
-                        .sender_transport_url
-                        .as_deref()
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or("http://unknown");
-                    let mut peer_store = PeerStore::new(&mut db);
-                    match peer_store.add_with_eth(
-                        alias,
-                        pubkey_hex,
-                        addr,
-                        Some(&env.from),
-                        openxgram_peer::PeerRole::Worker,
-                        Some("auto-registered via envelope sender hint (rc.193)"),
+        // rc.244 zero-touch — sender hint (alias, pubkey, transport_url) + 서명 검증 OK 면
+        //   매번 idempotent 하게 자동 등록/갱신 (기존 peer 도 주소 refresh). gui_address 는
+        //   transport_url 포트+2 로 파생해 함께 저장 → cross-machine 터미널 proxy 가 수동 교정
+        //   없이 동작. 신규는 머신 데몬 = primary 기본. 주소 'unknown' 은 기존 주소를 덮지 않음.
+        if let (Some(alias), Some(pubkey_hex)) =
+            (env.sender_alias.as_deref(), env.sender_pubkey_hex.as_deref())
+        {
+            if verify_with_pubkey(pubkey_hex, &payload_bytes, &sig_bytes).is_ok() {
+                let real_addr = env
+                    .sender_transport_url
+                    .as_deref()
+                    .filter(|s| !s.is_empty() && !s.contains("unknown"));
+                let mut peer_store = PeerStore::new(&mut db);
+                if let Some(addr) = real_addr {
+                    let gui = derive_gui_url(addr);
+                    let new_role = if peer_opt.is_some() {
+                        openxgram_peer::PeerRole::Worker // update 경로 — upsert 가 role 보존
+                    } else {
+                        openxgram_peer::PeerRole::Primary // 신규 머신 데몬 = primary 기본
+                    };
+                    match peer_store.upsert_announce(
+                        alias, pubkey_hex, addr, gui.as_deref(), &env.from, new_role,
                     ) {
                         Ok(p) => {
-                            tracing::info!(alias = %alias, eth = %env.from, "rc.193 auto-peer-upsert 성공 (sender hint + signature 검증 OK)");
+                            tracing::debug!(alias = %p.alias, addr = %addr, gui = ?gui, "rc.244 zero-touch upsert (addr+gui 자동 갱신)");
                             peer_opt = Some(p);
                         }
                         Err(e) => {
-                            // UNIQUE alias 충돌 등 — silent
-                            tracing::debug!(alias = %alias, error = %e, "auto-peer-upsert skip (이미 있거나 alias 충돌)");
-                            if let Ok(Some(p)) = PeerStore::new(&mut db).get_by_eth_address(&env.from) {
-                                peer_opt = Some(p);
+                            tracing::debug!(alias = %alias, error = %e, "zero-touch upsert skip");
+                            if peer_opt.is_none() {
+                                if let Ok(Some(p)) = peer_store.get_by_eth_address(&env.from) {
+                                    peer_opt = Some(p);
+                                }
                             }
                         }
                     }
+                } else if peer_opt.is_none() {
+                    // 주소 불명 + 미등록 — 최소 placeholder (이후 정상 주소 announce 시 갱신)
+                    let _ = peer_store
+                        .add_with_eth(
+                            alias,
+                            pubkey_hex,
+                            "http://unknown",
+                            Some(&env.from),
+                            openxgram_peer::PeerRole::Worker,
+                            Some("auto-registered (addr unknown) via envelope"),
+                        )
+                        .map(|p| peer_opt = Some(p));
                 }
             }
         }

@@ -1429,17 +1429,32 @@ async fn gui_public_session_screen(
     //   capture_session("0") 은 unsupported 라, "0"/빈 식별자면 첫 active 로컬 세션을 자동 선택.
     let resolved: String = if identifier == "0" || identifier.is_empty() {
         match tokio::task::spawn_blocking(crate::daemon_gui_sessions::collect_sessions).await {
-            Ok(dto) => dto
-                .sessions
-                .into_iter()
-                .max_by_key(|s| match s.status {
-                    crate::daemon_gui_sessions::SessionStatus::Active => 3,
-                    crate::daemon_gui_sessions::SessionStatus::Attached => 2,
-                    crate::daemon_gui_sessions::SessionStatus::Detached => 1,
-                    crate::daemon_gui_sessions::SessionStatus::Stale => 0,
-                })
-                .map(|s| s.identifier)
-                .unwrap_or_else(|| identifier.clone()),
+            Ok(dto) => {
+                // rc.244 — 한 머신이 여러 tmux(AoE 워커 등)를 돌릴 때 "첫 active" 가 엉뚱한
+                //   세션(portal 이 active 로 표시한 워커, 예: aoe_studio)을 뽑아 그 머신의 본
+                //   에이전트가 아닌 게 보이던 문제. 우선순위로 본 에이전트를 정확히 선택:
+                //   (1) 세션 이름이 머신 자기 alias 와 일치 (그 머신의 primary 에이전트 세션)
+                //   (2) attached=true (사용자/portal 이 실제 attach 한 세션)
+                //   (3) status (Active>Attached>Detached>Stale)
+                let m_alias = dto.machine.alias.clone();
+                dto.sessions
+                    .into_iter()
+                    .max_by_key(|s| {
+                        let alias_match = if !m_alias.is_empty()
+                            && (s.identifier.contains(&m_alias) || s.display.contains(&m_alias))
+                        { 100 } else { 0 };
+                        let attached_bonus = if s.attached == Some(true) { 10 } else { 0 };
+                        let status_score = match s.status {
+                            crate::daemon_gui_sessions::SessionStatus::Active => 3,
+                            crate::daemon_gui_sessions::SessionStatus::Attached => 2,
+                            crate::daemon_gui_sessions::SessionStatus::Detached => 1,
+                            crate::daemon_gui_sessions::SessionStatus::Stale => 0,
+                        };
+                        alias_match + attached_bonus + status_score
+                    })
+                    .map(|s| s.identifier)
+                    .unwrap_or_else(|| identifier.clone())
+            }
             Err(_) => identifier.clone(),
         }
     } else {
