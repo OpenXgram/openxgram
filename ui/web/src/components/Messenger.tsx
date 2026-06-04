@@ -1589,12 +1589,14 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
      console.error("peer_set_session 실패", err);
    }
  }}
- style="padding:4px 8px; font-size:12px; cursor:pointer; border:1px solid var(--border); border-radius:4px; background:transparent; color:inherit; max-width:200px;"
+ style="padding:4px 8px; font-size:12px; cursor:pointer; border:1px solid var(--border); border-radius:4px; background:#1b2030; color:#e6e6e6; max-width:220px;"
  >
- <option value="">터미널: (자동)</option>
+ {/* rc.249 (이슈) — 옵션 팝업 글자 가시성: 명시적 어두운 배경+밝은 글자
+     (transparent+inherit 면 네이티브 팝업이 흰 배경에 흰 글자로 안 보였음). */}
+ <option value="" style="background:#1b2030; color:#e6e6e6;">터미널: (자동)</option>
  <For each={sessions()?.sessions ?? []}>
  {(s) => (
- <option value={s.identifier}>{s.display || s.identifier}</option>
+ <option value={s.identifier} style="background:#1b2030; color:#e6e6e6;">{s.display || s.identifier}</option>
  )}
  </For>
  </select>
