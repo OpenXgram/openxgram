@@ -1548,12 +1548,16 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
      rc.237 — cross-machine peer 면 `peer:<alias>` identifier 로 backend proxy
      (그 peer daemon 의 첫 active session 자동 선택). local 이면 alias 그대로. */}
  <TmuxPreview alias={(() => {
+   // rc.242 — 하드코딩 IP map(machineFromAddress) 의존 제거. 그 목록에 없는 새 머신
+   //   (macmini 등)이 로컬로 오인돼 bare alias 가 backend 로 가 (unsupported identifier)
+   //   터미널이 안 떴음. peer 의 http 주소가 로컬 머신 IP/localhost 가 아니면 cross-machine
+   //   으로 간주 → peer:<alias> proxy (대상 daemon 의 첫 active session 자동 선택).
    const addr = f.meta?.address;
-   const remoteMachine = machineFromAddress(addr);
-   const localMachine = sessions()?.machine?.alias || sessions()?.machine?.hostname;
-   const isRemote = !!addr && addr.startsWith("http")
-     && (!!remoteMachine && remoteMachine !== localMachine);
-   return isRemote ? `peer:${f.meta!.alias}` : f.display;
+   if (!addr || !addr.startsWith("http")) return f.display;
+   const localIp = sessions()?.machine?.tailscale_ip || "";
+   const isLocal = addr.includes("127.0.0.1") || addr.includes("localhost")
+     || (!!localIp && addr.includes(localIp));
+   return !isLocal ? `peer:${f.meta!.alias}` : f.display;
  })()} />
  </Show>
  </section>
