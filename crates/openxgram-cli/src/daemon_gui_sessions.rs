@@ -590,8 +590,34 @@ fn refresh_or_stale(stale: SessionsDto) -> SessionsDto {
 fn collect_fresh() -> SessionsDto {
     let machine = detect_machine();
     let mut sessions = Vec::new();
+
+    // rc.255 — 로컬 tmux 가 이 머신의 권위 있는 소스. 항상 먼저 수집한다.
+    //   이전(rc.~254): portal 이 비었을 때만 detect_tmux 를 실행(`if !had_portal`).
+    //   그런데 portal-zalman 은 중앙 fleet 집계기라 모든 머신이 글로벌 세션 목록을 받고,
+    //   그러면 had_portal=true 가 되어 자기 로컬 tmux 가 통째로 스킵됐다. 게다가 세션
+    //   이름충돌(여러 머신이 "starian" 사용)로 남의 머신 세션을 자기 것처럼 표시했다
+    //   (예: macmini 가 server-seoul 의 starian 을 표시 + 자기 3 윈도우는 누락).
+    let local = detect_tmux();
+    let local_names: std::collections::HashSet<String> = local
+        .iter()
+        .filter_map(|s| s.identifier.strip_prefix("tmux:"))
+        .map(|rest| rest.split(':').next().unwrap_or(rest).to_string())
+        .collect();
+
     let mut portal = detect_starian_portal();
-    let had_portal = !portal.is_empty();
+    // 로컬 tmux 와 이름이 겹치는 portal/aoe 엔트리는 버린다 — 로컬 detect_tmux 가 그 세션의
+    // 정확한 윈도우/상태를 이미 권위 있게 갖고 있고, cross-machine 이름충돌 오염을 막는다.
+    portal.retain(|s| {
+        let name = s
+            .identifier
+            .strip_prefix("portal:")
+            .or_else(|| s.identifier.strip_prefix("aoe:"))
+            .and_then(|r| r.split(':').next());
+        match name {
+            Some(n) => !local_names.contains(n),
+            None => true,
+        }
+    });
     // rc.148 — portal entry 의 status 를 AoE activity_state 기반으로 매핑.
     // active = LLM 작업 중 → 녹색 (Attached 로 표시)
     // waiting = 사용자 입력 대기 → 노랑 (Detached 로 표시)
@@ -620,9 +646,7 @@ fn collect_fresh() -> SessionsDto {
     }
     sessions.extend(portal);
     sessions.extend(detect_claude_projects());
-    if !had_portal {
-        sessions.extend(detect_tmux());
-    }
+    sessions.extend(local); // rc.255 — 로컬 tmux 는 항상 포함 (권위 소스)
     sessions.extend(detect_processes());
     SessionsDto { machine, sessions }
 }
