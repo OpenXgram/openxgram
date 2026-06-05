@@ -114,16 +114,10 @@ pub fn spawn_all_with_data_dir(db: Arc<Mutex<Db>>, data_dir: PathBuf) {
         }
     });
     // rc.178 — cross-machine peer sync (60s 주기). 각 active peer 의 /v1/gui/peers fetch + upsert.
-    // 모든 머신의 peers list 가 자동 동일 → agent 간 대화 가능.
-    let db_ps = db.clone();
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(60)).await;
-            if let Err(e) = peer_sync_tick(&db_ps).await {
-                tracing::warn!("peer_sync tick: {e}");
-            }
-        }
-    });
+    // rc.265 — 비활성화. peer_sync_tick 은 각 peer 에 자기 비번으로 unlock 시도하여 cross-machine 데몬에
+    // M-8 lockout 을 누적시키는 회귀를 일으켰다. cross-machine 인지는 rc.263 daemon_peer_sync
+    // (GET /v1/peers/reachable, unlock 불필요)가 이미 담당하므로 spawn 자체를 중지한다.
+    let _ = &db; // db 참조 유지 (이후 worker 들이 사용)
     // rc.179 — Tailscale 자동 peer discovery (5분 주기).
     // tailscale status --json 으로 tailnet 머신 detect + 각 머신의 OpenXgram daemon health check.
     // 응답하면 자동 peer add (placeholder pubkey). 사용자 추가 작업 0 — 진짜 자동 메신저.
@@ -252,7 +246,15 @@ pub async fn tailscale_discovery_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()>
 /// rc.178 — cross-machine peer sync worker.
 /// 각 active peer 의 /v1/gui/peers 호출 + 자기 peers 테이블에 upsert (없는 alias 면 INSERT).
 /// 양방향 자동 sync 로 모든 머신의 list_peers 가 자동 동일.
+#[allow(dead_code, unreachable_code)]
 pub async fn peer_sync_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
+    // rc.265 — cross-machine unlock 비번 불일치로 M-8 lockout 유발, rc.263 daemon_peer_sync로 대체되어 비활성화.
+    // 이 루틴은 각 peer 에 자기 local_pw 로 /v1/auth/unlock 을 보내는데, cross-machine peer 의 비번은 다르므로
+    // 원격 데몬에서 unlock 실패가 누적되어 M-8 lockout 을 일으킨다. rc.263 의 GET /v1/peers/reachable (unlock 불필요)
+    // 가 cross-machine 인지를 이미 담당하므로 본 함수는 즉시 return 하여 비활성화한다.
+    let _ = db;
+    return Ok(());
+
     let local_pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").unwrap_or_default();
     if local_pw.is_empty() {
         return Ok(());
