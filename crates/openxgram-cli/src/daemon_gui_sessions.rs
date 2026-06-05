@@ -347,6 +347,7 @@ fn urlencode(s: &str) -> String {
 
 /// `~/.claude/projects/<encoded-path>/*.jsonl` — 각 디렉토리가 Claude Code 프로젝트.
 /// 가장 최근 .jsonl 의 mtime 을 last_active 로 사용.
+#[allow(dead_code)] // rc.266 — claude_project 수집 비활성화 후 미사용. capture/preview 참조 대비 보존.
 fn detect_claude_projects() -> Vec<DetectedSession> {
     let mut out = Vec::new();
     // WSL 환경에서 Windows side claude projects 도 스캔 (W가 Windows 직접 Claude Code 실행하는 경우).
@@ -656,7 +657,8 @@ fn collect_fresh() -> SessionsDto {
         }
     }
     sessions.extend(portal);
-    sessions.extend(detect_claude_projects());
+    // rc.266 — 메신저 카드는 실제 tmux 세션만 (마스터 핵심 지시·반복 회귀 금지). claude_project 수집 비활성화.
+    // sessions.extend(detect_claude_projects());
     sessions.extend(local); // rc.255 — 로컬 tmux 는 항상 포함 (권위 소스)
     sessions.extend(detect_processes());
     SessionsDto { machine, sessions }

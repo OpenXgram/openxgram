@@ -1262,6 +1262,9 @@ async fn gui_sessions(
             }
         }
     }
+    // rc.266 — 메신저 카드는 실제 tmux 세션만 (마스터 핵심 지시·반복 회귀 금지).
+    // 로컬+원격(peer merge) 모두에서 claude_project 카드 제거 — 단일 방어선.
+    dto.sessions.retain(|s| s.kind != crate::daemon_gui_sessions::SessionKind::ClaudeProject);
     Ok(Json(dto))
 }
 
