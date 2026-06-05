@@ -16,6 +16,7 @@ pub mod daemon;
 pub mod daemon_gui;
 pub mod daemon_gui_sessions;
 pub mod daemon_gui_wallets;
+pub mod daemon_peer_sync;
 pub mod daemon_workers;
 pub mod doctor;
 pub mod dump;

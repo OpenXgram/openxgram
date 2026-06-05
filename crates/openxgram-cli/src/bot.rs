@@ -520,7 +520,10 @@ fn add_peer(
     })?;
     db.migrate()?;
     let mut store = PeerStore::new(&mut db);
-    let address = format!("http://127.0.0.1:{port}");
+    // cross-machine 도달 가능 주소 우선 (tailscale/LAN IP + port). 검출 실패 시에만
+    // localhost 폴백 — 동일 머신 link 는 여전히 동작, daemon startup self-heal 이 후속 교정.
+    let address = openxgram_transport::tailscale::self_reachable_url(port)
+        .unwrap_or_else(|| format!("http://127.0.0.1:{port}"));
     // alias 중복 시 silent skip — 이미 등록된 link 재실행 idempotent.
     if store.get_by_alias(alias)?.is_some() {
         return Ok(());

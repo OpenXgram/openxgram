@@ -38,6 +38,57 @@ pub fn local_ipv4() -> Result<Ipv4Addr> {
         .with_context(|| format!("Ipv4Addr 파싱 실패: {line}"))
 }
 
+/// 머신의 LAN(사설망) IPv4 — Tailscale 미설치/미로그인 환경의 fallback.
+///
+/// 외부 라우팅 IP(8.8.8.8:80)로 UDP "connect" 만 수행 (실제 패킷 전송 없음 —
+/// 커널이 라우팅 테이블을 보고 outbound interface 의 source IP 를 고름).
+/// loopback(127.x)·link-local(169.254.x)·unspecified 는 reachable 아님 → 제외.
+/// 의존성 추가 없이 std 만으로 구현.
+pub fn lan_ipv4() -> Option<Ipv4Addr> {
+    use std::net::UdpSocket;
+    let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("8.8.8.8:80").ok()?;
+    match sock.local_addr().ok()? {
+        std::net::SocketAddr::V4(v4) => {
+            let ip = *v4.ip();
+            if ip.is_loopback() || ip.is_link_local() || ip.is_unspecified() {
+                None
+            } else {
+                Some(ip)
+            }
+        }
+        _ => None,
+    }
+}
+
+/// 이 머신의 cross-machine reachable transport URL 을 동적 계산 — `http://<ip>:<port>`.
+///
+/// 우선순위: ① Tailscale IPv4(`tailscale ip --4`, CGNAT 100.64.0.0/10) →
+/// ② LAN IPv4(`lan_ipv4`). 둘 다 실패 시 None (silent fallback 금지 — 호출측 로깅).
+///
+/// 등록(register_subagent / retroactive) + ACK(sender_transport_url) 경로가 공유.
+/// `127.0.0.1`/`0.0.0.0` 같은 도달 불가 주소를 절대 반환하지 않음.
+pub fn self_reachable_url(port: u16) -> Option<String> {
+    if let Ok(ip) = local_ipv4() {
+        return Some(format!("http://{ip}:{port}"));
+    }
+    lan_ipv4().map(|ip| format!("http://{ip}:{port}"))
+}
+
+/// 주어진 주소 문자열이 cross-machine 도달 불가(localhost/unspecified/빈값)인지.
+/// gossip merge·self-heal 에서 "오염된" 주소를 식별·거부하는 데 사용.
+pub fn is_unreachable_address(address: &str) -> bool {
+    let a = address.trim();
+    if a.is_empty() {
+        return true;
+    }
+    a.contains("127.0.0.1")
+        || a.contains("0.0.0.0")
+        || a.contains("localhost")
+        || a.contains("[::1]")
+        || a.contains("://unknown")
+}
+
 /// Tailscale 데몬 health — `tailscale status` 종료 코드 0 여부.
 pub fn is_running() -> bool {
     Command::new(TAILSCALE_BIN)
@@ -81,5 +132,38 @@ mod tests {
     #[test]
     fn local_ipv4_returns_result_or_error() {
         let _ = local_ipv4();
+    }
+
+    #[test]
+    fn lan_ipv4_is_not_loopback() {
+        // 환경에 네트워크가 없을 수도 있으므로 None 허용. Some 일 때만 reachable 검증.
+        if let Some(ip) = lan_ipv4() {
+            assert!(!ip.is_loopback(), "lan_ipv4 가 loopback 반환: {ip}");
+            assert!(!ip.is_unspecified(), "lan_ipv4 가 0.0.0.0 반환");
+        }
+    }
+
+    #[test]
+    fn self_reachable_url_never_localhost() {
+        // self_reachable_url 은 절대 127.0.0.1/0.0.0.0 을 반환하지 않는다.
+        if let Some(url) = self_reachable_url(47300) {
+            assert!(url.starts_with("http://"));
+            assert!(url.ends_with(":47300"));
+            assert!(
+                !is_unreachable_address(&url),
+                "self_reachable_url 이 도달 불가 주소 반환: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_unreachable_address_classifies() {
+        assert!(is_unreachable_address("http://127.0.0.1:47300"));
+        assert!(is_unreachable_address("http://0.0.0.0:47300"));
+        assert!(is_unreachable_address("http://localhost:47300"));
+        assert!(is_unreachable_address("http://unknown"));
+        assert!(is_unreachable_address(""));
+        assert!(!is_unreachable_address("http://100.101.237.9:47300"));
+        assert!(!is_unreachable_address("http://192.168.1.20:17400"));
     }
 }
