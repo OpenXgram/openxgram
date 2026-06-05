@@ -315,6 +315,68 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  } catch { return new Set(); }
  });
 
+ // rc.267 (A) — 사용자 부여 친근한 이름 (DB v32 session_aliases, identifier → {display_name}).
+ //   AgentSidePanel Overview 와 동일 API 재사용 (session_aliases GET / session_alias_set POST).
+ //   row 큰 이름 = 사용자 override → 없으면 deterministic derivation (세션마다 안 바뀜).
+ const [sessionAliases, { refetch: refetchAliases }] =
+   createResource<Record<string, { display_name?: string }>>(async () => {
+     try { return await invoke<Record<string, { display_name?: string }>>("session_aliases"); }
+     catch { return {}; }
+   });
+ // 인라인 편집 상태 (한 번에 한 row). key = friend identifier.
+ const [editingId, setEditingId] = createSignal<string | null>(null);
+ const [editDraft, setEditDraft] = createSignal("");
+ // friend → session_aliases identifier 매핑.
+ //   peer: AgentSidePanel 과 동일하게 address || alias.
+ //   session: 데몬이 session_aliases override 를 s.identifier 로 적용하므로 sessionMeta.identifier.
+ function identifierFor(f: Friend): string {
+   if (f.kind === "peer" && f.meta) return f.meta.address || f.meta.alias;
+   if (f.sessionMeta) return f.sessionMeta.identifier;
+   return f.id;
+ }
+ // raw 식별자 (작게 표시). peer=alias, session=display 의 원형(=tmux/aoe 이름).
+ function rawIdFor(f: Friend): string {
+   if (f.kind === "peer" && f.meta) return f.meta.alias;
+   if (f.sessionMeta) {
+     const id = f.sessionMeta.identifier || "";
+     const aoeM = id.match(/aoe_[a-zA-Z0-9_-]+/);
+     if (aoeM) return aoeM[0];
+     const portalM = id.match(/(?:^|:)portal:([^:]+)/);
+     if (portalM) return portalM[1];
+     const tmuxM = id.match(/(?:^|:)tmux:(.+)$/);
+     if (tmuxM) return tmuxM[1];
+   }
+   return f.display;
+ }
+ // deterministic 친근한 이름 derivation (override 없을 때).
+ //   aoe_<name>_<hex> → Titlecase(<name>) ("akashic" → "Akashic")
+ //   sv_aoe_<n>_<ts> / sv_<n> → "Subagent <n>"
+ //   그 외 → normalizeAlias 후 Titlecase.
+ function deriveFriendly(raw: string): string {
+   const s = (raw || "").trim();
+   if (!s) return "(unknown)";
+   const svM = s.match(/^sv(?:_aoe)?_([a-zA-Z0-9-]+)/i);
+   if (svM) return `Subagent ${svM[1]}`;
+   const core = normalizeAlias(s) || s;
+   if (!core) return s;
+   return core.charAt(0).toUpperCase() + core.slice(1);
+ }
+ // row 큰 이름: 사용자 override 우선, 없으면 derivation.
+ function friendlyName(f: Friend): string {
+   const ov = sessionAliases()?.[identifierFor(f)]?.display_name;
+   if (ov && ov.trim()) return ov.trim();
+   return deriveFriendly(rawIdFor(f));
+ }
+ async function saveFriendly(f: Friend) {
+   const name = editDraft().trim();
+   if (!name) { window.alert("이름은 비울 수 없음"); return; }
+   try {
+     await invoke("session_alias_set", { identifier: identifierFor(f), display_name: name });
+     await refetchAliases();
+     setEditingId(null);
+   } catch (e) { window.alert("저장 실패: " + e); }
+ }
+
  // rc.170 — auto-echo enforcer visual: 각 binding 의 매칭 상태 (no_match/first_setup/pending_echo/up_to_date).
  // friend row 옆 chip 으로 표시 → 마스터가 GUI 에서 매칭 정상 여부 직접 확인.
  interface BindingStatus {
@@ -477,6 +539,24 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  return Date.now() - ts < 60 * 60 * 1000;
 }
 
+ // rc.267 (B) — 로스터 멤버십 판정. 마스터 정의: 에이전트 = tmux LLM peer / 그 worktree / 서브에이전트.
+ //   worktree·subagent 는 PeerDto 에 nested 되어 부모 카드 안에서 표시 (별도 top-level row 아님).
+ //   따라서 top-level peer row 로 남길지는 "실제 tmux LLM peer 인가" 로 판정.
+ //   기준은 daemon.rs:1114-1122 auto-seed 게이트와 동일 (단일 권위 소스 정렬, 새 모델 안 만듦):
+ //     - null / 빈 문자열 → 제외
+ //     - 순수 숫자 alias → 제외 (service/seed 잡것)
+ //     - sv_ / sv_aoe_ prefix → 서브에이전트 (부모 pane 공유, 독립 peer 아님)
+ //     - '[' 포함 (예: "[machine] ...") → 제외
+ //   그 외 (aoe_<name>_<hex>, zalman-wsl, 일반 tmux LLM alias) → 로스터 멤버 유지 (over-hide 방지).
+ function isRosterPeer(alias: string | null | undefined): boolean {
+   const a = (alias || "").trim();
+   if (!a || a.toLowerCase() === "null") return false;
+   if (/^\d+$/.test(a)) return false;                 // 순수 숫자
+   if (/^sv(_aoe)?_/i.test(a)) return false;          // 서브에이전트
+   if (a.includes("[")) return false;                 // [machine] 류 잡 alias
+   return true;
+ }
+
  // rc.230 — 머신 group header 폐기. peer + session 을 단일 flat list 로 병합.
  //   머신은 카테고리가 아니라 row 의 inline 태그 (machineTag). 채널만 별 group 유지.
  //   FLAT_GROUP = 머신 헤더 없이 렌더되는 sentinel machine 키.
@@ -561,6 +641,11 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  // (2) peers (원격 포함) — 같은 alias session 이 없으면 flat list 에 합류.
  //   현재 머신 group 으로 흩어져 화면에서 사라진 zalman peer 들을 머신 태그로 표시.
  for (const p of peers() ?? []) {
+ // rc.267 (B) — 로스터 멤버십 필터 (마스터 정의: tmux LLM / worktree / subagent 만 에이전트).
+ //   daemon.rs:1114-1122 의 auto-seed 게이트와 동일 기준 (null·순수숫자·sv_*·'[' 포함 = 비peer).
+ //   worktree/subagent 는 PeerDto.worktrees/subagents 로 부모 카드에 nested (rc.228) → 독립 row 아님.
+ //   over-hide 방지: 정상 tmux peer (예: aoe_akashic_*, zalman-wsl) 는 위 패턴에 안 걸려 그대로 유지.
+ if (!isRosterPeer(p.alias)) continue;
  if (connFilter() === "connected" && !isConnected(p)) continue;
  if (connFilter() === "offline" && isConnected(p)) continue;
  const machineTag = machineFromAddress(p.address) || p.machine?.trim() || undefined;
@@ -955,7 +1040,48 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  />
  <span class="messenger-friend-text">
  <span class="messenger-friend-name" style="font-size:14px;" title={info.label}>
- {f.display}
+ {(f.kind === "discord" || f.kind === "telegram") ? f.display : (() => {
+   // rc.267 (A) — 친근한 이름(큰) + raw 식별자(작은) + 인라인 편집.
+   //   채널(discord/telegram)은 제외 — 위 조건에서 원본 display 그대로.
+   const ident = identifierFor(f);
+   const raw = rawIdFor(f);
+   if (editingId() === ident) {
+     return (
+       <span style="display:inline-flex; align-items:center; gap:4px;" onClick={(e) => e.stopPropagation()}>
+         <input
+           value={editDraft()}
+           onInput={(e) => setEditDraft(e.currentTarget.value)}
+           maxlength="64"
+           autofocus
+           style="width:120px; padding:2px 5px; background:var(--surface-2); color:var(--text-1); border:1px solid var(--border); border-radius:3px; font-size:13px;"
+           onKeyDown={(e) => {
+             if (e.key === "Enter") { e.stopPropagation(); void saveFriendly(f); }
+             if (e.key === "Escape") { e.stopPropagation(); setEditingId(null); }
+           }}
+         />
+         <span style="cursor:pointer; font-size:12px; color:#238636;"
+           title="저장" onClick={(e) => { e.stopPropagation(); void saveFriendly(f); }}>✓</span>
+         <span style="cursor:pointer; font-size:12px; color:var(--text-3);"
+           title="취소" onClick={(e) => { e.stopPropagation(); setEditingId(null); }}>✕</span>
+       </span>
+     );
+   }
+   return (
+     <span style="display:inline-flex; align-items:baseline; gap:5px; min-width:0;">
+       <span style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+         title={`${friendlyName(f)} (raw: ${raw})`}>
+         {friendlyName(f)}
+       </span>
+       <span style="font-size:9.5px; color:var(--text-3); opacity:0.65; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+         title={`raw 식별자: ${raw}`}>
+         {raw}
+       </span>
+       <span style="cursor:pointer; font-size:10px; opacity:0.45; flex:none;"
+         title="친근한 이름 편집"
+         onClick={(e) => { e.stopPropagation(); setEditDraft(friendlyName(f)); setEditingId(ident); }}>✎</span>
+     </span>
+   );
+ })()}
  {(() => {
  // rc.162 — peer 친구도 display name 으로 명시 등록 시 ✓ MSG 표시.
  // 사용자가 우측 패널에서 peer 친구 등록하면 agent_capabilities.alias=display
