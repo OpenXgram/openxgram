@@ -527,7 +527,10 @@ enum Commands {
     /// MCP 서버 자기 자신을 Claude Code (.claude.json) 또는 프로젝트 (.mcp.json) 에 등록
     McpInstall {
         /// user(~/.claude.json) / project(./.mcp.json) / 임의 경로
-        #[arg(long, value_enum, default_value_t = McpInstallScope::Project)]
+        /// rc.260 — 기본을 User(전역)로. 이전 기본 Project 는 폴더마다 .mcp.json 을 만들어
+        ///   머신마다·프로젝트마다 경로 불일치(예: /usr/local/bin vs ~/.local/bin) 로 MCP 가
+        ///   실패하는 원인이었다. 전역 1곳이면 모든 프로젝트가 상속 — 설치/신규 프로젝트 자동.
+        #[arg(long, value_enum, default_value_t = McpInstallScope::User)]
         scope: McpInstallScope,
         /// scope=custom 일 때 사용할 경로
         #[arg(long)]
