@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use openxgram_core::paths::db_path;
 use openxgram_scheduler::{add_reflection_job, build_scheduler, NIGHTLY_REFLECTION_CRON};
-use openxgram_transport::{spawn_server_with_metrics, MetricsProvider};
+use openxgram_transport::{spawn_server_with_peer_provider, MetricsProvider};
 use std::sync::Arc;
 
 const DEFAULT_BIND: &str = "127.0.0.1:47300";
@@ -124,7 +124,30 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
     // Prometheus metrics provider — DB 카운트 매 scrape 마다 조회
     let data_dir_for_metrics = opts.data_dir.clone();
     let metrics: MetricsProvider = Arc::new(move || gather_db_metrics(&data_dir_for_metrics));
-    let server = spawn_server_with_metrics(bind, Some(metrics))
+    // rc.263 — cross-machine peer-sync gossip: `GET /v1/peers/reachable` provider.
+    // 자기 DB 의 reachable peer(localhost 제외 + eth/pubkey 보유)를 RemotePeer→DTO 로 매핑.
+    // transport 크레이트가 openxgram-db/peer 에 무의존(저수준)이므로 closure 주입(순환 방지).
+    let data_dir_for_peers = opts.data_dir.clone();
+    let peer_provider: openxgram_transport::ReachablePeerProvider = Arc::new(move || {
+        match crate::daemon_peer_sync::reachable_remote_peers(&data_dir_for_peers) {
+            Ok(peers) => peers
+                .into_iter()
+                .map(|p| openxgram_transport::ReachablePeerDto {
+                    alias: p.alias,
+                    public_key_hex: p.public_key_hex,
+                    eth_address: p.eth_address,
+                    address: p.address,
+                    gui_address: p.gui_address,
+                    role: p.role,
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "peers/reachable provider: DB 읽기 실패 (빈 목록 반환)");
+                Vec::new()
+            }
+        }
+    });
+    let server = spawn_server_with_peer_provider(bind, Some(metrics), Some(peer_provider))
         .await
         .context("transport server bind 실패")?;
     println!("  ✓ transport server bound: http://{}", server.bound_addr);

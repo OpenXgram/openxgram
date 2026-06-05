@@ -143,6 +143,31 @@ impl ServerHandle {
 /// 외부 모니터링용 metrics text provider — Prometheus exposition format 등.
 pub type MetricsProvider = Arc<dyn Fn() -> String + Send + Sync>;
 
+/// cross-machine peer-sync (gossip) 용 reachable peer 요약 DTO.
+///
+/// `daemon_peer_sync::RemotePeer` 와 **필드명·JSON 형태가 정확히 일치**해야 한다
+/// (그쪽이 `GET /v1/peers/reachable` 응답을 Deserialize 받음). transport 크레이트는
+/// openxgram-db / openxgram-peer 에 의존하지 않으므로(저수준), 이 타입은 transport 안에
+/// 독립 정의하고 daemon 이 provider closure 로 데이터를 주입한다(의존성 순환 방지).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReachablePeerDto {
+    pub alias: String,
+    pub public_key_hex: String,
+    /// 0x… ECDSA 주소 — 식별 키.
+    pub eth_address: String,
+    /// http://<reachable-ip>:<port> — localhost 면 핸들러에서 제외.
+    pub address: String,
+    /// gui_address(transport+2) — cross-machine 터미널 proxy 용.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gui_address: Option<String>,
+    /// "primary" / "secondary" / "worker".
+    pub role: String,
+}
+
+/// reachable peer 목록을 돌려주는 provider closure (이미 localhost 제외된 목록 가정).
+/// daemon 이 자기 DB 를 읽어 주입한다. None 이면 빈 목록 응답(미주입 환경).
+pub type ReachablePeerProvider = Arc<dyn Fn() -> Vec<ReachablePeerDto> + Send + Sync>;
+
 #[derive(Clone)]
 struct AppState {
     received: Arc<Mutex<Vec<Envelope>>>,
@@ -152,6 +177,8 @@ struct AppState {
     rate_limiter: Arc<rate_limit::RateLimiter>,
     /// rc.238 — inbound_processor 의 마지막 tick (unix epoch secs). 0 = 미tick.
     last_inbound_tick: Arc<AtomicI64>,
+    /// peer-sync gossip provider — None 이면 `/v1/peers/reachable` 가 빈 배열 반환.
+    peer_provider: Option<ReachablePeerProvider>,
 }
 
 pub async fn spawn_server(bind_addr: SocketAddr) -> Result<ServerHandle> {
@@ -159,6 +186,7 @@ pub async fn spawn_server(bind_addr: SocketAddr) -> Result<ServerHandle> {
         bind_addr,
         None,
         Arc::new(rate_limit::RateLimiter::default()),
+        None,
     )
     .await
 }
@@ -171,6 +199,23 @@ pub async fn spawn_server_with_metrics(
         bind_addr,
         metrics,
         Arc::new(rate_limit::RateLimiter::default()),
+        None,
+    )
+    .await
+}
+
+/// metrics + peer-sync provider 동시 주입. daemon 이 `/v1/peers/reachable` 활성화 시 사용.
+/// `peer_provider` 는 이미 localhost 제외된 reachable peer 목록을 돌려준다(핸들러도 방어 필터).
+pub async fn spawn_server_with_peer_provider(
+    bind_addr: SocketAddr,
+    metrics: Option<MetricsProvider>,
+    peer_provider: Option<ReachablePeerProvider>,
+) -> Result<ServerHandle> {
+    spawn_server_inner(
+        bind_addr,
+        metrics,
+        Arc::new(rate_limit::RateLimiter::default()),
+        peer_provider,
     )
     .await
 }
@@ -185,6 +230,7 @@ pub async fn spawn_server_with_rate_limit(
         bind_addr,
         None,
         Arc::new(rate_limit::RateLimiter::new(per_minute)),
+        None,
     )
     .await
 }
@@ -193,6 +239,7 @@ async fn spawn_server_inner(
     bind_addr: SocketAddr,
     metrics: Option<MetricsProvider>,
     rate_limiter: Arc<rate_limit::RateLimiter>,
+    peer_provider: Option<ReachablePeerProvider>,
 ) -> Result<ServerHandle> {
     let received = Arc::new(Mutex::new(Vec::new()));
     let last_inbound_tick = Arc::new(AtomicI64::new(0));
@@ -203,12 +250,14 @@ async fn spawn_server_inner(
         replay: Arc::new(replay::ReplayCache::default()),
         rate_limiter,
         last_inbound_tick: last_inbound_tick.clone(),
+        peer_provider,
     };
 
     let app = Router::new()
         .route("/v1/health", get(health_check))
         .route("/v1/message", post(receive_message))
         .route("/v1/metrics", get(metrics_endpoint))
+        .route("/v1/peers/reachable", get(reachable_peers_endpoint))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
@@ -317,6 +366,20 @@ async fn metrics_endpoint(State(state): State<AppState>) -> (StatusCode, String)
     (StatusCode::OK, body)
 }
 
+/// `GET /v1/peers/reachable` — cross-machine peer-sync(gossip) 주소록 힌트.
+/// read-only 주소록만 제공하므로 health/metrics 처럼 무인증 GET (설계노트 A).
+/// provider 미주입(None) 환경이면 빈 배열 `[]`. provider 결과도 localhost 면 방어적 제외.
+async fn reachable_peers_endpoint(State(state): State<AppState>) -> Json<Vec<ReachablePeerDto>> {
+    let peers = match &state.peer_provider {
+        Some(provider) => provider()
+            .into_iter()
+            .filter(|p| !crate::tailscale::is_unreachable_address(&p.address))
+            .collect(),
+        None => Vec::new(),
+    };
+    Json(peers)
+}
+
 /// `base_url` 의 `/v1/message` 로 envelope POST. 4xx/5xx 시 raise.
 pub async fn send_envelope(base_url: &str, envelope: &Envelope) -> Result<()> {
     let url = format!("{}/v1/message", base_url.trim_end_matches('/'));
@@ -335,4 +398,66 @@ pub async fn send_envelope(base_url: &str, envelope: &Envelope) -> Result<()> {
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod peers_reachable_tests {
+    use super::*;
+
+    fn dto(alias: &str, addr: &str) -> ReachablePeerDto {
+        ReachablePeerDto {
+            alias: alias.to_string(),
+            public_key_hex: "02abc".to_string(),
+            eth_address: format!("0x{alias}"),
+            address: addr.to_string(),
+            gui_address: None,
+            role: "worker".to_string(),
+        }
+    }
+
+    /// 핸들러가 localhost/unreachable 주소를 방어적으로 제외하고 reachable 만 노출하는지.
+    #[tokio::test]
+    async fn endpoint_filters_localhost_and_returns_reachable() {
+        let provider: ReachablePeerProvider = Arc::new(|| {
+            vec![
+                dto("local", "http://127.0.0.1:47300"),
+                dto("zero", "http://0.0.0.0:47300"),
+                dto("good", "http://100.101.237.9:47300"),
+            ]
+        });
+        let bind: SocketAddr = "127.0.0.1:0".parse().expect("bind");
+        let server = spawn_server_with_peer_provider(bind, None, Some(provider))
+            .await
+            .expect("spawn");
+        let url = format!("http://{}/v1/peers/reachable", server.bound_addr);
+        let body: Vec<ReachablePeerDto> = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .expect("send")
+            .json()
+            .await
+            .expect("json");
+        assert_eq!(body.len(), 1, "localhost/0.0.0.0 제외, reachable 1 개만");
+        assert_eq!(body[0].alias, "good");
+        server.shutdown();
+    }
+
+    /// provider 미주입(None) 환경이면 빈 배열을 반환해야 한다.
+    #[tokio::test]
+    async fn endpoint_empty_without_provider() {
+        let bind: SocketAddr = "127.0.0.1:0".parse().expect("bind");
+        let server = spawn_server(bind).await.expect("spawn");
+        let url = format!("http://{}/v1/peers/reachable", server.bound_addr);
+        let body: Vec<ReachablePeerDto> = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .expect("send")
+            .json()
+            .await
+            .expect("json");
+        assert!(body.is_empty(), "provider None → []");
+        server.shutdown();
+    }
 }

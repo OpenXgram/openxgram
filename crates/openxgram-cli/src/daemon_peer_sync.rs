@@ -16,20 +16,20 @@
 //!    서명 신뢰 경계는 기존 envelope 체계를 따른다(이 sync 는 주소록 힌트만 제공하며,
 //!    실제 메시지 수신 시 process_inbound 가 서명 검증 + eth→pubkey 매칭으로 재확인).
 //!
-//! ## 현재 구현 범위 (이 PR)
+//! ## 현재 구현 범위 (rc.263 — 활성화 완료)
 //! - `merge_remote_peers` — 순수·단위테스트 가능한 병합 로직 (완성).
 //! - `RemotePeer` — 교환 DTO (eth_address 포함 — 식별 키로 필수).
-//! - `spawn_peer_sync` / `sync_tick_once` — 주기 tick scaffold (reachable peer 순회 +
-//!   merge 호출). 실제 원격 pull 은 eth_address 를 노출하는 교환 엔드포인트가 필요.
+//! - `reachable_remote_peers` — 자기 DB → provider 가 노출할 `Vec<RemotePeer>` 매핑.
+//! - `fetch_remote_peers` — 원격 `GET /v1/peers/reachable` pull (reqwest, timeout 3s).
+//! - `sync_tick_once` — reachable base 순회 → pull → merge (per-peer warn+continue).
+//! - `spawn_peer_sync` — 60s 주기 tick.
 //!
-//! ## 설계 노트 — 후속(별도 PR) 필요 사항
-//! 기존 `GET /v1/gui/peers`(PeerDto)는 **eth_address 미노출** + Bearer 인증 필요라
-//! gossip pull 에 부적합. 다음 중 하나가 필요:
-//!   (A) transport 서버(envelope 포트)에 read-only `GET /v1/peers/reachable` 추가 —
-//!       reachable peer 만(localhost 제외) {alias,pubkey,eth,address,role} 반환.
-//!       transport 크레이트에 DB 접근을 주입해야 하므로 별도 PR 로 분리(범위 보호).
-//!   (B) 또는 PeerDto 에 eth_address 필드 추가 + 전용 sync 토큰.
-//! 이 PR 은 (A) 의 client/merge 측을 완비하고 endpoint 는 노트로 남긴다.
+//! ## 엔드포인트 (설계 노트 (A) — rc.263 합류)
+//! transport 서버(envelope 포트)에 read-only `GET /v1/peers/reachable` 추가됨 —
+//! reachable peer 만(localhost 제외) {alias,pubkey,eth,address,gui,role} 반환.
+//! transport 크레이트는 저수준(openxgram-db/peer 무의존)이므로 daemon 이
+//! `reachable_remote_peers` 결과를 `ReachablePeerProvider` closure 로 주입한다
+//! (의존성 순환 방지). 기존 `GET /v1/gui/peers`(PeerDto, eth 미노출 + Bearer)는 무관.
 
 use std::path::{Path, PathBuf};
 
@@ -135,23 +135,92 @@ pub fn reachable_peer_addresses(data_dir: &Path) -> anyhow::Result<Vec<String>> 
         .collect())
 }
 
-/// 1회 sync tick — reachable peer 들로부터 목록 pull 시도 후 merge.
+/// 자기 DB 에서 reachable(localhost 아님) + eth_address·pubkey 보유 peer 를 `RemotePeer` 로 매핑.
+/// `GET /v1/peers/reachable` provider 가 노출할 목록 — 다른 머신 데몬이 이를 pull 해 merge 한다.
+/// self 항목도 자기 peers table 에 있으면 포함되어 다른 머신이 나를 알 수 있다(받는 쪽이 self_eth 로 거름).
+pub fn reachable_remote_peers(data_dir: &Path) -> anyhow::Result<Vec<RemotePeer>> {
+    let mut db = openxgram_db::Db::open(openxgram_db::DbConfig {
+        path: openxgram_core::paths::db_path(data_dir),
+        ..Default::default()
+    })?;
+    let mut store = PeerStore::new(&mut db);
+    let peers = store.list()?;
+    Ok(peers
+        .into_iter()
+        .filter(|p| !is_unreachable_address(&p.address))
+        .filter_map(|p| {
+            let eth = p.eth_address?;
+            if eth.trim().is_empty() || p.public_key_hex.trim().is_empty() {
+                return None;
+            }
+            Some(RemotePeer {
+                alias: p.alias,
+                public_key_hex: p.public_key_hex,
+                eth_address: eth,
+                gui_address: derive_gui_url(&p.address),
+                address: p.address,
+                role: p.role.as_str().to_string(),
+            })
+        })
+        .collect())
+}
+
+/// 자기 신원(eth address). `XGRAM_KEYSTORE_PASSWORD` 가 있으면 master keystore 에서 derive.
+/// 없으면 None — 그 경우 merge 가 self 항목을 idempotent 재upsert 할 뿐 무해.
+fn self_eth_address(data_dir: &Path) -> Option<String> {
+    use openxgram_keystore::Keystore;
+    let pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").ok()?;
+    let ks = openxgram_keystore::FsKeystore::new(openxgram_core::paths::keystore_dir(data_dir));
+    let kp = ks
+        .load(openxgram_core::paths::MASTER_KEY_NAME, &pw)
+        .ok()?;
+    Some(kp.address.as_str().to_string())
+}
+
+/// 원격 데몬의 `GET {base}/v1/peers/reachable` 를 pull → `Vec<RemotePeer>` 역직렬화.
+/// timeout 3s. 실패는 에러 반환(호출자 sync_tick_once 가 per-peer 로 잡아 warn 후 continue).
+async fn fetch_remote_peers(base: &str) -> anyhow::Result<Vec<RemotePeer>> {
+    let url = format!("{}/v1/peers/reachable", base.trim_end_matches('/'));
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()?;
+    let resp = client.get(&url).send().await?.error_for_status()?;
+    let peers = resp.json::<Vec<RemotePeer>>().await?;
+    Ok(peers)
+}
+
+/// 1회 sync tick — reachable peer 들의 `GET /v1/peers/reachable` 를 pull 해 merge.
 ///
-/// 현 PR: 원격 pull 엔드포인트(설계 노트 (A)) 부재로, 후보 reachable peer 수를
-/// 로깅하고 merge scaffold 만 수행(noop pull). endpoint 합류 시 `fetch_remote_peers`
-/// 만 구현하면 즉시 활성화된다.
+/// rc.263: 설계 노트 (A) 엔드포인트 합류로 활성화됨. 각 reachable base 를 순회하며
+/// `fetch_remote_peers` 로 목록을 받아 `merge_remote_peers` 로 병합한다.
+/// per-peer 실패(네트워크/역직렬화)는 전체를 멈추지 않고 warn 후 continue.
+/// 병합된 총 row 수 반환.
 pub async fn sync_tick_once(data_dir: &Path) -> anyhow::Result<usize> {
     let candidates = reachable_peer_addresses(data_dir)?;
     if candidates.is_empty() {
         tracing::debug!("peer-sync tick: reachable peer 0 — skip");
         return Ok(0);
     }
-    tracing::debug!(
-        count = candidates.len(),
-        "peer-sync tick: reachable peer 후보 (원격 pull 엔드포인트 합류 시 활성화)"
-    );
-    // 후속 PR: for base in candidates { let remote = fetch_remote_peers(&base).await?; ... }
-    Ok(0)
+    let self_eth = self_eth_address(data_dir);
+    let mut db = openxgram_db::Db::open(openxgram_db::DbConfig {
+        path: openxgram_core::paths::db_path(data_dir),
+        ..Default::default()
+    })?;
+    let mut total = 0usize;
+    for base in &candidates {
+        match fetch_remote_peers(base).await {
+            Ok(remote) => match merge_remote_peers(&mut db, &remote, self_eth.as_deref()) {
+                Ok(n) => total += n,
+                Err(e) => {
+                    tracing::warn!(base = %base, error = %e, "peer-sync merge 실패 (계속)")
+                }
+            },
+            Err(e) => {
+                tracing::warn!(base = %base, error = %e, "peer-sync pull 실패 (계속)");
+            }
+        }
+    }
+    Ok(total)
 }
 
 /// 주기 sync tick spawn — 기본 60초 간격. daemon startup 에서 호출.
@@ -246,6 +315,31 @@ mod tests {
         let mut store = PeerStore::new(&mut db);
         let all = store.list().unwrap();
         assert_eq!(all.iter().filter(|p| p.alias == "dup").count(), 1);
+    }
+
+    #[test]
+    fn remote_peer_json_matches_dto_shape() {
+        // RemotePeer 가 transport 의 ReachablePeerDto 와 동일 JSON 형태여야 한다
+        // (provider 직렬화 → fetch_remote_peers 역직렬화 round-trip).
+        let dto = openxgram_transport::ReachablePeerDto {
+            alias: "akashic".to_string(),
+            public_key_hex: "02abc".to_string(),
+            eth_address: "0xDEAD".to_string(),
+            address: "http://100.64.0.9:47300".to_string(),
+            gui_address: Some("http://100.64.0.9:47302".to_string()),
+            role: "primary".to_string(),
+        };
+        let json = serde_json::to_string(&dto).unwrap();
+        let rp: RemotePeer = serde_json::from_str(&json).unwrap();
+        assert_eq!(rp.alias, "akashic");
+        assert_eq!(rp.eth_address, "0xDEAD");
+        assert_eq!(rp.address, "http://100.64.0.9:47300");
+        assert_eq!(rp.gui_address.as_deref(), Some("http://100.64.0.9:47302"));
+        assert_eq!(rp.role, "primary");
+        // 역방향도 동일 형태 — DTO 로 다시 역직렬화 가능.
+        let back: openxgram_transport::ReachablePeerDto =
+            serde_json::from_str(&serde_json::to_string(&rp).unwrap()).unwrap();
+        assert_eq!(back, dto);
     }
 
     #[test]
