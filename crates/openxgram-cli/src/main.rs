@@ -532,6 +532,11 @@ enum Commands {
         ///   실패하는 원인이었다. 전역 1곳이면 모든 프로젝트가 상속 — 설치/신규 프로젝트 자동.
         #[arg(long, value_enum, default_value_t = McpInstallScope::User)]
         scope: McpInstallScope,
+        /// 등록 대상 MCP 클라이언트.
+        /// auto = 설치 흔적 있는 클라이언트만 / all = 전부(antigravity 제외) / 개별 = 그것만.
+        /// --scope(user/project/custom)는 claude 클라이언트일 때만 적용된다.
+        #[arg(long, value_enum, default_value_t = McpInstallClient::Auto)]
+        client: McpInstallClient,
         /// scope=custom 일 때 사용할 경로
         #[arg(long)]
         config: Option<PathBuf>,
@@ -789,6 +794,46 @@ enum McpInstallScope {
     Project,
     /// 임의 경로 (--config 필요)
     Custom,
+}
+
+/// `--client` 선택값 — 등록 대상 MCP 클라이언트.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum McpInstallClient {
+    /// 설치 흔적 있는 클라이언트만 자동 등록 (기본)
+    Auto,
+    /// 흔적 무관 전부 등록 (antigravity 제외 — 경로 미확정)
+    All,
+    /// Claude Code (~/.claude.json 또는 --scope)
+    Claude,
+    /// OpenAI Codex CLI (~/.codex/config.toml)
+    Codex,
+    /// Cursor (~/.cursor/mcp.json)
+    Cursor,
+    /// Gemini CLI (~/.gemini/settings.json)
+    Gemini,
+    /// VS Code (OS별 user mcp.json)
+    Vscode,
+    /// Windsurf (~/.codeium/windsurf/mcp_config.json)
+    Windsurf,
+    /// Google Antigravity (~/.gemini/antigravity/mcp_config.json — 경로 미검증)
+    Antigravity,
+}
+
+impl McpInstallClient {
+    fn to_selector(self) -> openxgram_cli::mcp_install::McpClientSelector {
+        use openxgram_cli::mcp_install::{McpClient, McpClientSelector};
+        match self {
+            McpInstallClient::Auto => McpClientSelector::Auto,
+            McpInstallClient::All => McpClientSelector::All,
+            McpInstallClient::Claude => McpClientSelector::One(McpClient::Claude),
+            McpInstallClient::Codex => McpClientSelector::One(McpClient::Codex),
+            McpInstallClient::Cursor => McpClientSelector::One(McpClient::Cursor),
+            McpInstallClient::Gemini => McpClientSelector::One(McpClient::Gemini),
+            McpInstallClient::Vscode => McpClientSelector::One(McpClient::VsCode),
+            McpInstallClient::Windsurf => McpClientSelector::One(McpClient::Windsurf),
+            McpInstallClient::Antigravity => McpClientSelector::One(McpClient::Antigravity),
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -2900,6 +2945,7 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::McpInstall {
             scope,
+            client,
             config,
             data_dir,
             with_password,
@@ -2914,7 +2960,8 @@ async fn main() -> anyhow::Result<()> {
                 ),
             };
             let dir = resolve_data_dir(data_dir)?;
-            openxgram_cli::mcp_install::run_install(
+            openxgram_cli::mcp_install::run_install_clients(
+                client.to_selector(),
                 resolved_scope,
                 &dir,
                 with_password,

@@ -73,6 +73,410 @@ pub enum McpScope {
     Custom(PathBuf),
 }
 
+/// 지원하는 MCP 클라이언트.
+///
+/// OpenXgram 의 본질은 "어떤 LLM/에이전트에든 install" — 따라서 Claude Code 외
+/// 여러 클라이언트를 동일한 전역(user) 설정 1곳에 idempotent 하게 등록한다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum McpClient {
+    /// Claude Code — `~/.claude.json` (또는 --scope 로 project/custom).
+    Claude,
+    /// OpenAI Codex CLI — `~/.codex/config.toml` ([mcp_servers.openxgram]).
+    Codex,
+    /// Cursor — `~/.cursor/mcp.json` (mcpServers.openxgram).
+    Cursor,
+    /// Gemini CLI — `~/.gemini/settings.json` (mcpServers.openxgram).
+    Gemini,
+    /// VS Code — OS별 user-scope mcp.json (servers.openxgram, type=stdio).
+    VsCode,
+    /// Windsurf — `~/.codeium/windsurf/mcp_config.json` (mcpServers.openxgram).
+    Windsurf,
+    /// Google Antigravity IDE — `~/.gemini/antigravity/mcp_config.json` (mcpServers.openxgram).
+    /// ⚠️ 경로 미확정(신생 IDE) — auto/all 에서 제외, 명시적 --client antigravity 일 때만 시도.
+    Antigravity,
+}
+
+impl McpClient {
+    /// 사람이 읽는 짧은 이름 (로그 출력용).
+    pub fn label(self) -> &'static str {
+        match self {
+            McpClient::Claude => "claude",
+            McpClient::Codex => "codex",
+            McpClient::Cursor => "cursor",
+            McpClient::Gemini => "gemini",
+            McpClient::VsCode => "vscode",
+            McpClient::Windsurf => "windsurf",
+            McpClient::Antigravity => "antigravity",
+        }
+    }
+
+    /// auto/all 대상이 되는 클라이언트들. Antigravity 는 경로 미확정이라 제외 —
+    /// 명시적 `--client antigravity` 일 때만 best-effort 시도.
+    fn discoverable() -> &'static [McpClient] {
+        &[
+            McpClient::Claude,
+            McpClient::Codex,
+            McpClient::Cursor,
+            McpClient::Gemini,
+            McpClient::VsCode,
+            McpClient::Windsurf,
+        ]
+    }
+}
+
+/// `--client` 선택값. clap value_enum 과 매핑.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum McpClientSelector {
+    /// 시스템에 설치 흔적이 있는 클라이언트만 자동 선택.
+    Auto,
+    /// 흔적 무관 전부 (Antigravity 제외).
+    All,
+    /// 특정 클라이언트 1개.
+    One(McpClient),
+}
+
+fn home_dir() -> Result<PathBuf> {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(PathBuf::from)
+        .map_err(|_| anyhow!("HOME / USERPROFILE 둘 다 미설정"))
+}
+
+/// VS Code user-scope mcp.json 경로 (OS별).
+fn vscode_user_mcp_path(home: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        home.join("Library/Application Support/Code/User/mcp.json")
+    } else if cfg!(target_os = "windows") {
+        // %APPDATA% 우선, 없으면 home 기반 fallback.
+        std::env::var("APPDATA")
+            .map(|a| PathBuf::from(a).join("Code/User/mcp.json"))
+            .unwrap_or_else(|_| home.join("AppData/Roaming/Code/User/mcp.json"))
+    } else {
+        home.join(".config/Code/User/mcp.json")
+    }
+}
+
+/// 한 클라이언트의 전역(user) 설정 파일 경로.
+/// claude 만 scope 영향을 받고, 나머지는 항상 전역 경로.
+fn client_config_path(client: McpClient, claude_scope_path: &Path) -> Result<PathBuf> {
+    let home = home_dir()?;
+    Ok(match client {
+        McpClient::Claude => claude_scope_path.to_path_buf(),
+        McpClient::Codex => home.join(".codex/config.toml"),
+        McpClient::Cursor => home.join(".cursor/mcp.json"),
+        McpClient::Gemini => home.join(".gemini/settings.json"),
+        McpClient::VsCode => vscode_user_mcp_path(&home),
+        McpClient::Windsurf => home.join(".codeium/windsurf/mcp_config.json"),
+        McpClient::Antigravity => home.join(".gemini/antigravity/mcp_config.json"),
+    })
+}
+
+/// 클라이언트별 "설치 흔적" 판정 — 설정 디렉토리 또는 파일 존재.
+/// auto 선택 시 사용.
+fn client_installed(client: McpClient) -> bool {
+    let Ok(home) = home_dir() else {
+        return false;
+    };
+    let probes: Vec<PathBuf> = match client {
+        McpClient::Claude => vec![home.join(".claude.json"), home.join(".claude")],
+        McpClient::Codex => vec![home.join(".codex")],
+        McpClient::Cursor => vec![home.join(".cursor")],
+        McpClient::Gemini => vec![home.join(".gemini")],
+        McpClient::VsCode => {
+            let p = vscode_user_mcp_path(&home);
+            // user/ 디렉토리(상위) 존재로 판정.
+            let user_dir = p.parent().map(|d| d.to_path_buf());
+            let mut v = vec![p];
+            if let Some(d) = user_dir {
+                v.push(d);
+            }
+            v
+        }
+        McpClient::Windsurf => vec![home.join(".codeium/windsurf"), home.join(".codeium")],
+        McpClient::Antigravity => vec![home.join(".gemini/antigravity")],
+    };
+    probes.iter().any(|p| p.exists())
+}
+
+/// 절대경로 xgram 바이너리 (또는 PATH lookup).
+fn resolve_xgram_bin(use_path_lookup: bool) -> Result<PathBuf> {
+    if use_path_lookup {
+        Ok(PathBuf::from("xgram"))
+    } else {
+        std::env::current_exe().context("현재 xgram 바이너리 경로 추출 실패")
+    }
+}
+
+/// server entry 의 args 벡터 (모든 클라이언트 공통).
+fn server_args(data_dir: &Path) -> Vec<String> {
+    vec![
+        "mcp-serve".to_string(),
+        "--data-dir".to_string(),
+        data_dir.display().to_string(),
+    ]
+}
+
+/// 부모 디렉토리 생성 헬퍼.
+fn ensure_parent(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("디렉토리 생성 실패: {}", parent.display()))?;
+    }
+    Ok(())
+}
+
+/// JSON 기반 클라이언트 공통 writer (claude/cursor/gemini/windsurf/antigravity).
+/// `servers_key` = "mcpServers", `entry_type` = None.
+/// VS Code 는 `servers_key="servers"`, `entry_type=Some("stdio")`.
+fn write_json_client(
+    config_path: &Path,
+    xgram_bin: &Path,
+    data_dir: &Path,
+    include_password: bool,
+    servers_key: &str,
+    entry_type: Option<&str>,
+) -> Result<()> {
+    let mut config: Value = if config_path.exists() {
+        let raw = fs::read_to_string(config_path)
+            .with_context(|| format!("{} 읽기 실패", config_path.display()))?;
+        if raw.trim().is_empty() {
+            json!({})
+        } else {
+            serde_json::from_str(&raw)
+                .with_context(|| format!("{} JSON 파싱 실패", config_path.display()))?
+        }
+    } else {
+        ensure_parent(config_path)?;
+        json!({})
+    };
+
+    let mut server_entry = serde_json::Map::new();
+    if let Some(t) = entry_type {
+        server_entry.insert("type".to_string(), json!(t));
+    }
+    server_entry.insert("command".to_string(), json!(xgram_bin.display().to_string()));
+    server_entry.insert("args".to_string(), json!(server_args(data_dir)));
+    if include_password {
+        if let Ok(pw) = std::env::var("XGRAM_KEYSTORE_PASSWORD") {
+            server_entry.insert("env".to_string(), json!({ "XGRAM_KEYSTORE_PASSWORD": pw }));
+        }
+    }
+
+    let servers = config
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("{} 의 root 가 JSON object 아님", config_path.display()))?
+        .entry(servers_key.to_string())
+        .or_insert_with(|| json!({}));
+    let servers_map = servers
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("{servers_key} 가 object 아님"))?;
+    servers_map.insert("openxgram".to_string(), Value::Object(server_entry));
+
+    let new_content = serde_json::to_string_pretty(&config)?;
+    fs::write(config_path, new_content)
+        .with_context(|| format!("{} 쓰기 실패", config_path.display()))?;
+    Ok(())
+}
+
+/// Codex TOML writer — `[mcp_servers.openxgram]` 에 merge.
+/// 기존 다른 mcp_servers / 설정은 보존. 단, toml 크레이트 특성상 주석은 유지 안 됨.
+fn write_codex_client(
+    config_path: &Path,
+    xgram_bin: &Path,
+    data_dir: &Path,
+    include_password: bool,
+) -> Result<()> {
+    use toml::Value as Toml;
+
+    let mut root: Toml = if config_path.exists() {
+        let raw = fs::read_to_string(config_path)
+            .with_context(|| format!("{} 읽기 실패", config_path.display()))?;
+        if raw.trim().is_empty() {
+            Toml::Table(Default::default())
+        } else {
+            raw.parse::<Toml>()
+                .with_context(|| format!("{} TOML 파싱 실패", config_path.display()))?
+        }
+    } else {
+        ensure_parent(config_path)?;
+        Toml::Table(Default::default())
+    };
+
+    let root_table = root
+        .as_table_mut()
+        .ok_or_else(|| anyhow!("{} root 가 TOML table 아님", config_path.display()))?;
+
+    let mcp_servers = root_table
+        .entry("mcp_servers".to_string())
+        .or_insert_with(|| Toml::Table(Default::default()));
+    let mcp_table = mcp_servers
+        .as_table_mut()
+        .ok_or_else(|| anyhow!("mcp_servers 가 table 아님"))?;
+
+    let mut entry = toml::map::Map::new();
+    entry.insert(
+        "command".to_string(),
+        Toml::String(xgram_bin.display().to_string()),
+    );
+    entry.insert(
+        "args".to_string(),
+        Toml::Array(server_args(data_dir).into_iter().map(Toml::String).collect()),
+    );
+    if include_password {
+        if let Ok(pw) = std::env::var("XGRAM_KEYSTORE_PASSWORD") {
+            // Codex: env_vars 는 forward 할 env 이름 목록 + [mcp_servers.openxgram.env] 테이블.
+            let mut env_tbl = toml::map::Map::new();
+            env_tbl.insert("XGRAM_KEYSTORE_PASSWORD".to_string(), Toml::String(pw));
+            entry.insert("env".to_string(), Toml::Table(env_tbl));
+        }
+    }
+    mcp_table.insert("openxgram".to_string(), Toml::Table(entry));
+
+    let new_content = toml::to_string_pretty(&root)
+        .with_context(|| format!("{} TOML 직렬화 실패", config_path.display()))?;
+    fs::write(config_path, new_content)
+        .with_context(|| format!("{} 쓰기 실패", config_path.display()))?;
+    Ok(())
+}
+
+/// 한 클라이언트 등록 — 성공/실패 모두 Result 로 반환 (호출부에서 per-client 경고 처리).
+fn install_one_client(
+    client: McpClient,
+    claude_scope_path: &Path,
+    xgram_bin: &Path,
+    data_dir: &Path,
+    include_password: bool,
+) -> Result<PathBuf> {
+    let config_path = client_config_path(client, claude_scope_path)?;
+    match client {
+        McpClient::Codex => {
+            write_codex_client(&config_path, xgram_bin, data_dir, include_password)?;
+        }
+        McpClient::VsCode => {
+            write_json_client(
+                &config_path,
+                xgram_bin,
+                data_dir,
+                include_password,
+                "servers",
+                Some("stdio"),
+            )?;
+        }
+        // claude/cursor/gemini/windsurf/antigravity — 모두 mcpServers JSON, type 없음.
+        _ => {
+            write_json_client(
+                &config_path,
+                xgram_bin,
+                data_dir,
+                include_password,
+                "mcpServers",
+                None,
+            )?;
+        }
+    }
+    Ok(config_path)
+}
+
+/// 멀티 클라이언트 MCP install 본체.
+///
+/// `selector` 로 대상 클라이언트 결정 (auto/all/개별).
+/// claude 의 설정 경로는 `claude_scope` 로 결정 (하위호환 user/project/custom).
+/// 다른 클라이언트는 항상 전역(user) 경로.
+///
+/// 각 클라이언트는 idempotent merge. 한 클라이언트가 실패해도 다른 클라이언트는 계속 진행.
+pub fn run_install_clients(
+    selector: McpClientSelector,
+    claude_scope: McpScope,
+    data_dir: &Path,
+    include_password: bool,
+    use_path_lookup: bool,
+) -> Result<()> {
+    let xgram_bin = resolve_xgram_bin(use_path_lookup)?;
+    let claude_scope_path = resolve_config_path(claude_scope)?;
+
+    // 대상 클라이언트 목록 결정.
+    let targets: Vec<McpClient> = match selector {
+        McpClientSelector::One(c) => vec![c],
+        McpClientSelector::All => McpClient::discoverable().to_vec(),
+        McpClientSelector::Auto => McpClient::discoverable()
+            .iter()
+            .copied()
+            .filter(|c| client_installed(*c))
+            .collect(),
+    };
+
+    if targets.is_empty() {
+        println!("[WARN] 설치 흔적 있는 MCP 클라이언트를 찾지 못했습니다.");
+        println!("       --client all 로 전부 등록하거나 --client <name> 으로 지정하세요.");
+        return Ok(());
+    }
+
+    if matches!(selector, McpClientSelector::One(McpClient::Antigravity)) {
+        eprintln!(
+            "[NOTE] antigravity: 설정 경로 미검증 (신생 IDE). best-effort 로 {} 에 작성합니다.",
+            client_config_path(McpClient::Antigravity, &claude_scope_path)?.display()
+        );
+    }
+
+    let mut ok_count = 0usize;
+    let mut fail_count = 0usize;
+    for client in targets {
+        match install_one_client(
+            client,
+            &claude_scope_path,
+            &xgram_bin,
+            data_dir,
+            include_password,
+        ) {
+            Ok(path) => {
+                println!("[OK] {}: {}", client.label(), path.display());
+                ok_count += 1;
+            }
+            Err(e) => {
+                eprintln!("[WARN] {}: 등록 실패 (계속 진행): {e}", client.label());
+                fail_count += 1;
+            }
+        }
+    }
+
+    println!();
+    println!(
+        "  xgram binary : {}  ({})",
+        xgram_bin.display(),
+        if use_path_lookup {
+            "PATH lookup"
+        } else {
+            "absolute"
+        }
+    );
+    println!("  data_dir     : {}", data_dir.display());
+    println!(
+        "  password     : {}",
+        if include_password {
+            "included (XGRAM_KEYSTORE_PASSWORD env in config)"
+        } else {
+            "not included (user must export separately)"
+        }
+    );
+    println!("  registered   : {ok_count} client(s){}", if fail_count > 0 {
+        format!(", {fail_count} failed")
+    } else {
+        String::new()
+    });
+    println!();
+
+    // Auto-import webhook/token from global settings (~/.claude/CLAUDE.md + env vars).
+    println!("--> attempting auto-import of webhook/token from global settings");
+    match import_global_defaults(data_dir) {
+        Ok(0) => println!("  (no global settings to import - skipped)"),
+        Ok(n) => println!("  [OK] {n} entries auto-registered"),
+        Err(e) => eprintln!("  [WARN] global import failed (continuing): {e}"),
+    }
+    println!();
+    println!("Restart the MCP client(s) to use `openxgram.*` tools.");
+    Ok(())
+}
+
 /// `xgram mcp install` 본체.
 ///
 /// `include_password` 가 true 면 현재 XGRAM_KEYSTORE_PASSWORD env 를 config 에
