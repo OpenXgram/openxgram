@@ -3645,10 +3645,17 @@ async fn gui_agents_register(
         let eth_addr = kp.address.to_string();
         registered_eth = Some(eth_addr.clone());
 
-        // peer entry add. address = 이 머신의 transport public URL (env override 가능).
+        // peer entry add. address = 이 머신의 cross-machine reachable transport URL.
         // 외부 peer 가 이 URL 로 envelope POST → daemon 가 alias 별 inbox 분리 routing (Step 2).
+        // env override → tailscale/LAN IP 동적 검출. 127.0.0.1/0.0.0.0 같은 도달 불가 주소 회피.
+        // 검출 실패 시에만 localhost 폴백 (daemon startup self-heal 이 다음 재시작에 교정).
         let local_addr = std::env::var("XGRAM_TRANSPORT_PUBLIC_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:47300".to_string());
+            .ok()
+            .filter(|u| !u.is_empty() && !openxgram_transport::tailscale::is_unreachable_address(u))
+            .or_else(|| {
+                openxgram_transport::tailscale::self_reachable_url(openxgram_core::ports::RPC_PORT)
+            })
+            .unwrap_or_else(|| format!("http://127.0.0.1:{}", openxgram_core::ports::RPC_PORT));
         let mut peer_store = PeerStore::new(&mut db);
         // 이미 있으면 (UNIQUE alias) error — silent skip.
         let _ = peer_store.add_with_eth(

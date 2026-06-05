@@ -25,6 +25,35 @@ fn derive_gui_url(transport_url: &str) -> Option<String> {
     Some(format!("{head}:{}", port + 2))
 }
 
+/// 이 머신의 cross-machine reachable transport URL 을 계산한다.
+///
+/// 우선순위 (모두 도달 가능 주소만 채택, `127.0.0.1`/`0.0.0.0` 절대 금지):
+///   ① env `XGRAM_TRANSPORT_PUBLIC_URL` (운영자 override) — 단 unreachable 이면 무시
+///   ② install-manifest `machine.tailscale_ip` + port
+///   ③ 동적 검출: `tailscale ip --4` → LAN IPv4 (`self_reachable_url`)
+///
+/// 이는 peer_send.rs 의 sender_transport_url 계산(rc.221)과 같은 로직을 공유하여,
+/// 등록(register/retroactive)과 ACK 경로가 동일한 self 주소를 쓰게 한다.
+/// 전부 실패하면 None — 호출측이 명시 로깅 후 localhost 폴백 여부를 결정.
+fn compute_self_reachable_url(data_dir: &std::path::Path, port: u16) -> Option<String> {
+    // ① env override (단 도달 불가 주소는 거부 — 옛 오염 env 무시)
+    if let Ok(u) = std::env::var("XGRAM_TRANSPORT_PUBLIC_URL") {
+        if !u.is_empty() && !openxgram_transport::tailscale::is_unreachable_address(&u) {
+            return Some(u);
+        }
+    }
+    // ② manifest tailscale_ip
+    if let Ok(m) =
+        openxgram_manifest::InstallManifest::read(openxgram_core::paths::manifest_path(data_dir))
+    {
+        if let Some(ip) = m.machine.tailscale_ip.filter(|s| !s.is_empty()) {
+            return Some(format!("http://{ip}:{port}"));
+        }
+    }
+    // ③ 동적 검출 (tailscale → LAN)
+    openxgram_transport::tailscale::self_reachable_url(port)
+}
+
 #[derive(Debug, Clone)]
 pub struct DaemonOpts {
     pub data_dir: PathBuf,
@@ -131,11 +160,17 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
     // rc.196 — retroactive register: messenger_enabled=1 인데 peer entry 없는 옛 agent 들의
     // sub-keystore + peer 자동 생성. 마스터의 portal/akashic 등 ui 토글만 켜고 rc.192 fix 이전
     // 등록된 agent 들이 mock 상태였던 본질 결함 해결.
-    match retroactive_register_agents(&opts.data_dir) {
+    match retroactive_register_agents(&opts.data_dir, bind.port()) {
         Ok(n) if n > 0 => println!("  ✓ rc.196 retroactive: {n} 옛 agent → verified peer 자동 등록"),
         Ok(_) => {}
         Err(e) => tracing::warn!(error = %e, "rc.196 retroactive register 실패 (계속 진행)"),
     }
+
+    // cross-machine peer registry sync (gossip) — reachable agent 목록 주기 교환(60s).
+    // 각 데몬이 fleet 전체의 reachable agent 를 알게 되어 직접 연결을 가능케 함.
+    // 자세한 설계·범위·후속 endpoint 노트는 daemon_peer_sync 모듈 doc 참조.
+    crate::daemon_peer_sync::spawn_peer_sync(opts.data_dir.clone());
+    println!("  ✓ peer-sync spawned (cross-machine registry gossip, 60s interval)");
 
     // inbound processor — 1초 주기로 server.drain_received() 한 후 envelope.from 매칭으로
     // peer.touch_by_eth_address. 매칭 실패는 silent (anonymous envelope 도 정상 도착).
@@ -1100,7 +1135,7 @@ fn auto_seed_local_tmux_agents(data_dir: &std::path::Path) -> anyhow::Result<usi
 /// 마스터의 본질: peer = 머신 X, peer = 터미널 (각 tmux session) O.
 /// 각 머신 daemon 가 자기 owner agent (자기 머신 tmux session 에 매칭) 만 sub-keystore generate.
 /// 다른 머신 owner 의 agent 는 sender hint (rc.193) 로 자동 upsert (receive 시).
-fn retroactive_register_agents(data_dir: &std::path::Path) -> anyhow::Result<usize> {
+fn retroactive_register_agents(data_dir: &std::path::Path, bind_port: u16) -> anyhow::Result<usize> {
     let pw = match openxgram_core::env::require_password() {
         Ok(p) => p,
         Err(_) => return Ok(0), // keystore password 없음 — skip (CLI mode 등)
@@ -1121,19 +1156,37 @@ fn retroactive_register_agents(data_dir: &std::path::Path) -> anyhow::Result<usi
         rows.filter_map(|r| r.ok()).collect()
     };
 
-    // rc.196 추가 fix — self-peer (master alias) 의 address 가 'http://unknown' 또는 빈값이면
-    // 실제 transport URL 로 update. retroactive 가 reply 못 보내던 본질 결함 해결.
-    let local_url = std::env::var("XGRAM_TRANSPORT_PUBLIC_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:47300".to_string());
-    let updated = db.conn().execute(
-        "UPDATE peers SET address = ?1
-         WHERE (address = 'http://unknown' OR address = '' OR address IS NULL)
-           AND eth_address IS NOT NULL AND eth_address != ''",
-        rusqlite::params![local_url],
-    ).unwrap_or(0);
-    if updated > 0 {
-        tracing::info!(updated = updated, addr = %local_url, "rc.196 self-peer address fix (http://unknown → real)");
-    }
+    // rc.196 + 신규: self-heal — 자기 머신 peer 들의 address 가 도달 불가하면 reachable 로 교정.
+    // 옛 'http://unknown'/빈값뿐 아니라 rc.196 가 박아둔 'http://127.0.0.1:47300'/0.0.0.0 도
+    // 포함. cross-machine 직접 전송이 안 되던 본질 결함(주소가 localhost 로 박힘) 해결.
+    // reachable 주소 검출 실패 시에는 self-heal 을 건너뜀 (localhost 유지 — 더 나빠지지 않음).
+    let reachable = compute_self_reachable_url(data_dir, bind_port);
+    let local_url = match &reachable {
+        Some(u) => {
+            // idempotent — 이미 reachable 인 row 는 건드리지 않음.
+            // localhost/unknown/빈값/unspecified 만 교정 대상.
+            let updated = db.conn().execute(
+                "UPDATE peers SET address = ?1
+                 WHERE eth_address IS NOT NULL AND eth_address != ''
+                   AND (address = 'http://unknown' OR address = '' OR address IS NULL
+                        OR address LIKE 'http://127.0.0.1:%'
+                        OR address LIKE 'http://0.0.0.0:%'
+                        OR address LIKE 'http://localhost:%')",
+                rusqlite::params![u],
+            ).unwrap_or(0);
+            if updated > 0 {
+                tracing::info!(updated = updated, addr = %u, "self-heal: peer address localhost/unknown → reachable");
+            }
+            u.clone()
+        }
+        None => {
+            tracing::warn!(
+                "self-heal skip — reachable 주소 검출 실패 (tailscale/LAN IP 없음). \
+                 신규 peer 는 localhost 로 등록됨 — env XGRAM_TRANSPORT_PUBLIC_URL 또는 manifest tailscale_ip 권장"
+            );
+            format!("http://127.0.0.1:{bind_port}")
+        }
+    };
 
     if candidates.is_empty() {
         return Ok(0);
