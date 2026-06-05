@@ -68,3 +68,7 @@ release-bundle/
 
 # fastembed 로컬 인덱스 아티팩트 (model.onnx 470MB 등) — 커밋 금지
 .memsearch/
+
+# 에이전트 worktree + fastembed 캐시 (커밋 금지)
+.claude/worktrees/
+.fastembed_cache/
