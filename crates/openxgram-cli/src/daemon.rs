@@ -180,6 +180,30 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
         Err(e) => tracing::warn!(error = %e, "rc.201 auto-seed 실패 (계속)"),
     }
 
+    // rc.268 — auto-seed 주기 tick: rc.201 auto-seed 는 startup 1회뿐이라, daemon 시작 이후
+    // 새로 만든 tmux LLM 세션이 재시작 전까지 안 뜨던 본질 결함을 fix. 30초마다 재실행하여
+    // 새 LLM tmux 세션을 재시작 없이 자동 등록 (auto_seed_local_tmux_agents 재사용 — INSERT OR IGNORE 라 idempotent).
+    {
+        let seed_data_dir = opts.data_dir.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            interval.tick().await; // 첫 tick 즉시 발화 회피 — startup 에서 이미 1회 실행됨.
+            loop {
+                interval.tick().await;
+                let dd = seed_data_dir.clone();
+                match tokio::task::spawn_blocking(move || auto_seed_local_tmux_agents(&dd)).await {
+                    Ok(Ok(n)) if n > 0 => {
+                        tracing::info!(seeded = n, "rc.268 auto-seed tick: 새 tmux LLM 세션 자동 등록")
+                    }
+                    Ok(Ok(_)) => {}
+                    Ok(Err(e)) => tracing::warn!(error = %e, "rc.268 auto-seed tick 실패 (계속)"),
+                    Err(e) => tracing::warn!(error = %e, "rc.268 auto-seed tick join 실패 (계속)"),
+                }
+            }
+        });
+        println!("  ✓ rc.268 auto-seed tick (30s) — 새 tmux LLM 세션 재시작 없이 자동 등록");
+    }
+
     // rc.196 — retroactive register: messenger_enabled=1 인데 peer entry 없는 옛 agent 들의
     // sub-keystore + peer 자동 생성. 마스터의 portal/akashic 등 ui 토글만 켜고 rc.192 fix 이전
     // 등록된 agent 들이 mock 상태였던 본질 결함 해결.
