@@ -21,6 +21,7 @@ use openxgram_core::env::require_password;
 use openxgram_core::paths::{db_path, keystore_dir, MASTER_KEY_NAME};
 use openxgram_core::time::kst_now;
 use openxgram_db::{Db, DbConfig};
+use rusqlite::OptionalExtension;
 use openxgram_keystore::{FsKeystore, Keypair, Keystore};
 use openxgram_memory::{default_embedder, MessageStore, SessionStore};
 
@@ -526,7 +527,7 @@ pub async fn run_discord_inbound_for_daemon(
             // message 로 submit. portal HTTP 우회 (같은 host).
             let injected = format!("[Discord:{}]\n{}{}", msg.author_name, msg.content, attach_line);
             if let Err(e) =
-                dispatch_to_session(&agent_id, &injected, &portal_url, &portal_token, &http_client).await
+                dispatch_to_session(&agent_id, &injected, &portal_url, &portal_token, &http_client, &mut store.db).await
             {
                 tracing::warn!(agent_id = %agent_id, error = %e, "discord → session dispatch 실패");
             } else {
@@ -583,14 +584,85 @@ pub async fn resolve_alias_to_tmux(alias: &str) -> Option<(String, u32)> {
     None
 }
 
+/// transport URL(`http://ip:port`) → GUI URL(port+2) 유도. daemon.rs/daemon_peer_sync.rs 와 동일 규칙.
+/// gui_address 컬럼이 비어 transport `address` 만 있을 때 사용.
+fn derive_gui_url(transport_url: &str) -> Option<String> {
+    let idx = transport_url.rfind(':')?;
+    let (head, rest) = transport_url.split_at(idx);
+    let port: u16 = rest[1..].trim_end_matches('/').parse().ok()?;
+    Some(format!("{head}:{}", port + 2))
+}
+
+/// rc.268 — 로컬 tmux 에 없는 alias (cross-machine peer) 를 그 머신의 PUBLIC 입력 엔드포인트로 fan-out.
+/// daemon_gui.rs `gui_session_input` 의 rc.256 peer 블록과 동일 패턴 (무인증 anon public 입력).
+/// peers 테이블에서 gui_address(없으면 transport address 에서 +2 유도) 를 조회 →
+/// `POST {gui}/v1/gui/public/sessions/{alias}/input` (body `{"data": text}`).
+/// fallback 금지 — 도달 불가/실패는 명시 에러 반환.
+async fn dispatch_to_remote_peer(
+    db: &mut Db,
+    alias: &str,
+    text: &str,
+    http: &reqwest::Client,
+) -> Result<()> {
+    // peers 조회: gui_address(우선) + transport address.
+    let row: Option<(Option<String>, Option<String>)> = db
+        .conn()
+        .query_row(
+            "SELECT gui_address, address FROM peers WHERE alias = ?1",
+            rusqlite::params![alias],
+            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)),
+        )
+        .optional()
+        .map_err(|e| anyhow!("peers 조회 실패 (alias={}): {}", alias, e))?;
+    let (gui_addr, transport_addr) = match row {
+        Some(v) => v,
+        None => bail!("dispatch remote: peers 에 alias '{}' 없음 (cross-machine 대상 아님)", alias),
+    };
+    // gui_address 우선, 없으면 transport address 에서 +2 유도.
+    let gui_base = match gui_addr.filter(|s| s.starts_with("http")) {
+        Some(g) => g,
+        None => match transport_addr {
+            Some(a) if a.starts_with("http") => derive_gui_url(&a)
+                .ok_or_else(|| anyhow!("dispatch remote: transport address '{}' 에서 gui url 유도 실패", a))?,
+            _ => bail!("dispatch remote: peer '{}' 에 http gui/transport address 없음", alias),
+        },
+    };
+    if openxgram_transport::tailscale::is_unreachable_address(&gui_base) {
+        bail!("dispatch remote: peer '{}' gui address '{}' 도달 불가 (localhost/0.0.0.0) — skip", alias, gui_base);
+    }
+    let base = gui_base.trim_end_matches('/');
+    // 원격 머신은 tmux send-keys -l (literal, Enter 없음) → 끝에 개행 추가해 submit 유도.
+    let payload = if text.ends_with('\n') { text.to_string() } else { format!("{text}\n") };
+    let url = format!(
+        "{base}/v1/gui/public/sessions/{}/input",
+        urlencoding::encode(alias)
+    );
+    let resp = http
+        .post(&url)
+        .timeout(std::time::Duration::from_secs(4))
+        .json(&serde_json::json!({ "data": payload }))
+        .send()
+        .await
+        .map_err(|e| anyhow!("dispatch remote: peer '{}' public input 전송 실패: {}", alias, e))?;
+    if !resp.status().is_success() {
+        let st = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        bail!("dispatch remote: peer '{}' public input HTTP {}: {}", alias, st, body);
+    }
+    tracing::info!(alias = %alias, gui = %base, "discord → remote peer public input dispatched (rc.268)");
+    Ok(())
+}
+
 /// identifier (`portal:<session>:<idx>` / `aoe:<session>` / prefix-less alias) 의 세션에 텍스트 주입.
-/// portal-new 의 `/api/tmux/send` 호출. peer:* 는 별도 fan-out (TODO).
+/// portal-new 의 `/api/tmux/send` 호출. rc.268 — bare alias 가 로컬 tmux 에 없으면 cross-machine
+/// peer 의 public 입력 엔드포인트로 fan-out (peer:* fan-out TODO 구현).
 async fn dispatch_to_session(
     identifier: &str,
     text: &str,
     portal_url: &str,
     portal_token: &str,
     http: &reqwest::Client,
+    db: &mut Db,
 ) -> Result<()> {
     let (session, idx) = if let Some(rest) = identifier.strip_prefix("portal:") {
         let mut parts = rest.splitn(2, ':');
@@ -614,10 +686,14 @@ async fn dispatch_to_session(
     } else if identifier.starts_with("peer:") {
         bail!("dispatch: peer:* binding 은 미구현 (Phase 2)");
     } else {
-        // prefix 없는 alias — tmux 진리원천 조회로 동적 resolve (하드코딩 0)
+        // prefix 없는 alias — 먼저 로컬 tmux 진리원천 조회로 동적 resolve (하드코딩 0).
+        // rc.268 — 로컬에 없으면 cross-machine peer 로 간주, 그 머신 public 입력 엔드포인트로 fan-out.
+        //   (로컬 경로는 절대 깨지 않음 — 원격 분기는 로컬 resolve 실패시에만.)
         match resolve_alias_to_tmux(identifier).await {
             Some(v) => v,
-            None => bail!("dispatch: alias '{}' → tmux 세션 매핑 실패 (tmux list-sessions 에 일치하는 세션 없음)", identifier),
+            None => {
+                return dispatch_to_remote_peer(db, identifier, text, http).await;
+            }
         }
     };
     // rc.114 — portal HTTP 우회 + 직접 tmux send-keys (bracket-paste mode).
@@ -744,4 +820,42 @@ fn resolve_data_dir(opt: Option<&Path>) -> Result<PathBuf> {
     let home = std::env::var_os("HOME")
         .ok_or_else(|| anyhow!("HOME 환경변수 없음 — --data-dir 명시 필요"))?;
     Ok(PathBuf::from(home).join(".openxgram"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derive_gui_url_adds_two() {
+        // transport 포트 47300 → gui 47302 (+2), daemon_peer_sync.rs 와 동일 규칙.
+        assert_eq!(
+            derive_gui_url("http://100.101.237.9:47300").as_deref(),
+            Some("http://100.101.237.9:47302")
+        );
+        assert_eq!(
+            derive_gui_url("http://100.101.237.9:47300/").as_deref(),
+            Some("http://100.101.237.9:47302")
+        );
+    }
+
+    #[test]
+    fn derive_gui_url_rejects_malformed() {
+        assert_eq!(derive_gui_url("not-a-url"), None);
+        assert_eq!(derive_gui_url("http://host:notaport"), None);
+    }
+
+    #[test]
+    fn remote_dispatch_skips_unreachable_gui() {
+        // is_unreachable_address 재사용 — localhost/0.0.0.0 는 cross-machine fan-out skip.
+        assert!(openxgram_transport::tailscale::is_unreachable_address(
+            "http://127.0.0.1:47302"
+        ));
+        assert!(openxgram_transport::tailscale::is_unreachable_address(
+            "http://localhost:47302"
+        ));
+        assert!(!openxgram_transport::tailscale::is_unreachable_address(
+            "http://100.101.237.9:47302"
+        ));
+    }
 }
