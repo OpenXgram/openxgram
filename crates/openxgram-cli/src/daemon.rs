@@ -476,7 +476,7 @@ pub fn process_inbound(
 ) -> Result<()> {
     use openxgram_db::{Db, DbConfig};
     use openxgram_keystore::verify_with_pubkey;
-    use openxgram_memory::{default_embedder, MessageStore, SessionStore};
+    use openxgram_memory::{message_embedder, MessageStore, SessionStore};
     use openxgram_peer::PeerStore;
 
     tracing::info!(count = envelopes.len(), "process_inbound: entry");
@@ -489,8 +489,15 @@ pub fn process_inbound(
     tracing::debug!("process_inbound: DB open ok");
     db.migrate().context("DB migrate (inbound) 실패")?;
     tracing::debug!("process_inbound: migrate ok");
-    let embedder = default_embedder().context("embedder init 실패")?;
-    tracing::debug!("process_inbound: embedder init ok");
+    // rc.270 본질 fix — 메시지 전달은 임베더 init 에 강결합되면 안 된다.
+    // 이전: default_embedder()? 가 실패하면 인바운드 envelope 전부 DB 저장 전 드롭
+    //   (macmini 214/214 drop, error="embedder init 실패"). embedder 실패가 전체
+    //   process_inbound 를 early-return 시키던 근본 버그.
+    // 현재: message_embedder() 는 init 실패 시 WARN 로그 + DummyEmbedder degrade →
+    //   메시지 L0 저장은 항상 진행 (의미 임베딩만 best-effort). 정상 경로(FastEmbedder
+    //   init 성공)는 기존과 동일하게 의미 임베딩 사용 — 회귀 없음.
+    let embedder = message_embedder();
+    tracing::debug!("process_inbound: embedder ready (best-effort, degrade-on-fail)");
 
     for env in envelopes {
         // rc.219 — ACK envelope branch. envelope_type="ack" 면 outbound_queue.ack_at UPDATE 만.

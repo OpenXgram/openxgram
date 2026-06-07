@@ -146,3 +146,34 @@ pub fn default_embedder() -> anyhow::Result<Box<dyn Embedder + Send + Sync>> {
 
     Ok(Box::new(DummyEmbedder))
 }
+
+/// 메시지 전달(L0 저장·송신)용 임베더 — best-effort.
+///
+/// rc.270 본질 fix: 메시지 전달이 임베딩 서브시스템(ONNX/FastEmbed init)에
+/// 강결합되면 안 된다. `default_embedder()` 가 실패하면 인바운드/아웃바운드
+/// envelope 가 DB 에 쓰이기도 전에 전부 드롭되던 근본 버그(macmini 214/214 drop)
+/// 해결.
+///
+/// 동작:
+/// - 정상 경로(FastEmbedder init 성공): 기존과 **동일하게** 의미 임베딩 사용.
+/// - init 실패 시: 메시지 전달을 막지 않도록 `DummyEmbedder` 로 degrade 하여
+///   메시지 row 는 반드시 저장되게 한다.
+///
+/// ⚠️ CLAUDE.md 절대규칙 #1 (fallback 금지 = silent swallow 금지) 준수:
+///   조용히 무시하지 않고 `tracing::warn!` 로 **명시 로그**를 남긴 뒤 degrade.
+///   "silent fallback" 이 아니라 "explicit log + graceful degrade".
+///   degrade 된 임베딩은 의미 검색 정확도만 낮을 뿐, 메시지 전달·저장은 보존된다.
+pub fn message_embedder() -> Box<dyn Embedder + Send + Sync> {
+    match default_embedder() {
+        Ok(e) => e,
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "message_embedder: 임베더 init 실패 — DummyEmbedder 로 degrade. \
+                 메시지 전달·저장은 계속 진행 (의미 임베딩만 best-effort, \
+                 의미 검색 정확도 일시 저하). 임베더 복구 후 backfill 권장."
+            );
+            Box::new(DummyEmbedder)
+        }
+    }
+}

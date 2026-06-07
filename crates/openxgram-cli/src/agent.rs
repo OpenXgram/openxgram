@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use openxgram_db::{Db, DbConfig};
-use openxgram_memory::{default_embedder, MessageStore, SessionStore};
+use openxgram_memory::{default_embedder, message_embedder, MessageStore, SessionStore};
 use openxgram_orchestration::{kst_now_epoch, ScheduleKind, ScheduledStore, TargetKind};
 use serde::{Deserialize, Serialize};
 
@@ -413,7 +413,11 @@ async fn poll_once(
     })
     .context("DB open 실패")?;
     db.migrate().context("DB migrate 실패")?;
-    let embedder = default_embedder().context("embedder init 실패")?;
+    // rc.270 본질 fix — inbox 처리 agent 루프가 임베더 init 에 막혀 전체 인바운드를
+    // 처리 못 하던 근본 버그. init 실패 시 WARN + DummyEmbedder degrade → inbox
+    // 메시지 list/처리/응답 저장 모두 진행 (의미 임베딩만 best-effort).
+    // 정상 경로(FastEmbedder init 성공)는 기존과 동일.
+    let embedder = message_embedder();
 
     let inbox_sessions: Vec<_> = SessionStore::new(&mut db)
         .list()

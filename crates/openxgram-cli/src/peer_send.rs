@@ -8,7 +8,7 @@ use openxgram_core::paths::{db_path, keystore_dir, MASTER_KEY_NAME};
 use openxgram_core::time::kst_now;
 use openxgram_db::{Db, DbConfig};
 use openxgram_keystore::{FsKeystore, Keystore};
-use openxgram_memory::{default_embedder, MessageStore, SessionStore};
+use openxgram_memory::{message_embedder, MessageStore, SessionStore};
 use openxgram_nostr::{
     encrypt_for_peer, keys_from_master, NostrKeys, NostrKind, NostrSink, NostrTag, PublicKey,
 };
@@ -28,7 +28,10 @@ fn record_outbox(
     conversation_id: Option<&str>,
 ) -> Result<()> {
     let mut db = open_db(data_dir)?;
-    let embedder = default_embedder().context("embedder init 실패")?;
+    // rc.270 본질 fix — 송신(outbox L0 저장)이 임베더 init 에 막히면 안 된다.
+    // init 실패 시 WARN + DummyEmbedder degrade → 메시지 송신·저장은 진행
+    // (의미 임베딩만 best-effort). 정상 경로는 기존과 동일.
+    let embedder = message_embedder();
 
     let session_title = format!("outbox-to-{}", peer_alias);
     let session = SessionStore::new(&mut db)
