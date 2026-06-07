@@ -465,10 +465,29 @@ async function fetchRolePolicies(): Promise<RolePolicyDto | null> {
 }
 function RoleTab(props: { peer: PeerMeta; onJumpToSettings: () => void}) {
  const [policies] = createResource(fetchRolePolicies);
+ // rc.275 — 하드코딩 제거. 편집 탭과 동일 소스(agents_list)에서 이 alias 의 실제 등록값 로드.
+ const [agents] = createResource<AgentCapDto[]>(async () => {
+ try { return await invoke<AgentCapDto[]>("agents_list");} catch { return [];}
+});
+ const cap = () => (agents() ?? []).find((a) => a.alias === props.peer.alias) || null;
+ const currentRole = () => {
+ const r = (props.peer as any).role ?? cap()?.role;
+ return r && String(r).trim() ? String(r) : "(미설정)";
+};
+ const orchRole = () => {
+ const o = cap()?.orchestration_role;
+ return o && String(o).trim() ? String(o) : "(미설정)";
+};
  return (
  <div>
- <Row label="현재 역할" value="researcher (기본)" />
- <Row label="오케스트레이션" value="워커" />
+ <Row label="현재 역할" value={currentRole()} />
+ <Row label="오케스트레이션" value={orchRole()} />
+ <p style="font-size:11px; color:var(--text-3); padding:2px 0 6px;">
+ 역할·오케스트레이션을 바꾸려면{" "}
+ <button class="link-btn" type="button" onClick={props.onJumpToSettings} style="padding:0; font-size:11px;">
+ 역할·메신저 등록 탭에서 편집 →
+ </button>
+ </p>
  {/* rc.92 D2 — capabilities 표시 */}
  <Show when={props.peer.description}>
  <Row label="설명" value={props.peer.description!} />
