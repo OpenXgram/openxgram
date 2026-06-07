@@ -709,6 +709,45 @@ async fn gui_peers(
             })
             .collect()
     };
+    // rc.274 — 같은 tmux 세션을 가리키는 중복 peer 행 dedupe (GUI 로스터 1행/세션).
+    //   auto_seed 가 에이전트당 2행 기록할 수 있음: short alias(예: "akashic") + full
+    //   alias(예: "aoe_akashic_5054a80a"). 둘 다 session_identifier 가 동일("tmux:<name>")
+    //   이라 로스터에 둘 다 노출됨 → session_identifier(tmux:* 인 행) 기준 1행만 남긴다.
+    //   - canonical: alias == 세션명(sid 의 "tmux:" 접두 제거값, 즉 aoe_* full alias) 우선.
+    //     (worktree/subagent 연결이 full alias 기준이므로 그쪽을 살린다.) 없으면 첫 행.
+    //   - sid NULL / 비-tmux(원격·채널·self) 행은 dedupe 대상 아님 — 각자 고유하므로 그대로 유지.
+    let rows: Vec<_> = {
+        // tmux 세션별 후보 인덱스 수집 (입력 순서 보존).
+        let mut seen: std::collections::HashMap<String, usize> = Default::default();
+        let mut keep: Vec<bool> = vec![true; rows.len()];
+        for (idx, p) in rows.iter().enumerate() {
+            let sid = match sid_map.get(&p.alias) {
+                Some(s) if s.starts_with("tmux:") => s.clone(),
+                // 비-tmux / 없음 → dedupe 제외 (고유 유지).
+                _ => continue,
+            };
+            let session_name = &sid["tmux:".len()..];
+            let is_canonical = p.alias == session_name;
+            match seen.get(&sid).copied() {
+                None => {
+                    seen.insert(sid, idx);
+                }
+                Some(prev_idx) => {
+                    // 이미 본 세션. canonical(full alias) 우선으로 유지 대상 교체.
+                    if is_canonical && rows[prev_idx].alias != session_name {
+                        keep[prev_idx] = false; // 기존(short) 제거
+                        seen.insert(sid, idx); // 현재(full) 유지
+                    } else {
+                        keep[idx] = false; // 현재 중복 제거
+                    }
+                }
+            }
+        }
+        rows.into_iter()
+            .enumerate()
+            .filter_map(|(idx, p)| if keep[idx] { Some(p) } else { None })
+            .collect()
+    };
     // rc.229 — fix#1: per-peer subprocess enrichment 전부 제거 (8.7s → <200ms).
     //   project_folder/llm_type/llm_version/worktrees/subagents/ex_peers 는 모두
     //   on-demand `/v1/gui/agent/{alias}/detail` 에서 1개씩 enrich (fix#3).
