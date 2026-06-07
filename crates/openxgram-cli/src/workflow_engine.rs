@@ -13,6 +13,9 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkflowYaml {
+    // rc.269 — 최상위 `name` 누락 시 "missing field name" 으로 파싱 전체 실패하던 결함 완화.
+    // 누락되면 description/빈 문자열로 대체 (steps 가 본질). 명시되면 그대로 사용.
+    #[serde(default = "default_workflow_name")]
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -47,6 +50,10 @@ pub struct EngineResult {
     pub error: Option<String>,
     pub total_cost: f64,
     pub step_outputs: HashMap<String, String>,
+}
+
+fn default_workflow_name() -> String {
+    "untitled-workflow".to_string()
 }
 
 /// YAML 검증 + 파싱.
@@ -172,6 +179,37 @@ async fn execute_step(step: &StepDef, input: &str) -> Result<(String, f64), Stri
                 cost = 0.001;
                 format!("[email sent] to={to} subject='workflow {} - {}'", step.agent, step.id)
             }
+        }
+        "agent" => {
+            // W-10 orchestrator — step 을 다른 agent(peer)에게 위임.
+            // target 우선순위: step.to → step.agent (역할/alias). peer alias 직접 매칭.
+            // 기존 peer_send 재사용 (crate::peer_send::run_peer_send) — 재구현 금지.
+            // fire+record: 동기 결과는 기다리지 않음 (outbound_queue 에 enqueue 후 즉시 success).
+            let target = step
+                .to
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(step.agent.as_str())
+                .trim()
+                .to_string();
+            if target.is_empty() {
+                return Err("agent action: 'to' 또는 'agent' (target peer alias) 필수".into());
+            }
+            // daemon 환경: 키스토어 비번 + data_dir 해석. 미설정이면 명확 에러 (fallback 금지).
+            let password = std::env::var("XGRAM_KEYSTORE_PASSWORD").map_err(|_| {
+                "agent action: XGRAM_KEYSTORE_PASSWORD 미설정 — peer 위임에 master 키 필요".to_string()
+            })?;
+            let data_dir = match std::env::var("XGRAM_DATA_DIR") {
+                Ok(d) => std::path::PathBuf::from(d),
+                Err(_) => openxgram_core::paths::default_data_dir()
+                    .map_err(|e| format!("agent action: data_dir 해석 실패: {e}"))?,
+            };
+            let dispatch_body = step.body.as_deref().unwrap_or(input);
+            crate::peer_send::run_peer_send(&data_dir, &target, None, dispatch_body, &password)
+                .await
+                .map_err(|e| format!("agent action: peer_send({target}) 실패: {e}"))?;
+            cost = 0.001;
+            format!("[agent dispatched] to={target} step={}", step.id)
         }
         other => format!("[unsupported:{}] {}={}", other, step.agent, input),
     };

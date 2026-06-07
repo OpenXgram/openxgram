@@ -1718,14 +1718,19 @@ async fn do_local_session_input(
         return Ok(serde_json::json!({"ok": true, "via": format!("portal:{session}:{idx}"), "bytes_sent": data.len()}));
     }
 
-    // ── (3) local tmux fallback (tmux:<name>) ─────────────────────
-    let target = identifier
+    // ── (3) local tmux fallback (tmux:<name> 또는 bare alias) ─────────────────────
+    let raw_target = identifier
         .strip_prefix("tmux:")
         .unwrap_or(identifier)
         .to_string();
-    if target.is_empty() {
+    if raw_target.is_empty() {
         return Err(bad_request("empty identifier"));
     }
+    // rc.269 gap#5 — alias → 실제 tmux session 해석.
+    // Discord 인바운드 binding alias("voice")가 실제 session("aoe_voice_75cb4fe6")과
+    // 다르면 send-keys -t 가 "can't find pane" 으로 실패 → alias 를 실제 session 명으로 변환.
+    // 이미 실제 session 명이면 그대로. 매핑 못 찾으면 raw_target 유지 (명확한 tmux 에러 노출).
+    let target = resolve_tmux_session(&raw_target);
     let send_data = data.to_string();
     let result = tokio::task::spawn_blocking(move || -> std::io::Result<std::process::Output> {
         std::process::Command::new("tmux")
@@ -1747,6 +1752,63 @@ async fn do_local_session_input(
         "ok": true,
         "bytes_sent": data.len()
     }))
+}
+
+/// rc.269 gap#5 — binding alias → 실제 tmux session 명 해석.
+/// 우선순위:
+///   1) alias 가 이미 살아있는 tmux session 명이면 그대로.
+///   2) peers.session_identifier ("tmux:<name>") 매핑 (auto_seed_local_tmux_agents 가 기록).
+///   3) tmux list-sessions 에서 alias == name | "aoe_<alias>_*" prefix 매칭
+///      (retroactive_register_agents 의 매칭 규칙과 동일).
+///   4) 못 찾으면 입력 alias 그대로 반환 (이후 send-keys 가 명확한 에러 노출).
+fn resolve_tmux_session(alias: &str) -> String {
+    // 현재 살아있는 tmux session 목록 (sync — daemon_gui 의 다른 helper 와 동일 패턴).
+    let live: Vec<String> = {
+        let (cmd, base_arg) = if cfg!(windows) { ("wsl", Some("tmux")) } else { ("tmux", None) };
+        let mut c = std::process::Command::new(cmd);
+        if let Some(a) = base_arg { c.arg(a); }
+        match c.args(["list-sessions", "-F", "#{session_name}"]).output() {
+            Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+                .lines().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+            _ => Vec::new(),
+        }
+    };
+    // (1) 이미 실제 session 명.
+    if live.iter().any(|s| s == alias) {
+        return alias.to_string();
+    }
+    // (2) peers.session_identifier 매핑 ("tmux:<name>").
+    let data_dir = match openxgram_core::paths::default_data_dir() {
+        Ok(d) => Some(d),
+        Err(_) => std::env::var("XGRAM_DATA_DIR").ok().map(std::path::PathBuf::from),
+    };
+    if let Some(dir) = &data_dir {
+        if let Ok(mut db) = openxgram_db::Db::open(openxgram_db::DbConfig {
+            path: openxgram_core::paths::db_path(dir),
+            ..Default::default()
+        }) {
+            let sid: Option<String> = db.conn().query_row(
+                "SELECT session_identifier FROM peers \
+                 WHERE alias=?1 AND session_identifier IS NOT NULL AND session_identifier != ''",
+                rusqlite::params![alias],
+                |r| r.get::<_, String>(0),
+            ).ok();
+            if let Some(sid) = sid {
+                let name = sid.strip_prefix("tmux:").unwrap_or(&sid).to_string();
+                if !name.is_empty() {
+                    return name;
+                }
+            }
+        }
+    }
+    // (3) live session prefix 매칭 (aoe_<alias>_*).
+    if let Some(found) = live.iter().find(|sn| {
+        sn.starts_with(&format!("aoe_{alias}_")) || sn.as_str() == alias
+    }) {
+        return found.clone();
+    }
+    // (4) fallback — 입력 그대로.
+    alias.to_string()
 }
 
 /// `POST /v1/gui/public/sessions/:identifier/input` — rc.256. 인증 없이 로컬 세션에 입력 주입
@@ -5306,8 +5368,24 @@ async fn gui_workflow_delete(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     let mut db = state.db.lock().await;
-    db.conn().execute("DELETE FROM workflows WHERE id=?1", rusqlite::params![id])
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    // FK cascade — workflow_runs(→workflow_step_logs) 가 workflow_id 를 참조.
+    // 명시적 child 삭제 후 부모 삭제 (FOREIGN KEY constraint failed 방지).
+    {
+        let tx = db.conn().transaction()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+        // step logs (runs 참조) → runs → workflow 순.
+        tx.execute(
+            "DELETE FROM workflow_step_logs WHERE run_id IN \
+             (SELECT id FROM workflow_runs WHERE workflow_id=?1)",
+            rusqlite::params![id],
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+        tx.execute("DELETE FROM workflow_runs WHERE workflow_id=?1", rusqlite::params![id])
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+        tx.execute("DELETE FROM workflows WHERE id=?1", rusqlite::params![id])
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+        tx.commit()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    }
     Ok(Json(serde_json::json!({"deleted": id})))
 }
 

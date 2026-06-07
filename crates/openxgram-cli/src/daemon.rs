@@ -185,23 +185,51 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
     // 새 LLM tmux 세션을 재시작 없이 자동 등록 (auto_seed_local_tmux_agents 재사용 — INSERT OR IGNORE 라 idempotent).
     {
         let seed_data_dir = opts.data_dir.clone();
+        // rc.269 gap#2 — auto-seed tick 이 agent_capabilities 만 채우고 peer row 는 안 만들던 결함 fix.
+        // auto-seed 직후 retroactive_register_agents 를 재실행하여, 새 tmux LLM 세션이 재시작 없이
+        // 30초 내 로스터(peers)에도 등재되게 한다. peer 생성 로직은 retroactive_register_agents 재사용
+        // (keystore + PeerStore::add_with_eth + session_identifier) — 중복 구현 금지.
+        let seed_bind_port = bind.port();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
             interval.tick().await; // 첫 tick 즉시 발화 회피 — startup 에서 이미 1회 실행됨.
             loop {
                 interval.tick().await;
                 let dd = seed_data_dir.clone();
-                match tokio::task::spawn_blocking(move || auto_seed_local_tmux_agents(&dd)).await {
-                    Ok(Ok(n)) if n > 0 => {
-                        tracing::info!(seeded = n, "rc.268 auto-seed tick: 새 tmux LLM 세션 자동 등록")
+                let seeded = match tokio::task::spawn_blocking(move || auto_seed_local_tmux_agents(&dd)).await {
+                    Ok(Ok(n)) => {
+                        if n > 0 {
+                            tracing::info!(seeded = n, "rc.268 auto-seed tick: 새 tmux LLM 세션 자동 등록");
+                        }
+                        n
                     }
-                    Ok(Ok(_)) => {}
-                    Ok(Err(e)) => tracing::warn!(error = %e, "rc.268 auto-seed tick 실패 (계속)"),
-                    Err(e) => tracing::warn!(error = %e, "rc.268 auto-seed tick join 실패 (계속)"),
+                    Ok(Err(e)) => {
+                        tracing::warn!(error = %e, "rc.268 auto-seed tick 실패 (계속)");
+                        0
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "rc.268 auto-seed tick join 실패 (계속)");
+                        0
+                    }
+                };
+                // rc.269 gap#2 — peer row 생성 (재시작 불요). agent_capabilities 에 새로 들어온
+                // (또는 아직 peer 없는) agent 를 peers 로스터에 등재. retroactive 자체가 idempotent
+                // (이미 있는 peer 는 skip) 라 seeded==0 여도 안전하지만, 신규 seed 가 있을 때만 호출하여
+                // tmux list/keystore 비용 절약.
+                if seeded > 0 {
+                    let dd2 = seed_data_dir.clone();
+                    match tokio::task::spawn_blocking(move || retroactive_register_agents(&dd2, seed_bind_port)).await {
+                        Ok(Ok(r)) if r > 0 => {
+                            tracing::info!(registered = r, "rc.269 auto-seed tick: 새 agent → peer 로스터 등재")
+                        }
+                        Ok(Ok(_)) => {}
+                        Ok(Err(e)) => tracing::warn!(error = %e, "rc.269 auto-seed tick retroactive 실패 (계속)"),
+                        Err(e) => tracing::warn!(error = %e, "rc.269 auto-seed tick retroactive join 실패 (계속)"),
+                    }
                 }
             }
         });
-        println!("  ✓ rc.268 auto-seed tick (30s) — 새 tmux LLM 세션 재시작 없이 자동 등록");
+        println!("  ✓ rc.268/269 auto-seed tick (30s) — 새 tmux LLM 세션 재시작 없이 capability + peer 로스터 자동 등록");
     }
 
     // rc.196 — retroactive register: messenger_enabled=1 인데 peer entry 없는 옛 agent 들의
