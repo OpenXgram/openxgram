@@ -689,6 +689,26 @@ async fn gui_peers(
         )
     })?;
     drop(db); // unlock
+
+    // rc.273 — 로스터에는 살아있는 tmux 에이전트만 (마스터 룰). 단일 헬퍼로 LOCAL 생존 판정.
+    //   - LOCAL tmux peer = session_identifier 가 "tmux:<name>" (auto_seed 가 자기 머신 세션에만 기록).
+    //     이 ident 가 live 집합에 없으면 죽은 LOCAL 세션 → 로스터에서 제외.
+    //   - 원격 병합 peer(session_identifier 없거나 비-tmux)·채널(discord/telegram)·self 는 그대로 표시.
+    //     (원격 peer 는 함대 배포 후 그 원격의 reachable 소스에서 이미 걸러짐 → 로컬 tmux 검사 금지.)
+    //   - tmux 미설치/실패로 live 가 비면(보수) 필터를 적용하지 않는다(기존 표시 유지 — 과삭제 방지).
+    let live = crate::daemon::local_live_tmux_agent_idents();
+    let rows: Vec<_> = if live.is_empty() {
+        rows
+    } else {
+        rows.into_iter()
+            .filter(|p| match sid_map.get(&p.alias) {
+                // LOCAL tmux peer — 살아있는 세션 집합에 있을 때만 표시.
+                Some(sid) if sid.starts_with("tmux:") => live.contains(sid),
+                // 비-tmux session_identifier / 없음 = 원격·채널·self → 그대로 표시.
+                _ => true,
+            })
+            .collect()
+    };
     // rc.229 — fix#1: per-peer subprocess enrichment 전부 제거 (8.7s → <200ms).
     //   project_folder/llm_type/llm_version/worktrees/subagents/ex_peers 는 모두
     //   on-demand `/v1/gui/agent/{alias}/detail` 에서 1개씩 enrich (fix#3).

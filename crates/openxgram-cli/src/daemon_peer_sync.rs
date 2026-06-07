@@ -119,6 +119,20 @@ fn derive_gui_url(transport_url: &str) -> Option<String> {
     Some(format!("{head}:{}", port + 2))
 }
 
+/// transport/base URL 에서 host(authority 의 host 부분)만 추출. scheme·port·path 무시.
+/// 예: "http://100.64.0.5:47300" → "100.64.0.5". 파싱 실패 시 None.
+fn url_host(url: &str) -> Option<String> {
+    let after_scheme = url.split("://").nth(1).unwrap_or(url);
+    let authority = after_scheme.split('/').next().unwrap_or(after_scheme);
+    let host = authority.rsplit_once(':').map(|(h, _)| h).unwrap_or(authority);
+    let host = host.trim();
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
+}
+
 /// 자기 DB 에서 reachable(localhost 아님) peer 들의 base address 집합을 모은다.
 /// gossip pull 대상 후보 — 각 reachable peer 의 데몬에 sync 엔드포인트가 있다고 가정.
 pub fn reachable_peer_addresses(data_dir: &Path) -> anyhow::Result<Vec<String>> {
@@ -137,21 +151,67 @@ pub fn reachable_peer_addresses(data_dir: &Path) -> anyhow::Result<Vec<String>> 
 
 /// 자기 DB 에서 reachable(localhost 아님) + eth_address·pubkey 보유 peer 를 `RemotePeer` 로 매핑.
 /// `GET /v1/peers/reachable` provider 가 노출할 목록 — 다른 머신 데몬이 이를 pull 해 merge 한다.
-/// self 항목도 자기 peers table 에 있으면 포함되어 다른 머신이 나를 알 수 있다(받는 쪽이 self_eth 로 거름).
+///
+/// rc.273 — **자기 머신의 살아있는 tmux 에이전트만 광고**한다 (마스터 룰: 죽은/비-tmux peer 노출 금지).
+/// 판정:
+///   - LOCAL peer = `session_identifier` 가 `tmux:<name>` 형식 (auto_seed 가 자기 머신 세션에만 기록).
+///     이 LOCAL peer 는 `local_live_tmux_agent_idents()` 의 live 집합에 그 ident 가 있어야 광고.
+///     → 죽은 tmux·비-tmux(session_identifier 없음 또는 비-tmux) LOCAL 등록 peer 는 제외.
+///   - 원격 병합 peer(session_identifier 없음, eth 가 self 아님)는 **재광고하지 않음**
+///     (자기 머신 것만 광고 — 원격은 그 원격의 데몬이 책임).
+///   - self peer(session_identifier 없어도 eth==self_eth)는 항상 광고 — 다른 머신이 나를 알아야 함
+///     (e2e #3 cross-machine 인지 보존).
+///
+/// session_identifier 는 PeerStore.list() 미반환 필드라 raw SQL 로 alias→ident 맵을 prefetch.
 pub fn reachable_remote_peers(data_dir: &Path) -> anyhow::Result<Vec<RemotePeer>> {
     let mut db = openxgram_db::Db::open(openxgram_db::DbConfig {
         path: openxgram_core::paths::db_path(data_dir),
         ..Default::default()
     })?;
+
+    // alias → session_identifier prefetch (gui_peers 와 동일 방식).
+    let mut sid_map: std::collections::HashMap<String, String> = Default::default();
+    if let Ok(mut stmt) = db.conn().prepare(
+        "SELECT alias, session_identifier FROM peers WHERE session_identifier IS NOT NULL AND session_identifier != ''",
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        }) {
+            for row in rows.flatten() {
+                sid_map.insert(row.0, row.1);
+            }
+        }
+    }
+    // 자기 머신의 살아있는 tmux 에이전트 ident 집합 (단일 헬퍼 — 회귀 방지 중앙화).
+    let live = crate::daemon::local_live_tmux_agent_idents();
+    let self_eth = self_eth_address(data_dir);
+
     let mut store = PeerStore::new(&mut db);
     let peers = store.list()?;
     Ok(peers
         .into_iter()
         .filter(|p| !is_unreachable_address(&p.address))
         .filter_map(|p| {
-            let eth = p.eth_address?;
+            let eth = p.eth_address.clone()?;
             if eth.trim().is_empty() || p.public_key_hex.trim().is_empty() {
                 return None;
+            }
+            // self peer 는 무조건 광고 (cross-machine 인지 보존).
+            let is_self = self_eth
+                .as_deref()
+                .map(|me| me.eq_ignore_ascii_case(eth.trim()))
+                .unwrap_or(false);
+            if !is_self {
+                match sid_map.get(&p.alias) {
+                    // LOCAL tmux peer — 살아있는 세션 집합에 있을 때만 광고.
+                    Some(sid) if sid.starts_with("tmux:") => {
+                        if !live.contains(sid) {
+                            return None; // 죽은 tmux LOCAL peer — 광고 제외.
+                        }
+                    }
+                    // session_identifier 없음 = 원격 병합 peer (또는 비-tmux LOCAL) — 자기 것만 광고하므로 제외.
+                    _ => return None,
+                }
             }
             Some(RemotePeer {
                 alias: p.alias,
@@ -209,18 +269,98 @@ pub async fn sync_tick_once(data_dir: &Path) -> anyhow::Result<usize> {
     let mut total = 0usize;
     for base in &candidates {
         match fetch_remote_peers(base).await {
-            Ok(remote) => match merge_remote_peers(&mut db, &remote, self_eth.as_deref()) {
-                Ok(n) => total += n,
-                Err(e) => {
-                    tracing::warn!(base = %base, error = %e, "peer-sync merge 실패 (계속)")
+            Ok(remote) => {
+                // rc.273 — tombstone prune: fetch **성공** 시에만, 그 base 가 더는 광고 안 하는
+                // 그 base 소속(같은 host) 로컬 peer 를 제거. fetch 실패 시엔 절대 prune 금지(과삭제 방지).
+                match prune_absent_from_remote(&mut db, base, &remote, self_eth.as_deref()) {
+                    Ok(pruned) if pruned > 0 => {
+                        tracing::info!(base = %base, pruned = pruned, "peer-sync tombstone prune (원격 미광고)")
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::warn!(base = %base, error = %e, "peer-sync prune 실패 (계속)")
+                    }
                 }
-            },
+                match merge_remote_peers(&mut db, &remote, self_eth.as_deref()) {
+                    Ok(n) => total += n,
+                    Err(e) => {
+                        tracing::warn!(base = %base, error = %e, "peer-sync merge 실패 (계속)")
+                    }
+                }
+            }
             Err(e) => {
-                tracing::warn!(base = %base, error = %e, "peer-sync pull 실패 (계속)");
+                // ⚠️ fetch 실패(네트워크 에러) — prune 절대 금지. 죽은 줄 알고 전체 삭제하는 사고 방지.
+                tracing::warn!(base = %base, error = %e, "peer-sync pull 실패 (계속) — prune skip");
             }
         }
     }
     Ok(total)
+}
+
+/// rc.273 — 원격(base) 의 reachable 목록을 **성공적으로 fetch 한 뒤**, 그 base 소속(같은 host)
+/// 인데 목록에 없는 로컬 peer 를 삭제(absence = tombstone). 삭제 row 수 반환.
+///
+/// 안전장치 (호출자 보장 + 여기 재확인):
+///   - fetch 성공 시에만 호출됨 — 빈 목록(remote=[]) 도 "그 host 에 아무도 없음" 의 정당한 신호.
+///   - 삭제 대상 = `address` 의 host 가 base host 와 일치하는 peer 만 (다른 머신·로컬 tmux 보호).
+///   - self peer(eth==self_eth)·eth 없는 peer 는 제외.
+///   - 자기 머신 LOCAL tmux peer 는 base host(원격) 와 host 가 다르므로 자연히 제외됨.
+fn prune_absent_from_remote(
+    db: &mut openxgram_db::Db,
+    base: &str,
+    remote: &[RemotePeer],
+    self_eth: Option<&str>,
+) -> anyhow::Result<usize> {
+    let base_host = match url_host(base) {
+        Some(h) => h,
+        None => return Ok(0),
+    };
+    // 원격이 현재 광고하는 eth 집합 (소문자 정규화).
+    let advertised: std::collections::HashSet<String> = remote
+        .iter()
+        .map(|p| p.eth_address.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let mut store = PeerStore::new(db);
+    let peers = store.list()?;
+    // 삭제 후보: base host 소속 + eth 보유 + self 아님 + 원격 미광고.
+    let to_delete: Vec<String> = peers
+        .into_iter()
+        .filter_map(|p| {
+            let eth = p.eth_address?;
+            let eth_norm = eth.trim().to_ascii_lowercase();
+            if eth_norm.is_empty() {
+                return None;
+            }
+            if let Some(me) = self_eth {
+                if me.eq_ignore_ascii_case(eth_norm.trim()) {
+                    return None; // self 보호.
+                }
+            }
+            // 그 base host 소속만 prune 대상 (다른 머신·로컬 tmux peer 보호).
+            match url_host(&p.address) {
+                Some(h) if h == base_host => {}
+                _ => return None,
+            }
+            if advertised.contains(&eth_norm) {
+                return None; // 여전히 광고됨 — 유지.
+            }
+            Some(p.alias)
+        })
+        .collect();
+
+    let mut pruned = 0usize;
+    for alias in to_delete {
+        match store.delete(&alias) {
+            Ok(_) => {
+                pruned += 1;
+                tracing::info!(alias = %alias, base = %base, "peer-sync prune — 원격 미광고 로컬 row 삭제");
+            }
+            Err(e) => tracing::warn!(alias = %alias, error = %e, "peer-sync prune delete 실패"),
+        }
+    }
+    Ok(pruned)
 }
 
 /// 주기 sync tick spawn — 기본 60초 간격. daemon startup 에서 호출.
@@ -340,6 +480,59 @@ mod tests {
         let back: openxgram_transport::ReachablePeerDto =
             serde_json::from_str(&serde_json::to_string(&rp).unwrap()).unwrap();
         assert_eq!(back, dto);
+    }
+
+    #[test]
+    fn url_host_extracts_host_only() {
+        assert_eq!(url_host("http://100.64.0.5:47300").as_deref(), Some("100.64.0.5"));
+        assert_eq!(url_host("http://host.tld:1/path").as_deref(), Some("host.tld"));
+        assert_eq!(url_host("100.64.0.6:47300").as_deref(), Some("100.64.0.6"));
+        assert_eq!(url_host("").as_deref(), None);
+    }
+
+    #[test]
+    fn prune_removes_only_absent_same_host_peers() {
+        let mut db = open_mem_db();
+        // 같은 base host(100.64.0.5) 에 두 peer 가 있었다.
+        let initial = vec![
+            rp("alive", "http://100.64.0.5:47300", "0xALIVE"),
+            rp("dead", "http://100.64.0.5:47300", "0xDEAD"),
+            // 다른 머신 peer — prune 대상 아님.
+            rp("other_host", "http://100.64.0.9:47300", "0xOTHER"),
+        ];
+        merge_remote_peers(&mut db, &initial, None).unwrap();
+
+        // base(100.64.0.5) 가 이제 alive 만 광고 → dead 는 tombstone.
+        let now_remote = vec![rp("alive", "http://100.64.0.5:47300", "0xALIVE")];
+        let pruned =
+            prune_absent_from_remote(&mut db, "http://100.64.0.5:47300", &now_remote, None).unwrap();
+        assert_eq!(pruned, 1, "dead 1 개만 prune");
+
+        let mut store = PeerStore::new(&mut db);
+        assert!(store.get_by_eth_address("0xALIVE").unwrap().is_some());
+        assert!(store.get_by_eth_address("0xDEAD").unwrap().is_none(), "미광고 → 삭제");
+        assert!(
+            store.get_by_eth_address("0xOTHER").unwrap().is_some(),
+            "다른 host peer 는 보호"
+        );
+    }
+
+    #[test]
+    fn prune_protects_self() {
+        let mut db = open_mem_db();
+        merge_remote_peers(
+            &mut db,
+            &[rp("me", "http://100.64.0.5:47300", "0xSELF")],
+            None,
+        )
+        .unwrap();
+        // 원격이 self 를 광고 안 해도 (빈 목록) self 는 보호.
+        let pruned =
+            prune_absent_from_remote(&mut db, "http://100.64.0.5:47300", &[], Some("0xself"))
+                .unwrap();
+        assert_eq!(pruned, 0, "self peer 는 prune 금지");
+        let mut store = PeerStore::new(&mut db);
+        assert!(store.get_by_eth_address("0xSELF").unwrap().is_some());
     }
 
     #[test]

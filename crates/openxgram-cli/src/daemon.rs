@@ -1124,6 +1124,55 @@ fn tmux_session_runs_llm(session: &str) -> bool {
     false
 }
 
+/// rc.273 — 단일 진실원천: 이 머신에서 **현재 살아있는 tmux 에이전트** 의 세션 식별자 집합.
+/// 마스터 룰: 메신저 로스터에는 살아있는 tmux LLM 세션(①tmux LLM ②worktree ③서브에이전트 sv_)
+/// 만 보여야 한다. gui_peers(로스터)·reachable_remote_peers(광고) 양쪽이 이 한 함수로 LOCAL
+/// peer 의 생존을 판정해 회귀를 막는다.
+///
+/// 판정:
+///   - `tmux list-sessions` 로 자기 머신 세션 열거 (auto_seed 와 동일 스캔 방식 재사용).
+///   - `sv_*` (서브에이전트 worktree 세션) → 부모 pane 공유, 무조건 live 포함.
+///   - 그 외 세션 → `tmux_session_runs_llm` 게이트 통과해야 live (운영 shell/placeholder 제외).
+///
+/// 반환 형식은 peers.session_identifier 와 동일한 `tmux:<session_name>` — 호출부가 LOCAL peer 의
+/// session_identifier 와 직접 set-membership 비교한다. tmux 미설치/실패 시 빈 집합 반환
+/// (호출부에서 "LOCAL peer 판정 자체를 못 함" → 보수적으로 필터하지 않도록 호출부가 처리).
+pub(crate) fn local_live_tmux_agent_idents() -> std::collections::HashSet<String> {
+    let mut live: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // auto_seed_local_tmux_agents 와 동일한 tmux list-sessions 스캔 (Windows = wsl tmux).
+    let local_sessions: Vec<String> = {
+        let (cmd, base_arg) = if cfg!(windows) {
+            ("wsl", Some("tmux"))
+        } else {
+            ("tmux", None)
+        };
+        let mut c = std::process::Command::new(cmd);
+        if let Some(a) = base_arg {
+            c.arg(a);
+        }
+        match c.args(["list-sessions", "-F", "#{session_name}"]).output() {
+            Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
+            _ => return live, // tmux 없음/실패 → 빈 집합 (호출부가 보수적으로 처리).
+        }
+    };
+    for sn in &local_sessions {
+        // sv_* 서브에이전트 worktree 세션 — 부모 LLM pane 공유. live 로 인정.
+        if sn.starts_with("sv_") {
+            live.insert(format!("tmux:{sn}"));
+            continue;
+        }
+        // 그 외 — pane 에 실제 LLM 이 도는 세션만 live (운영 shell/placeholder 제외).
+        if tmux_session_runs_llm(sn) {
+            live.insert(format!("tmux:{sn}"));
+        }
+    }
+    live
+}
+
 /// rc.201 — auto-seed: 자기 머신 의 tmux session 을 agent_capabilities 자동 등록.
 /// 마스터의 본질: peer = 터미널 (각 tmux). daemon startup 시 자기 머신 tmux session list
 /// 가져와서 각 session_name 의 alias 추출 → agent_capabilities INSERT OR IGNORE.
