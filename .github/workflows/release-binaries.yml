@@ -31,32 +31,45 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # ── 실사용 3 플랫폼 (blocking) ───────────────────────────────────
           - label: linux-x86_64
             target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             cross: false
             asset_suffix: x86_64-linux.tar.gz
-          - label: linux-aarch64
-            target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            cross: true
-            asset_suffix: aarch64-linux.tar.gz
-          - label: macos-x86_64
-            target: x86_64-apple-darwin
-            os: macos-14
-            cross: false
-            asset_suffix: x86_64-darwin.tar.gz
+            allow_failure: false
           - label: macos-aarch64
             target: aarch64-apple-darwin
             os: macos-14
             cross: false
             asset_suffix: aarch64-darwin.tar.gz
+            allow_failure: false
           - label: windows-x86_64
             target: x86_64-pc-windows-msvc
             os: windows-latest
             cross: false
             asset_suffix: x86_64-windows.zip
+            allow_failure: false
+          # ── 나중에 복구할 2 플랫폼 (non-blocking, continue-on-error) ──────
+          # 마스터 확정(2026-06): intel-mac(macos-x86_64) / arm-linux(linux-aarch64)
+          # 는 지금 제외. 레그는 유지하되 실패해도 release 게시를 막지 않음.
+          # 컴파일 가능해지면 allow_failure: false 로 되돌리면 됨.
+          - label: linux-aarch64
+            target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+            asset_suffix: aarch64-linux.tar.gz
+            allow_failure: true
+          - label: macos-x86_64
+            target: x86_64-apple-darwin
+            os: macos-14
+            cross: false
+            asset_suffix: x86_64-darwin.tar.gz
+            allow_failure: true
     runs-on: ${{ matrix.os }}
+    # non-blocking 레그(linux-aarch64 / macos-x86_64)는 실패해도 전체 workflow 를
+    # 실패로 만들지 않음 → 실사용 3 플랫폼 자산이 정상 release 에 attach.
+    continue-on-error: ${{ matrix.allow_failure }}
     env:
       RELEASE_TAG: ${{ github.event.release.tag_name || github.event.inputs.tag }}
       MATRIX_TARGET: ${{ matrix.target }}

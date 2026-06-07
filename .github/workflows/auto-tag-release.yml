@@ -54,21 +54,40 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.ver.outputs.tag }}
           VERSION: ${{ steps.ver.outputs.version }}
+        # 각 단계 idempotent — 부분 실패한 이전 run 이 tag/release 일부만 만든 상태에서도
+        # 재실행 안전. 핵심: release-binaries.yml dispatch 는 반드시 도달해야 한다
+        # (이게 자산 빌드 트리거). 이전엔 앞 단계 한 줄 실패로 dispatch 미도달 → 자산 0개였음.
         run: |
+          set -u
           git config user.name "openxgram-bot"
           git config user.email "bot@openxgram.org"
-          git tag -a "$TAG" -m "Auto release $TAG (Cargo.toml version bump)"
-          git push origin "$TAG"
-          # Release 생성 → release-binaries.yml 자동 트리거
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --notes "Auto-generated release from main branch Cargo.toml version bump.
+
+          # 1) tag 생성 + push (이미 존재해도 진행 — push 는 already-exists 무해)
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "ℹ tag $TAG 이미 로컬 존재 — 재생성 skip"
+          else
+            git tag -a "$TAG" -m "Auto release $TAG (Cargo.toml version bump)"
+          fi
+          git push origin "$TAG" || echo "ℹ tag push skip (이미 remote 존재 가능)"
+
+          # 2) Release 생성 (이미 있으면 skip — idempotent)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "ℹ release $TAG 이미 존재 — 생성 skip"
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes "Auto-generated release from main branch Cargo.toml version bump.
 
             Binary downloads attached after release-binaries.yml workflow completes (~5-10 min).
 
-            Install: \`irm https://openxgram.org/install.ps1 | iex\` (Windows) or \`curl -sSfL https://openxgram.org/install.sh | sh\` (Linux/macOS)"
-          echo "✓ tag + release created: $TAG"
-          # GitHub 보안: GITHUB_TOKEN 으로 만든 release 는 release-binaries.yml 안 트리거 (재귀 방지).
-          # workflow_dispatch 명시 호출로 우회.
-          gh workflow run release-binaries.yml --ref "$TAG" -f tag="$TAG"
-          echo "✓ release-binaries.yml dispatched for $TAG"
+            Install: \`irm https://openxgram.org/install.ps1 | iex\` (Windows) or \`curl -sSfL https://openxgram.org/install.sh | sh\` (Linux/macOS)" \
+              && echo "✓ release created: $TAG" \
+              || echo "⚠ release create 실패 (이미 존재 race 가능) — dispatch 는 계속 진행"
+          fi
+
+          # 3) release-binaries.yml dispatch — 반드시 도달해야 자산이 빌드됨.
+          #    GITHUB_TOKEN 으로 만든 release 는 release event 를 안 발생시켜(재귀 방지)
+          #    여기서 명시 workflow_dispatch 로 트리거. 앞 단계가 무엇이든 이 줄은 실행.
+          gh workflow run release-binaries.yml --ref "$TAG" -f tag="$TAG" \
+            && echo "✓ release-binaries.yml dispatched for $TAG" \
+            || { echo "✗ release-binaries.yml dispatch 실패 — 자산 빌드 안 됨"; exit 1; }
