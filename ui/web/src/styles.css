@@ -653,7 +653,8 @@ input:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 36px;
+  /* rc.272 — 친근한 이름/raw id 세로 스택 수용 위해 36 -> 46px. align-items:center 유지로 형제(dot/MSG/머신/★/▶) 수직 정렬 보존. */
+  height: 46px;
   padding: 4px 10px;
   overflow: hidden;
   border-bottom: 1px solid #1c1c1c;

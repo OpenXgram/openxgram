@@ -407,7 +407,7 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  const [selectedThread, setSelectedThread] = createSignal<string | null>(null); // conversation_id
  const [leftMode, setLeftMode] = createSignal<LeftMode>("agent"); // L1
  // 컬럼 너비 — drag 로 조절, localStorage 영구
- const initialSidebar = (() => { const v = parseInt(localStorage.getItem("messenger.sidebar_w") || "280"); return isNaN(v) ? 280 : v; })();
+ const initialSidebar = (() => { const v = parseInt(localStorage.getItem("messenger.sidebar_w") || "300"); return isNaN(v) ? 300 : v; })();
  const initialSidepanel = (() => { const v = parseInt(localStorage.getItem("messenger.sidepanel_w") || "320"); return isNaN(v) ? 320 : v; })();
  const [sidebarW, setSidebarW] = createSignal(initialSidebar);
  const [sidepanelW, setSidepanelW] = createSignal(initialSidepanel);
@@ -1067,18 +1067,22 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
      );
    }
    return (
-     <span style="display:inline-flex; align-items:baseline; gap:5px; min-width:0;">
-       <span style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
-         title={`${friendlyName(f)} (raw: ${raw})`}>
-         {friendlyName(f)}
+     // rc.272 — 친근한 이름/raw id 세로 스택. 1줄=이름(큰,굵게)+✎, 2줄=raw id(작게,muted).
+     // 좁은 사이드바에서 이름 말줄임 방지 (rc.267 "친근한 이름 크게 읽기" 목적 회복).
+     <span style="display:flex; flex-direction:column; min-width:0; gap:1px; line-height:1.2;">
+       <span style="display:flex; align-items:center; gap:4px; min-width:0;">
+         <span style="font-weight:600; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+           title={`${friendlyName(f)} (raw: ${raw})`}>
+           {friendlyName(f)}
+         </span>
+         <span style="cursor:pointer; font-size:10px; opacity:0.45; flex:none;"
+           title="친근한 이름 편집"
+           onClick={(e) => { e.stopPropagation(); setEditDraft(friendlyName(f)); setEditingId(ident); }}>✎</span>
        </span>
        <span style="font-size:9.5px; color:var(--text-3); opacity:0.65; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
          title={`raw 식별자: ${raw}`}>
          {raw}
        </span>
-       <span style="cursor:pointer; font-size:10px; opacity:0.45; flex:none;"
-         title="친근한 이름 편집"
-         onClick={(e) => { e.stopPropagation(); setEditDraft(friendlyName(f)); setEditingId(ident); }}>✎</span>
      </span>
    );
  })()}
