@@ -1065,6 +1065,9 @@ fn tmux_session_runs_llm(session: &str) -> bool {
             || hay.contains("cursor agent")
             || (hay.contains("continue") && hay.contains("dev"))
             || hay.contains("cline")
+            // rc.278 — Hermes Agent (비-Claude 프레임워크) 도 LLM 에이전트로 인식.
+            // 미인식 시 auto-seed 가 skip → peer 등재 안 됨 → 양방향 통신 불가였음.
+            || hay.contains("hermes")
     };
 
     // 0회차 — pane_pid 자체.

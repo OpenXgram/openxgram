@@ -1171,6 +1171,9 @@ async fn match_llm_in_line(line: &str) -> Option<(Option<String>, Option<String>
         ("Continue", None)
     } else if hay.contains("cline") {
         ("Cline", None)
+    } else if hay.contains("hermes") || comm == "hermes" {
+        // rc.278 — Hermes Agent(비-Claude 프레임워크) 인식. tmux_session_runs_llm 과 동일 후보.
+        ("Hermes", None)
     } else {
         return None;
     };
