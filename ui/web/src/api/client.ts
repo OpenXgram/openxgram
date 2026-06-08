@@ -202,6 +202,12 @@ const ROUTES: Record<string, Route> = {
  workflow_run: { method: "POST", path: "/workflows/{id}/run"},
  workflow_runs: { method: "GET", path: "/workflows/{id}/runs"},
  workflow_run_approve: { method: "POST", path: "/workflows/runs/{run_id}/approve"},
+ // rc.279 — Paperclip 오케스트레이션 GUI (org agents + invoke). backend rc.276/277.
+ orchestration_agents: { method: "GET", path: "/orchestration/agents", emptyAs: []},
+ orchestration_issues: { method: "GET", path: "/orchestration/issues", emptyAs: []},
+ orchestration_goals: { method: "GET", path: "/orchestration/goals", emptyAs: []},
+ orchestration_add_from_peer: { method: "POST", path: "/orchestration/agents/add-from-peer", body: true},
+ orchestration_agent_invoke: { method: "POST", path: "/orchestration/agents/{alias}/invoke", body: true},
  notify_discord_channels: { method: "POST", path: "/notify/discord/channels", body: true},
  notify_discord_diagnostic: { method: "GET", path: "/notify/discord/diagnostic"},
  ops_diagnostic: { method: "GET", path: "/ops/diagnostic"},
