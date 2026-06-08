@@ -429,6 +429,16 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/orchestration/agents", get(gui_orchestration_agents))
         .route("/v1/gui/orchestration/issues", get(gui_orchestration_issues))
         .route("/v1/gui/orchestration/goals", get(gui_orchestration_goals))
+        // rc.277 — Paperclip Phase 2 (adapter abstraction). Make every list_peers entry an
+        // addable org agent (adapter_type=peer_send), + single-shot agent invoke primitive.
+        .route(
+            "/v1/gui/orchestration/agents/add-from-peer",
+            post(gui_orchestration_add_from_peer),
+        )
+        .route(
+            "/v1/gui/orchestration/agents/{alias}/invoke",
+            post(gui_orchestration_agent_invoke),
+        )
         .route("/v1/gui/peers/{alias}/send-unsigned", post(gui_peer_send_unsigned))
         // 메신저 카드 v1.3 Step 0 — 메시지 송수신.
         .route("/v1/gui/messages", get(gui_messages_recent))
@@ -3819,6 +3829,206 @@ async fn gui_orchestration_goals(
     }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
         .filter_map(|r| r.ok()).collect();
     Ok(Json(rows))
+}
+
+#[derive(Debug, Deserialize)]
+struct AddFromPeerBody {
+    /// Peer alias (from list_peers) to add as an org agent.
+    alias: String,
+    /// Optional reports_to (manager alias) — cross-machine sub-agents use this.
+    #[serde(default)]
+    reports_to: Option<String>,
+    /// Optional company_id.
+    #[serde(default)]
+    company_id: Option<String>,
+}
+
+/// `POST /v1/gui/orchestration/agents/add-from-peer` — rc.277 Paperclip Phase 2.
+/// Make a fleet peer an addable org agent: upsert into agent_capabilities with
+/// adapter_type='peer_send', adapter_config={"alias": peer_alias}.
+/// cross-machine 룰 (oxg.md §6 #7): only a machine's primary is addable directly;
+/// sub-agents are modeled via reports_to (caller passes reports_to=primary alias).
+async fn gui_orchestration_add_from_peer(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<AddFromPeerBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    if body.alias.trim().is_empty() {
+        return Err(internal("alias 필요"));
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    let adapter_config = serde_json::json!({ "alias": body.alias }).to_string();
+
+    let mut db = state.db.lock().await;
+
+    // 1) Confirm the peer exists in the fleet (peers table) — addable agent must be a real peer.
+    let peer_exists: bool = {
+        let mut store = PeerStore::new(&mut db);
+        store
+            .get_by_alias(&body.alias)
+            .map_err(|e| internal(&format!("peer lookup: {e}")))?
+            .is_some()
+    };
+    if !peer_exists {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorDto {
+                error: format!("peer '{}' 없음 (list_peers 에 존재하는 alias 필요)", body.alias),
+            }),
+        ));
+    }
+
+    // 2) Upsert into agent_capabilities as a peer_send org agent.
+    db.conn()
+        .execute(
+            "INSERT INTO agent_capabilities \
+                (alias, role, adapter_type, adapter_config, reports_to, company_id, status, updated_at) \
+             VALUES (?1, 'agent', 'peer_send', ?2, ?3, ?4, 'idle', ?5) \
+             ON CONFLICT(alias) DO UPDATE SET \
+                adapter_type = 'peer_send', \
+                adapter_config = excluded.adapter_config, \
+                reports_to = COALESCE(excluded.reports_to, reports_to), \
+                company_id = COALESCE(excluded.company_id, company_id), \
+                updated_at = excluded.updated_at",
+            rusqlite::params![body.alias, adapter_config, body.reports_to, body.company_id, now],
+        )
+        .map_err(|e| internal(&format!("agent_capabilities upsert: {e}")))?;
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "alias": body.alias,
+        "adapter_type": "peer_send",
+        "adapter_config": adapter_config,
+        "reports_to": body.reports_to,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentInvokeBody {
+    /// Prompt to deliver (mutually exclusive-ish with issue_id; prompt wins if both given).
+    #[serde(default)]
+    prompt: Option<String>,
+    /// Issue id — its title+body becomes the prompt.
+    #[serde(default)]
+    issue_id: Option<String>,
+    /// Optional timeout seconds (default 120).
+    #[serde(default)]
+    timeout_secs: Option<u64>,
+}
+
+/// `POST /v1/gui/orchestration/agents/{alias}/invoke` — rc.277 Paperclip Phase 2.
+/// Single-shot agent run primitive (pre-Phase-3 run engine): resolve the agent's adapter_type,
+/// dispatch adapter.execute, return AdapterResult + write an activity_log row.
+async fn gui_orchestration_agent_invoke(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+    Json(body): Json<AgentInvokeBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+
+    // 1) Load the agent's adapter_type / adapter_config.
+    let (adapter_type, adapter_config_raw): (Option<String>, Option<String>) = {
+        let mut db = state.db.lock().await;
+        db.conn()
+            .query_row(
+                "SELECT adapter_type, adapter_config FROM agent_capabilities WHERE alias = ?1",
+                rusqlite::params![alias],
+                |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)),
+            )
+            .map_err(|_| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(ErrorDto {
+                        error: format!("agent '{alias}' 없음 (agent_capabilities)"),
+                    }),
+                )
+            })?
+    };
+    let adapter_type = adapter_type.unwrap_or_else(|| "peer_send".to_string());
+    let adapter_config: serde_json::Value = adapter_config_raw
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_else(|| serde_json::json!({ "alias": alias }));
+
+    // 2) Resolve the prompt: explicit prompt wins, else issue_id → title+body.
+    let prompt = if let Some(p) = body.prompt.filter(|s| !s.trim().is_empty()) {
+        p
+    } else if let Some(iid) = &body.issue_id {
+        let mut db = state.db.lock().await;
+        let (title, ibody): (String, Option<String>) = db
+            .conn()
+            .query_row(
+                "SELECT title, body FROM issues WHERE id = ?1",
+                rusqlite::params![iid],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+            )
+            .map_err(|_| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(ErrorDto {
+                        error: format!("issue '{iid}' 없음"),
+                    }),
+                )
+            })?;
+        match ibody {
+            Some(b) if !b.trim().is_empty() => format!("{title}\n\n{b}"),
+            _ => title,
+        }
+    } else {
+        return Err(internal("prompt 또는 issue_id 필요"));
+    };
+
+    // 3) Build adapter context. password from daemon env (peer_send signing).
+    let password = std::env::var("XGRAM_KEYSTORE_PASSWORD").ok();
+    let timeout = std::time::Duration::from_secs(body.timeout_secs.unwrap_or(120).clamp(1, 1800));
+    let ctx = crate::orchestration_adapter::AdapterContext {
+        data_dir: state.data_dir.as_ref().clone(),
+        agent_alias: alias.clone(),
+        prompt: prompt.clone(),
+        adapter_config,
+        password,
+        session_id: None,
+        timeout,
+        on_log: None,
+    };
+
+    // 4) Dispatch adapter.
+    let adapter = crate::orchestration_adapter::get_adapter(&adapter_type)
+        .map_err(|e| internal(&format!("adapter: {e}")))?;
+    let result = adapter
+        .execute(&ctx)
+        .await
+        .map_err(|e| internal(&format!("adapter execute ({adapter_type}): {e}")))?;
+
+    // 5) activity_log row.
+    {
+        let now = chrono::Utc::now().to_rfc3339();
+        let log_id = uuid::Uuid::new_v4().to_string();
+        let payload = serde_json::json!({
+            "adapter_type": adapter_type,
+            "issue_id": body.issue_id,
+            "timed_out": result.timed_out,
+            "summary_len": result.summary.len(),
+        })
+        .to_string();
+        let mut db = state.db.lock().await;
+        if let Err(e) = db.conn().execute(
+            "INSERT INTO activity_log (id, actor, kind, target, payload, created_at) \
+             VALUES (?1, ?2, 'agent_invoke', ?3, ?4, ?5)",
+            rusqlite::params![log_id, alias, format!("agent:{alias}"), payload, now],
+        ) {
+            tracing::warn!(error = %e, "activity_log INSERT 실패 (invoke 자체는 성공)");
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "alias": alias,
+        "adapter_type": adapter_type,
+        "result": result,
+    })))
 }
 
 async fn gui_agents_register(

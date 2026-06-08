@@ -76,6 +76,7 @@ tracing-opentelemetry = { workspace = true }
 futures-util = "0.3"
 reqwest = { workspace = true }
 serde_yaml = "0.9"
+async-trait = "0.1"
 regex = "1"
 urlencoding = "2"
 lettre = { version = "0.11", features = ["smtp-transport", "builder", "rustls-tls"], default-features = false }

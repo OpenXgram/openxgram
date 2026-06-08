@@ -42,6 +42,7 @@ pub mod notify_setup;
 pub mod onboard;
 pub mod openagentx;
 pub mod orchestration;
+pub mod orchestration_adapter;
 pub mod otel;
 pub mod pair_desktop;
 pub mod pair_host;
