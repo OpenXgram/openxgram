@@ -5,7 +5,7 @@ import { AgentSidePanel} from "./AgentSidePanel";
 import { SessionScreen} from "./SessionScreen";
 import { RoutingRulesModal} from "./RoutingRulesModal";
 import { WhitelistModal} from "./WhitelistModal";
-import { WorkflowPanel} from "./WorkflowPanel";
+import { PaperclipFrame} from "./PaperclipFrame";
 
 // v1.3 Tier 1 — 좌측 머신×세션 트리 (UI-MESSENGER-SPEC §3.2, S4).
 // - peer 목록 = 본인의 다른 머신/세션 — machine 별 그룹화
@@ -839,14 +839,8 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  const gridCols = () => hasSidepanel()
  ? `${sidebarW()}px 5px minmax(0, 1fr) 5px ${sidepanelW()}px`
  : `${sidebarW()}px 5px minmax(0, 1fr)`;
- return (
- <div
- class="messenger-shell"
- style={{ "grid-template-columns": gridCols()}}
- >
- {/* 좌: 머신×세션 트리 + 스레드 모드 (Tier 1 + L1) */}
- <aside class="messenger-sidebar">
- {/* L1 — 좌측 상단 3 모드 탭 */}
+ // L1 — 좌측 상단 3 모드 탭 (에이전트 / 스레드 / 오케스트레이션). workflow 모드 전용 풀쉘에서도 재사용.
+ const modeTabs = () => (
  <div class="messenger-sidebar-mode" style="display:flex; gap:4px; padding:6px 8px; border-bottom:1px solid var(--border);">
  <button
  type="button"
@@ -861,7 +855,7 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  class={leftMode() === "thread" ? "active" : ""}
  onClick={() => setLeftMode("thread")}
  style="flex:1;"
- title={`스레드 — 같은 conversation_id 의 메시지 묶음 (대화 단위). 에이전트 모드(누가)와 다름. 메시지 송수신 시작하면 자동 생성. 현재 ${threads().length}건`}
+ title={`스레드 — 같은 conversation_id 의 메시지 묶음 (대화 단위). 메시지 송수신 시작하면 자동 생성. 현재 ${threads().length}건`}
  >
  스레드·{threads().length}
  </button>
@@ -870,12 +864,33 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  class={leftMode() === "workflow" ? "active" : ""}
  onClick={() => setLeftMode("workflow")}
  style="flex:1;"
- title="오케스트레이션 — W-1~W-10 워크플로 정의·실행·조율 (web_search·llm_call·email step). 사양 UI-MESSENGER-SPEC v1.4 §20"
+ title="오케스트레이션 — paperclip 임베드 (paperclip.starian.us). 사이드메뉴부터 본문 전체."
  >
  오케스트레이션
  </button>
- {/* rc.248 (이슈 #78) — 중복 ⚙ 토글 제거. 헤더의 "⚙ 설정"(라벨 있음) 하나로 통일. */}
  </div>
+ );
+
+ // rc.281 — 오케스트레이션 탭 = paperclip 풀쉘 임베드.
+ // 좌측 모드 탭만 상단에 두고, 그 아래 전체 영역(좌측 사이드 + 우측 본문)을 paperclip iframe 이 차지.
+ if (leftMode() === "workflow") {
+ return (
+ <div class="messenger-shell" style="display:flex; flex-direction:column; height:100%;">
+ {modeTabs()}
+ <PaperclipFrame />
+ </div>
+ );
+ }
+
+ return (
+ <div
+ class="messenger-shell"
+ style={{ "grid-template-columns": gridCols()}}
+ >
+ {/* 좌: 머신×세션 트리 + 스레드 모드 (Tier 1 + L1) */}
+ <aside class="messenger-sidebar">
+ {/* L1 — 좌측 상단 3 모드 탭 (modeTabs() 재사용. rc.281 workflow=paperclip 풀쉘) */}
+ {modeTabs()}
  {/* L1b — 액션 (RoutingRule + Whitelist) 2 버튼 */}
  <div class="messenger-sidebar-actions" style="display:flex; gap:4px; padding:0 8px 6px; border-bottom:1px solid var(--border);">
  <button
@@ -1489,10 +1504,7 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  </div>
  </Show>
 
- {/* L1 — 스레드 모드 콘텐츠 */}
- <Show when={leftMode() === "workflow"}>
- <WorkflowPanel />
- </Show>
+ {/* rc.281 — 오케스트레이션(workflow) 모드는 상단에서 paperclip 풀쉘로 early-return 처리됨. */}
 
  <Show when={leftMode() === "thread"}>
  <div class="messenger-friend-list">
