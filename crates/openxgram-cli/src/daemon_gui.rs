@@ -424,6 +424,11 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/workflows/{id}/run", post(gui_workflow_run))
         .route("/v1/gui/workflows/{id}/runs", get(gui_workflow_runs))
         .route("/v1/gui/workflows/runs/{run_id}/approve", post(gui_workflow_run_approve))
+        // rc.276 — Paperclip orchestration absorption Phase 1 read endpoints.
+        // org chart (agent_capabilities + reports_to hierarchy), issue board, goals tree.
+        .route("/v1/gui/orchestration/agents", get(gui_orchestration_agents))
+        .route("/v1/gui/orchestration/issues", get(gui_orchestration_issues))
+        .route("/v1/gui/orchestration/goals", get(gui_orchestration_goals))
         .route("/v1/gui/peers/{alias}/send-unsigned", post(gui_peer_send_unsigned))
         // 메신저 카드 v1.3 Step 0 — 메시지 송수신.
         .route("/v1/gui/messages", get(gui_messages_recent))
@@ -3704,6 +3709,112 @@ async fn gui_agents_list(
             "orchestration_role": r.get::<_, Option<String>>(8)?,
             "special_instructions": r.get::<_, Option<String>>(9)?,
             "updated_at": r.get::<_, String>(10)?,
+        }))
+    }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+/// `GET /v1/gui/orchestration/agents` — rc.276 Paperclip Phase 1.
+/// agent_capabilities org overlay (company_id + reports_to hierarchy + adapter_type/config/budget/status).
+async fn gui_orchestration_agents(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT alias, role, description, capabilities, orchestration_role, \
+                company_id, reports_to, adapter_type, adapter_config, \
+                budget_monthly_cents, status, paused_at, updated_at \
+         FROM agent_capabilities ORDER BY reports_to IS NULL DESC, reports_to ASC, alias ASC",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map([], |r| {
+        Ok(serde_json::json!({
+            "alias": r.get::<_, String>(0)?,
+            "role": r.get::<_, Option<String>>(1)?,
+            "description": r.get::<_, Option<String>>(2)?,
+            "capabilities": r.get::<_, Option<String>>(3)?,
+            "orchestration_role": r.get::<_, Option<String>>(4)?,
+            "company_id": r.get::<_, Option<String>>(5)?,
+            "reports_to": r.get::<_, Option<String>>(6)?,
+            "adapter_type": r.get::<_, Option<String>>(7)?,
+            "adapter_config": r.get::<_, Option<String>>(8)?,
+            "budget_monthly_cents": r.get::<_, Option<i64>>(9)?,
+            "status": r.get::<_, Option<String>>(10)?,
+            "paused_at": r.get::<_, Option<String>>(11)?,
+            "updated_at": r.get::<_, String>(12)?,
+        }))
+    }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+/// `GET /v1/gui/orchestration/issues` — rc.276 Paperclip Phase 1. Issue board (unit of work).
+async fn gui_orchestration_issues(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, company_id, project_id, goal_id, parent_id, title, body, status, \
+                priority, assignee_agent_id, checkout_run_id, execution_locked_at, \
+                origin_kind, origin_fingerprint, request_depth, issue_number, identifier, \
+                created_at, updated_at \
+         FROM issues ORDER BY created_at DESC",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map([], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_, String>(0)?,
+            "company_id": r.get::<_, Option<String>>(1)?,
+            "project_id": r.get::<_, Option<String>>(2)?,
+            "goal_id": r.get::<_, Option<String>>(3)?,
+            "parent_id": r.get::<_, Option<String>>(4)?,
+            "title": r.get::<_, String>(5)?,
+            "body": r.get::<_, Option<String>>(6)?,
+            "status": r.get::<_, String>(7)?,
+            "priority": r.get::<_, i64>(8)?,
+            "assignee_agent_id": r.get::<_, Option<String>>(9)?,
+            "checkout_run_id": r.get::<_, Option<String>>(10)?,
+            "execution_locked_at": r.get::<_, Option<String>>(11)?,
+            "origin_kind": r.get::<_, Option<String>>(12)?,
+            "origin_fingerprint": r.get::<_, Option<String>>(13)?,
+            "request_depth": r.get::<_, i64>(14)?,
+            "issue_number": r.get::<_, Option<i64>>(15)?,
+            "identifier": r.get::<_, Option<String>>(16)?,
+            "created_at": r.get::<_, String>(17)?,
+            "updated_at": r.get::<_, String>(18)?,
+        }))
+    }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+/// `GET /v1/gui/orchestration/goals` — rc.276 Paperclip Phase 1. Goals (+ parent_id ancestry).
+async fn gui_orchestration_goals(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, company_id, title, description, level, status, parent_id, \
+                owner_agent_id, created_at, updated_at \
+         FROM goals ORDER BY parent_id IS NULL DESC, parent_id ASC, created_at ASC",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map([], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_, String>(0)?,
+            "company_id": r.get::<_, Option<String>>(1)?,
+            "title": r.get::<_, String>(2)?,
+            "description": r.get::<_, Option<String>>(3)?,
+            "level": r.get::<_, String>(4)?,
+            "status": r.get::<_, String>(5)?,
+            "parent_id": r.get::<_, Option<String>>(6)?,
+            "owner_agent_id": r.get::<_, Option<String>>(7)?,
+            "created_at": r.get::<_, String>(8)?,
+            "updated_at": r.get::<_, String>(9)?,
         }))
     }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
         .filter_map(|r| r.ok()).collect();

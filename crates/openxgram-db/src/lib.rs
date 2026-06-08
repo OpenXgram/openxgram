@@ -5,6 +5,7 @@ mod error;
 mod migrate;
 mod pragma;
 
+pub mod orchestration;
 pub mod schema;
 
 pub use connection::{Db, DbConfig, JournalMode};

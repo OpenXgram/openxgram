@@ -244,6 +244,14 @@ const MIGRATIONS: &[Migration] = &[
         name: "peer_session_identifier",
         sql: include_str!("../migrations/0046_peer_session_identifier.sql"),
     },
+    // rc.276 — Paperclip orchestration absorption, Phase 1 (core entities / schema).
+    // companies, agent_capabilities org overlay, goals/projects/project_goals,
+    // issues (+checkout lock), issue_relations, activity_log.
+    Migration {
+        version: 47,
+        name: "paperclip_orchestration",
+        sql: include_str!("../migrations/0047_paperclip_orchestration.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {
