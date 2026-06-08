@@ -5,12 +5,11 @@
 //! (`server/src/adapters/registry.ts`) as a Rust trait + dispatch.
 //!
 //! 3 adapters:
-//!   - `peer_send`  : reuse `crate::peer_send::run_peer_send_with_conv` to send the prompt to a
-//!                    fleet peer, then poll the `inbox-from-{alias}` session for the reply.
-//!                    **Messaging is NOT reimplemented** — send + reply collection reuse the
-//!                    existing peer_send / inbound (messages table) plumbing.
-//!   - `process`    : spawn a local command, collect stdout.
-//!   - `http`       : POST the prompt body to a webhook URL, return the response body.
+//! - `peer_send` : reuse `crate::peer_send::run_peer_send_with_conv` to send the prompt to a
+//!   fleet peer, then poll the `inbox-from-{alias}` session for the reply. Messaging is NOT
+//!   reimplemented — send + reply collection reuse the existing peer_send / inbound plumbing.
+//! - `process` : spawn a local command, collect stdout.
+//! - `http` : POST the prompt body to a webhook URL, return the response body.
 //!
 //! 절대 규칙 (CLAUDE.md): no silent fallback (errors are surfaced), no production `unwrap()`.
 
