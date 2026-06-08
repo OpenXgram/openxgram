@@ -878,7 +878,9 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  return (
  <>
  <Show when={leftMode() === "workflow"}>
- <div class="messenger-shell" style="display:flex; flex-direction:column; height:100%;">
+ {/* rc.284 — height:100% 가 부모 미정의로 작게 나오던 것 수정: .messenger-shell 클래스의
+     height:calc(100vh-140px) 를 그대로 쓰도록 inline height 제거. display 만 grid→flex 로 override. */}
+ <div class="messenger-shell" style="display:flex; flex-direction:column;">
  {modeTabs()}
  <PaperclipFrame />
  </div>
