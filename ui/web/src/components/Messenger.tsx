@@ -864,25 +864,26 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
  class={leftMode() === "workflow" ? "active" : ""}
  onClick={() => setLeftMode("workflow")}
  style="flex:1;"
- title="오케스트레이션 — paperclip 임베드 (paperclip.starian.us). 사이드메뉴부터 본문 전체."
+ title="오케스트레이션 — paperclip 임베드 (same-origin /paperclip/). 사이드메뉴부터 본문 전체."
  >
  오케스트레이션
  </button>
  </div>
  );
 
- // rc.281 — 오케스트레이션 탭 = paperclip 풀쉘 임베드.
- // 좌측 모드 탭만 상단에 두고, 그 아래 전체 영역(좌측 사이드 + 우측 본문)을 paperclip iframe 이 차지.
- if (leftMode() === "workflow") {
+ // rc.283 — 오케스트레이션 탭 = paperclip 풀쉘 임베드.
+ // ⚠️ rc.281 버그: 컴포넌트 body 의 early-return(if leftMode()==="workflow")은 SolidJS 에서
+ // 마운트 시 1회만 평가됨(기본 leftMode="agent" 이라 항상 false) → 탭 클릭해도 iframe 안 뜸.
+ // → 반응형 <Show> 로 JSX 트리 안에서 분기. 탭 전환 시 iframe 이 실제 DOM 에 마운트됨.
  return (
+ <>
+ <Show when={leftMode() === "workflow"}>
  <div class="messenger-shell" style="display:flex; flex-direction:column; height:100%;">
  {modeTabs()}
  <PaperclipFrame />
  </div>
- );
- }
-
- return (
+ </Show>
+ <Show when={leftMode() !== "workflow"}>
  <div
  class="messenger-shell"
  style={{ "grid-template-columns": gridCols()}}
@@ -1909,6 +1910,8 @@ export function Messenger(props: { onJumpToSettings?: () => void} = {}) {
 )}
  </Show>
  </div>
+ </Show>
+ </>
 );
 }
 

@@ -3,13 +3,14 @@
 // 그대로 임베드되어 나타난다. rc.279 커스텀 Org 에이전트 UI(WorkflowPanel/OrchestrationSection)는
 // 이 임베드로 대체. iframe 이 탭 영역(좌측 사이드 + 우측 본문) 전체를 꽉 채운다.
 //
-// paperclip 은 paperclip.starian.us (tailscale 전용) 로 서빙. 미설정/로딩 실패 대비 fallback 안내.
+// paperclip 은 same-origin /paperclip/ (Caddy 리버스프록시) 로 서빙. 미설정/로딩 실패 대비 fallback 안내.
 
 import { createSignal, Show } from "solid-js";
 
-// iframe src — 상수. 환경에서 override 가능 (VITE_PAPERCLIP_URL).
+// iframe src — same-origin 경로. xgram.starian.us/paperclip/ → Caddy가 내장 paperclip(:3100)으로 리버스프록시.
+// same-origin이라 cert/CSP/X-Frame 문제 없음(별도 도메인 불필요). 환경에서 override 가능.
 export const PAPERCLIP_URL: string =
-  (import.meta as any).env?.VITE_PAPERCLIP_URL || "https://paperclip.starian.us/";
+  (import.meta as any).env?.VITE_PAPERCLIP_URL || "/paperclip/";
 
 export function PaperclipFrame() {
   const [failed, setFailed] = createSignal(false);
