@@ -657,6 +657,52 @@ async fn gui_initialized(
     Ok(Json(mp.exists()))
 }
 
+/// rc.274/rc.280 — 같은 tmux 세션을 가리키는 중복 행을 1행/세션으로 dedupe.
+///   auto_seed 가 에이전트당 2행 기록할 수 있음: short alias(예: "akashic") + full
+///   alias(예: "aoe_akashic_5054a80a"). 둘 다 session_identifier 가 동일("tmux:<name>")
+///   이라 목록에 둘 다 노출됨 → session_identifier(tmux:* 인 행) 기준 1행만 남긴다.
+///   - canonical: alias == 세션명(sid 의 "tmux:" 접두 제거값, 즉 aoe_* full alias) 우선.
+///     (worktree/subagent 연결이 full alias 기준이므로 그쪽을 살린다.) 없으면 첫 행.
+///   - sid NULL / 비-tmux(원격·채널·self) 행은 dedupe 대상 아님 — 각자 고유하므로 그대로 유지.
+/// `alias_of` 로 각 행의 alias 를 추출, `sid_map` 으로 그 alias 의 session_identifier 를 조회.
+/// gui_peers(PeerDto) 와 gui_orchestration_agents(serde_json::Value) 가 공유.
+fn dedup_by_tmux_session<T>(
+    rows: Vec<T>,
+    sid_map: &std::collections::HashMap<String, String>,
+    alias_of: impl Fn(&T) -> &str,
+) -> Vec<T> {
+    let mut seen: std::collections::HashMap<String, usize> = Default::default();
+    let mut keep: Vec<bool> = vec![true; rows.len()];
+    for (idx, r) in rows.iter().enumerate() {
+        let alias = alias_of(r);
+        let sid = match sid_map.get(alias) {
+            Some(s) if s.starts_with("tmux:") => s.clone(),
+            // 비-tmux / 없음 → dedupe 제외 (고유 유지).
+            _ => continue,
+        };
+        let session_name = &sid["tmux:".len()..];
+        let is_canonical = alias == session_name;
+        match seen.get(&sid).copied() {
+            None => {
+                seen.insert(sid, idx);
+            }
+            Some(prev_idx) => {
+                // 이미 본 세션. canonical(full alias) 우선으로 유지 대상 교체.
+                if is_canonical && alias_of(&rows[prev_idx]) != session_name {
+                    keep[prev_idx] = false; // 기존(short) 제거
+                    seen.insert(sid, idx); // 현재(full) 유지
+                } else {
+                    keep[idx] = false; // 현재 중복 제거
+                }
+            }
+        }
+    }
+    rows.into_iter()
+        .enumerate()
+        .filter_map(|(idx, r)| if keep[idx] { Some(r) } else { None })
+        .collect()
+}
+
 /// `GET /v1/gui/peers` — 등록된 peer 전체 목록.
 async fn gui_peers(
     State(state): State<GuiServerState>,
@@ -724,45 +770,9 @@ async fn gui_peers(
             })
             .collect()
     };
-    // rc.274 — 같은 tmux 세션을 가리키는 중복 peer 행 dedupe (GUI 로스터 1행/세션).
-    //   auto_seed 가 에이전트당 2행 기록할 수 있음: short alias(예: "akashic") + full
-    //   alias(예: "aoe_akashic_5054a80a"). 둘 다 session_identifier 가 동일("tmux:<name>")
-    //   이라 로스터에 둘 다 노출됨 → session_identifier(tmux:* 인 행) 기준 1행만 남긴다.
-    //   - canonical: alias == 세션명(sid 의 "tmux:" 접두 제거값, 즉 aoe_* full alias) 우선.
-    //     (worktree/subagent 연결이 full alias 기준이므로 그쪽을 살린다.) 없으면 첫 행.
-    //   - sid NULL / 비-tmux(원격·채널·self) 행은 dedupe 대상 아님 — 각자 고유하므로 그대로 유지.
-    let rows: Vec<_> = {
-        // tmux 세션별 후보 인덱스 수집 (입력 순서 보존).
-        let mut seen: std::collections::HashMap<String, usize> = Default::default();
-        let mut keep: Vec<bool> = vec![true; rows.len()];
-        for (idx, p) in rows.iter().enumerate() {
-            let sid = match sid_map.get(&p.alias) {
-                Some(s) if s.starts_with("tmux:") => s.clone(),
-                // 비-tmux / 없음 → dedupe 제외 (고유 유지).
-                _ => continue,
-            };
-            let session_name = &sid["tmux:".len()..];
-            let is_canonical = p.alias == session_name;
-            match seen.get(&sid).copied() {
-                None => {
-                    seen.insert(sid, idx);
-                }
-                Some(prev_idx) => {
-                    // 이미 본 세션. canonical(full alias) 우선으로 유지 대상 교체.
-                    if is_canonical && rows[prev_idx].alias != session_name {
-                        keep[prev_idx] = false; // 기존(short) 제거
-                        seen.insert(sid, idx); // 현재(full) 유지
-                    } else {
-                        keep[idx] = false; // 현재 중복 제거
-                    }
-                }
-            }
-        }
-        rows.into_iter()
-            .enumerate()
-            .filter_map(|(idx, p)| if keep[idx] { Some(p) } else { None })
-            .collect()
-    };
+    // rc.274/rc.280 — 같은 tmux 세션을 가리키는 중복 peer 행 dedupe (GUI 로스터 1행/세션).
+    //   공통 헬퍼 dedup_by_tmux_session 으로 일원화 (gui_orchestration_agents 와 동일 규칙).
+    let rows = dedup_by_tmux_session(rows, &sid_map, |p| p.alias.as_str());
     // rc.229 — fix#1: per-peer subprocess enrichment 전부 제거 (8.7s → <200ms).
     //   project_folder/llm_type/llm_version/worktrees/subagents/ex_peers 는 모두
     //   on-demand `/v1/gui/agent/{alias}/detail` 에서 1개씩 enrich (fix#3).
@@ -3736,13 +3746,26 @@ async fn gui_orchestration_agents(
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     let mut db = state.db.lock().await;
+    // rc.280 — peers.session_identifier prefetch (tmux 세션 dedupe 용, gui_peers 와 동일).
+    let mut sid_map: std::collections::HashMap<String, String> = Default::default();
+    if let Ok(mut stmt) = db.conn().prepare(
+        "SELECT alias, session_identifier FROM peers WHERE session_identifier IS NOT NULL AND session_identifier != ''"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        }) {
+            for row in rows.flatten() {
+                sid_map.insert(row.0, row.1);
+            }
+        }
+    }
     let mut stmt = db.conn().prepare(
         "SELECT alias, role, description, capabilities, orchestration_role, \
                 company_id, reports_to, adapter_type, adapter_config, \
                 budget_monthly_cents, status, paused_at, updated_at \
          FROM agent_capabilities ORDER BY reports_to IS NULL DESC, reports_to ASC, alias ASC",
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
-    let rows = stmt.query_map([], |r| {
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| {
         Ok(serde_json::json!({
             "alias": r.get::<_, String>(0)?,
             "role": r.get::<_, Option<String>>(1)?,
@@ -3760,6 +3783,12 @@ async fn gui_orchestration_agents(
         }))
     }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
         .filter_map(|r| r.ok()).collect();
+    // rc.280 — 같은 tmux 세션의 short+full alias 중복 행 dedupe (gui_peers 와 동일 헬퍼/규칙).
+    //   read 엔드포인트가 agent_capabilities 를 그대로 반환해 short(akashic)+full(aoe_akashic_*)
+    //   둘 다 노출되던 문제 수정. sid 비-tmux/없음(원격·self)은 그대로 유지.
+    let rows = dedup_by_tmux_session(rows, &sid_map, |v| {
+        v.get("alias").and_then(|a| a.as_str()).unwrap_or("")
+    });
     Ok(Json(rows))
 }
 
