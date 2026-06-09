@@ -24,6 +24,85 @@ use openxgram_vault::VaultStore;
 use openxgram_wiki::{mcp::WikiTools, WikiFs};
 use serde_json::{json, Value};
 
+/// mcp-serve 시작 시 자격(`XGRAM_KEYSTORE_PASSWORD` / `XGRAM_MCP_TOKEN`) 해석.
+///
+/// 반복 핵심 문제 fix: Claude Code 가 세션마다 띄우는 `xgram mcp-serve` 프로세스에
+/// config env 주입이 누락되면 peer_send/vault 가 "비번 필요" 로 실패한다.
+/// config env 배선에 의존하는 게 취약점이므로, **같은 머신·같은 유저**라는 전제 하에
+/// `{data_dir}/daemon.env`(데몬이 쓰는 동일 파일)에서 비번을 자동 확보한다.
+///
+/// 해석 순서:
+///   1) env `XGRAM_MCP_TOKEN` 존재 → 그대로 (데몬 서명 경로). 추가 작업 없음.
+///   2) env `XGRAM_KEYSTORE_PASSWORD` 존재 → 그대로.
+///   3) 둘 다 없음 → `daemon.env` 의 `XGRAM_KEYSTORE_PASSWORD=` 줄을 읽어
+///      현재 프로세스 env 로 set (이후 require_password / peer_send 서명이 자동으로 사용).
+///   파일/키 없으면 명시 경고 로그(silent 금지) 후 자격 없이 진행(읽기 도구만 동작).
+///
+/// 비밀번호 값은 로그/출력에 평문으로 내보내지 않는다 — 존재 여부만 기록.
+pub fn ensure_mcp_credentials(data_dir: &Path) {
+    // 1) 데몬 서명 토큰이 있으면 keystore 비번 없이도 peer_send 가능 — 그대로 둔다.
+    if std::env::var("XGRAM_MCP_TOKEN").is_ok() {
+        eprintln!("[mcp-serve][cred] XGRAM_MCP_TOKEN env 존재 — 데몬 서명 경로 사용");
+        return;
+    }
+    // 2) keystore 비번이 이미 env 에 있으면 그대로 둔다 (기존 동작).
+    if std::env::var(openxgram_core::env::PASSWORD_ENV).is_ok() {
+        eprintln!("[mcp-serve][cred] XGRAM_KEYSTORE_PASSWORD env 존재 — 기존 자격 사용");
+        return;
+    }
+    // 3) 둘 다 없음 → daemon.env fallback.
+    let env_path = data_dir.join("daemon.env");
+    match read_daemon_env_password(&env_path) {
+        Some(pw) if !pw.is_empty() => {
+            std::env::set_var(openxgram_core::env::PASSWORD_ENV, &pw);
+            eprintln!(
+                "[mcp-serve][cred] {} 에서 XGRAM_KEYSTORE_PASSWORD 자동 확보 — peer_send/vault 활성",
+                env_path.display()
+            );
+        }
+        _ => {
+            eprintln!(
+                "[mcp-serve][cred][WARN] env 자격 없음 + {} 에 XGRAM_KEYSTORE_PASSWORD 없음 \
+                 — 자격 없이 진행 (읽기 도구만 동작, peer_send/vault 불가)",
+                env_path.display()
+            );
+        }
+    }
+}
+
+/// `daemon.env`(KEY=VALUE 라인 형식, 데몬도 같은 파일을 source)에서
+/// `XGRAM_KEYSTORE_PASSWORD` 값을 추출. 파일/키 없으면 None.
+/// 따옴표 한 겹과 `export ` prefix 는 벗겨낸다. 값은 trim (env.rs require_password 와 동일 정책).
+fn read_daemon_env_password(env_path: &Path) -> Option<String> {
+    let contents = std::fs::read_to_string(env_path).ok()?;
+    let key = openxgram_core::env::PASSWORD_ENV;
+    for raw in contents.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        if k.trim() != key {
+            continue;
+        }
+        let v = v.trim();
+        let v = v
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .or_else(|| v.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+            .unwrap_or(v);
+        let v = v.trim();
+        if v.is_empty() {
+            return None;
+        }
+        return Some(v.to_string());
+    }
+    None
+}
+
 pub struct OpenxgramDispatcher {
     db: Db,
     /// peer_send 등 keystore 접근 도구가 master 키 로드할 때 사용.

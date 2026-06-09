@@ -2549,6 +2549,8 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::McpServe { data_dir, bind } => {
             let dir = resolve_data_dir(data_dir)?;
+            // config env 주입 누락 시에도 같은 머신 daemon.env 에서 자격 자동 확보.
+            mcp_serve::ensure_mcp_credentials(&dir);
             match bind {
                 Some(addr) => mcp_serve::run_http_serve(&dir, addr).await?,
                 None => mcp_serve::run_serve(&dir)?,
