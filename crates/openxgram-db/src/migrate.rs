@@ -252,6 +252,12 @@ const MIGRATIONS: &[Migration] = &[
         name: "paperclip_orchestration",
         sql: include_str!("../migrations/0047_paperclip_orchestration.sql"),
     },
+    // Phase 2-D — 카카오톡 셸 GUI: 에이전트 프로필 (classification/execution_mode/ai_type/worktree/public).
+    Migration {
+        version: 48,
+        name: "agent_profiles",
+        sql: include_str!("../migrations/0048_agent_profiles.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

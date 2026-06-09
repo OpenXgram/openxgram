@@ -269,6 +269,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/agent/{alias}/detail", get(gui_agent_detail))
         // Phase 2-A — 동적 설정 탐지: AI 종류별 지침/설정 파일 체인(@import 재귀) + MCP/hooks/skills.
         .route("/v1/gui/agent/{alias}/config-chain", get(gui_agent_config_chain))
+        // Phase 2-D — 에이전트 프로필 (classification/execution_mode/ai_type/worktree/public + folder/group/role 병합).
+        .route("/v1/gui/agent/{alias}/profile", get(gui_agent_profile_get).post(gui_agent_profile_set))
         // 메신저 v1.3 §3.2 — 머신×세션 통합 detector (M-1).
         .route("/v1/gui/sessions", get(gui_sessions))
         .route("/v1/gui/sessions/{identifier}/screen", get(gui_session_screen))
@@ -3716,10 +3718,14 @@ async fn gui_agents_list(
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     let mut db = state.db.lock().await;
+    // Phase 2-C — agent_profiles LEFT JOIN: 명부 그룹화용 classification/execution_mode/ai_type/public.
     let mut stmt = db.conn().prepare(
-        "SELECT alias, role, description, capabilities, tool_list, project_path, \
-                group_name, messenger_enabled, orchestration_role, special_instructions, updated_at \
-         FROM agent_capabilities ORDER BY messenger_enabled DESC, alias ASC",
+        "SELECT ac.alias, ac.role, ac.description, ac.capabilities, ac.tool_list, ac.project_path, \
+                ac.group_name, ac.messenger_enabled, ac.orchestration_role, ac.special_instructions, ac.updated_at, \
+                p.classification, p.execution_mode, p.ai_type, p.is_public \
+         FROM agent_capabilities ac \
+         LEFT JOIN agent_profiles p ON p.alias = ac.alias \
+         ORDER BY ac.messenger_enabled DESC, ac.alias ASC",
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
     let rows = stmt.query_map([], |r| {
         Ok(serde_json::json!({
@@ -3734,6 +3740,10 @@ async fn gui_agents_list(
             "orchestration_role": r.get::<_, Option<String>>(8)?,
             "special_instructions": r.get::<_, Option<String>>(9)?,
             "updated_at": r.get::<_, String>(10)?,
+            "classification": r.get::<_, Option<String>>(11)?,
+            "execution_mode": r.get::<_, Option<String>>(12)?,
+            "ai_type": r.get::<_, Option<String>>(13)?,
+            "is_public": r.get::<_, Option<i64>>(14)?.map(|v| v != 0),
         }))
     }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
         .filter_map(|r| r.ok()).collect();
@@ -4481,6 +4491,156 @@ async fn gui_agents_instructions_save(
         "ok": true, "alias": body.alias, "file": agent_md.display().to_string(),
         "bytes": body.content.len(),
         "claude_md_ref_added": claude_ref_added,
+    })))
+}
+
+/// agent_profiles 의 허용 enum 값 검증 (rule #1: silent fallback 금지 — 잘못된 값은 400).
+fn validate_profile_enums(
+    ai_type: &str, classification: &str, execution_mode: &str,
+) -> Result<(), String> {
+    if !matches!(ai_type, "claude" | "codex" | "gemini") {
+        return Err(format!("ai_type 는 claude|codex|gemini (받음: {ai_type})"));
+    }
+    if !matches!(classification, "primary" | "project" | "special") {
+        return Err(format!("classification 은 primary|project|special (받음: {classification})"));
+    }
+    if !matches!(execution_mode, "always" | "on_demand" | "heartbeat") {
+        return Err(format!("execution_mode 는 always|on_demand|heartbeat (받음: {execution_mode})"));
+    }
+    Ok(())
+}
+
+/// `GET /v1/gui/agent/{alias}/profile` (Phase 2-D).
+/// agent_profiles(신규 차원) + agent_capabilities(folder=project_path / group=group_name / role) 병합.
+/// 프로필 미생성 alias 면 기본값으로 반환 (exists=false).
+async fn gui_agent_profile_get(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use rusqlite::OptionalExtension;
+    let mut db = state.db.lock().await;
+    let prof = db.conn().query_row(
+        "SELECT ai_type, classification, execution_mode, worktree, is_public, created_at, updated_at \
+         FROM agent_profiles WHERE alias = ?1",
+        rusqlite::params![alias],
+        |r| Ok(serde_json::json!({
+            "ai_type": r.get::<_, String>(0)?,
+            "classification": r.get::<_, String>(1)?,
+            "execution_mode": r.get::<_, String>(2)?,
+            "worktree": r.get::<_, Option<String>>(3)?,
+            "is_public": r.get::<_, i64>(4)? != 0,
+            "created_at": r.get::<_, String>(5)?,
+            "updated_at": r.get::<_, String>(6)?,
+        })),
+    ).optional().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("profile: {e}")})))?;
+    let caps = db.conn().query_row(
+        "SELECT role, group_name, project_path, description FROM agent_capabilities WHERE alias = ?1",
+        rusqlite::params![alias],
+        |r| Ok((
+            r.get::<_, Option<String>>(0)?,
+            r.get::<_, Option<String>>(1)?,
+            r.get::<_, Option<String>>(2)?,
+            r.get::<_, Option<String>>(3)?,
+        )),
+    ).optional().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("caps: {e}")})))?;
+    let (role, group, folder, description) = caps.unwrap_or((None, None, None, None));
+    let exists = prof.is_some();
+    let p = prof.unwrap_or_else(|| serde_json::json!({
+        "ai_type": "claude", "classification": "project", "execution_mode": "on_demand",
+        "worktree": serde_json::Value::Null, "is_public": false,
+        "created_at": serde_json::Value::Null, "updated_at": serde_json::Value::Null,
+    }));
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "alias": alias,
+        "exists": exists,
+        "ai_type": p["ai_type"],
+        "classification": p["classification"],
+        "execution_mode": p["execution_mode"],
+        "worktree": p["worktree"],
+        "is_public": p["is_public"],
+        "role": role,
+        "group": group,
+        "folder": folder,
+        "description": description,
+        "created_at": p["created_at"],
+        "updated_at": p["updated_at"],
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentProfileBody {
+    #[serde(default)] ai_type: Option<String>,
+    #[serde(default)] classification: Option<String>,
+    #[serde(default)] execution_mode: Option<String>,
+    #[serde(default)] worktree: Option<String>,
+    #[serde(default)] is_public: Option<bool>,
+    // 기존 agent_capabilities 로 반영 (제공 시에만)
+    #[serde(default)] role: Option<String>,
+    #[serde(default)] group: Option<String>,
+    #[serde(default)] folder: Option<String>,
+    #[serde(default)] description: Option<String>,
+}
+
+/// `POST /v1/gui/agent/{alias}/profile` (Phase 2-D) — 프로필 upsert.
+/// 미제공 필드는 기존값 유지(merge). 신규 alias 면 기본값 적용. 잘못된 enum 은 400.
+/// 신규 차원 → agent_profiles, folder/group/role/description → agent_capabilities (중복 보관 안 함).
+async fn gui_agent_profile_set(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+    Json(body): Json<AgentProfileBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use rusqlite::OptionalExtension;
+    let mut db = state.db.lock().await;
+    // 기존 프로필 읽어 merge (제공된 필드만 덮어씀).
+    let existing = db.conn().query_row(
+        "SELECT ai_type, classification, execution_mode, worktree, is_public FROM agent_profiles WHERE alias = ?1",
+        rusqlite::params![alias],
+        |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, Option<String>>(3)?, r.get::<_, i64>(4)? != 0,
+        )),
+    ).optional().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("read: {e}")})))?;
+    let (cur_ai, cur_class, cur_exec, cur_wt, cur_pub) = existing.unwrap_or_else(||
+        ("claude".into(), "project".into(), "on_demand".into(), None, false));
+    let ai_type = body.ai_type.unwrap_or(cur_ai);
+    let classification = body.classification.unwrap_or(cur_class);
+    let execution_mode = body.execution_mode.unwrap_or(cur_exec);
+    let worktree = body.worktree.or(cur_wt);
+    let is_public = body.is_public.unwrap_or(cur_pub);
+    validate_profile_enums(&ai_type, &classification, &execution_mode)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorDto{error: e})))?;
+    let now = chrono::Utc::now().to_rfc3339();
+    db.conn().execute(
+        "INSERT INTO agent_profiles (alias, ai_type, classification, execution_mode, worktree, is_public, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7) \
+         ON CONFLICT(alias) DO UPDATE SET ai_type=excluded.ai_type, classification=excluded.classification, \
+           execution_mode=excluded.execution_mode, worktree=excluded.worktree, is_public=excluded.is_public, \
+           updated_at=excluded.updated_at",
+        rusqlite::params![alias, ai_type, classification, execution_mode, worktree, is_public as i64, now],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("upsert profile: {e}")})))?;
+    // folder/group/role/description 제공 시 agent_capabilities 반영 (COALESCE 로 기존 보존).
+    if body.role.is_some() || body.group.is_some() || body.folder.is_some() || body.description.is_some() {
+        db.conn().execute(
+            "INSERT INTO agent_capabilities (alias, role, description, project_path, group_name, updated_at) \
+             VALUES (?1, COALESCE(?2,'agent'), ?3, ?4, ?5, ?6) \
+             ON CONFLICT(alias) DO UPDATE SET \
+               role=COALESCE(?2, agent_capabilities.role), \
+               description=COALESCE(?3, agent_capabilities.description), \
+               project_path=COALESCE(?4, agent_capabilities.project_path), \
+               group_name=COALESCE(?5, agent_capabilities.group_name), \
+               updated_at=?6",
+            rusqlite::params![alias, body.role, body.description, body.folder, body.group, now],
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("upsert caps: {e}")})))?;
+    }
+    Ok(Json(serde_json::json!({
+        "ok": true, "alias": alias,
+        "ai_type": ai_type, "classification": classification, "execution_mode": execution_mode,
+        "worktree": worktree, "is_public": is_public,
     })))
 }
 

@@ -263,7 +263,11 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         "role": {"type": "string", "description": "역할 / 봇 alias (예: claude-code, codex, my-agent)"},
                         "machine": {"type": "string", "description": "머신 prefix (선택, 자동 hostname)"},
                         "description": {"type": "string", "description": "rc.92: 1-3 문장으로 '이 에이전트는 X 를 잘함' 설명. 다른 에이전트가 너에게 요청할지 판단 근거."},
-                        "capabilities": {"type": "array", "items": {"type": "string"}, "description": "rc.92: 가능한 능력 keywords (예: ['web_search', 'code_review', 'translation']). list_peers 가 이 list 반환 → request_help 매칭 키."}
+                        "capabilities": {"type": "array", "items": {"type": "string"}, "description": "rc.92: 가능한 능력 keywords (예: ['web_search', 'code_review', 'translation']). list_peers 가 이 list 반환 → request_help 매칭 키."},
+                        "ai_type": {"type": "string", "enum": ["claude", "codex", "gemini"], "description": "Phase 2: AI 종류 (동적 설정 탐지 분기). 기본 claude."},
+                        "classification": {"type": "string", "enum": ["primary", "project", "special"], "description": "Phase 2: 명부 분류. primary=👑상시 / project=📁프로젝트 / special=⚙️특수. 기본 project."},
+                        "execution_mode": {"type": "string", "enum": ["always", "on_demand", "heartbeat"], "description": "Phase 2: 실행모드. always=상시 / on_demand=선택 / heartbeat=깨움. 기본 on_demand."},
+                        "worktree": {"type": "string", "description": "Phase 2: git worktree 경로 (선택)."}
                     },
                     "required": ["role"]
                 }),
@@ -1588,6 +1592,21 @@ impl ToolDispatcher for OpenxgramDispatcher {
                        capabilities=excluded.capabilities, updated_at=excluded.updated_at",
                     rusqlite::params![entry.alias, role, description, capabilities, now],
                 );
+                // Phase 2 — 프로필 차원 upsert (agent_profiles). 미제공 시 기본값, 잘못된 enum 은 거부(rule #1).
+                let ai_type = args.get("ai_type").and_then(|v| v.as_str()).unwrap_or("claude");
+                let classification = args.get("classification").and_then(|v| v.as_str()).unwrap_or("project");
+                let execution_mode = args.get("execution_mode").and_then(|v| v.as_str()).unwrap_or("on_demand");
+                let worktree = args.get("worktree").and_then(|v| v.as_str());
+                if !matches!(ai_type, "claude" | "codex" | "gemini") { return Err(invalid("ai_type 은 claude|codex|gemini")); }
+                if !matches!(classification, "primary" | "project" | "special") { return Err(invalid("classification 은 primary|project|special")); }
+                if !matches!(execution_mode, "always" | "on_demand" | "heartbeat") { return Err(invalid("execution_mode 은 always|on_demand|heartbeat")); }
+                let _ = self.db.conn().execute(
+                    "INSERT INTO agent_profiles (alias, ai_type, classification, execution_mode, worktree, is_public, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?6) \
+                     ON CONFLICT(alias) DO UPDATE SET ai_type=excluded.ai_type, classification=excluded.classification, \
+                       execution_mode=excluded.execution_mode, worktree=excluded.worktree, updated_at=excluded.updated_at",
+                    rusqlite::params![entry.alias, ai_type, classification, execution_mode, worktree, now],
+                );
                 Ok(json!({
                     "registered": true,
                     "name": entry.name,
@@ -1597,6 +1616,9 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     "mcp_port": entry.transport_port + 2,
                     "description_saved": description.is_some(),
                     "capabilities_saved": capabilities.is_some(),
+                    "ai_type": ai_type,
+                    "classification": classification,
+                    "execution_mode": execution_mode,
                 }))
             }
             "install_hooks" => {
