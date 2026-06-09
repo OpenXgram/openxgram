@@ -93,6 +93,11 @@ const ROUTES: Record<string, Route> = {
  peer_add: { method: "POST", path: "/peers", body: true},
  // rc.229 fix#3 — on-demand 단일 agent enrich (4-metadata + worktree/subagent/ex_peer)
  agent_detail: { method: "GET", path: "/agent/{alias}/detail"},
+ // Phase 2-A — 동적 설정 탐지 (ai_type/path_hint 는 query 로 전송)
+ agent_config_chain: { method: "GET", path: "/agent/{alias}/config-chain"},
+ // Phase 2-D — 에이전트 프로필 (classification/execution_mode/ai_type/worktree/public + folder/group/role)
+ agent_profile_get: { method: "GET", path: "/agent/{alias}/profile"},
+ agent_profile_set: { method: "POST", path: "/agent/{alias}/profile", body: true},
  // rc.245 — 결정적 세션 매핑 사용자 override (PATCH; body.session_identifier = string|null)
  peer_set_session: { method: "PATCH", path: "/peers/{alias}/session", body: true},
 

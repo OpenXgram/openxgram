@@ -1597,15 +1597,16 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 let classification = args.get("classification").and_then(|v| v.as_str()).unwrap_or("project");
                 let execution_mode = args.get("execution_mode").and_then(|v| v.as_str()).unwrap_or("on_demand");
                 let worktree = args.get("worktree").and_then(|v| v.as_str());
+                let machine_p = args.get("machine").and_then(|v| v.as_str());
                 if !matches!(ai_type, "claude" | "codex" | "gemini") { return Err(invalid("ai_type 은 claude|codex|gemini")); }
                 if !matches!(classification, "primary" | "project" | "special") { return Err(invalid("classification 은 primary|project|special")); }
                 if !matches!(execution_mode, "always" | "on_demand" | "heartbeat") { return Err(invalid("execution_mode 은 always|on_demand|heartbeat")); }
                 let _ = self.db.conn().execute(
-                    "INSERT INTO agent_profiles (alias, ai_type, classification, execution_mode, worktree, is_public, created_at, updated_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?6) \
+                    "INSERT INTO agent_profiles (alias, ai_type, classification, execution_mode, machine, worktree, is_public, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?7) \
                      ON CONFLICT(alias) DO UPDATE SET ai_type=excluded.ai_type, classification=excluded.classification, \
-                       execution_mode=excluded.execution_mode, worktree=excluded.worktree, updated_at=excluded.updated_at",
-                    rusqlite::params![entry.alias, ai_type, classification, execution_mode, worktree, now],
+                       execution_mode=excluded.execution_mode, machine=excluded.machine, worktree=excluded.worktree, updated_at=excluded.updated_at",
+                    rusqlite::params![entry.alias, ai_type, classification, execution_mode, machine_p, worktree, now],
                 );
                 Ok(json!({
                     "registered": true,

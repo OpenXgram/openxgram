@@ -2,8 +2,8 @@ import { createSignal, Show } from "solid-js";
 import "./kakao.css";
 import { ChatTab } from "./ChatTab";
 import { MemoryTab } from "./MemoryTab";
-import { NetworkTab } from "./NetworkTab";
 import { SettingsTab } from "./SettingsTab";
+import { AgentsTab } from "./AgentsTab";
 
 // Phase 1 — 카카오톡 셸. 정본 디자인: _mockups/kakao-mockup.html
 // 하단 6탭. 본문은 기존 실제 컴포넌트를 그대로 끼움(대화·위키·에이전트·설정).
@@ -54,7 +54,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
             <div class="kk-embed"><MemoryTab /></div>
           </Show>
           <Show when={tab() === "agents"}>
-            <div class="kk-embed"><NetworkTab /></div>
+            <div class="kk-embed"><AgentsTab onGotoChat={() => setTab("chat")} /></div>
           </Show>
           <Show when={tab() === "settings"}>
             <div class="kk-embed"><SettingsTab /></div>

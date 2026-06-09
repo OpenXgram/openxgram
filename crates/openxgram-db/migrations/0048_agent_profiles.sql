@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS agent_profiles (
     ai_type         TEXT NOT NULL DEFAULT 'claude',   -- claude | codex | gemini
     classification  TEXT NOT NULL DEFAULT 'project',  -- primary | project | special
     execution_mode  TEXT NOT NULL DEFAULT 'on_demand',-- always | on_demand | heartbeat
+    machine         TEXT,                    -- 머신 라벨 (서울/zalman 등; 추가 폼에서만 노출)
     worktree        TEXT,                    -- git worktree 경로 (있으면)
     is_public       INTEGER NOT NULL DEFAULT 0,        -- 0/1 — 마켓 공개
     created_at      TEXT NOT NULL,

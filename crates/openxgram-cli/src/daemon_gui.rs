@@ -3722,7 +3722,7 @@ async fn gui_agents_list(
     let mut stmt = db.conn().prepare(
         "SELECT ac.alias, ac.role, ac.description, ac.capabilities, ac.tool_list, ac.project_path, \
                 ac.group_name, ac.messenger_enabled, ac.orchestration_role, ac.special_instructions, ac.updated_at, \
-                p.classification, p.execution_mode, p.ai_type, p.is_public \
+                p.classification, p.execution_mode, p.ai_type, p.is_public, p.machine \
          FROM agent_capabilities ac \
          LEFT JOIN agent_profiles p ON p.alias = ac.alias \
          ORDER BY ac.messenger_enabled DESC, ac.alias ASC",
@@ -3744,6 +3744,7 @@ async fn gui_agents_list(
             "execution_mode": r.get::<_, Option<String>>(12)?,
             "ai_type": r.get::<_, Option<String>>(13)?,
             "is_public": r.get::<_, Option<i64>>(14)?.map(|v| v != 0),
+            "machine": r.get::<_, Option<String>>(15)?,
         }))
     }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
         .filter_map(|r| r.ok()).collect();
@@ -4522,17 +4523,18 @@ async fn gui_agent_profile_get(
     use rusqlite::OptionalExtension;
     let mut db = state.db.lock().await;
     let prof = db.conn().query_row(
-        "SELECT ai_type, classification, execution_mode, worktree, is_public, created_at, updated_at \
+        "SELECT ai_type, classification, execution_mode, machine, worktree, is_public, created_at, updated_at \
          FROM agent_profiles WHERE alias = ?1",
         rusqlite::params![alias],
         |r| Ok(serde_json::json!({
             "ai_type": r.get::<_, String>(0)?,
             "classification": r.get::<_, String>(1)?,
             "execution_mode": r.get::<_, String>(2)?,
-            "worktree": r.get::<_, Option<String>>(3)?,
-            "is_public": r.get::<_, i64>(4)? != 0,
-            "created_at": r.get::<_, String>(5)?,
-            "updated_at": r.get::<_, String>(6)?,
+            "machine": r.get::<_, Option<String>>(3)?,
+            "worktree": r.get::<_, Option<String>>(4)?,
+            "is_public": r.get::<_, i64>(5)? != 0,
+            "created_at": r.get::<_, String>(6)?,
+            "updated_at": r.get::<_, String>(7)?,
         })),
     ).optional().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("profile: {e}")})))?;
     let caps = db.conn().query_row(
@@ -4549,7 +4551,7 @@ async fn gui_agent_profile_get(
     let exists = prof.is_some();
     let p = prof.unwrap_or_else(|| serde_json::json!({
         "ai_type": "claude", "classification": "project", "execution_mode": "on_demand",
-        "worktree": serde_json::Value::Null, "is_public": false,
+        "machine": serde_json::Value::Null, "worktree": serde_json::Value::Null, "is_public": false,
         "created_at": serde_json::Value::Null, "updated_at": serde_json::Value::Null,
     }));
     Ok(Json(serde_json::json!({
@@ -4559,6 +4561,7 @@ async fn gui_agent_profile_get(
         "ai_type": p["ai_type"],
         "classification": p["classification"],
         "execution_mode": p["execution_mode"],
+        "machine": p["machine"],
         "worktree": p["worktree"],
         "is_public": p["is_public"],
         "role": role,
@@ -4575,6 +4578,7 @@ struct AgentProfileBody {
     #[serde(default)] ai_type: Option<String>,
     #[serde(default)] classification: Option<String>,
     #[serde(default)] execution_mode: Option<String>,
+    #[serde(default)] machine: Option<String>,
     #[serde(default)] worktree: Option<String>,
     #[serde(default)] is_public: Option<bool>,
     // 기존 agent_capabilities 로 반영 (제공 시에만)
@@ -4598,30 +4602,31 @@ async fn gui_agent_profile_set(
     let mut db = state.db.lock().await;
     // 기존 프로필 읽어 merge (제공된 필드만 덮어씀).
     let existing = db.conn().query_row(
-        "SELECT ai_type, classification, execution_mode, worktree, is_public FROM agent_profiles WHERE alias = ?1",
+        "SELECT ai_type, classification, execution_mode, machine, worktree, is_public FROM agent_profiles WHERE alias = ?1",
         rusqlite::params![alias],
         |r| Ok((
             r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
-            r.get::<_, Option<String>>(3)?, r.get::<_, i64>(4)? != 0,
+            r.get::<_, Option<String>>(3)?, r.get::<_, Option<String>>(4)?, r.get::<_, i64>(5)? != 0,
         )),
     ).optional().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("read: {e}")})))?;
-    let (cur_ai, cur_class, cur_exec, cur_wt, cur_pub) = existing.unwrap_or_else(||
-        ("claude".into(), "project".into(), "on_demand".into(), None, false));
+    let (cur_ai, cur_class, cur_exec, cur_machine, cur_wt, cur_pub) = existing.unwrap_or_else(||
+        ("claude".into(), "project".into(), "on_demand".into(), None, None, false));
     let ai_type = body.ai_type.unwrap_or(cur_ai);
     let classification = body.classification.unwrap_or(cur_class);
     let execution_mode = body.execution_mode.unwrap_or(cur_exec);
+    let machine = body.machine.or(cur_machine);
     let worktree = body.worktree.or(cur_wt);
     let is_public = body.is_public.unwrap_or(cur_pub);
     validate_profile_enums(&ai_type, &classification, &execution_mode)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorDto{error: e})))?;
     let now = chrono::Utc::now().to_rfc3339();
     db.conn().execute(
-        "INSERT INTO agent_profiles (alias, ai_type, classification, execution_mode, worktree, is_public, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7) \
+        "INSERT INTO agent_profiles (alias, ai_type, classification, execution_mode, machine, worktree, is_public, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
          ON CONFLICT(alias) DO UPDATE SET ai_type=excluded.ai_type, classification=excluded.classification, \
-           execution_mode=excluded.execution_mode, worktree=excluded.worktree, is_public=excluded.is_public, \
-           updated_at=excluded.updated_at",
-        rusqlite::params![alias, ai_type, classification, execution_mode, worktree, is_public as i64, now],
+           execution_mode=excluded.execution_mode, machine=excluded.machine, worktree=excluded.worktree, \
+           is_public=excluded.is_public, updated_at=excluded.updated_at",
+        rusqlite::params![alias, ai_type, classification, execution_mode, machine, worktree, is_public as i64, now],
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("upsert profile: {e}")})))?;
     // folder/group/role/description 제공 시 agent_capabilities 반영 (COALESCE 로 기존 보존).
     if body.role.is_some() || body.group.is_some() || body.folder.is_some() || body.description.is_some() {
@@ -4640,7 +4645,7 @@ async fn gui_agent_profile_set(
     Ok(Json(serde_json::json!({
         "ok": true, "alias": alias,
         "ai_type": ai_type, "classification": classification, "execution_mode": execution_mode,
-        "worktree": worktree, "is_public": is_public,
+        "machine": machine, "worktree": worktree, "is_public": is_public,
     })))
 }
 
