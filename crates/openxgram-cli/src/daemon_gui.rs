@@ -267,6 +267,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/peers/{alias}/session", patch(gui_peer_set_session))
         // rc.229 fix#3 — on-demand 1-agent enrich (4-metadata + worktree/subagent/ex_peer tree).
         .route("/v1/gui/agent/{alias}/detail", get(gui_agent_detail))
+        // Phase 2-A — 동적 설정 탐지: AI 종류별 지침/설정 파일 체인(@import 재귀) + MCP/hooks/skills.
+        .route("/v1/gui/agent/{alias}/config-chain", get(gui_agent_config_chain))
         // 메신저 v1.3 §3.2 — 머신×세션 통합 detector (M-1).
         .route("/v1/gui/sessions", get(gui_sessions))
         .route("/v1/gui/sessions/{identifier}/screen", get(gui_session_screen))
@@ -4482,6 +4484,193 @@ async fn gui_agents_instructions_save(
     })))
 }
 
+/// alias → 프로젝트 cwd 해석. hint 우선, 없으면 tmux session 의 `pane_current_path`.
+/// `Ok(None)` = tmux session 없음 또는 cwd 빈 값. `Err` = tmux 실행 실패.
+async fn resolve_agent_cwd(alias: &str, hint: Option<&str>) -> Result<Option<String>, String> {
+    if let Some(p) = hint.filter(|s| !s.is_empty()) {
+        return Ok(Some(p.to_string()));
+    }
+    let session = match crate::notify::resolve_alias_to_tmux(alias).await {
+        Some((s, _)) => s,
+        None => return Ok(None),
+    };
+    let out = tokio::process::Command::new("tmux")
+        .args(["display-message", "-p", "-t", &session, "#{pane_current_path}"])
+        .output().await
+        .map_err(|e| format!("tmux: {e}"))?;
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() { Ok(None) } else { Ok(Some(s)) }
+}
+
+/// 지침 파일에서 `@import` 줄(라인 시작 `@<path>`)을 추출. Claude Code @import 문법.
+fn parse_md_imports(content: &str) -> Vec<String> {
+    content.lines().filter_map(|l| {
+        let t = l.trim_start();
+        t.strip_prefix('@').and_then(|rest| {
+            let p = rest.split_whitespace().next().unwrap_or("");
+            if p.is_empty() { None } else { Some(p.to_string()) }
+        })
+    }).collect()
+}
+
+/// `@import` 원시 경로를 절대 경로로 해석. `~` 홈, 절대, 상대(파일 디렉토리 기준).
+fn resolve_import_path(raw: &str, base_dir: &std::path::Path, home: &std::path::Path) -> std::path::PathBuf {
+    if raw == "~" { home.to_path_buf() }
+    else if let Some(rest) = raw.strip_prefix("~/") { home.join(rest) }
+    else if raw.starts_with('/') { std::path::PathBuf::from(raw) }
+    else { base_dir.join(raw) }
+}
+
+/// 지침 파일 1개를 노드로 만들고 @import 를 재귀 해석. 깊이 제한 + 순환 방지(visited).
+fn build_instruction_node(
+    path: &std::path::Path, scope: &str, home: &std::path::Path,
+    depth: usize, visited: &mut std::collections::HashSet<String>,
+) -> serde_json::Value {
+    let key = path.to_string_lossy().to_string();
+    let exists = path.is_file();
+    let mut node = serde_json::json!({ "path": key, "scope": scope, "exists": exists });
+    if !exists || depth == 0 || !visited.insert(key.clone()) {
+        if exists { node["note"] = serde_json::json!("dedup/depth-limit"); }
+        return node;
+    }
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    node["bytes"] = serde_json::json!(content.len());
+    let base_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let imports: Vec<serde_json::Value> = parse_md_imports(&content).into_iter().map(|raw| {
+        let ip = resolve_import_path(&raw, base_dir, home);
+        let mut child = build_instruction_node(&ip, "import", home, depth - 1, visited);
+        child["raw"] = serde_json::json!(raw);
+        child
+    }).collect();
+    if !imports.is_empty() { node["imports"] = serde_json::json!(imports); }
+    node
+}
+
+/// `GET /v1/gui/agent/{alias}/config-chain?ai_type=&path_hint=` (Phase 2-A).
+/// 그 에이전트에 실제 적용 중인 지침/설정 파일 체인을 동적 탐지하여 반환 (read-only).
+/// AI 종류 분기: claude(@import 재귀) / codex(AGENTS.md) / gemini(GEMINI.md).
+/// env 는 **키만** 반환 (값=시크릿 노출 금지).
+async fn gui_agent_config_chain(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let ai_type = q.get("ai_type").map(|s| s.to_lowercase()).unwrap_or_else(|| "claude".into());
+    let hint = q.get("path_hint").map(|s| s.as_str());
+    let project_path = match resolve_agent_cwd(&alias, hint).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e})))?
+    {
+        Some(p) => p,
+        None => return Ok(Json(serde_json::json!({
+            "ok": false,
+            "error": "cwd 해석 실패 (path_hint 또는 tmux session 필요)",
+            "alias": alias, "ai_type": ai_type,
+        }))),
+    };
+    let home = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default());
+    let proj = std::path::Path::new(&project_path);
+
+    // 1) 지침 파일 체인 (scope 순서: global → project → agent), AI 종류 분기.
+    let candidates: Vec<(std::path::PathBuf, &str)> = match ai_type.as_str() {
+        "codex" => vec![
+            (home.join(".codex/AGENTS.md"), "global"),
+            (proj.join("AGENTS.md"), "project"),
+        ],
+        "gemini" => vec![
+            (home.join(".gemini/GEMINI.md"), "global"),
+            (proj.join("GEMINI.md"), "project"),
+        ],
+        _ => vec![ // claude (기본)
+            (home.join(".claude/CLAUDE.md"), "global"),
+            (proj.join("CLAUDE.md"), "project"),
+            (proj.join("AGENT.md"), "agent"),
+        ],
+    };
+    let mut visited: std::collections::HashSet<String> = Default::default();
+    let instruction_chain: Vec<serde_json::Value> = candidates.iter()
+        .map(|(p, scope)| build_instruction_node(p, scope, &home, 6, &mut visited))
+        .collect();
+
+    // 2) .mcp.json — mcpServers 키 목록.
+    let mcp_path = proj.join(".mcp.json");
+    let (mcp_servers, mcp_source): (Vec<String>, Option<String>) = if mcp_path.is_file() {
+        let servers = std::fs::read_to_string(&mcp_path).ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v.get("mcpServers").and_then(|m| m.as_object())
+                .map(|o| o.keys().cloned().collect::<Vec<_>>()))
+            .unwrap_or_default();
+        (servers, Some(mcp_path.to_string_lossy().to_string()))
+    } else { (vec![], None) };
+
+    // 3) settings 파일 + hooks + env 키 (claude/gemini). env 값은 절대 반환 안 함.
+    let settings_candidates: Vec<(std::path::PathBuf, &str)> = match ai_type.as_str() {
+        "gemini" => vec![(proj.join(".gemini/settings.json"), "project")],
+        "codex" => vec![],
+        _ => vec![
+            (home.join(".claude/settings.json"), "global"),
+            (proj.join(".claude/settings.json"), "project"),
+            (proj.join(".claude/settings.local.json"), "local"),
+        ],
+    };
+    let mut settings_files: Vec<serde_json::Value> = vec![];
+    let mut hooks: Vec<serde_json::Value> = vec![];
+    let mut env_keys: std::collections::BTreeSet<String> = Default::default();
+    for (p, scope) in &settings_candidates {
+        let exists = p.is_file();
+        settings_files.push(serde_json::json!({ "path": p.to_string_lossy(), "scope": scope, "exists": exists }));
+        if !exists { continue; }
+        if let Some(v) = std::fs::read_to_string(p).ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        {
+            if let Some(hk) = v.get("hooks").and_then(|h| h.as_object()) {
+                for (event, arr) in hk {
+                    if let Some(items) = arr.as_array() {
+                        for it in items {
+                            let matcher = it.get("matcher").and_then(|m| m.as_str()).unwrap_or("*").to_string();
+                            hooks.push(serde_json::json!({
+                                "event": event, "matcher": matcher,
+                                "source": p.to_string_lossy(), "scope": scope,
+                            }));
+                        }
+                    }
+                }
+            }
+            if let Some(env) = v.get("env").and_then(|e| e.as_object()) {
+                for k in env.keys() { env_keys.insert(k.clone()); }
+            }
+        }
+    }
+
+    // 4) skills 디렉토리 (.claude/skills + skills).
+    let mut skills: Vec<String> = vec![];
+    for d in [".claude/skills", "skills"] {
+        let dir = proj.join(d);
+        if dir.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for e in entries.flatten() {
+                    if let Some(n) = e.file_name().to_str() { skills.push(n.to_string()); }
+                }
+            }
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "alias": alias,
+        "ai_type": ai_type,
+        "project_path": project_path,
+        "instruction_chain": instruction_chain,
+        "mcp_servers": mcp_servers,
+        "mcp_source": mcp_source,
+        "settings_files": settings_files,
+        "hooks": hooks,
+        "env_keys": env_keys.into_iter().collect::<Vec<_>>(),
+        "skills": skills,
+    })))
+}
+
 // rc.125 — 자동 감지: 해당 alias 의 cwd 에서 AGENT.md → CLAUDE.md 우선순위로 읽기 + .mcp.json.
 // rc.129: AGENT.md 우선 (메신저 등록 탭에서 inline 편집한 파일).
 async fn gui_agents_auto_detect(
@@ -4490,28 +4679,16 @@ async fn gui_agents_auto_detect(
     Json(body): Json<AgentAutoDetectBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    // 1) project_path 결정: hint 우선, 없으면 tmux session 의 default-path
-    let project_path: String = if let Some(p) = body.project_path_hint.as_ref().filter(|s| !s.is_empty()) {
-        p.clone()
-    } else {
-        // alias → tmux session → default-path
-        let session = match crate::notify::resolve_alias_to_tmux(&body.alias).await {
-            Some((s, _)) => s,
-            None => return Ok(Json(serde_json::json!({
-                "ok": false,
-                "error": "tmux session not found for alias",
-                "alias": body.alias,
-            }))),
-        };
-        let out = tokio::process::Command::new("tmux")
-            .args(["display-message", "-p", "-t", &session, "#{pane_current_path}"])
-            .output().await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("tmux: {e}")})))?;
-        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if s.is_empty() {
-            return Ok(Json(serde_json::json!({"ok": false, "error": "cwd 추출 실패", "alias": body.alias})));
-        }
-        s
+    // 1) project_path 결정: hint 우선, 없으면 tmux session 의 default-path (resolve_agent_cwd 공용)
+    let project_path: String = match resolve_agent_cwd(&body.alias, body.project_path_hint.as_deref()).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e})))?
+    {
+        Some(p) => p,
+        None => return Ok(Json(serde_json::json!({
+            "ok": false,
+            "error": "cwd 추출 실패 (tmux session 없음)",
+            "alias": body.alias,
+        }))),
     };
     // rc.129/130 — 2) AGENT.md 우선 (메신저 등록 탭 inline 편집 파일) → CLAUDE.md fallback
     let agent_md_path = std::path::Path::new(&project_path).join("AGENT.md");
