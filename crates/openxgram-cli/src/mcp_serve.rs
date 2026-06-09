@@ -826,7 +826,8 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     let handle = tokio::runtime::Handle::current();
                     let members_clone = group_members.clone();
                     let injected_clone = injected.clone();
-                    let delivered: Vec<String> = handle.block_on(async move {
+                    // rc.286 — bare block_on → block_in_place (runtime-in-runtime panic 우회).
+                    let delivered: Vec<String> = tokio::task::block_in_place(|| handle.block_on(async move {
                         let mut ok = vec![];
                         for m in members_clone {
                             if let Some((session, idx)) = crate::notify::resolve_alias_to_tmux(&m).await {
@@ -844,7 +845,7 @@ impl ToolDispatcher for OpenxgramDispatcher {
                             }
                         }
                         ok
-                    });
+                    }));
                     return Ok(json!({
                         "sent": true,
                         "via": "group_fanout",
@@ -932,19 +933,24 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     let token_clone = token.clone();
                     let url_clone = url.clone();
                     let payload_clone = payload.clone();
+                    // rc.286 본질 fix — bare handle.block_on 은 tokio runtime thread 에서
+                    // "Cannot start a runtime from within a runtime" panic → MCP 프로세스 종료
+                    // ("Connection closed"). rc.195/rc.197 과 동일하게 block_in_place 로 우회.
                     let http_res: std::result::Result<(reqwest::StatusCode, String), reqwest::Error> =
-                        handle.block_on(async move {
-                            let client = reqwest::Client::new();
-                            let resp = client
-                                .post(&url_clone)
-                                .header("Authorization", format!("Bearer {}", token_clone))
-                                .header("Content-Type", "application/json")
-                                .json(&payload_clone)
-                                .send()
-                                .await?;
-                            let status = resp.status();
-                            let text = resp.text().await.unwrap_or_default();
-                            Ok((status, text))
+                        tokio::task::block_in_place(|| {
+                            handle.block_on(async move {
+                                let client = reqwest::Client::new();
+                                let resp = client
+                                    .post(&url_clone)
+                                    .header("Authorization", format!("Bearer {}", token_clone))
+                                    .header("Content-Type", "application/json")
+                                    .json(&payload_clone)
+                                    .send()
+                                    .await?;
+                                let status = resp.status();
+                                let text = resp.text().await.unwrap_or_default();
+                                Ok((status, text))
+                            })
                         });
                     match http_res {
                         Ok((status, text)) if status.is_success() => {
@@ -963,24 +969,44 @@ impl ToolDispatcher for OpenxgramDispatcher {
                             }));
                         }
                         Ok((status, text)) => {
-                            // rc.223 — 명시 error 반환 (silent fallback 금지).
-                            return Err(internal(format!(
-                                "daemon HTTP {} from {}: {}",
-                                status, url, text
-                            )));
+                            // rc.286 — silent fallback 금지(룰1). 단, vault 자격 있으면
+                            // keystore CLI path 로 graceful fallback 후 그래도 실패 시 명시 error.
+                            // 자격 없으면 즉시 명시 error 반환(아래 fall-through 없이).
+                            if self.vault_password.is_none() {
+                                return Err(internal(format!(
+                                    "daemon HTTP {} from {}: {}",
+                                    status, url, text
+                                )));
+                            }
+                            eprintln!(
+                                "[mcp-serve][peer_send] daemon HTTP {} — keystore CLI path 로 fallback",
+                                status
+                            );
                         }
                         Err(e) => {
-                            return Err(internal(format!("daemon HTTP request 실패 ({}): {}", url, e)));
+                            if self.vault_password.is_none() {
+                                return Err(internal(format!(
+                                    "daemon HTTP request 실패 ({}): {}",
+                                    url, e
+                                )));
+                            }
+                            eprintln!(
+                                "[mcp-serve][peer_send] daemon HTTP request 실패 ({}) — keystore CLI path 로 fallback",
+                                e
+                            );
                         }
                     }
                 }
 
-                // XGRAM_MCP_TOKEN 미설정 — 기존 CLI path (XGRAM_KEYSTORE_PASSWORD 필요).
+                // XGRAM_MCP_TOKEN 미설정(또는 token path fallback) — CLI path (XGRAM_KEYSTORE_PASSWORD 필요).
                 // xgram peer send CLI 명령 backward compat 보장. 마스터 직접 호출 시 작동.
                 let pw = self.require_vault()?.to_string();
-                let p2p_result = handle.block_on(crate::peer_send::run_peer_send_with_conv(
-                    &data_dir, &alias, None, &body, &pw, Some(conv.clone()),
-                ));
+                // rc.286 — bare block_on → block_in_place (runtime-in-runtime panic 우회).
+                let p2p_result = tokio::task::block_in_place(|| {
+                    handle.block_on(crate::peer_send::run_peer_send_with_conv(
+                        &data_dir, &alias, None, &body, &pw, Some(conv.clone()),
+                    ))
+                });
                 match p2p_result {
                     Ok(_) => Ok(json!({
                         "sent": true,
@@ -1003,14 +1029,15 @@ impl ToolDispatcher for OpenxgramDispatcher {
                             let backup_body = format!("📩 [backup peer:{}] {}", alias, body);
                             let payload = json!({"content": backup_body});
                             let url = format!("https://discord.com/api/v10/channels/{}/messages", channel_id);
-                            let post_res = handle.block_on(async {
+                            // rc.286 — bare block_on → block_in_place (runtime-in-runtime panic 우회).
+                            let post_res = tokio::task::block_in_place(|| handle.block_on(async {
                                 let client = reqwest::Client::new();
                                 client.post(&url)
                                     .header("Authorization", format!("Bot {}", token))
                                     .header("Content-Type", "application/json")
                                     .json(&payload)
                                     .send().await
-                            });
+                            }));
                             if let Ok(resp) = post_res {
                                 if resp.status().is_success() {
                                     return Ok(json!({
