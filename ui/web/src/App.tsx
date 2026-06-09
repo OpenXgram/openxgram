@@ -18,6 +18,7 @@ import { OpsCard} from "./components/OpsCard";
 import { AgentTemplatesCard} from "./components/AgentTemplatesCard";
 import { ApprovalQueueBell} from "./components/ApprovalQueueBell";
 import { GlobalSearchModal} from "./components/GlobalSearchModal";
+import { KakaoShell} from "./components/KakaoShell";
 
 // PRD-OpenXgram v1.4 §0 + UI-CARDS-IDENTITY v1.1: 홈 대시보드 = 8 카드 (4 가치 + 4 토대).
 // unlock 후 첫 화면 = HomeDashboard. 카드 클릭 시 해당 카드 전용 페이지 진입.
@@ -163,7 +164,7 @@ function AppInner() {
  <Onboarding onReady={() => setTab("home")} />
  </Show>
  <Show when={tab() === "home"}>
- <HomeDashboard onOpen={openCard} />
+ <KakaoShell onLogout={onLogout} />
  </Show>
  <Show when={tab() === "chat"}>
  <ChatTab onJumpToSettings={() => setTab("settings")} />
