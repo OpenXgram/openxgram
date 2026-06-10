@@ -1,5 +1,6 @@
 import { createSignal, createResource, createMemo, createEffect, For, Show } from "solid-js";
 import { invoke } from "../api/client";
+import { AcpConversation } from "./AcpConversation";
 
 // 대화 탭 — 카카오톡 정본 목업(_mockups/kakao-mockup.html) 충실 이식.
 // 좌: 분류 그룹화 명부(👑 프라이머리 / 📌 상단 고정 / 📁 프로젝트 / ⚙️ 특수) + llm-type 아바타색
@@ -158,6 +159,8 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
   const [sending, setSending] = createSignal(false);
   const [sendErr, setSendErr] = createSignal<string | null>(null);
   const [mobileChat, setMobileChat] = createSignal(false);
+  // ACP 모드 — 활성 시 우측 패널이 peer 대화 대신 ACP 대화방을 렌더. peer 흐름은 그대로 유지.
+  const [acpMode, setAcpMode] = createSignal(false);
 
   const [convo, { refetch: refetchConvo }] = createResource(
     () => selected() ?? undefined,
@@ -239,8 +242,15 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
   });
 
   function pick(alias: string) {
+    setAcpMode(false);
     setSelected(alias);
     setSendErr(null);
+    setMobileChat(true);
+  }
+
+  // ⚡ ACP 세션 진입 — peer 선택과 배타적. peer 대화 상태는 보존(복귀 시 그대로).
+  function openAcp() {
+    setAcpMode(true);
     setMobileChat(true);
   }
 
@@ -290,11 +300,25 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
       <div class="kk-talk-roster">
         <div class="side-top">
           <h1>OpenXgram</h1>
-          <button class="add-btn" onClick={() => props.onJumpToSettings?.()}>＋ 에이전트 추가</button>
+          <div class="side-top-actions">
+            <button class={`add-btn acp${acpMode() ? " active" : ""}`} onClick={openAcp}>⚡ ACP 세션</button>
+            <button class="add-btn" onClick={() => props.onJumpToSettings?.()}>＋ 에이전트 추가</button>
+          </div>
         </div>
         <div class="search">🔍 에이전트·대화 검색</div>
 
         <div class="list">
+          {/* ⚡ ACP 에이전트 섹션 — peer 명부와 별개. 로컬 ACP subprocess 구동. */}
+          <div class="group-title">⚡ ACP 에이전트 <span class="gt-sub">(로컬)</span></div>
+          <div class={`row acp-row${acpMode() ? " active" : ""}`} onClick={openAcp}>
+            <div class="ava c-claude">⚡<span class="dot" /></div>
+            <div class="meta">
+              <div class="nm">ACP 세션<span class="tag">local</span></div>
+              <div class="st">로컬 ACP 에이전트 구동 + 실시간 스트리밍</div>
+            </div>
+            <div class="rcol"><div class="time">＋</div></div>
+          </div>
+
           <Show when={!agents.loading} fallback={<div class="empty">불러오는 중…</div>}>
             <Show when={!agents.error} fallback={<div class="empty">명부를 불러오지 못했습니다.<br />데몬 연결을 확인하세요.</div>}>
               <Show
@@ -343,7 +367,11 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
         </div>
       </div>
 
-      {/* ── 우측 대화방 (정본: chat-top + msgs + composer) ── */}
+      {/* ── 우측 대화방: ACP 모드면 ACP 대화방, 아니면 peer 대화(정본 chat-top+msgs+composer) ── */}
+      <Show when={acpMode()}>
+        <AcpConversation onClose={() => { setAcpMode(false); setMobileChat(false); }} />
+      </Show>
+      <Show when={!acpMode()}>
       <div class="kk-talk-chat">
         <Show
           when={selAgent()}
@@ -460,6 +488,7 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
           )}
         </Show>
       </div>
+      </Show>
     </div>
   );
 }

@@ -439,3 +439,48 @@
   .kk-wiki .bh, .kk-set .bh, .kk-flow .bh{padding:13px 16px 12px;}
   .apvgrid{grid-template-columns:1fr;}
 }
+
+/* ===========================================================
+   ⚡ ACP 대화 (AcpConversation.tsx, Phase B-3) — peer 대화(.kk-talk-chat)와 동일한
+   .chat-top/.msgs/.me/.agent/.toolcall/pre.code/.composer 를 그대로 재사용한다.
+   여기엔 ACP 전용 추가 요소(에이전트 선택 화면 · plan 리스트 · tool 상태 · 닫기/취소
+   컨트롤)만 정의. --kk-* 토큰 + 기존 kk-talk 톤 유지.
+   =========================================================== */
+.kk-talk-roster .side-top-actions{display:flex; gap:6px; align-items:center;}
+.kk-talk-roster .add-btn.acp{background:#2f6bd8; color:#fff;}
+.kk-talk-roster .add-btn.acp:hover{filter:brightness(1.08);}
+.kk-talk-roster .add-btn.acp.active{box-shadow:0 0 0 2px rgba(47,107,216,.35);}
+.kk-talk-roster .row.acp-row.active{background:#eef4ff; box-shadow:inset 3px 0 0 #2f6bd8;}
+
+/* 에이전트 선택 화면 (세션 미생성) */
+.kk-acp-pick{display:flex; flex-direction:column; gap:8px; width:100%; max-width:520px; margin:0 auto;}
+.kk-acp-pick-h{font-size:13px; font-weight:800; color:#54607a; margin:4px 0 8px;}
+.kk-acp-agent{display:flex; align-items:center; gap:11px; border:1px solid var(--kk-line); border-radius:12px; padding:11px 14px; background:#fff; cursor:pointer;}
+.kk-acp-agent:hover{background:var(--kk-list-hover,#f2f3f5);}
+.kk-acp-agent.off{opacity:.55; cursor:not-allowed;}
+.kk-acp-agent .av{width:34px; height:34px; border-radius:11px; flex:none; display:flex; align-items:center; justify-content:center; font-size:15px;}
+.kk-acp-agent-meta{flex:1; min-width:0;}
+.kk-acp-agent-nm{font-size:14px; font-weight:700; color:var(--kk-ink); font-family:ui-monospace,Menlo,monospace;}
+.kk-acp-agent-st{font-size:11.5px; color:var(--kk-sub); margin-top:2px;}
+.kk-acp-badge{font-size:10px; font-weight:800; color:#9aa1ad; background:#f0f1f4; border-radius:7px; padding:2px 8px;}
+
+/* 대화방 상단 컨트롤 */
+.kk-talk-chat .chat-top .kk-acp-x{font-size:11px; font-weight:700; color:#d64545; background:#fdeaea; border-radius:20px; padding:4px 11px; cursor:pointer;}
+.kk-talk-chat .chat-top .kk-acp-x:hover{filter:brightness(.97);}
+
+/* tool 상태 라벨 (.toolcall 내부) + 실패 표시 */
+.kk-talk-chat .msgs .toolcall .kk-acp-tstat{margin-left:auto; font-size:10px; font-weight:700; color:#9aa1ad; text-transform:uppercase;}
+.kk-talk-chat .msgs .toolcall .no{color:#d64545; font-weight:800;}
+
+/* plan 리스트 */
+.kk-acp-plan{border:1px solid var(--kk-line); border-radius:10px; padding:10px 12px; background:#fafbfd;}
+.kk-acp-plan-h{font-size:11px; font-weight:800; color:#54607a; text-transform:uppercase; letter-spacing:.3px; margin-bottom:7px;}
+.kk-acp-plan-item{display:flex; align-items:flex-start; gap:8px; font-size:12.5px; color:#4b5563; line-height:1.5; padding:2px 0;}
+.kk-acp-plan-dot{width:6px; height:6px; border-radius:50%; background:#c4c9d2; flex:none; margin-top:6px;}
+.kk-acp-plan-item.st-in_progress .kk-acp-plan-dot{background:#2f6bd8;}
+.kk-acp-plan-item.st-completed .kk-acp-plan-dot{background:#1f9d4d;}
+.kk-acp-plan-item.st-completed{color:#9aa1ad; text-decoration:line-through;}
+
+/* 컴포저 취소 컨트롤 */
+.kk-talk-chat .composer .kk-acp-cancel{font-size:11px; font-weight:700; color:#d64545; background:#2b1416; border:1px solid #5b2326; border-radius:8px; padding:5px 10px; cursor:pointer; margin-right:8px;}
+.kk-talk-chat .composer .kk-acp-cancel:hover{filter:brightness(1.15);}

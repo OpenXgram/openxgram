@@ -354,6 +354,119 @@ const ROUTES: Record<string, Route> = {
  workflow_approve_run: { method: "POST", path: "/workflows/runs/{run_id}/approve", body: true},
 };
 
+// ── ACP (Agent Client Protocol, Phase B-3) ────────────────────────────────
+//
+// ACP 라우트는 `/v1/gui/*` 가 아니라 `/v1/acp/*` (daemon_gui.rs Router 참고).
+// invoke() shim 은 `/v1/gui` base 에 고정돼 있어 재사용 못 하므로, gui base 에서
+// `/v1/acp` base 를 파생하는 전용 helper 를 둔다. SSE 스트림도 EventSource 가
+// Authorization 헤더를 못 실으므로 fetch + ReadableStream 으로 직접 구동한다.
+// daemon 의 정확한 요청/응답 필드명(camelCase)은 daemon_gui_acp.rs 와 1:1 매칭.
+
+/** gui base(`…/v1/gui`) → acp base(`…/v1/acp`) 파생. 미인식 형태면 `/v1/acp` 폴백. */
+export function getAcpBase(): string {
+  const gui = getDaemonUrl().replace(/\/+$/, "");
+  if (gui.endsWith("/v1/gui")) return gui.slice(0, -"/gui".length) + "/acp";
+  if (gui.endsWith("/gui")) return gui.slice(0, -"/gui".length) + "/acp";
+  // 절대 URL 등 비표준 base — same-origin /v1/acp 로.
+  return "/v1/acp";
+}
+
+function authHeaders(json: boolean): Record<string, string> {
+  const h: Record<string, string> = {};
+  const token = getBearer();
+  if (token) h["Authorization"] = `Bearer ${token}`;
+  if (json) h["Content-Type"] = "application/json";
+  return h;
+}
+
+/** ACP REST 호출 (SSE 제외). 비-2xx → Error throw (조용한 폴백 없음 — 절대규칙 1). */
+export async function acpFetch<T>(
+  method: HttpMethod,
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  const url = `${getAcpBase()}${path}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: authHeaders(body !== undefined),
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    throw new Error(`daemon 연결 실패 (${url}): ${(e as Error).message}`);
+  }
+  if (res.status === 401) throw new Error("미인증 — 다시 로그인하세요");
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
+  }
+  const text = await res.text();
+  if (!text) return undefined as unknown as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return text as unknown as T;
+  }
+}
+
+/**
+ * ACP `session/update` SSE 스트림 구독. EventSource 는 Bearer 헤더를 못 싣기에
+ * fetch + ReadableStream 으로 `event: session_update` 프레임을 파싱한다.
+ * @returns 구독 취소 함수 (AbortController.abort).
+ */
+export function acpStream(
+  sessionId: string,
+  onUpdate: (payload: unknown) => void,
+  onError: (msg: string) => void,
+): () => void {
+  const ctrl = new AbortController();
+  const url = `${getAcpBase()}/sessions/${encodeURIComponent(sessionId)}/stream`;
+  (async () => {
+    let res: Response;
+    try {
+      res = await fetch(url, { headers: authHeaders(false), signal: ctrl.signal });
+    } catch (e) {
+      if (!ctrl.signal.aborted) onError(`스트림 연결 실패: ${(e as Error).message}`);
+      return;
+    }
+    if (!res.ok || !res.body) {
+      onError(`스트림 HTTP ${res.status}`);
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        // SSE 프레임은 빈 줄(\n\n)로 구분. event:/data: 라인 파싱.
+        let sep: number;
+        while ((sep = buf.indexOf("\n\n")) !== -1) {
+          const frame = buf.slice(0, sep);
+          buf = buf.slice(sep + 2);
+          const dataLines: string[] = [];
+          for (const line of frame.split("\n")) {
+            if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+          }
+          if (dataLines.length === 0) continue;
+          const data = dataLines.join("\n");
+          try {
+            onUpdate(JSON.parse(data));
+          } catch {
+            // 비-JSON keep-alive/주석 프레임 — 무시.
+          }
+        }
+      }
+    } catch (e) {
+      if (!ctrl.signal.aborted) onError(`스트림 중단: ${(e as Error).message}`);
+    }
+  })();
+  return () => ctrl.abort();
+}
+
 /** path 템플릿 치환 + 남은 args 반환. */
 function renderPath(
  template: string,
