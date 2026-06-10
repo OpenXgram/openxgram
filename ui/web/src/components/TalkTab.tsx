@@ -1,6 +1,6 @@
 import { createSignal, createResource, createMemo, createEffect, For, Show } from "solid-js";
 import { invoke } from "../api/client";
-import { AcpConversation } from "./AcpConversation";
+import { AcpConversation, aiTypeToAdapter, type AcpPreset } from "./AcpConversation";
 
 // 대화 탭 — 카카오톡 정본 목업(_mockups/kakao-mockup.html) 충실 이식.
 // 좌: 분류 그룹화 명부(👑 프라이머리 / 📌 상단 고정 / 📁 프로젝트 / ⚙️ 특수) + llm-type 아바타색
@@ -191,8 +191,10 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
   const [sending, setSending] = createSignal(false);
   const [sendErr, setSendErr] = createSignal<string | null>(null);
   const [mobileChat, setMobileChat] = createSignal(false);
-  // ACP 모드 — 활성 시 우측 패널이 peer 대화 대신 ACP 대화방을 렌더. peer 흐름은 그대로 유지.
+  // ACP picker 모드 — 어댑터를 직접 고르는 진입(에이전트 미선택). preset 경로와 별개.
   const [acpMode, setAcpMode] = createSignal(false);
+  // peerMode — 선택 에이전트의 기본(ACP) 대신 peer_send(tmux-inject) 대화를 볼 때만 true.
+  const [peerMode, setPeerMode] = createSignal(false);
   // 정보 사이드 패널(폴더·tmux·워크트리·워크플로우) 열림. tmux/worktree pill 클릭 → 토글, ✕ → 닫힘.
   const [infoOpen, setInfoOpen] = createSignal(false);
   // 파일 드래그앤드롭 진행 중 — 대화/컴포저 영역에 시각 힌트 표시.
@@ -252,6 +254,21 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
 
   const selAgent = createMemo(() => (agents() ?? []).find((a) => a.alias === selected()) ?? null);
   const selPeer = createMemo(() => peerMap().get((selected() ?? "").toLowerCase()) ?? null);
+
+  // 선택 에이전트 → ACP preset(어댑터/cwd/실행모드/라벨). 우측 대화방을 ACP 세션으로 구동.
+  //   adapter   = ai_type 매핑(claude→claude-agent-acp, codex→codex-acp, gemini→gemini, 그 외 기본)
+  //   cwd       = project_path (없으면 daemon 기본)
+  //   execMode  = execution_mode (없으면 on_demand)
+  const acpPreset = createMemo<AcpPreset | null>(() => {
+    const a = selAgent();
+    if (!a) return null;
+    return {
+      adapter: aiTypeToAdapter(a.ai_type),
+      cwd: a.project_path ?? null,
+      execMode: a.execution_mode ?? null,
+      label: a.alias,
+    };
+  });
 
   // selected 변경 시 정보 패널 닫음(다른 에이전트로 이동하면 상태 초기화).
   createEffect(() => { selected(); setInfoOpen(false); });
@@ -320,14 +337,16 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
     });
   });
 
+  // 에이전트 선택 → 기본 대화 = ACP 세션(preset). peer_send 대화는 peerMode 토글로만.
   function pick(alias: string) {
+    setPeerMode(false);
     setAcpMode(false);
     setSelected(alias);
     setSendErr(null);
     setMobileChat(true);
   }
 
-  // ⚡ ACP 세션 진입 — peer 선택과 배타적. peer 대화 상태는 보존(복귀 시 그대로).
+  // ⚡ 에이전트 미리 정하지 않고 ACP 어댑터 picker 진입(기존 경로 유지).
   function openAcp() {
     setAcpMode(true);
     setMobileChat(true);
@@ -486,11 +505,25 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
         </div>
       </div>
 
-      {/* ── 우측 대화방: ACP 모드면 ACP 대화방, 아니면 peer 대화(정본 chat-top+msgs+composer) ── */}
+      {/* ── 우측 대화방 ──
+          1) acpMode  : 어댑터 picker(에이전트 미리 안 정함)
+          2) 에이전트 선택 + !peerMode : 기본 = 그 에이전트의 ACP 세션(preset 구동·스트리밍)
+          3) peerMode : peer_send(tmux-inject) 대화 — 명시적으로 볼 때만 */}
       <Show when={acpMode()}>
         <AcpConversation onClose={() => { setAcpMode(false); setMobileChat(false); }} />
       </Show>
-      <Show when={!acpMode()}>
+      <Show when={!acpMode() && acpPreset() && !peerMode()}>
+        {/* key=alias 로 에이전트 전환 시 컴포넌트 재마운트 → 새 ACP 세션 구동 */}
+        <Show when={selected()} keyed>
+          {(_alias) => (
+            <AcpConversation
+              preset={acpPreset()}
+              onClose={() => setMobileChat(false)}
+            />
+          )}
+        </Show>
+      </Show>
+      <Show when={!acpMode() && (!acpPreset() || peerMode())}>
       <div
         class={`kk-talk-chat${dragOver() ? " dragover" : ""}`}
         onDragOver={onDragOver}

@@ -1,6 +1,31 @@
 import { createSignal, createEffect, onCleanup, For, Show } from "solid-js";
 import { acpFetch, acpStream } from "../api/client";
 
+// ai_type(에이전트 명부의 LLM 종류) → ACP 어댑터 이름 매핑.
+// daemon registry(openxgram_acp::registry)의 어댑터 키와 1:1. 미인식 → claude 기본.
+const AI_TYPE_TO_ADAPTER: Record<string, string> = {
+  claude: "claude-agent-acp",
+  codex: "codex-acp",
+  gemini: "gemini",
+};
+export function aiTypeToAdapter(aiType?: string | null): string {
+  const k = (aiType ?? "").toLowerCase();
+  return AI_TYPE_TO_ADAPTER[k] ?? "claude-agent-acp";
+}
+
+// 미리 정한 에이전트로 ACP 세션을 구동할 때의 props(TalkTab roster 선택용).
+// 생략 시(picker 경로) 기존 에이전트 선택 화면을 그대로 사용.
+export interface AcpPreset {
+  // ACP 어댑터 이름(aiTypeToAdapter 결과). 이것으로 spawn.
+  adapter: string;
+  // 작업 디렉토리. null/undefined 면 daemon 기본 cwd.
+  cwd?: string | null;
+  // 실행 모드(always|on_demand|heartbeat). 생략 시 on_demand.
+  execMode?: string | null;
+  // 대화 헤더에 표시할 라벨(에이전트 alias). 생략 시 adapter 이름.
+  label?: string | null;
+}
+
 // ACP 대화방 (Phase B-3) — 로컬 ACP 에이전트 subprocess 를 daemon `/v1/acp/*` 로
 // 구동하고 `session/update` SSE 를 카카오톡 정본 대화 UI(.msgs/.me/.agent/.toolcall/
 // pre.code/composer)로 렌더. peer 대화(TalkTab)와 동일한 마크업·CSS 재사용 —
@@ -80,7 +105,7 @@ function blocksToText(content: unknown): string {
   return parts.join("\n");
 }
 
-export function AcpConversation(props: { onClose: () => void }) {
+export function AcpConversation(props: { onClose: () => void; preset?: AcpPreset | null }) {
   const [agents, setAgents] = createSignal<AgentInfo[] | null>(null);
   const [agentsErr, setAgentsErr] = createSignal<string | null>(null);
   const [sessionId, setSessionId] = createSignal<string | null>(null);
@@ -104,18 +129,40 @@ export function AcpConversation(props: { onClose: () => void }) {
     });
   }
 
-  // 설치된 ACP 에이전트 목록 로드.
-  async function loadAgents() {
+  // 설치된 ACP 에이전트 목록 로드. 반환값으로 preset 자동 구동 시 설치 여부 판정.
+  async function loadAgents(): Promise<AgentInfo[]> {
     setAgentsErr(null);
     try {
       const r = await acpFetch<{ agents: AgentInfo[] }>("GET", "/agents");
-      setAgents(r.agents ?? []);
+      const list = r.agents ?? [];
+      setAgents(list);
+      return list;
     } catch (e) {
       setAgentsErr((e as Error)?.message ?? String(e));
       setAgents([]);
+      return [];
     }
   }
-  loadAgents();
+
+  // preset(특정 에이전트로 진입)이면: 어댑터 목록을 받아 설치 여부 확인 후 자동 spawn.
+  // 미설치면 spawnErr 로 명확히 안내(에이전트 선택 화면 fallback 에 표시됨).
+  // preset 이 없으면(picker 경로) 단순히 목록만 로드.
+  async function bootForPreset(p: AcpPreset) {
+    const list = await loadAgents();
+    const found = list.find((a) => a.name === p.adapter);
+    if (found && !found.installed) {
+      setSpawnErr(`이 에이전트의 ACP 어댑터(${p.adapter}) 미설치 — 어댑터를 설치한 뒤 다시 시도하세요.`);
+      return;
+    }
+    // 목록에 없어도(probe 누락) 구동을 시도 — 실제 미설치면 spawn 단계에서 오류가 노출됨.
+    await spawn(p.adapter, { cwd: p.cwd, execMode: p.execMode, label: p.label });
+  }
+
+  if (props.preset) {
+    void bootForPreset(props.preset);
+  } else {
+    loadAgents();
+  }
 
   function pushBubble(b: Bubble) {
     setBubbles((prev) => [...prev, b]);
@@ -185,18 +232,27 @@ export function AcpConversation(props: { onClose: () => void }) {
   }
 
   // 에이전트 선택 → 세션 생성 + SSE 구독.
-  async function spawn(agent: string) {
+  // cwd 생략 시 DEFAULT_ACP_CWD, execMode 생략 시 on_demand. label 은 헤더 표시명(생략 시 adapter).
+  async function spawn(
+    agent: string,
+    opts?: { cwd?: string | null; execMode?: string | null; label?: string | null },
+  ) {
     if (busy()) return;
     setBusy(true);
     setSpawnErr(null);
     try {
+      const body: Record<string, unknown> = {
+        agent,
+        cwd: opts?.cwd ?? DEFAULT_ACP_CWD,
+        executionMode: opts?.execMode || "on_demand",
+      };
       const r = await acpFetch<{ sessionId: string; agent: string; spawned: boolean }>(
         "POST",
         "/sessions",
-        { agent, cwd: DEFAULT_ACP_CWD, executionMode: "on_demand" },
+        body,
       );
       setSessionId(r.sessionId);
-      setActiveAgent(agent);
+      setActiveAgent(opts?.label || agent);
       setBubbles([]);
       curAgentBubbleId = null;
       toolBubbleByCall.clear();
@@ -305,7 +361,31 @@ export function AcpConversation(props: { onClose: () => void }) {
     <Show
       when={sessionId()}
       fallback={
-        // ── 에이전트 선택 화면 (세션 미생성) ──
+        props.preset ? (
+          // ── preset 진입(roster 선택) — picker 없이 구동/오류 상태만 표시 ──
+          <div class="kk-talk-chat">
+            <div class="chat-top">
+              <span class="back" onClick={() => props.onClose()}>←</span>
+              <div class="ava c-claude">⚡</div>
+              <div class="nm">{props.preset.label || props.preset.adapter}</div>
+              <div class="meta-r">
+                <span class="pill">⚡ ACP · {props.preset.adapter}</span>
+              </div>
+            </div>
+            <div class="msgs">
+              <Show when={agentsErr()}>
+                <div class="kk-talk-err">⚠ 어댑터 목록 실패: {agentsErr()}</div>
+              </Show>
+              <Show when={spawnErr()}>
+                <div class="kk-talk-err">⚠ {spawnErr()}</div>
+              </Show>
+              <Show when={!spawnErr() && !agentsErr()}>
+                <div class="kk-talk-empty">⚡ ACP 세션 구동 중…</div>
+              </Show>
+            </div>
+          </div>
+        ) : (
+        // ── 에이전트 선택 화면 (세션 미생성, picker 경로) ──
         <div class="kk-talk-chat">
           <div class="chat-top">
             <span class="back" onClick={() => props.onClose()}>←</span>
@@ -351,6 +431,7 @@ export function AcpConversation(props: { onClose: () => void }) {
             </div>
           </div>
         </div>
+        )
       }
     >
       {/* ── ACP 대화방 (세션 활성) — peer 대화와 동일 마크업 ── */}
