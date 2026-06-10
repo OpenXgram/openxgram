@@ -118,3 +118,80 @@
 .kk-modal .chk input{width:auto;}
 .kk-modal .err{color:#e03131; font-size:12px; margin-top:10px;}
 @media (max-width:900px){ .apvgrid{grid-template-columns:1fr;} .kk-agents .kk-roster{width:100%;} }
+
+/* ===========================================================
+   잠금 해제(로그인) 화면 — 카카오톡 정본 디자인 언어
+   (정본: _mockups/kakao-mockup.html · --kk-* 토큰 재사용)
+   .kk-login 은 .kk 셸 바깥(인증 전 진입로)에서 단독 렌더되므로
+   토큰을 자체 정의한다.
+   =========================================================== */
+.kk-login{
+  --kk-yellow:#262b33; --kk-yellow-d:#363c46;
+  --kk-surface:#f6f7f9; --kk-list:#ffffff; --kk-ink:#1f2937;
+  --kk-sub:#8a94a6; --kk-line:#e9ebf0; --kk-online:#27c24c;
+  min-height:100%; flex:1; display:flex; align-items:center; justify-content:center;
+  padding:32px 18px; background:var(--kk-surface);
+  font-family:-apple-system,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;
+}
+.kk-login *{box-sizing:border-box;}
+.kk-login-card{
+  width:100%; max-width:380px; background:var(--kk-list);
+  border:1px solid var(--kk-line); border-radius:18px;
+  box-shadow:0 14px 44px rgba(31,41,55,.10);
+  padding:34px 30px 26px; display:flex; flex-direction:column;
+}
+.kk-login-brandmark{
+  width:60px; height:60px; border-radius:20px; margin:0 auto 16px;
+  background:var(--kk-yellow); display:flex; align-items:center; justify-content:center;
+  color:#fff; font-size:26px; font-weight:800; letter-spacing:-.5px;
+}
+.kk-login-brand{
+  text-align:center; font-size:16px; font-weight:800; color:var(--kk-ink);
+  letter-spacing:-.3px; margin-bottom:4px;
+}
+.kk-login-title{
+  text-align:center; font-size:21px; font-weight:800; color:var(--kk-ink);
+  letter-spacing:-.4px; margin:6px 0 6px;
+}
+.kk-login-sub{
+  text-align:center; font-size:13px; line-height:1.5; color:var(--kk-sub);
+  margin:0 0 22px;
+}
+.kk-login-form{display:flex; flex-direction:column; gap:6px;}
+.kk-login-label{
+  font-size:12px; font-weight:700; color:#54607a; margin-bottom:2px;
+}
+.kk-login-input{
+  width:100%; font-size:14px; color:var(--kk-ink); background:#fff;
+  border:1px solid var(--kk-line); border-radius:11px; padding:12px 13px;
+  transition:border-color .14s ease, box-shadow .14s ease;
+}
+.kk-login-input::placeholder{color:#b6bdc9;}
+.kk-login-input:focus{
+  outline:none; border-color:var(--kk-yellow);
+  box-shadow:0 0 0 3px rgba(38,43,51,.10);
+}
+.kk-login-input:disabled{background:#f4f5f7; color:#9aa1ad; cursor:not-allowed;}
+.kk-login-error{
+  font-size:12.5px; color:#e03131; background:#fdecec;
+  border:1px solid #f7c9c9; border-radius:9px; padding:9px 11px; margin-top:4px;
+}
+.kk-login-btn{
+  margin-top:14px; width:100%; font-size:14.5px; font-weight:700; color:#fff;
+  background:var(--kk-yellow); border:none; border-radius:12px; padding:13px;
+  cursor:pointer; transition:background .14s ease, opacity .14s ease;
+}
+.kk-login-btn:hover:not(:disabled){background:var(--kk-yellow-d);}
+.kk-login-btn:disabled{opacity:.55; cursor:not-allowed;}
+.kk-login-foot{
+  margin-top:20px; padding-top:16px; border-top:1px solid var(--kk-line);
+  font-size:11.5px; line-height:1.55; color:var(--kk-sub); text-align:center;
+}
+.kk-login-foot code{
+  font-family:ui-monospace,Menlo,monospace; font-size:11px;
+  background:#eef1f5; color:#54607a; border-radius:6px; padding:1px 6px;
+}
+@media (max-width:480px){
+  .kk-login{padding:20px 14px;}
+  .kk-login-card{padding:28px 22px 22px; border-radius:16px;}
+}
