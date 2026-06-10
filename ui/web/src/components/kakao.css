@@ -129,7 +129,7 @@
   --kk-yellow:#262b33; --kk-yellow-d:#363c46;
   --kk-surface:#f6f7f9; --kk-list:#ffffff; --kk-ink:#1f2937;
   --kk-sub:#8a94a6; --kk-line:#e9ebf0; --kk-online:#27c24c;
-  min-height:100%; flex:1; display:flex; align-items:center; justify-content:center;
+  min-height:100vh; flex:1; display:flex; align-items:center; justify-content:center;
   padding:32px 18px; background:var(--kk-surface);
   font-family:-apple-system,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;
 }
