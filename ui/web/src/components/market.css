@@ -1,0 +1,122 @@
+/* market.css — OpenAgentX 마켓 / 지갑 / 수익 / 외부작업
+   정본 디자인: _mockups/kakao-mockup.html (#marketOvl L818-854, #budgetOvl L856-905,
+   #earningsOvl L937-965, #extWorkOvl L924-934). CSS 값은 정본에서 그대로 포팅.
+   namespaced under .kk-market. --kk-* 토큰은 kakao.css 전역. */
+
+.kk-market { padding: 18px 20px; overflow-y: auto; height: 100%; box-sizing: border-box; }
+.kk-market .mk-head { display: flex; align-items: center; gap: 11px; margin-bottom: 16px; flex-wrap: wrap; }
+.kk-market .mk-head h2 { font-size: 17px; font-weight: 800; color: var(--kk-ink); margin: 0; }
+.kk-market .mk-head .sub { font-size: 12px; color: #aab0bd; }
+
+/* 지갑 배지 — 정본 .wallet */
+.kk-market .wallet { margin-left: auto; font-size: 12px; font-weight: 700; color: #1f9d4d; background: #e6f6ec; border-radius: 20px; padding: 5px 12px; cursor: pointer; border: none; }
+
+/* 검색 줄 — 정본 .wsearch */
+.kk-market .wsearch { background: #f1f2f4; border-radius: 10px; padding: 9px 13px; font-size: 13px; color: var(--kk-sub); margin-bottom: 16px; }
+
+/* 수익 진입 버튼 — 정본 .qbtn */
+.kk-market .qbtn { display: block; width: 100%; font-size: 12px; font-weight: 600; color: #5b6678; background: #eef1f5; border: none; border-radius: 8px; padding: 9px; cursor: pointer; text-align: left; margin-bottom: 14px; }
+.kk-market .qbtn:hover { background: #e3e7ee; }
+
+/* 카테고리 칩 — 정본 .mkcat / .mc */
+.kk-market .mkcat { display: flex; gap: 7px; margin-bottom: 15px; flex-wrap: wrap; }
+.kk-market .mkcat .mc { font-size: 11.5px; font-weight: 600; border: 1px solid #e7e9ee; border-radius: 20px; padding: 5px 12px; color: #7b8494; cursor: pointer; background: #fff; }
+.kk-market .mkcat .mc.on { background: #262b33; color: #fff; border-color: #262b33; }
+
+/* 에이전트 카드 그리드 — 정본 .mkgrid / .mkcard */
+.kk-market .mkgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.kk-market .mkcard { border: 1px solid var(--kk-line); border-radius: 12px; padding: 14px; background: #fcfcfd; }
+.kk-market .mkh { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
+.kk-market .mkh .ava { width: 38px; height: 38px; border-radius: 11px; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; flex: none; }
+.kk-market .mkn { font-size: 13.5px; font-weight: 700; color: var(--kk-ink); }
+.kk-market .mkby { font-size: 11px; color: #9aa1ad; margin-top: 2px; }
+.kk-market .mkprice { margin-left: auto; font-size: 12px; font-weight: 800; color: #2f6bd8; background: #eaf1ff; border-radius: 7px; padding: 3px 9px; white-space: nowrap; }
+.kk-market .mkd { font-size: 12px; color: #4b5563; line-height: 1.45; margin-bottom: 11px; min-height: 34px; }
+.kk-market .mkuse { width: 100%; background: #262b33; color: #fff; border: none; border-radius: 9px; padding: 9px; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+.kk-market .mkuse:hover { background: #363c46; }
+.kk-market .mkuse:disabled { background: #c4c9d2; cursor: not-allowed; }
+
+/* avatar 색 (정본 .c-*) — kakao.css 에도 있으나 마켓 격리 위해 재선언 */
+.kk-market .c-claude { background: #d97757; }
+.kk-market .c-codex { background: #10a37f; }
+.kk-market .c-gemini { background: #4285f4; }
+.kk-market .c-ollama { background: #5b5b66; }
+.kk-market .c-hermes { background: #7c5cff; }
+.kk-market .c-group { background: #b8842b; }
+.kk-market .c-primary { background: linear-gradient(135deg, #f6c453, #dca12a); }
+
+/* 준비 중(백엔드 미연결) 안내 배너 */
+.kk-market .mk-note { font-size: 11.5px; color: #9aa1ad; background: #fafbfc; border: 1px dashed var(--kk-line); border-radius: 9px; padding: 10px 12px; margin: 0 0 14px; line-height: 1.5; }
+.kk-market .mk-note b { color: #c9760e; }
+
+/* ── 서브뷰(지갑·수익·외부작업) 보드 ── 정본 .board / .bh / .bb */
+.kk-market .board { width: 100%; max-width: 740px; margin: 0 auto; background: #fff; border-radius: 16px; border: 1px solid var(--kk-line); overflow: hidden; display: flex; flex-direction: column; }
+.kk-market .board .bh { padding: 15px 20px; display: flex; align-items: center; gap: 11px; border-bottom: 1px solid var(--kk-line); }
+.kk-market .board .bh h2 { font-size: 17px; font-weight: 800; color: var(--kk-ink); margin: 0; }
+.kk-market .board .bh .sub { font-size: 12px; color: #aab0bd; }
+.kk-market .board .bh .bx { margin-left: auto; font-size: 18px; color: #aab0bd; cursor: pointer; background: none; border: none; }
+.kk-market .board .bb { padding: 18px 20px; overflow-y: auto; }
+
+/* 섹션 라벨 — 정본 .wsec */
+.kk-market .wsec { font-size: 12px; font-weight: 800; color: #54607a; margin: 6px 0 9px; text-transform: uppercase; letter-spacing: .3px; }
+
+/* 지갑 상단 — 정본 .budtop / .big / .cap / .budbtn */
+.kk-market .budtop { display: flex; align-items: center; gap: 22px; background: #f7f9fb; border: 1px solid var(--kk-line); border-radius: 12px; padding: 15px 18px; margin-bottom: 18px; flex-wrap: wrap; }
+.kk-market .budtop .big { font-size: 22px; font-weight: 800; color: var(--kk-ink); }
+.kk-market .budtop .cap { font-size: 12px; color: #9aa1ad; margin-top: 2px; }
+.kk-market .budbtn { background: #262b33; color: #fff; border: none; border-radius: 9px; padding: 8px 14px; font-size: 12px; font-weight: 700; cursor: pointer; }
+.kk-market .budbtn.alt { background: #eef1f5; color: #5b6678; }
+.kk-market .budbtn:disabled { background: #c4c9d2; cursor: not-allowed; }
+
+/* 에이전트별 예산 row — 정본 .budrow */
+.kk-market .budrow { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px dashed #f0f1f4; }
+.kk-market .budrow .ava { width: 34px; height: 34px; border-radius: 10px; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex: none; }
+.kk-market .budrow .bn { font-size: 13px; font-weight: 700; color: var(--kk-ink); }
+.kk-market .pbar { width: 130px; height: 7px; background: #eef1f5; border-radius: 5px; overflow: hidden; margin-top: 6px; }
+.kk-market .pbar > i { display: block; height: 100%; background: #2f9e44; }
+.kk-market .pbar > i.warn { background: #e0a82e; }
+.kk-market .pbar > i.over { background: #d64545; }
+.kk-market .budamt { margin-left: auto; text-align: right; }
+.kk-market .budamt .u { font-size: 12.5px; font-weight: 800; color: var(--kk-ink); }
+.kk-market .budamt .l { font-size: 11px; color: #9aa1ad; }
+.kk-market .budedit { font-size: 11px; font-weight: 700; color: #5b6678; background: #eef1f5; border: none; border-radius: 7px; padding: 6px 11px; cursor: pointer; }
+
+/* 거래내역 공용 — 정본 .txn */
+.kk-market .txn { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: #3b4250; padding: 9px 0; border-bottom: 1px dashed #f0f1f4; }
+.kk-market .txn .ti { width: 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 13px; flex: none; }
+.kk-market .txn .ti.in { background: #e6f6ec; }
+.kk-market .txn .ti.out { background: #fdeaea; }
+.kk-market .txn .tn { font-weight: 600; color: #2b333f; }
+.kk-market .txn .ts { font-size: 11px; color: #9aa1ad; }
+.kk-market .txn .tu { font-family: ui-monospace, Menlo, monospace; color: #54607a; font-size: 11.5px; }
+.kk-market .txn .ta { margin-left: auto; font-weight: 800; }
+.kk-market .txn .ta.plus { color: #1f9d4d; }
+.kk-market .txn .ta.minus { color: #d64545; }
+
+/* 수익 — 정본 .earn-item */
+.kk-market .earn-item { border: 1px solid var(--kk-line); border-radius: 11px; padding: 13px 15px; margin-bottom: 10px; background: #fcfcfd; }
+.kk-market .earn-top { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.kk-market .earn-top .ava { width: 32px; height: 32px; border-radius: 9px; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex: none; }
+.kk-market .earn-top .en { font-size: 13.5px; font-weight: 700; color: var(--kk-ink); }
+.kk-market .earn-top .erate { font-size: 11.5px; color: #9aa1ad; }
+.kk-market .earn-top .er { margin-left: auto; font-size: 11.5px; font-weight: 800; color: #1f9d4d; background: #e6f6ec; border-radius: 20px; padding: 3px 10px; }
+.kk-market .earn-stat { font-size: 12px; color: #4b5563; line-height: 1.55; }
+
+/* 외부작업 상세 — 정본 #extWorkOvl 본문 */
+.kk-market .ew-req { background: #eef1f5; border-radius: 10px; padding: 12px 14px; font-size: 13px; color: #2b333f; line-height: 1.5; margin-bottom: 16px; }
+.kk-market .ew-body { font-size: 14px; line-height: 1.62; color: #2b333f; }
+.kk-market .ew-body p { margin: 0 0 8px; }
+.kk-market .ew-body strong { color: #111; }
+.kk-market .ew-body .toolcall { font-size: 12.5px; color: #54607a; margin-bottom: 8px; }
+.kk-market .ew-body .toolcall .ok { color: #1f9d4d; font-weight: 800; }
+.kk-market .ew-body .toolcall .cmd { color: #2f6bd8; }
+.kk-market .ew-body pre.code { background: #1f2430; color: #e6e9ef; border-radius: 9px; padding: 12px 14px; font-size: 12px; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; font-family: ui-monospace, Menlo, monospace; }
+.kk-market .ew-body pre.code .g { color: #f6c453; }
+
+/* 뒤로 가기 */
+.kk-market .mk-back { font-size: 12px; font-weight: 700; color: #5b6678; background: #eef1f5; border: none; border-radius: 8px; padding: 7px 12px; cursor: pointer; margin-bottom: 14px; }
+
+/* 좁은 폭 — 1열 (정본 모바일 .mkgrid 1열) */
+@media (max-width: 620px) {
+  .kk-market .mkgrid { grid-template-columns: 1fr; }
+}

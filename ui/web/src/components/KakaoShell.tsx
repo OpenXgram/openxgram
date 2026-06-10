@@ -5,10 +5,11 @@ import { WikiTab } from "./WikiTab";
 import { ConfigTab } from "./ConfigTab";
 import { AgentsTab } from "./AgentsTab";
 import { FlowTab } from "./FlowTab";
+import { MarketTab } from "./MarketTab";
 
 // Phase 1 — 카카오톡 셸. 정본 디자인: _mockups/kakao-mockup.html
 // 하단 6탭. 본문은 기존 실제 컴포넌트를 그대로 끼움(대화·위키·에이전트·설정).
-// 흐름·마켓은 Phase 4·6에서 네이티브 패널로 교체 (현재 안내 자리).
+// 흐름은 Phase 4에서 네이티브 패널로 교체 (현재 안내 자리). 마켓은 Phase 6 네이티브(MarketTab).
 type KkTab = "agents" | "chat" | "flow" | "wiki" | "market" | "settings";
 
 const TABS: { id: KkTab; ic: string; label: string }[] = [
@@ -19,18 +20,6 @@ const TABS: { id: KkTab; ic: string; label: string }[] = [
   { id: "market", ic: "🌐", label: "마켓" },
   { id: "settings", ic: "⚙️", label: "설정" },
 ];
-
-function Placeholder(props: { title: string; phase: string }) {
-  return (
-    <div style="padding:40px 28px; color:var(--kk-sub); max-width:560px;">
-      <h2 style="font-size:17px; font-weight:800; color:var(--kk-ink); margin:0 0 8px;">{props.title}</h2>
-      <p style="font-size:13px; line-height:1.6; margin:0;">
-        이 화면은 <b>{props.phase}</b>에서 네이티브로 구현됩니다. 디자인 정본은
-        <code> _mockups/kakao-mockup.html</code> 이며, 백엔드(엔진·바인딩) 배선 후 이 자리에 들어옵니다.
-      </p>
-    </div>
-  );
-}
 
 export function KakaoShell(props: { onLogout?: () => void }) {
   const [tab, setTab] = createSignal<KkTab>("chat");
@@ -64,7 +53,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
             <FlowTab />
           </Show>
           <Show when={tab() === "market"}>
-            <div class="kk-embed"><Placeholder title="🌐 OpenAgentX 마켓" phase="Phase 6 (마켓 + 지갑 + 수익)" /></div>
+            <div class="kk-embed"><MarketTab /></div>
           </Show>
         </div>
         <div class="kk-tabs">

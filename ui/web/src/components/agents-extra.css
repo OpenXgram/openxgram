@@ -1,0 +1,282 @@
+/* agents-extra.css — AgentsTab 전용 추가 스타일.
+ * 정본 디자인: _mockups/kakao-mockup.html (외부채널 channelOvl / tmux termOvl / 편집 edOvl).
+ * 목업 CSS 를 그대로 이식하되, 전역 토큰(--kk-line/--kk-ink/--kk-sub)으로 네임스페이스.
+ * kakao.css 는 건드리지 않는다 (다른 컴포넌트 공유). 이 파일만 AgentsTab 에서 import. */
+
+/* ---------- 공통 오버레이 (목업 .ovl) ---------- */
+.ax-ovl {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 24, 30, .55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+}
+.ax-board {
+  width: 600px;
+  max-width: 92vw;
+  max-height: 86vh;
+  overflow: auto;
+  background: #fff;
+  border-radius: 18px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .4);
+}
+.ax-bh {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 18px 22px 12px;
+  border-bottom: 1px solid var(--kk-line);
+}
+.ax-bh h2 {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--kk-ink);
+}
+.ax-bh .ax-sub {
+  font-size: 12px;
+  color: var(--kk-sub);
+}
+.ax-bh .ax-bx {
+  margin-left: auto;
+  font-size: 17px;
+  color: var(--kk-sub);
+  cursor: pointer;
+}
+.ax-bb {
+  padding: 18px 22px 22px;
+}
+.ax-note {
+  background: #fff7e0;
+  border: 1px solid #f0d98a;
+  border-radius: 10px;
+  padding: 11px 13px;
+  font-size: 12px;
+  color: #7a5a14;
+  line-height: 1.5;
+  margin-bottom: 15px;
+}
+.ax-wsec {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--kk-sub);
+  margin: 16px 0 9px;
+  letter-spacing: .02em;
+}
+.ax-empty {
+  font-size: 12.5px;
+  color: var(--kk-sub);
+  padding: 18px;
+  text-align: center;
+  border: 1px dashed #cfd5de;
+  border-radius: 10px;
+  background: #fafbfc;
+}
+
+/* ---------- 외부 채널 바인딩 (목업 .chcard) ---------- */
+.ax-chcard {
+  border: 1px solid var(--kk-line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 11px;
+  background: #fcfcfd;
+}
+.ax-chtop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.ax-chtop .ax-chav {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex: none;
+  color: #fff;
+}
+.ax-ch-dc { background: #5865F2; }
+.ax-ch-tg { background: #229ED9; }
+.ax-ch-sl { background: #4A154B; }
+.ax-ch-xx { background: #6b7280; }
+.ax-chtop .ax-chn {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--kk-ink);
+}
+.ax-chtop .ax-chs {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 800;
+  background: #e6f6ec;
+  color: #1f9d4d;
+  border-radius: 20px;
+  padding: 3px 10px;
+}
+.ax-chtop .ax-chs.off {
+  background: #f3f4f6;
+  color: #9aa1ad;
+}
+.ax-chbind {
+  font-size: 12.5px;
+  color: #4b5563;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.ax-chbind .ax-ar { color: #c2c7d0; }
+.ax-chbind .ax-bt { font-weight: 700; color: #2b333f; }
+.ax-chdir {
+  font-size: 11px;
+  color: var(--kk-sub);
+  margin-top: 7px;
+}
+
+/* ---------- tmux 터미널 미리보기 (목업 termOvl) ---------- */
+.ax-term {
+  width: 680px;
+  max-width: 94vw;
+  background: #0d1117;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .5);
+}
+.ax-term-h {
+  background: #161b22;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-bottom: 1px solid #21262d;
+}
+.ax-term-h .ax-tl {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  flex: none;
+}
+.ax-term-h .ax-tl.r { background: #ff5f56; }
+.ax-term-h .ax-tl.y { background: #ffbd2e; }
+.ax-term-h .ax-tl.g { background: #27c93f; }
+.ax-term-h .ax-tt {
+  font-size: 12.5px;
+  color: #8b949e;
+  font-family: ui-monospace, Menlo, monospace;
+  margin-left: 6px;
+}
+.ax-term-h .ax-tt b { color: #c9d1d9; }
+.ax-term-h .ax-tx {
+  margin-left: auto;
+  font-size: 16px;
+  color: #8b949e;
+  cursor: pointer;
+}
+.ax-term pre {
+  margin: 0;
+  padding: 16px;
+  background: #0d1117;
+  color: #c9d1d9;
+  font-size: 12.5px;
+  line-height: 1.6;
+  font-family: ui-monospace, Menlo, monospace;
+  height: 300px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ax-term .ax-tmeta {
+  padding: 8px 14px;
+  background: #161b22;
+  border-top: 1px solid #21262d;
+  font-size: 11px;
+  color: #8b949e;
+  font-family: ui-monospace, Menlo, monospace;
+}
+
+/* ---------- 설정/지침 에디터 (목업 .editor) ---------- */
+.ax-editor {
+  width: 640px;
+  max-width: 94vw;
+  background: #0d1117;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .5);
+}
+.ax-editor .ax-eh {
+  background: #161b22;
+  padding: 11px 16px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-bottom: 1px solid #21262d;
+}
+.ax-editor .ax-ei {
+  font-size: 13.5px;
+  color: #c9d1d9;
+  font-weight: 700;
+}
+.ax-editor .ax-ep {
+  font-size: 11px;
+  color: #8b949e;
+  font-family: ui-monospace, Menlo, monospace;
+  word-break: break-all;
+}
+.ax-editor .ax-ex {
+  margin-left: auto;
+  font-size: 16px;
+  color: #8b949e;
+  cursor: pointer;
+}
+.ax-editor textarea {
+  width: 100%;
+  height: 330px;
+  background: #0d1117;
+  color: #c9d1d9;
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 16px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  font-family: ui-monospace, Menlo, monospace;
+  box-sizing: border-box;
+}
+.ax-editor .ax-ef {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  justify-content: flex-end;
+  padding: 11px 16px;
+  background: #161b22;
+  border-top: 1px solid #21262d;
+}
+.ax-editor .ax-ef .ax-rohint {
+  margin-right: auto;
+  font-size: 11px;
+  color: #8b949e;
+}
+.ax-editor .ax-ef .c {
+  background: #21262d;
+  color: #c9d1d9;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.ax-editor .ax-ef .s {
+  background: #2c333d;
+  color: #6b7480;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: not-allowed;
+}
