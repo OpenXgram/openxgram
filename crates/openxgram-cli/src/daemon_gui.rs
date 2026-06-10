@@ -46,8 +46,12 @@ pub struct GuiServerState {
     acp: crate::daemon_gui_acp::AcpHttpState,
     /// A2A (Google Agent2Agent) daemon state — client-only: OpenXgram이 외부/타
     /// 에이전트의 A2A endpoint 를 호출 (AgentCard discover + tasks/send|get|cancel).
-    /// Phase 3 (ACP-A2A-CORE). AgentCard 호스팅(callee 측)은 후속 작업. Clone-cheap.
+    /// Phase 3 (ACP-A2A-CORE). Clone-cheap.
     a2a: crate::daemon_gui_a2a::A2aHttpState,
+    /// A2A SERVER state — OpenXgram 에이전트를 A2A로 CALLABLE 하게 호스팅
+    /// (AgentCard serving + tasks/send 실행). 실행은 `acp` AcpHttpState 재사용
+    /// (별도 ACP registry 없음). tasks/get 용 in-memory task 추적. Clone-cheap.
+    served_a2a: crate::daemon_gui_a2a::ServedA2aState,
 }
 
 // (axum 의 layer middleware 가 URI 를 mutate 해도 router matching 은 재실행
@@ -265,6 +269,7 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         db: Arc::new(Mutex::new(db)),
         acp: crate::daemon_gui_acp::AcpHttpState::new(),
         a2a: crate::daemon_gui_a2a::A2aHttpState::new(),
+        served_a2a: crate::daemon_gui_a2a::ServedA2aState::new(),
     };
     let state_clone = state.clone();
 
@@ -577,6 +582,18 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/a2a/agents", get(a2a_agents))
         .route("/v1/gui/a2a/send", post(a2a_send))
         .route("/v1/gui/a2a/tasks/{id}", get(a2a_task_get))
+        // ── A2A SERVER (ACP-A2A-CORE) — OpenXgram agents CALLABLE via A2A ───
+        // AgentCard hosting (discovery) + tasks/send (executes via ACP) + tasks/get.
+        // Behind require_auth like the rest of the daemon surface.
+        .route(
+            "/v1/a2a/agents/{alias}/.well-known/agent-card.json",
+            get(a2a_served_card),
+        )
+        .route("/v1/a2a/agents/{alias}/tasks", post(a2a_served_task_send))
+        .route(
+            "/v1/a2a/agents/{alias}/tasks/{id}",
+            get(a2a_served_task_get),
+        )
         .with_state(state);
 
     // rc.184 — port 자동 fallback. 47302 가 Hyper-V/Windows 예약 port 가면 fail → 다른 port 시도.
@@ -7880,24 +7897,126 @@ struct A2aTaskQuery {
 }
 
 /// `GET /v1/gui/a2a/agents` — A2A 로 호출 가능한 에이전트 목록.
-/// HONEST: client-only + AgentCard 호스팅 미구현 → 등록된 peer 를 reachable:false 로
-/// 정직하게 반환 (note 동봉). peer alias 는 PeerStore 에서 조회.
+/// ACP-A2A-CORE: AgentCard 호스팅 구현됨 → ai_type 이 ACP 어댑터로 resolve 되는
+/// 에이전트는 reachable:true + agentCardUrl/tasksUrl 동봉. ai_type 없으면 false.
+/// 로스터는 agent_capabilities⋈agent_profiles (DB lock).
 async fn a2a_agents(
     State(state): State<GuiServerState>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    let aliases: Vec<String> = {
+    let infos: Vec<crate::daemon_gui_a2a::A2aAgentInfo> = {
         let mut db = state.db.lock().await;
-        let mut store = PeerStore::new(&mut db);
-        match store.list() {
-            Ok(rows) => rows.into_iter().map(|p| p.alias).collect(),
-            Err(e) => {
-                return Err(internal(&format!("peer list: {e}")));
-            }
-        }
+        let mut stmt = db
+            .conn()
+            .prepare(
+                "SELECT ac.alias, p.ai_type \
+                 FROM agent_capabilities ac \
+                 LEFT JOIN agent_profiles p ON p.alias = ac.alias \
+                 WHERE ac.role IS NOT 'tmux' \
+                 ORDER BY ac.messenger_enabled DESC, ac.alias ASC",
+            )
+            .map_err(|e| internal(&format!("a2a roster prep: {e}")))?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(crate::daemon_gui_a2a::A2aAgentInfo {
+                    alias: r.get::<_, String>(0)?,
+                    ai_type: r.get::<_, Option<String>>(1)?,
+                })
+            })
+            .map_err(|e| internal(&format!("a2a roster query: {e}")))?;
+        rows.filter_map(|r| r.ok()).collect()
     };
-    Ok(Json(crate::daemon_gui_a2a::list_agents(&aliases)))
+    Ok(Json(crate::daemon_gui_a2a::list_agents(&infos)))
+}
+
+/// Load an agent's A2A `AgentMeta` from `agent_capabilities`⋈`agent_profiles`.
+/// `Ok(None)` when the alias is unknown (→ explicit 404 at the call site).
+async fn load_a2a_agent_meta(
+    state: &GuiServerState,
+    alias: &str,
+) -> Result<Option<crate::daemon_gui_a2a::server::AgentMeta>, (StatusCode, Json<ErrorDto>)> {
+    let mut db = state.db.lock().await;
+    let mut stmt = db
+        .conn()
+        .prepare(
+            "SELECT ac.alias, ac.role, ac.capabilities, ac.project_path, p.ai_type \
+             FROM agent_capabilities ac \
+             LEFT JOIN agent_profiles p ON p.alias = ac.alias \
+             WHERE ac.alias = ?1 AND ac.role IS NOT 'tmux'",
+        )
+        .map_err(|e| internal(&format!("a2a meta prep: {e}")))?;
+    let mut rows = stmt
+        .query_map([alias], |r| {
+            Ok(crate::daemon_gui_a2a::server::AgentMeta {
+                alias: r.get::<_, String>(0)?,
+                role: r.get::<_, Option<String>>(1)?,
+                capabilities: r.get::<_, Option<String>>(2)?,
+                project_path: r.get::<_, Option<String>>(3)?,
+                ai_type: r.get::<_, Option<String>>(4)?,
+            })
+        })
+        .map_err(|e| internal(&format!("a2a meta query: {e}")))?;
+    match rows.next() {
+        Some(Ok(meta)) => Ok(Some(meta)),
+        Some(Err(e)) => Err(internal(&format!("a2a meta row: {e}"))),
+        None => Ok(None),
+    }
+}
+
+/// `GET /v1/a2a/agents/{alias}/.well-known/agent-card.json` — served AgentCard.
+async fn a2a_served_card(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let meta = load_a2a_agent_meta(&state, &alias).await?.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorDto {
+                error: format!("unknown agent: {alias}"),
+            }),
+        )
+    })?;
+    let card = crate::daemon_gui_a2a::build_agent_card(&meta);
+    let value = serde_json::to_value(&card).map_err(|e| internal(&format!("card serialize: {e}")))?;
+    Ok(Json(value))
+}
+
+/// `POST /v1/a2a/agents/{alias}/tasks` — A2A tasks/send; executes via ACP.
+async fn a2a_served_task_send(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+    Json(body): Json<crate::daemon_gui_a2a::TaskBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let meta = load_a2a_agent_meta(&state, &alias).await?.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorDto {
+                error: format!("unknown agent: {alias}"),
+            }),
+        )
+    })?;
+    crate::daemon_gui_a2a::handle_task(&state.acp, &state.served_a2a, &meta, body)
+        .await
+        .map(Json)
+        .map_err(a2a_err)
+}
+
+/// `GET /v1/a2a/agents/{alias}/tasks/{id}` — A2A tasks/get for a served task.
+async fn a2a_served_task_get(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path((alias, id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    crate::daemon_gui_a2a::served_task(&state.served_a2a, &alias, &id)
+        .await
+        .map(Json)
+        .map_err(a2a_err)
 }
 
 /// `POST /v1/gui/a2a/send` — 대상 AgentCard discover 후 tasks/send.
