@@ -68,16 +68,35 @@ impl AcpTools {
 
     /// `acp_prompt` — run one prompt turn against a spawned agent. `text` is sent
     /// as a single text ContentBlock; `cwd` is the session working directory.
+    ///
+    /// Non-streaming: the returned `{stopReason, updates}` is delivered only at
+    /// turn end. Used by the MCP JSON-RPC path (`mcp_serve.rs`), which has no live
+    /// channel. For live per-chunk delivery use [`AcpTools::acp_prompt_streaming`].
     pub async fn acp_prompt(
         &self,
         handle_id: AgentHandleId,
         cwd: &str,
         text: &str,
     ) -> Result<Value> {
+        self.acp_prompt_streaming(handle_id, cwd, text, None).await
+    }
+
+    /// `acp_prompt_streaming` — like [`AcpTools::acp_prompt`] but forwards each
+    /// `session/update` body to `on_update` **live**, as it arrives during the
+    /// turn (before the `stopReason`). The returned value is identical to
+    /// `acp_prompt` (`{stopReason, updates}`) so non-SSE callers still get the
+    /// full collected list; the live forwarding is purely additive.
+    pub async fn acp_prompt_streaming(
+        &self,
+        handle_id: AgentHandleId,
+        cwd: &str,
+        text: &str,
+        on_update: Option<tokio::sync::mpsc::UnboundedSender<Value>>,
+    ) -> Result<Value> {
         let agents = self.inner.agents.lock().await;
         let client = agents.get(&handle_id).ok_or(AcpError::SessionClosed)?;
         let result = client
-            .prompt(cwd.to_string(), vec![ContentBlock::text(text)])
+            .prompt_streaming(cwd.to_string(), vec![ContentBlock::text(text)], on_update)
             .await?;
         let updates = serde_json::to_value(&result.updates)?;
         let stop_reason = serde_json::to_value(result.stop_reason)?;

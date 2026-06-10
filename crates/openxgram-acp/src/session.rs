@@ -88,7 +88,7 @@ impl AcpSession {
         &self.cwd
     }
 
-    /// Run one prompt turn to completion.
+    /// Run one prompt turn to completion (non-streaming).
     ///
     /// Sends `session/prompt` and concurrently drains `session/update`
     /// notifications until the prompt response (the `stopReason`) arrives. Full-
@@ -97,6 +97,28 @@ impl AcpSession {
     pub async fn prompt(
         &mut self,
         blocks: Vec<crate::types::ContentBlock>,
+    ) -> Result<PromptResult> {
+        self.prompt_streaming(blocks, None).await
+    }
+
+    /// Run one prompt turn to completion, optionally forwarding each
+    /// `session/update` **live** as it arrives.
+    ///
+    /// When `on_update` is `Some`, every successfully observed update is sent to
+    /// that channel *immediately* (before the turn's `stopReason` resolves) AND
+    /// pushed into the returned `PromptResult.updates` vec — the non-streaming
+    /// return contract is unchanged. The raw `serde_json::Value` of each update's
+    /// body (`{sessionUpdate, …}`) is forwarded so a consumer can re-emit it
+    /// verbatim (e.g. onto an SSE broadcast). Send failures (no live subscriber)
+    /// are ignored — they never abort the turn (절대 규칙 1 honesty preserved for
+    /// the collected vec which is the source of truth).
+    ///
+    /// The forwarding ends naturally when this method returns (the turn ends);
+    /// the caller's receiver observes channel close once it drops the sender.
+    pub async fn prompt_streaming(
+        &mut self,
+        blocks: Vec<crate::types::ContentBlock>,
+        on_update: Option<mpsc::UnboundedSender<serde_json::Value>>,
     ) -> Result<PromptResult> {
         let params = json!({
             "sessionId": self.session_id,
@@ -110,6 +132,21 @@ impl AcpSession {
 
         let mut collected: Vec<SessionUpdate> = Vec::new();
 
+        // Forward one parsed update both live (if a subscriber exists) and into
+        // the collected vec. `raw` is the full params object; we forward the
+        // update *body* (`raw.update` when present) so consumers receive the same
+        // `{sessionUpdate, …}` shape the GUI already parses.
+        let handle = |raw: &serde_json::Value, collected: &mut Vec<SessionUpdate>| {
+            if let Some(u) = parse_update(raw) {
+                if let Some(tx) = on_update.as_ref() {
+                    let body = raw.get("update").cloned().unwrap_or_else(|| raw.clone());
+                    // Ignore send errors: no live subscriber is a normal state.
+                    let _ = tx.send(body);
+                }
+                collected.push(u);
+            }
+        };
+
         loop {
             tokio::select! {
                 // Prompt resolved → turn ended.
@@ -118,11 +155,10 @@ impl AcpSession {
                     let parsed: SessionPromptResponse = serde_json::from_value(value)
                         .map_err(AcpError::Serde)?;
                     // Drain any remaining buffered updates without blocking, so
-                    // updates that arrived just before the stopReason are not lost.
+                    // updates that arrived just before the stopReason are not lost
+                    // (these are still forwarded live for SSE consumers).
                     while let Ok(raw) = self.updates.try_recv() {
-                        if let Some(u) = parse_update(&raw) {
-                            collected.push(u);
-                        }
+                        handle(&raw, &mut collected);
                     }
                     return Ok(PromptResult {
                         stop_reason: parsed.stop_reason,
@@ -137,9 +173,7 @@ impl AcpSession {
                             // than aborting the turn, but never the response path.
                             // The discriminator is nested under `update` on the
                             // wire — `parse_update` handles the unwrap + logging.
-                            if let Some(u) = parse_update(&raw) {
-                                collected.push(u);
-                            }
+                            handle(&raw, &mut collected);
                         }
                         None => {
                             // Listener closed but the prompt has not resolved.

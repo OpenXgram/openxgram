@@ -169,6 +169,90 @@ async fn mock_agent_full_turn() {
     client.close().await.expect("close + reap");
 }
 
+/// LIVE STREAMING (per-chunk): the `on_update` channel must receive each
+/// `session/update` body **as it arrives during the turn** — i.e. before the
+/// prompt future resolves with the `stopReason`. This proves the updates are
+/// forwarded live, not collected-then-dumped at turn end.
+///
+/// We assert live ordering by polling the on_update receiver while the prompt
+/// future is still pending: at least the first update must be observable before
+/// the turn completes, and every update body is delivered (count + order).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn prompt_streaming_forwards_updates_live() {
+    use std::time::Duration;
+    use tokio::sync::mpsc;
+
+    let mock = write_mock_agent();
+    let path = mock.path().to_string_lossy().to_string();
+    let spec = AgentSpec::builder("mock", python_command())
+        .arg(path)
+        .build();
+
+    let client = AcpClient::spawn_minimal(spec)
+        .await
+        .expect("spawn + initialize mock agent");
+
+    let (tx, mut rx) = mpsc::unbounded_channel::<serde_json::Value>();
+
+    // Drive the turn on a separate task so we can observe live forwarding while
+    // the prompt future is still pending.
+    let turn = tokio::spawn(async move {
+        client
+            .prompt_streaming("/tmp", vec![ContentBlock::text("hi")], Some(tx))
+            .await
+    });
+
+    // LIVE ORDERING: the first update must arrive on the channel before the turn
+    // future resolves. `recv()` here returns the live-forwarded body; if updates
+    // were only collected-then-returned, the channel would stay empty until the
+    // turn ended (and then close), so an early `recv()` proves liveness.
+    let first = tokio::time::timeout(Duration::from_secs(10), rx.recv())
+        .await
+        .expect("first live update should arrive before turn end (liveness)")
+        .expect("channel open mid-turn — sender not yet dropped");
+    assert!(!turn.is_finished(), "turn still pending when first update seen");
+    assert_eq!(
+        first.get("sessionUpdate").and_then(|v| v.as_str()),
+        Some("agent_thought_chunk"),
+        "first live update body must be the thought chunk (got {first})"
+    );
+
+    // Collect the rest of the live stream until the sender drops (turn ends).
+    let mut bodies = vec![first];
+    while let Some(b) = rx.recv().await {
+        bodies.push(b);
+    }
+
+    // The turn future resolves with the full PromptResult; the live stream
+    // delivered the SAME set of updates (additive — return contract unchanged).
+    let result = turn
+        .await
+        .expect("turn task join")
+        .expect("prompt turn ok");
+    assert_eq!(result.stop_reason, StopReason::EndTurn);
+    assert_eq!(
+        bodies.len(),
+        result.updates.len(),
+        "live channel must deliver every update the collected vec has"
+    );
+    assert_eq!(bodies.len(), 4, "all 4 updates forwarded live");
+
+    let disc: Vec<&str> = bodies
+        .iter()
+        .filter_map(|b| b.get("sessionUpdate").and_then(|v| v.as_str()))
+        .collect();
+    assert_eq!(
+        disc,
+        vec![
+            "agent_thought_chunk",
+            "agent_message_chunk",
+            "agent_message_chunk",
+            "some_future_update_kind",
+        ],
+        "live updates must arrive in order"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn spawn_nonexistent_binary_is_spawn_error() {
     let spec = AgentSpec::builder("nope", "this-binary-does-not-exist-xyz").build();

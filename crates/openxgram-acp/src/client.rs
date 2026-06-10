@@ -124,8 +124,24 @@ impl AcpClient {
         cwd: impl Into<String>,
         blocks: Vec<ContentBlock>,
     ) -> Result<PromptResult> {
+        self.prompt_streaming(cwd, blocks, None).await
+    }
+
+    /// One-shot helper that additionally forwards each `session/update` **live**
+    /// (as it arrives, before the turn's `stopReason`) to `on_update`.
+    ///
+    /// The returned [`PromptResult`] is identical to [`AcpClient::prompt`] — the
+    /// live forwarding is purely additive. The `on_update` channel closes when
+    /// this future resolves (turn end): the caller drops the sender, the receiver
+    /// observes the end of the live stream.
+    pub async fn prompt_streaming(
+        &self,
+        cwd: impl Into<String>,
+        blocks: Vec<ContentBlock>,
+        on_update: Option<tokio::sync::mpsc::UnboundedSender<serde_json::Value>>,
+    ) -> Result<PromptResult> {
         let mut session = self.session_new(cwd, Vec::new()).await?;
-        session.prompt(blocks).await
+        session.prompt_streaming(blocks, on_update).await
     }
 
     /// Send `session/cancel` for a session id (notification).

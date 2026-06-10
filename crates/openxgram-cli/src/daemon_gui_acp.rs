@@ -32,7 +32,7 @@ use openxgram_acp::mcp::AgentHandleId;
 use openxgram_acp::{AcpError, AcpTools};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
 
 /// Explicit error type for ACP HTTP handlers → `(StatusCode, message)`.
 pub type AcpHttpError = (StatusCode, String);
@@ -269,20 +269,37 @@ pub async fn prompt(
         (hid, sess.cwd.clone(), sess.updates_tx.clone())
     };
 
+    // Live relay: each `session/update` is forwarded onto the per-session
+    // broadcast (→ SSE `/stream`) the instant it arrives during the turn, instead
+    // of all-at-once after the turn ends. We bridge the crate's per-update mpsc
+    // sender to the broadcast via a forwarding task.
+    let (update_tx, mut update_rx) = mpsc::unbounded_channel::<Value>();
+    let relay_tx = tx.clone();
+    let relay = tokio::spawn(async move {
+        // Ends when the turn finishes: the streaming prompt drops `update_tx`,
+        // `recv()` returns `None`, the loop exits, the task completes.
+        while let Some(u) = update_rx.recv().await {
+            // Ignore send errors: no SSE subscriber is a normal state.
+            let _ = relay_tx.send(u);
+        }
+    });
+
     let result = state
         .tools
-        .acp_prompt(handle_id, &cwd, &body.text)
+        .acp_prompt_streaming(handle_id, &cwd, &body.text, Some(update_tx))
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("acp prompt failed: {e}")))?;
 
-    // Relay each update onto the broadcast channel for any `/stream` client.
-    if let Some(updates) = result.get("updates").and_then(|u| u.as_array()) {
-        for u in updates {
-            // Ignore send errors: no subscribers is a normal state.
-            let _ = tx.send(u.clone());
-        }
+    // The streaming call has dropped its sender by now; await the forwarding task
+    // so every buffered update has been broadcast before we return the stopReason.
+    if let Err(e) = relay.await {
+        tracing::debug!(target: "acp.daemon", "update relay task join: {e}");
     }
 
+    // `result` still carries `{stopReason, updates}`; the updates were already
+    // broadcast live above (SSE is the live channel). We keep `updates` in the
+    // HTTP body for non-SSE callers — the GUI applies them only as a fallback
+    // when its stream is down, so there is no double-render.
     Ok(result)
 }
 
