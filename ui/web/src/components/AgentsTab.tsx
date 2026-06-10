@@ -595,40 +595,48 @@ function EditorOverlay(props: { file: EditorFile; onClose: () => void }) {
   );
 }
 
-// 8단계 추가 폼 — 머신·폴더·AI종류·이름·역할·분류·그룹·워크트리/공개.
+// 에이전트 추가 — 단일 페이지 폼. 정본: _mockups/kakao-mockup.html #ovl .modal (lines 598-632).
+// 모든 필드를 한 화면에서 입력. 8단계 위저드가 수집하던 필드(머신·폴더·AI종류·이름·역할·분류·
+// 그룹·실행모드·워크트리·공개)를 동일 submit 페이로드(agent_profile_set)로 매핑한다.
+const ADD_MACHINES = ["서울", "잘만", "맥미니", "sm-s936n"];
+const ADD_AI_TYPES = ["claude", "codex", "gemini", "ollama", "hermes"];
+// 목업 분류 select (라벨 → classification 키). 실행모드 기본값 분기에 쓰인다.
+const ADD_CLASSES = [
+  { key: "project", label: "📁 프로젝트 에이전트" },
+  { key: "special", label: "⚙️ 특수 기능 에이전트" },
+  { key: "primary", label: "⭐ 통합관리(프라이머리)" },
+];
+const ADD_GROUPS = ["없음", "배포팀", "+ 새 그룹"];
+
 function AddAgentModal(props: { onClose: () => void; onCreated: (alias: string) => void }) {
-  const [step, setStep] = createSignal(0);
   const [busy, setBusy] = createSignal(false);
   const [err, setErr] = createSignal("");
   const [d, setD] = createSignal({
-    machine: "", folder: "", ai_type: "claude", name: "", role: "",
-    classification: "project", group: "", worktree: "", is_public: false,
+    machine: ADD_MACHINES[0], folder: "~/projects/starian-set", ai_type: "claude",
+    name: "", role: "", classification: "project", group: "없음",
+    exec: "always", worktree: true, is_public: false,
   });
   const set = (k: string, v: unknown) => setD({ ...d(), [k]: v });
 
-  const STEPS = [
-    { key: "machine", title: "머신", sub: "이 에이전트가 도는 머신 (예: 서울, zalman). 추가 폼에서만 보입니다.", field: "text", ph: "서울" },
-    { key: "folder", title: "작업 폴더", sub: "프로젝트 경로 (동적 설정 탐지의 기준).", field: "text", ph: "~/projects/starian-set" },
-    { key: "ai_type", title: "AI 종류", sub: "지침 체인 분기 (claude=CLAUDE.md / codex=AGENTS.md / gemini=GEMINI.md).", field: "ai" },
-    { key: "name", title: "이름 (alias)", sub: "에이전트 고유 이름. 명부·라우팅 키.", field: "text", ph: "akashic" },
-    { key: "role", title: "역할", sub: "한 줄 역할 설명.", field: "text", ph: "작업 정리 · SNS" },
-    { key: "classification", title: "분류", sub: "명부 그룹 + 실행모드 기본값.", field: "class" },
-    { key: "group", title: "그룹", sub: "협업 단위 (peer_send fan-out 대상). 선택.", field: "text", ph: "배포팀" },
-    { key: "final", title: "워크트리 · 공개", sub: "git worktree(선택) + 마켓 공개 여부.", field: "final" },
-  ];
-  const cur = () => STEPS[step()];
-  const last = () => step() === STEPS.length - 1;
+  // 실행 모드: 분류가 프로젝트일 때만 선택 가능. 특수=깨움(하트비트), 프라이머리=상시 고정.
+  const execLocked = () => d().classification !== "project";
+  const effectiveExec = () =>
+    d().classification === "primary" ? "always" :
+    d().classification === "special" ? "heartbeat" : d().exec;
 
   async function submit() {
     const v = d();
-    if (!v.name.trim()) { setErr("이름(alias)은 필수입니다."); setStep(3); return; }
+    if (!v.name.trim()) { setErr("이름(alias)은 필수입니다."); return; }
     setBusy(true); setErr("");
-    const execution_mode = v.classification === "primary" ? "always" : v.classification === "special" ? "heartbeat" : "on_demand";
+    const execution_mode = effectiveExec();
     try {
       await invoke("agent_profile_set", {
         alias: v.name.trim(), ai_type: v.ai_type, classification: v.classification,
-        execution_mode, machine: v.machine || null, worktree: v.worktree || null,
-        is_public: v.is_public, role: v.role || null, group: v.group || null, folder: v.folder || null,
+        execution_mode, machine: v.machine || null,
+        worktree: v.worktree ? "사용" : null,
+        is_public: v.is_public, role: v.role || null,
+        group: v.group && v.group !== "없음" ? v.group : null,
+        folder: v.folder || null,
       });
       props.onCreated(v.name.trim());
     } catch (e) {
@@ -638,61 +646,94 @@ function AddAgentModal(props: { onClose: () => void; onCreated: (alias: string) 
   }
 
   return (
-    <div class="kk-ovl" onClick={(e) => { if (e.target === e.currentTarget) props.onClose(); }}>
-      <div class="kk-modal">
-        <h3>에이전트 추가 <span style="font-weight:600;color:#9aa1ad;font-size:13px;">({step() + 1}/{STEPS.length})</span></h3>
-        <p class="ssub">{cur().title} — {cur().sub}</p>
-
-        <Show when={cur().field === "text"}>
-          <label>{cur().title}</label>
-          <input
-            value={(d() as Record<string, string>)[cur().key]}
-            placeholder={(cur() as { ph?: string }).ph}
-            onInput={(e) => set(cur().key, e.currentTarget.value)}
-          />
-        </Show>
-        <Show when={cur().field === "ai"}>
-          <label>AI 종류</label>
-          <select value={d().ai_type} onChange={(e) => set("ai_type", e.currentTarget.value)}>
-            <option value="claude">claude (CLAUDE.md)</option>
-            <option value="codex">codex (AGENTS.md)</option>
-            <option value="gemini">gemini (GEMINI.md)</option>
-          </select>
-        </Show>
-        <Show when={cur().field === "class"}>
-          <label>분류</label>
-          <div class="kk-seg">
-            <For each={CLASS_GROUPS}>
-              {(g) => (
-                <div class={`s${d().classification === g.key ? " on" : ""}`} onClick={() => set("classification", g.key)}>
-                  {g.icon} {g.label}
-                </div>
-              )}
-            </For>
-          </div>
-        </Show>
-        <Show when={cur().field === "final"}>
-          <label>워크트리 경로 (선택)</label>
-          <input value={d().worktree} placeholder="wt/rc-288" onInput={(e) => set("worktree", e.currentTarget.value)} />
-          <label class="chk" onClick={() => set("is_public", !d().is_public)}>
-            <input type="checkbox" checked={d().is_public} onChange={(e) => set("is_public", e.currentTarget.checked)} />
-            🌐 OpenAgentX 마켓에 공개
-          </label>
-        </Show>
-
-        <Show when={err()}><div class="err">{err()}</div></Show>
+    <div class="ax-add" onClick={(e) => { if (e.target === e.currentTarget) props.onClose(); }}>
+      <div class="modal">
+        <h2>에이전트 추가</h2>
+        <p class="sub">만들면 바로 대화방이 생깁니다.</p>
 
         <div class="mrow">
-          <Show when={step() > 0}>
-            <button onClick={() => setStep(step() - 1)} disabled={busy()}>← 이전</button>
-          </Show>
-          <Show when={!last()}>
-            <button class="go" onClick={() => setStep(step() + 1)}>다음 →</button>
-          </Show>
-          <Show when={last()}>
-            <button class="go" onClick={submit} disabled={busy()}>{busy() ? "등록 중…" : "✓ 추가"}</button>
-          </Show>
+          <div class="fld">
+            <label>1 · 머신</label>
+            <select class="ctl" value={d().machine} onChange={(e) => set("machine", e.currentTarget.value)}>
+              <For each={ADD_MACHINES}>{(m) => <option value={m}>{m}</option>}</For>
+            </select>
+          </div>
+          <div class="fld">
+            <label>3 · AI 종류</label>
+            <select class="ctl" value={d().ai_type} onChange={(e) => set("ai_type", e.currentTarget.value)}>
+              <For each={ADD_AI_TYPES}>{(a) => <option value={a}>{a}</option>}</For>
+            </select>
+          </div>
         </div>
+
+        <div class="fld">
+          <label>2 · 프로젝트 폴더</label>
+          <input class="ctl" value={d().folder} placeholder="~/projects/starian-set"
+            onInput={(e) => set("folder", e.currentTarget.value)} />
+        </div>
+
+        <div class="mrow">
+          <div class="fld">
+            <label>4 · 이름</label>
+            <input class="ctl" value={d().name} placeholder="akashic"
+              onInput={(e) => set("name", e.currentTarget.value)} />
+          </div>
+          <div class="fld">
+            <label>6 · 분류</label>
+            <select class="ctl" value={d().classification} onChange={(e) => set("classification", e.currentTarget.value)}>
+              <For each={ADD_CLASSES}>{(c) => <option value={c.key}>{c.label}</option>}</For>
+            </select>
+          </div>
+        </div>
+
+        <div class="mrow">
+          <div class="fld">
+            <label>5 · 역할 <span class="opt">(선택)</span></label>
+            <input class="ctl" value={d().role} placeholder="작업 정리 · SNS 포스팅"
+              onInput={(e) => set("role", e.currentTarget.value)} />
+          </div>
+          <div class="fld">
+            <label>그룹 <span class="opt">(선택)</span></label>
+            <select class="ctl" value={d().group} onChange={(e) => set("group", e.currentTarget.value)}>
+              <For each={ADD_GROUPS}>{(g) => <option value={g}>{g}</option>}</For>
+            </select>
+          </div>
+        </div>
+
+        <div class="fld">
+          <label>실행 모드 <span class="opt">(분류 따라 기본값 — 프로젝트만 선택)</span></label>
+          <div class={`seg${execLocked() ? " lock" : ""}`}>
+            <div class={`s${effectiveExec() === "always" ? " on" : ""}`}
+              onClick={() => { if (!execLocked()) set("exec", "always"); }}>⚡ 상시 켜둠</div>
+            <div class={`s${effectiveExec() === "heartbeat" ? " on" : ""}`}
+              onClick={() => { if (!execLocked()) set("exec", "heartbeat"); }}>😴 필요할 때 깨움 (하트비트)</div>
+          </div>
+        </div>
+
+        <div class="mrow">
+          <div class="fld">
+            <label>7 · 워크트리</label>
+            <div class="seg">
+              <div class={`s${d().worktree ? " on" : ""}`} onClick={() => set("worktree", true)}>사용</div>
+              <div class={`s${!d().worktree ? " on" : ""}`} onClick={() => set("worktree", false)}>안 함</div>
+            </div>
+          </div>
+          <div class="fld">
+            <label>8 · 공개 (OpenAgentX)</label>
+            <div class="seg">
+              <div class={`s${!d().is_public ? " on" : ""}`} onClick={() => set("is_public", false)}>비공개</div>
+              <div class={`s${d().is_public ? " on" : ""}`} onClick={() => set("is_public", true)}>공개 →</div>
+            </div>
+          </div>
+        </div>
+
+        <Show when={err()}><div class="add-err">{err()}</div></Show>
+
+        <div class="modal-foot">
+          <button class="btn-q" onClick={props.onClose} disabled={busy()}>⛶ QR·링크</button>
+          <button class="btn-go" onClick={submit} disabled={busy()}>{busy() ? "만드는 중…" : "만들기"}</button>
+        </div>
+        <div class="hint">머신·tailscale·토큰은 이 안에서만 — 만든 뒤엔 에이전트 목록에 ‘이름’만 보입니다.</div>
       </div>
     </div>
   );

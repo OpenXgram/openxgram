@@ -280,3 +280,148 @@
   font-weight: 700;
   cursor: not-allowed;
 }
+
+/* ---------- 에이전트 추가 모달 (목업 #ovl .modal) — 단일 페이지 폼 ----------
+ * 정본: _mockups/kakao-mockup.html lines 598-632.
+ * 목업 .ovl/.modal/.mrow/.fld/.ctl/.seg/.modal-foot/.btn-q/.btn-go/.hint/.opt 를 그대로 이식.
+ * kakao.css 의 .kk-ovl/.kk-modal/.kk-seg/.mrow 와 충돌 피하려 .ax-add 래퍼로 네임스페이스.
+ * 색상은 전역 --kk-* 토큰 사용 (목업 --kakao-yellow 다크톤 == --kk-yellow). */
+.ax-add {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 24, 30, .55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+}
+.ax-add .modal {
+  width: 430px;
+  max-width: 92vw;
+  max-height: 92vh;
+  overflow-y: auto;
+  background: #fff;
+  border-radius: 18px;
+  padding: 24px 24px 20px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .4);
+}
+.ax-add .modal h2 {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--kk-ink);
+  margin: 0 0 4px;
+}
+.ax-add .modal p.sub {
+  font-size: 12px;
+  color: var(--kk-sub);
+  margin: 0 0 16px;
+}
+.ax-add .fld {
+  margin-bottom: 13px;
+}
+.ax-add .fld label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: #54607a;
+  margin-bottom: 5px;
+}
+.ax-add .fld label .opt {
+  color: #aab0bd;
+  font-weight: 500;
+}
+.ax-add .ctl {
+  width: 100%;
+  background: #f4f5f7;
+  border: 1px solid var(--kk-line);
+  border-radius: 9px;
+  padding: 9px 11px;
+  font-size: 13px;
+  color: var(--kk-ink);
+  box-sizing: border-box;
+}
+.ax-add input.ctl {
+  background: #fff;
+}
+.ax-add select.ctl {
+  appearance: none;
+  cursor: pointer;
+}
+.ax-add .mrow {
+  display: flex;
+  gap: 10px;
+}
+.ax-add .mrow .fld {
+  flex: 1;
+}
+.ax-add .seg {
+  display: flex;
+  gap: 7px;
+}
+.ax-add .seg .s {
+  flex: 1;
+  text-align: center;
+  background: #f4f5f7;
+  border: 1px solid var(--kk-line);
+  border-radius: 9px;
+  padding: 8px;
+  font-size: 12.5px;
+  color: #7b8494;
+  cursor: pointer;
+}
+.ax-add .seg .s.on {
+  background: var(--kk-yellow);
+  border-color: var(--kk-yellow-d);
+  color: #fff;
+  font-weight: 700;
+}
+.ax-add .seg.lock .s {
+  cursor: not-allowed;
+  opacity: .55;
+}
+.ax-add .modal-foot {
+  display: flex;
+  gap: 9px;
+  margin-top: 18px;
+}
+.ax-add .btn-q {
+  flex: none;
+  background: #f0f1f4;
+  border: none;
+  border-radius: 10px;
+  padding: 11px 14px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #5b6678;
+  cursor: pointer;
+}
+.ax-add .btn-go {
+  flex: 1;
+  background: var(--kk-yellow);
+  border: none;
+  border-radius: 10px;
+  padding: 11px;
+  font-size: 14px;
+  font-weight: 800;
+  color: #fff;
+  cursor: pointer;
+}
+.ax-add .btn-go:hover {
+  background: var(--kk-yellow-d);
+}
+.ax-add .btn-go:disabled {
+  opacity: .6;
+  cursor: default;
+}
+.ax-add .hint {
+  font-size: 11px;
+  color: #aab0bd;
+  text-align: center;
+  margin-top: 10px;
+}
+.ax-add .add-err {
+  color: #e03131;
+  font-size: 12px;
+  margin-top: 10px;
+  text-align: center;
+}
