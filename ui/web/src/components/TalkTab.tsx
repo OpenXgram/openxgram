@@ -1,6 +1,7 @@
 import { createSignal, createResource, createMemo, createEffect, For, Show } from "solid-js";
 import { invoke } from "../api/client";
 import { AcpConversation, aiTypeToAdapter, type AcpPreset } from "./AcpConversation";
+import { AddAgentModal } from "./AddAgentModal";
 
 // 대화 탭 — 카카오톡 정본 목업(_mockups/kakao-mockup.html) 충실 이식.
 // 좌: 분류 그룹화 명부(👑 프라이머리 / 📌 상단 고정 / 📁 프로젝트 / ⚙️ 특수) + llm-type 아바타색
@@ -121,7 +122,8 @@ function fmtPreviewTime(iso: string): string {
 }
 
 export function TalkTab(props: { onJumpToSettings?: () => void }) {
-  const [agents] = createResource<AgentRow[]>(() => invoke("agents_list"));
+  const [agents, { refetch: refetchAgents }] = createResource<AgentRow[]>(() => invoke("agents_list"));
+  const [addOpen, setAddOpen] = createSignal(false);
   const [peers] = createResource<PeerDto[]>(() => invoke("peers_list"), { initialValue: [] });
   const [recent] = createResource<MessageDto[]>(() => invoke("messages_recent", { limit: 100 }), { initialValue: [] });
   // 정보 패널 소스 — sessions(이 머신 tmux+워크트리) · workflows(orchestrator 매칭). 동적 only.
@@ -277,7 +279,7 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
       <div class="kk-talk-roster">
         <div class="side-top">
           <h1>OpenXgram</h1>
-          <button class="add-btn" onClick={() => props.onJumpToSettings?.()}>＋ 에이전트 추가</button>
+          <button class="add-btn" onClick={() => setAddOpen(true)}>＋ 에이전트 추가</button>
         </div>
         <div class="search">🔍 에이전트·대화 검색</div>
 
@@ -343,6 +345,7 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
           {(_alias) => (
             <AcpConversation
               preset={acpPreset()}
+              popoutAlias={selAgent()?.alias ?? null}
               onClose={() => setMobileChat(false)}
               // ⌗ 상태 토글을 ACP 헤더 pill 행(.meta-r) 왼쪽에 인라인 배치 →
               // 스트리밍/⚡ACP/✕닫기 pill 과 겹치지 않음(절대 배치 제거).
@@ -440,6 +443,18 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
             </div>
           </div>
         )}
+      </Show>
+
+      {/* 에이전트 추가 모달 — ＋ 버튼으로 열림. 만들면 로스터 새로고침 + 자동 선택. */}
+      <Show when={addOpen()}>
+        <AddAgentModal
+          onClose={() => setAddOpen(false)}
+          onCreated={(alias) => {
+            setAddOpen(false);
+            void refetchAgents();
+            setSelected(alias);
+          }}
+        />
       </Show>
     </div>
   );

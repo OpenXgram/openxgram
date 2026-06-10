@@ -3821,6 +3821,13 @@ struct AgentRegisterBody {
     // rc.125 — 자유 orchestration role (enum 아님) + 특수 지침
     #[serde(default)] orchestration_role: Option<String>,
     #[serde(default)] special_instructions: Option<String>,
+    // 카카오톡 셸 추가 모달 — agent_profiles 차원(이게 있어야 "생성된 에이전트"로 로스터 노출).
+    #[serde(default)] ai_type: Option<String>,
+    #[serde(default)] classification: Option<String>,
+    #[serde(default)] execution_mode: Option<String>,
+    #[serde(default)] machine: Option<String>,
+    #[serde(default)] worktree: Option<String>,
+    #[serde(default)] is_public: Option<bool>,
 }
 
 #[derive(serde::Deserialize)]
@@ -3849,7 +3856,7 @@ async fn gui_agents_list(
                 ac.group_name, ac.messenger_enabled, ac.orchestration_role, ac.special_instructions, ac.updated_at, \
                 p.classification, p.execution_mode, p.ai_type, p.is_public, p.machine \
          FROM agent_capabilities ac \
-         LEFT JOIN agent_profiles p ON p.alias = ac.alias \
+         JOIN agent_profiles p ON p.alias = ac.alias \
          WHERE ac.role IS NOT 'tmux' \
          ORDER BY ac.messenger_enabled DESC, ac.alias ASC",
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
@@ -4234,6 +4241,29 @@ async fn gui_agents_register(
             body.orchestration_role, body.special_instructions, now,
         ],
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("upsert: {e}")})))?;
+
+    // 에이전트 프로필 upsert — 이 행이 있어야 "마스터가 생성한 에이전트"로 간주되어 로스터에 노출.
+    // (자동등록 peer 는 agent_capabilities 만 있고 profiles 없음 → 로스터에서 제외.)
+    let ai_type = body.ai_type.as_deref().filter(|s| !s.is_empty()).unwrap_or("claude");
+    let classification = body.classification.as_deref().filter(|s| !s.is_empty()).unwrap_or("project");
+    let exec_mode = body.execution_mode.as_deref().filter(|s| !s.is_empty()).unwrap_or("on_demand");
+    db.conn().execute(
+        "INSERT INTO agent_profiles \
+            (alias, ai_type, classification, execution_mode, machine, worktree, is_public, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
+         ON CONFLICT(alias) DO UPDATE SET \
+            ai_type = excluded.ai_type, \
+            classification = excluded.classification, \
+            execution_mode = excluded.execution_mode, \
+            machine = COALESCE(excluded.machine, machine), \
+            worktree = COALESCE(excluded.worktree, worktree), \
+            is_public = excluded.is_public, \
+            updated_at = excluded.updated_at",
+        rusqlite::params![
+            body.alias, ai_type, classification, exec_mode,
+            body.machine, body.worktree, body.is_public.unwrap_or(false) as i64, now,
+        ],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("profiles upsert: {e}")})))?;
 
     // rc.192 본질 fix — UI 토글 messenger_enabled=true 시 sub-keypair + peer entry 자동 생성.
     // 이전엔 messenger_enabled flag 만 set 되어 UI MSG 태그 거짓 표시였음.

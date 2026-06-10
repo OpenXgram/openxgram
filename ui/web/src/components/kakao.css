@@ -316,6 +316,33 @@
 .kk-at-filter{width:100%; box-sizing:border-box; background:#0f1216; border:1px solid #2b303a; border-radius:7px; color:#cfd5de; font-size:12px; padding:6px 8px; margin-bottom:5px; outline:none;}
 .kk-at-filter:focus{border-color:#3a4a6a;}
 .kk-at-menu .kk-chip-opt{font-family:ui-monospace,Menlo,monospace; font-size:11.5px;}
+/* 헤더 새 창 버튼 + 대화창 단독 팝업 */
+.kk-acp-pop{font-size:12px; color:#9aa1ad; cursor:pointer; padding:3px 8px; border:1px solid #2b303a; border-radius:7px; white-space:nowrap;}
+.kk-acp-pop:hover{color:#cfd5de; border-color:#3a4a6a;}
+.kk-popup-root{position:fixed; inset:0; display:flex; flex-direction:column; background:var(--surface,#fff);}
+.kk-popup-root .kk-talk{height:100vh; width:100vw;}
+.kk-popup-root .info{display:none !important;}
+.kk-popup-loading{display:flex; align-items:center; justify-content:center; height:100vh; color:#8a94a6; font-size:14px;}
+/* ── 에이전트 추가 모달 (목업 정본 포팅) — 조건부 렌더라 .ovl 은 즉시 flex ── */
+.ovl{position:fixed; inset:0; background:rgba(20,24,30,.55); display:flex; align-items:center; justify-content:center; z-index:60;}
+.modal{width:430px; max-width:92vw; max-height:92vh; overflow-y:auto; background:#fff; border-radius:18px; padding:24px 24px 20px; box-shadow:0 24px 70px rgba(0,0,0,.4);}
+.modal h2{font-size:17px; font-weight:800; color:var(--ink,#1b2129); margin:0 0 4px;}
+.modal p.sub{font-size:12px; color:var(--sub,#8a94a6); margin:0 0 16px;}
+.modal .fld{margin-bottom:13px;}
+.modal .fld label{display:block; font-size:12px; font-weight:700; color:#54607a; margin-bottom:5px;}
+.modal .fld label .opt{color:#aab0bd; font-weight:500;}
+.modal .ctl{width:100%; box-sizing:border-box; background:#f4f5f7; border:1px solid #e7e9ee; border-radius:9px; padding:9px 11px; font-size:13px; color:var(--ink,#1b2129);}
+.modal .seg{display:flex; gap:7px;}
+.modal .seg .s{flex:1; text-align:center; background:#f4f5f7; border:1px solid #e7e9ee; border-radius:9px; padding:8px; font-size:12.5px; color:#7b8494; cursor:pointer;}
+.modal .seg .s.on{background:#fee500; border-color:#f0d800; color:#3a2e00; font-weight:700;}
+.modal .mrow{display:flex; gap:11px;}
+.modal .mrow .fld{flex:1;}
+.modal .modal-foot{display:flex; gap:9px; margin-top:18px;}
+.modal .btn-q{flex:none; background:#f0f1f4; border:none; border-radius:10px; padding:11px 14px; font-size:12.5px; font-weight:700; color:#5b6678; cursor:pointer;}
+.modal .btn-go{flex:1; background:#fee500; border:none; border-radius:10px; padding:11px; font-size:14px; font-weight:800; color:#3a2e00; cursor:pointer;}
+.modal .btn-go:hover{background:#f0d800;}
+.modal .btn-go:disabled,.modal .btn-q:disabled{opacity:.6; cursor:default;}
+.modal .hint{font-size:11px; color:#aab0bd; text-align:center; margin-top:10px;}
 /* 응답 대기 타이핑 인디케이터 */
 .kk-acp-typing .body{color:#8a94a6; font-size:13px; display:flex; align-items:center; gap:7px;}
 .kk-typing{display:inline-flex; gap:3px;}

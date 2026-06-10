@@ -119,7 +119,15 @@ export function AcpConversation(props: {
   // 선택: 우상단 pill 행 왼쪽에 끼워넣을 추가 토글(예: TalkTab 의 ⌗ 상태 패널 토글).
   // 헤더 행에 인라인 배치되어 스트리밍/ACP/닫기 pill 과 겹치지 않는다.
   headerExtra?: () => unknown;
+  // 설정 시 헤더에 "⤢ 새 창" 버튼 노출 → 이 alias 의 대화만 별도 창(카톡식 팝업)으로.
+  // 팝업 자신은 이 prop 없이 렌더되어 버튼이 안 보임(중첩 방지).
+  popoutAlias?: string | null;
 }) {
+  // 대화창만 별도 창으로 — 카톡식. 같은 alias 는 같은 창 이름으로 재사용.
+  function openPopout(alias: string) {
+    const url = `${location.pathname}?chat=${encodeURIComponent(alias)}`;
+    window.open(url, `oxgchat_${alias}`, "width=480,height=820,menubar=no,toolbar=no,location=no");
+  }
   const [agents, setAgents] = createSignal<AgentInfo[] | null>(null);
   const [agentsErr, setAgentsErr] = createSignal<string | null>(null);
   const [sessionId, setSessionId] = createSignal<string | null>(null);
@@ -287,6 +295,8 @@ export function AcpConversation(props: {
   let nextId = 1;
   // 마지막 spawn 인자 — 칩 변경 시 같은 에이전트로 새 옵션 재구동(대화 보존)에 사용.
   let lastSpawn: { agent: string; opts?: SpawnArgs } | null = null;
+  // true resume: 복원/재구동 후 첫 프롬프트에 1회 주입할 이전 대화 맥락(전송 텍스트에만, UI/DB엔 미표시).
+  let pendingContext: string | null = null;
   let stopStream: (() => void) | null = null;
 
   // 칩 선택 → 신호 갱신 + 메뉴 닫기. 세션이 이미 있으면 새 옵션으로 재구동(내역 보존).
@@ -441,11 +451,27 @@ export function AcpConversation(props: {
       });
       restored.push({ id: nextId++, kind: "note", text: "↑ 이전 대화 복원됨 — 이어서 대화하세요.", time: nowClock() });
       setBubbles(restored);
+      // true resume: 새 어댑터 프로세스에 이전 맥락을 첫 프롬프트로 주입 → 에이전트가 실제로 이어감.
+      pendingContext = buildContextPreamble();
       scrollDown();
       return true;
     } catch {
       return false;
     }
+  }
+
+  // 복원/재구동된 세션의 첫 프롬프트에 주입할 이전 대화 맥락. 최근 ~12k자만(토큰 보호).
+  function buildContextPreamble(): string {
+    const lines: string[] = [];
+    for (const b of bubbles()) {
+      if (b.kind === "me") lines.push(`사용자: ${b.text}`);
+      else if (b.kind === "agent")
+        lines.push(`너(에이전트): ${b.segs.filter((s) => s.kind === "text").map((s) => s.text).join("")}`);
+    }
+    if (lines.length === 0) return "";
+    let body = lines.join("\n");
+    if (body.length > 12000) body = "…(이전 일부 생략)\n" + body.slice(body.length - 12000);
+    return `[이전 대화 맥락 — 데몬 재시작/새로고침 후 이어서 진행. 아래는 우리의 지난 대화다.]\n${body}\n[위 맥락을 기억하고 아래 현재 요청에 답하라]\n`;
   }
 
   // 에이전트 선택 → 세션 생성 + SSE 구독.
@@ -498,6 +524,9 @@ export function AcpConversation(props: {
       );
       // 영속화된 이전 대화 복원 (있으면 시작 note 를 대체). keepHistory(칩 재구동) 시엔 유지.
       if (!opts?.keepHistory) await loadHistory();
+      // 칩 재구동도 새 어댑터 프로세스 → 기존 대화가 있으면 맥락 주입(true resume).
+      else if (bubbles().some((b) => b.kind === "me" || b.kind === "agent"))
+        pendingContext = buildContextPreamble();
     } catch (e) {
       setSpawnErr((e as Error)?.message ?? String(e));
     } finally {
@@ -513,16 +542,23 @@ export function AcpConversation(props: {
     setSpawnErr(null);
     const uid = nextId; // 이번 turn 의 user 버블 id — 이후 생성된 agent 버블 식별용.
     pushBubble({ id: nextId++, kind: "me", text, time: nowClock() });
-    void recordMsg("me", text); // 사용자 메시지 영속화.
+    void recordMsg("me", text); // 사용자 메시지 영속화(실제 입력만).
     setDraft("");
     curAgentBubbleId = null;
+    // true resume: 복원/재구동 후 첫 프롬프트엔 이전 맥락을 앞에 붙여 전송(에이전트가 이어감).
+    // UI 버블·DB 기록엔 사용자 실제 입력(text)만, 전송 텍스트(sendText)에만 맥락 포함.
+    const sendText = pendingContext ? `${pendingContext}현재 요청: ${text}` : text;
+    if (pendingContext) {
+      pushBubble({ id: nextId++, kind: "note", text: "↻ 이전 맥락을 에이전트에 전달하여 이어감", time: nowClock() });
+      pendingContext = null;
+    }
     try {
       // SSE 가 동일 update 를 먼저 relay 할 수 있으므로, prompt 응답의 updates 는
       // 스트림이 죽었을 때의 폴백으로만 적용. stopReason 은 note 로 표시.
       const r = await acpFetch<{ stopReason: string; updates?: unknown[] }>(
         "POST",
         `/sessions/${encodeURIComponent(id)}/prompt`,
-        { text },
+        { text: sendText },
       );
       if (!streaming() && Array.isArray(r.updates)) {
         for (const u of r.updates) applyUpdate(u);
@@ -688,6 +724,9 @@ export function AcpConversation(props: {
               <span class="pill"><span class="pdot" />스트리밍</span>
             </Show>
             <span class="pill">⚡ ACP</span>
+            <Show when={props.popoutAlias}>
+              <span class="kk-acp-pop" title="새 창으로 열기" onClick={() => openPopout(props.popoutAlias!)}>⤢ 새 창</span>
+            </Show>
             <span class="kk-acp-x" title="세션 닫기" onClick={() => void closeSession()}>✕ 닫기</span>
           </div>
         </div>
