@@ -24,7 +24,12 @@ interface AgentRow {
   ai_type?: string | null;
   is_public?: boolean | null;
   machine?: string | null;
+  display_name?: string | null;
 }
+
+// 표시 이름 — display_name 있으면 그것, 없으면 alias.
+const agentName = (a: { display_name?: string | null; alias: string }) =>
+  (a.display_name && a.display_name.trim()) || a.alias;
 
 interface PeerDto {
   alias: string;
@@ -126,6 +131,25 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
   const [addOpen, setAddOpen] = createSignal(false);
   // 상세 패널 "세션 재시작" 트리거 — 증가시키면 AcpConversation 이 세션을 닫고 재구동.
   const [restartTick, setRestartTick] = createSignal(0);
+  // 대화명 편집 — 상세 패널에서. null=비편집, 문자열=편집중 값.
+  const [renameVal, setRenameVal] = createSignal<string | null>(null);
+  const [renameBusy, setRenameBusy] = createSignal(false);
+  async function saveRename(alias: string) {
+    const v = (renameVal() ?? "").trim();
+    setRenameBusy(true);
+    try {
+      await invoke("agent_profile_set", { alias, display_name: v || alias });
+      await refetchAgents();
+      setRenameVal(null);
+    } catch (e) {
+      // 실패해도 편집 닫음(에러는 콘솔).
+      console.error("rename failed", e);
+      setRenameVal(null);
+    } finally {
+      setRenameBusy(false);
+    }
+  }
+
   // tmux 라이브 열기 — 새 창(?tmux=identifier). 창 재사용 시에도 명시적 이동(흰화면 방지).
   function openTmuxPopout(identifier: string, display: string) {
     const url = `${location.origin}${location.pathname}?tmux=${encodeURIComponent(identifier)}&label=${encodeURIComponent(display)}`;
@@ -207,7 +231,8 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
       adapter: aiTypeToAdapter(a.ai_type),
       cwd: a.project_path ?? null,
       execMode: a.execution_mode ?? null,
-      label: a.alias,
+      label: a.alias, // convKey(영속화 키) — 안정적 alias 유지.
+      displayName: agentName(a), // 헤더 표시용(대화명).
     };
   });
 
@@ -320,7 +345,7 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
                               </div>
                               <div class="meta">
                                 <div class="nm">
-                                  {a.alias}
+                                  {agentName(a)}
                                   <Show when={tagLabel(a)}><span class="tag">{tagLabel(a)}</span></Show>
                                   <Show when={a.is_public}><span class="tag">공개</span></Show>
                                 </div>
@@ -388,7 +413,27 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
         {(a) => (
           <div class={`info${infoOpen() ? " show" : ""}`}>
             <div class="info-head">
-              <span class="t">{a().alias} · 상태</span>
+              <Show
+                when={renameVal() !== null}
+                fallback={
+                  <span class="t">
+                    {agentName(a())} · 상태
+                    <span class="kk-rename-btn" title="대화명 수정" onClick={() => setRenameVal(agentName(a()))}>✏</span>
+                  </span>
+                }
+              >
+                <span class="kk-rename-edit">
+                  <input
+                    value={renameVal() ?? ""}
+                    disabled={renameBusy()}
+                    placeholder="대화명"
+                    onInput={(e) => setRenameVal(e.currentTarget.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") void saveRename(a().alias); if (e.key === "Escape") setRenameVal(null); }}
+                  />
+                  <button disabled={renameBusy()} onClick={() => void saveRename(a().alias)}>저장</button>
+                  <button disabled={renameBusy()} onClick={() => setRenameVal(null)}>취소</button>
+                </span>
+              </Show>
               <span class="x" onClick={() => setInfoOpen(false)}>✕</span>
             </div>
 

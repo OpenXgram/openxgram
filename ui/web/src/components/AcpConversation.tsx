@@ -22,8 +22,10 @@ export interface AcpPreset {
   cwd?: string | null;
   // 실행 모드(always|on_demand|heartbeat). 생략 시 on_demand.
   execMode?: string | null;
-  // 대화 헤더에 표시할 라벨(에이전트 alias). 생략 시 adapter 이름.
+  // 대화 헤더에 표시할 라벨(에이전트 alias). 생략 시 adapter 이름. convKey(영속화)로도 사용 — 안정적 유지.
   label?: string | null;
+  // 대화명(표시 이름). 헤더에 label 대신 노출(convKey 는 label 유지). 생략 시 label.
+  displayName?: string | null;
 }
 
 // ACP 대화방 (Phase B-3) — 로컬 ACP 에이전트 subprocess 를 daemon `/v1/acp/*` 로
@@ -507,7 +509,7 @@ export function AcpConversation(props: {
         body,
       );
       setSessionId(r.sessionId);
-      setActiveAgent(opts?.label || agent);
+      setActiveAgent(props.preset?.displayName || opts?.label || agent);
       if (!opts?.keepHistory) {
         setBubbles([]);
         setUsedTok(0);
@@ -661,7 +663,7 @@ export function AcpConversation(props: {
             <div class="chat-top">
               <span class="back" onClick={() => props.onClose()}>←</span>
               <div class="ava c-claude">⚡</div>
-              <div class="nm">{props.preset.label || props.preset.adapter}</div>
+              <div class="nm">{props.preset.displayName || props.preset.label || props.preset.adapter}</div>
               <div class="meta-r">
                 <span class="pill">⚡ ACP · {props.preset.adapter}</span>
               </div>

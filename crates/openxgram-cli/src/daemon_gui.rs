@@ -3325,7 +3325,9 @@ async fn gui_wiki_list(
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     let mut db = state.db.lock().await;
     let mut stmt = db.conn().prepare(
-        "SELECT id, title, page_type, updated_at FROM wiki_pages ORDER BY updated_at DESC LIMIT 200",
+        // id LIKE '%/%' — 정상 PageId(ptype/slug)만. 슬래시 없는 비정상 행(지식그래프 노드 등,
+        // 디스크 본문 없음 → 클릭 시 404)은 목록에서 제외.
+        "SELECT id, title, page_type, updated_at FROM wiki_pages WHERE id LIKE '%/%' ORDER BY updated_at DESC LIMIT 200",
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep:{e}")})))?;
     let rows = stmt.query_map([], |r| {
         Ok(WikiPageDto {
@@ -3854,7 +3856,7 @@ async fn gui_agents_list(
     let mut stmt = db.conn().prepare(
         "SELECT ac.alias, ac.role, ac.description, ac.capabilities, ac.tool_list, ac.project_path, \
                 ac.group_name, ac.messenger_enabled, ac.orchestration_role, ac.special_instructions, ac.updated_at, \
-                p.classification, p.execution_mode, p.ai_type, p.is_public, p.machine \
+                p.classification, p.execution_mode, p.ai_type, p.is_public, p.machine, p.display_name \
          FROM agent_capabilities ac \
          JOIN agent_profiles p ON p.alias = ac.alias \
          WHERE ac.role IS NOT 'tmux' \
@@ -3878,6 +3880,7 @@ async fn gui_agents_list(
             "ai_type": r.get::<_, Option<String>>(13)?,
             "is_public": r.get::<_, Option<i64>>(14)?.map(|v| v != 0),
             "machine": r.get::<_, Option<String>>(15)?,
+            "display_name": r.get::<_, Option<String>>(16)?,
         }))
     }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
         .filter_map(|r| r.ok()).collect();
@@ -4737,6 +4740,8 @@ struct AgentProfileBody {
     #[serde(default)] machine: Option<String>,
     #[serde(default)] worktree: Option<String>,
     #[serde(default)] is_public: Option<bool>,
+    // 대화명(표시 이름) — 로스터/헤더에 alias 대신.
+    #[serde(default)] display_name: Option<String>,
     // 기존 agent_capabilities 로 반영 (제공 시에만)
     #[serde(default)] role: Option<String>,
     #[serde(default)] group: Option<String>,
@@ -4777,12 +4782,12 @@ async fn gui_agent_profile_set(
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorDto{error: e})))?;
     let now = chrono::Utc::now().to_rfc3339();
     db.conn().execute(
-        "INSERT INTO agent_profiles (alias, ai_type, classification, execution_mode, machine, worktree, is_public, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
+        "INSERT INTO agent_profiles (alias, ai_type, classification, execution_mode, machine, worktree, is_public, display_name, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?9, ?8, ?8) \
          ON CONFLICT(alias) DO UPDATE SET ai_type=excluded.ai_type, classification=excluded.classification, \
            execution_mode=excluded.execution_mode, machine=excluded.machine, worktree=excluded.worktree, \
-           is_public=excluded.is_public, updated_at=excluded.updated_at",
-        rusqlite::params![alias, ai_type, classification, execution_mode, machine, worktree, is_public as i64, now],
+           is_public=excluded.is_public, display_name=COALESCE(excluded.display_name, display_name), updated_at=excluded.updated_at",
+        rusqlite::params![alias, ai_type, classification, execution_mode, machine, worktree, is_public as i64, now, body.display_name],
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("upsert profile: {e}")})))?;
     // folder/group/role/description 제공 시 agent_capabilities 반영 (COALESCE 로 기존 보존).
     if body.role.is_some() || body.group.is_some() || body.folder.is_some() || body.description.is_some() {

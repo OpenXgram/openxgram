@@ -340,6 +340,12 @@
 .kk-tmux-send{background:#238636; border:none; border-radius:7px; color:#fff; font-size:12.5px; font-weight:700; padding:0 14px; cursor:pointer;}
 .kk-tmux-send:hover{background:#2ea043;}
 .kk-tmux-key:disabled,.kk-tmux-send:disabled{opacity:.5; cursor:default;}
+.kk-rename-btn{cursor:pointer; margin-left:7px; opacity:.6; font-size:12px;}
+.kk-rename-btn:hover{opacity:1;}
+.kk-rename-edit{display:flex; gap:5px; align-items:center; flex:1;}
+.kk-rename-edit input{flex:1; min-width:0; background:#0f1216; border:1px solid #2b303a; border-radius:6px; color:#cfd5de; font-size:13px; padding:5px 8px; outline:none;}
+.kk-rename-edit button{background:#222732; border:1px solid #2b303a; border-radius:6px; color:#cfd5de; font-size:11.5px; padding:5px 8px; cursor:pointer; white-space:nowrap;}
+.kk-rename-edit button:first-of-type{background:#2f6a3a; border-color:#2f6a3a; color:#fff;}
 .info-actions{padding:10px 14px 4px;}
 .kk-restart-btn{width:100%; background:#222732; color:#cfd5de; border:1px solid #2b303a; border-radius:8px; padding:9px; font-size:12.5px; font-weight:600; cursor:pointer;}
 .kk-restart-btn:hover{background:#2a3140; border-color:#3a4a6a;}

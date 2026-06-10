@@ -264,6 +264,12 @@ const MIGRATIONS: &[Migration] = &[
         name: "acp_messages",
         sql: include_str!("../migrations/0049_acp_messages.sql"),
     },
+    // 에이전트 대화명(표시 이름) — 로스터/헤더에 alias 대신.
+    Migration {
+        version: 50,
+        name: "agent_display_name",
+        sql: include_str!("../migrations/0050_agent_display_name.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {
