@@ -115,6 +115,10 @@ pub struct OpenxgramDispatcher {
     /// 내부에 보유 (HashMap<handleId, AcpClient> behind async Mutex). dispatch 간
     /// 영속 (§3.1 — agent 가 단일 request frame 보다 오래 살아야 함). Phase B-2.
     acp_tools: openxgram_acp::AcpTools,
+    /// A2A (Google Agent2Agent) tool 표면 — agent↔agent: OpenXgram 이 외부/타
+    /// 에이전트의 A2A endpoint 를 호출 (AgentCard discover + tasks/send|get|cancel).
+    /// stateless (매 호출 새 client). callee 측 AgentCard 호스팅은 후속. Phase 3.
+    a2a_tools: openxgram_a2a::A2aTools,
 }
 
 impl OpenxgramDispatcher {
@@ -136,6 +140,7 @@ impl OpenxgramDispatcher {
             vault_password,
             current_agent: None,
             acp_tools: openxgram_acp::AcpTools::new(),
+            a2a_tools: openxgram_a2a::A2aTools::new(),
         })
     }
 
@@ -597,6 +602,59 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     "type": "object",
                     "properties": { "handleId": {"type": "integer"} },
                     "required": ["handleId"]
+                }),
+            },
+        ]);
+
+        // A2A (Google Agent2Agent) tools — agent↔agent delegation. 항상 노출.
+        // CLIENT-only: OpenXgram 이 외부/타 에이전트의 A2A endpoint 를 호출.
+        // Phase 3 (ACP-A2A-CORE). callee 측 AgentCard 호스팅은 후속 작업.
+        tools.extend([
+            ToolSpec {
+                name: "a2a_discover".into(),
+                description: "외부 A2A 에이전트의 AgentCard 조회 (/.well-known/agent-card.json). url=에이전트 base URL.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": { "url": {"type": "string"} },
+                    "required": ["url"]
+                }),
+            },
+            ToolSpec {
+                name: "a2a_send".into(),
+                description: "다른 에이전트에 작업 위임 — A2A tasks/send. agentUrl + skill + params 로 Task 반환.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "agentUrl": {"type": "string"},
+                        "skill": {"type": "string"},
+                        "params": {"type": "object"},
+                        "sessionId": {"type": "string"}
+                    },
+                    "required": ["agentUrl", "skill"]
+                }),
+            },
+            ToolSpec {
+                name: "a2a_get".into(),
+                description: "A2A 작업 상태/결과 조회 — tasks/get. agentUrl + taskId.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "agentUrl": {"type": "string"},
+                        "taskId": {"type": "string"}
+                    },
+                    "required": ["agentUrl", "taskId"]
+                }),
+            },
+            ToolSpec {
+                name: "a2a_cancel".into(),
+                description: "A2A 작업 취소 — tasks/cancel. agentUrl + taskId.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "agentUrl": {"type": "string"},
+                        "taskId": {"type": "string"}
+                    },
+                    "required": ["agentUrl", "taskId"]
                 }),
             },
         ]);
@@ -2288,6 +2346,98 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 tokio::task::block_in_place(|| handle.block_on(async move { tools.acp_close(handle_id).await }))
                     .map_err(internal)
             }
+
+            // ── A2A (Google Agent2Agent) tools — Phase 3 ───────────────────
+            // agent↔agent: OpenXgram 이 외부 A2A 에이전트를 호출 (client-only).
+            // ACP 와 동일하게 block_in_place(|| handle.block_on(...)) bridge 로
+            // sync dispatch 에서 async crate API await. a2a_tools 는 Clone.
+            // 반환 struct(AgentCard/Task) → serde_json::to_value 로 Value 화.
+            "a2a_discover" => {
+                let url = args
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'url'"))?
+                    .to_string();
+                let tools = self.a2a_tools.clone();
+                let handle = tokio::runtime::Handle::current();
+                let card = tokio::task::block_in_place(|| {
+                    handle.block_on(async move { tools.discover(&url).await })
+                })
+                .map_err(internal)?;
+                serde_json::to_value(card).map_err(internal)
+            }
+            "a2a_send" => {
+                let agent_url = args
+                    .get("agentUrl")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'agentUrl'"))?
+                    .to_string();
+                let skill = args
+                    .get("skill")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'skill'"))?
+                    .to_string();
+                let params = args
+                    .get("params")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+                let session_id = args
+                    .get("sessionId")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let send_args = openxgram_a2a::mcp::SendTaskArgs {
+                    agent_url,
+                    skill,
+                    params,
+                    session_id,
+                };
+                let tools = self.a2a_tools.clone();
+                let handle = tokio::runtime::Handle::current();
+                let task = tokio::task::block_in_place(|| {
+                    handle.block_on(async move { tools.send_task(send_args).await })
+                })
+                .map_err(internal)?;
+                serde_json::to_value(task).map_err(internal)
+            }
+            "a2a_get" => {
+                let agent_url = args
+                    .get("agentUrl")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'agentUrl'"))?
+                    .to_string();
+                let task_id = args
+                    .get("taskId")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'taskId'"))?
+                    .to_string();
+                let tools = self.a2a_tools.clone();
+                let handle = tokio::runtime::Handle::current();
+                let task = tokio::task::block_in_place(|| {
+                    handle.block_on(async move { tools.get_task(&agent_url, &task_id).await })
+                })
+                .map_err(internal)?;
+                serde_json::to_value(task).map_err(internal)
+            }
+            "a2a_cancel" => {
+                let agent_url = args
+                    .get("agentUrl")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'agentUrl'"))?
+                    .to_string();
+                let task_id = args
+                    .get("taskId")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'taskId'"))?
+                    .to_string();
+                let tools = self.a2a_tools.clone();
+                let handle = tokio::runtime::Handle::current();
+                let task = tokio::task::block_in_place(|| {
+                    handle.block_on(async move { tools.cancel_task(&agent_url, &task_id).await })
+                })
+                .map_err(internal)?;
+                serde_json::to_value(task).map_err(internal)
+            }
+
             other => Err(JsonRpcError {
                 code: ERR_METHOD_NOT_FOUND,
                 message: format!("unknown tool: {other}"),

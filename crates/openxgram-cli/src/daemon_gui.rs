@@ -44,6 +44,10 @@ pub struct GuiServerState {
     /// + GUI conversation-session 매핑 + SSE relay (§3 hosting, §5 lifecycle).
     /// Phase B-2. Clone-cheap (내부 Arc).
     acp: crate::daemon_gui_acp::AcpHttpState,
+    /// A2A (Google Agent2Agent) daemon state — client-only: OpenXgram이 외부/타
+    /// 에이전트의 A2A endpoint 를 호출 (AgentCard discover + tasks/send|get|cancel).
+    /// Phase 3 (ACP-A2A-CORE). AgentCard 호스팅(callee 측)은 후속 작업. Clone-cheap.
+    a2a: crate::daemon_gui_a2a::A2aHttpState,
 }
 
 // (axum 의 layer middleware 가 URI 를 mutate 해도 router matching 은 재실행
@@ -260,6 +264,7 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         data_dir: Arc::new(data_dir),
         db: Arc::new(Mutex::new(db)),
         acp: crate::daemon_gui_acp::AcpHttpState::new(),
+        a2a: crate::daemon_gui_a2a::A2aHttpState::new(),
     };
     let state_clone = state.clone();
 
@@ -566,6 +571,12 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/acp/sessions/{id}/stream", get(acp_session_stream))
         .route("/v1/acp/sessions/{id}/cancel", post(acp_session_cancel))
         .route("/v1/acp/sessions/{id}", axum::routing::delete(acp_session_close))
+        // ── A2A (Google Agent2Agent) — Phase 3 (additive, client-only) ─────
+        // Agent↔agent: OpenXgram calls another agent's A2A endpoint.
+        // All behind require_auth like the other /v1/gui routes.
+        .route("/v1/gui/a2a/agents", get(a2a_agents))
+        .route("/v1/gui/a2a/send", post(a2a_send))
+        .route("/v1/gui/a2a/tasks/{id}", get(a2a_task_get))
         .with_state(state);
 
     // rc.184 — port 자동 fallback. 47302 가 Hyper-V/Windows 예약 port 가면 fail → 다른 port 시도.
@@ -7851,6 +7862,70 @@ async fn acp_session_stream(
     });
     Ok(axum::response::Sse::new(stream)
         .keep_alive(axum::response::sse::KeepAlive::default()))
+}
+
+// ── A2A (Google Agent2Agent) HTTP handlers — Phase 3 (additive) ────────────
+// daemon_gui_a2a 모듈의 free fn 으로 위임. 모든 핸들러 require_auth 후 실행.
+// 모듈 에러 (StatusCode, String) → (StatusCode, Json<ErrorDto>) 매핑.
+// CLIENT-only: OpenXgram이 외부 A2A 에이전트를 호출. callee 측 AgentCard 호스팅은 후속.
+
+fn a2a_err((code, msg): (StatusCode, String)) -> (StatusCode, Json<ErrorDto>) {
+    (code, Json(ErrorDto { error: msg }))
+}
+
+/// `GET /v1/gui/a2a/tasks/{id}` query — A2A 대상 base URL (필수, 추측 default 없음).
+#[derive(Debug, serde::Deserialize)]
+struct A2aTaskQuery {
+    target: String,
+}
+
+/// `GET /v1/gui/a2a/agents` — A2A 로 호출 가능한 에이전트 목록.
+/// HONEST: client-only + AgentCard 호스팅 미구현 → 등록된 peer 를 reachable:false 로
+/// 정직하게 반환 (note 동봉). peer alias 는 PeerStore 에서 조회.
+async fn a2a_agents(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let aliases: Vec<String> = {
+        let mut db = state.db.lock().await;
+        let mut store = PeerStore::new(&mut db);
+        match store.list() {
+            Ok(rows) => rows.into_iter().map(|p| p.alias).collect(),
+            Err(e) => {
+                return Err(internal(&format!("peer list: {e}")));
+            }
+        }
+    };
+    Ok(Json(crate::daemon_gui_a2a::list_agents(&aliases)))
+}
+
+/// `POST /v1/gui/a2a/send` — 대상 AgentCard discover 후 tasks/send.
+/// body: { from_agent?, target, skill?, task?, session_id? }. crate client 재사용.
+async fn a2a_send(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<crate::daemon_gui_a2a::SendBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    crate::daemon_gui_a2a::send(&state.a2a, body)
+        .await
+        .map(Json)
+        .map_err(a2a_err)
+}
+
+/// `GET /v1/gui/a2a/tasks/{id}?target=<url>` — tasks/get 상태 조회.
+async fn a2a_task_get(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<A2aTaskQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    crate::daemon_gui_a2a::get_task(&state.a2a, &q.target, &id)
+        .await
+        .map(Json)
+        .map_err(a2a_err)
 }
 
 fn bad_request(msg: &str) -> (StatusCode, Json<ErrorDto>) {

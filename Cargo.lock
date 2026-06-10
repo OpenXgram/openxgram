@@ -4971,6 +4971,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "openxgram-a2a",
  "openxgram-acp",
  "openxgram-adapter",
  "openxgram-channel",
