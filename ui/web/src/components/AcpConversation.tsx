@@ -119,9 +119,13 @@ export function AcpConversation(props: {
   // 선택: 우상단 pill 행 왼쪽에 끼워넣을 추가 토글(예: TalkTab 의 ⌗ 상태 패널 토글).
   // 헤더 행에 인라인 배치되어 스트리밍/ACP/닫기 pill 과 겹치지 않는다.
   headerExtra?: () => unknown;
-  // 설정 시 헤더에 "⤢ 새 창" 버튼 노출 → 이 alias 의 대화만 별도 창(카톡식 팝업)으로.
+  // 설정 시 헤더에 "⤢ 새 창" 버튼 노출 → 이 alias 의 대화만 별도 창(팝업)으로.
   // 팝업 자신은 이 prop 없이 렌더되어 버튼이 안 보임(중첩 방지).
   popoutAlias?: string | null;
+  // 상세 패널의 "세션 재시작/닫기" — accessor 반환값이 증가하면 세션을 닫고 재구동.
+  restartTrigger?: () => number;
+  // status line 데이터 — 폴더/역할/공개여부/연결 워크플로우 수(모델·토큰은 내부 값 사용).
+  status?: () => { folder?: string | null; role?: string | null; isPublic?: boolean; workflows?: number };
 }) {
   // 대화창만 별도 창으로 — 카톡식. 같은 alias 는 같은 창 이름으로 재사용.
   function openPopout(alias: string) {
@@ -592,6 +596,8 @@ export function AcpConversation(props: {
   }
 
   // 세션 닫기 → DELETE + 스트림 중단. roster 로 복귀하지 않고 에이전트 선택 화면으로.
+  // 세션 닫기 = 재시작. 현 ACP 세션(subprocess)을 종료하고 곧바로 재구동 → 대화창 복귀.
+  // (이전 버그: sessionId=null 로만 두면 preset 이 남아 "구동 중…" 에서 멈춤.)
   async function closeSession() {
     const id = sessionId();
     stopStream?.();
@@ -601,18 +607,30 @@ export function AcpConversation(props: {
       try {
         await acpFetch("DELETE", `/sessions/${encodeURIComponent(id)}`);
       } catch {
-        // best-effort — 닫힘 실패해도 UI 는 선택 화면으로 복귀.
+        // best-effort — 닫힘 실패해도 재구동 시도.
       }
     }
     setSessionId(null);
-    setActiveAgent(null);
-    setBubbles([]);
+    // preset 진입(roster/팝업)이면 재구동 → 대화창 복귀(이전 대화 복원). 멈춤 방지.
+    if (props.preset) {
+      await bootForPreset(props.preset);
+    } else {
+      setActiveAgent(null);
+      setBubbles([]);
+    }
   }
 
   onCleanup(() => {
     stopStream?.();
     const id = sessionId();
     if (id) void acpFetch("DELETE", `/sessions/${encodeURIComponent(id)}`).catch(() => {});
+  });
+
+  // 상세 패널 "세션 재시작" 트리거 — 값이 증가하면 닫고 재구동(대화창 복귀).
+  createEffect<number>((prev) => {
+    const v = props.restartTrigger?.() ?? 0;
+    if (prev !== undefined && v !== prev && v > 0) void closeSession();
+    return v;
   });
 
   function onKey(e: KeyboardEvent) {
@@ -715,7 +733,7 @@ export function AcpConversation(props: {
           <div class="kk-drop-hint">📎 파일을 여기에 놓아 첨부</div>
         </Show>
         <div class="chat-top">
-          <span class="back" onClick={() => void closeSession()}>←</span>
+          <span class="back" onClick={() => props.onClose()}>←</span>
           <div class="ava c-claude">⚡</div>
           <div class="nm">{activeAgent()}</div>
           <div class="meta-r">
@@ -727,7 +745,7 @@ export function AcpConversation(props: {
             <Show when={props.popoutAlias}>
               <span class="kk-acp-pop" title="새 창으로 열기" onClick={() => openPopout(props.popoutAlias!)}>⤢ 새 창</span>
             </Show>
-            <span class="kk-acp-x" title="세션 닫기" onClick={() => void closeSession()}>✕ 닫기</span>
+            {/* 세션 닫기(=재시작)는 헤더에 노출하지 않음 — 상세 패널에서 제어(props.restartTrigger). */}
           </div>
         </div>
 
@@ -798,6 +816,21 @@ export function AcpConversation(props: {
 
         {/* ── 컴포저 (TalkTab 정본 Claude Code 다크 재사용) ── */}
         <div class="composer-wrap">
+          {/* status line — 폴더위치 · 사용모델 · 역할 · 공개여부 · 연결 워크플로우 · 토큰사용량. */}
+          <div class="kk-statusline">
+            <Show when={props.preset?.cwd}>
+              <span class="kk-sl" title={props.preset!.cwd!}>📁 {props.preset!.cwd}</span>
+            </Show>
+            <span class="kk-sl">🤖 {modelName()}</span>
+            <Show when={props.status?.().role}>
+              <span class="kk-sl">🎭 {props.status!().role}</span>
+            </Show>
+            <span class="kk-sl">{props.status?.().isPublic ? "🌐 공개" : "🔒 비공개"}</span>
+            <Show when={(props.status?.().workflows ?? 0) > 0}>
+              <span class="kk-sl">🔀 워크플로우 {props.status!().workflows}</span>
+            </Show>
+            <span class="kk-sl kk-sl-usage">⚡ {usageLabel()}</span>
+          </div>
           <div class="composer">
             <textarea
               class="ph-input"
@@ -909,7 +942,7 @@ export function AcpConversation(props: {
                   <span class="kk-acp-cancel" onClick={() => void cancelTurn()}>■ 취소</span>
                 </Show>
                 {/* 목업 정본: 토큰사용/컨텍스트윈도우 (%) · 비용. 모델명·버전은 모델 칩에 표시. */}
-                <span class="usage" title={`${modelName()} · ${activeAgent() ?? ""}`}>{usageLabel()}</span>
+                {/* 토큰 사용량은 status line(composer 상단)으로 이동 — 중복 제거. */}
                 <span
                   class={`send${draft().trim() && !busy() ? "" : " dis"}`}
                   onClick={() => void sendPrompt()}

@@ -317,6 +317,13 @@
 .kk-at-filter:focus{border-color:#3a4a6a;}
 .kk-at-menu .kk-chip-opt{font-family:ui-monospace,Menlo,monospace; font-size:11.5px;}
 /* 헤더 새 창 버튼 + 대화창 단독 팝업 */
+/* status line (composer 상단) — 폴더·모델·역할·공개·워크플로우·토큰 */
+.kk-statusline{display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; padding:0 4px 8px; font-size:11px; color:#7b8494;}
+.kk-statusline .kk-sl{display:inline-flex; align-items:center; gap:3px; white-space:nowrap; max-width:280px; overflow:hidden; text-overflow:ellipsis;}
+.kk-statusline .kk-sl-usage{margin-left:auto; font-family:ui-monospace,Menlo,monospace; color:#6b7280;}
+.info-actions{padding:10px 14px 4px;}
+.kk-restart-btn{width:100%; background:#222732; color:#cfd5de; border:1px solid #2b303a; border-radius:8px; padding:9px; font-size:12.5px; font-weight:600; cursor:pointer;}
+.kk-restart-btn:hover{background:#2a3140; border-color:#3a4a6a;}
 .kk-acp-pop{font-size:12px; color:#9aa1ad; cursor:pointer; padding:3px 8px; border:1px solid #2b303a; border-radius:7px; white-space:nowrap;}
 .kk-acp-pop:hover{color:#cfd5de; border-color:#3a4a6a;}
 .kk-popup-root{position:fixed; inset:0; display:flex; flex-direction:column; background:var(--surface,#fff);}
@@ -343,6 +350,18 @@
 .modal .btn-go:hover{background:#f0d800;}
 .modal .btn-go:disabled,.modal .btn-q:disabled{opacity:.6; cursor:default;}
 .modal .hint{font-size:11px; color:#aab0bd; text-align:center; margin-top:10px;}
+/* 폴더 트리 선택기 */
+.ft-panel{margin-top:8px; border:1px solid #e7e9ee; border-radius:10px; background:#fafbfc; overflow:hidden;}
+.ft-rootbar{display:flex; gap:6px; padding:7px; border-bottom:1px solid #e7e9ee; background:#f1f2f5;}
+.ft-rootbar .ctl{padding:6px 8px;}
+.ft-scroll{max-height:240px; overflow-y:auto; padding:6px 4px;}
+.ft-node{}
+.ft-row{display:flex; align-items:center; gap:4px; padding:3px 6px; border-radius:6px; cursor:default;}
+.ft-row.sel{background:#fff3bf;}
+.ft-tw{width:16px; text-align:center; color:#9aa1ad; cursor:pointer; font-size:11px; flex:none;}
+.ft-name{font-size:12.5px; color:#2b333f; cursor:pointer; font-family:ui-monospace,Menlo,monospace; white-space:nowrap;}
+.ft-name:hover{color:#1971c2; text-decoration:underline;}
+.ft-hint{font-size:10.5px; color:#aab0bd; padding:6px 8px; border-top:1px solid #e7e9ee;}
 /* 응답 대기 타이핑 인디케이터 */
 .kk-acp-typing .body{color:#8a94a6; font-size:13px; display:flex; align-items:center; gap:7px;}
 .kk-typing{display:inline-flex; gap:3px;}

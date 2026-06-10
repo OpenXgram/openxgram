@@ -124,6 +124,8 @@ function fmtPreviewTime(iso: string): string {
 export function TalkTab(props: { onJumpToSettings?: () => void }) {
   const [agents, { refetch: refetchAgents }] = createResource<AgentRow[]>(() => invoke("agents_list"));
   const [addOpen, setAddOpen] = createSignal(false);
+  // 상세 패널 "세션 재시작" 트리거 — 증가시키면 AcpConversation 이 세션을 닫고 재구동.
+  const [restartTick, setRestartTick] = createSignal(0);
   const [peers] = createResource<PeerDto[]>(() => invoke("peers_list"), { initialValue: [] });
   const [recent] = createResource<MessageDto[]>(() => invoke("messages_recent", { limit: 100 }), { initialValue: [] });
   // 정보 패널 소스 — sessions(이 머신 tmux+워크트리) · workflows(orchestrator 매칭). 동적 only.
@@ -346,6 +348,13 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
             <AcpConversation
               preset={acpPreset()}
               popoutAlias={selAgent()?.alias ?? null}
+              restartTrigger={restartTick}
+              status={() => ({
+                folder: selAgent()?.project_path ?? null,
+                role: selAgent()?.role ?? null,
+                isPublic: !!selAgent()?.is_public,
+                workflows: selWorkflows().length,
+              })}
               onClose={() => setMobileChat(false)}
               // ⌗ 상태 토글을 ACP 헤더 pill 행(.meta-r) 왼쪽에 인라인 배치 →
               // 스트리밍/⚡ACP/✕닫기 pill 과 겹치지 않음(절대 배치 제거).
@@ -373,6 +382,13 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
             <div class="info-head">
               <span class="t">{a().alias} · 상태</span>
               <span class="x" onClick={() => setInfoOpen(false)}>✕</span>
+            </div>
+
+            {/* 세션 제어 — 닫기는 헤더 대신 여기서. 닫으면 재구동되어 대화창 복귀. */}
+            <div class="info-actions">
+              <button class="kk-restart-btn" onClick={() => setRestartTick((n) => n + 1)} title="ACP 세션을 닫고 다시 구동(대화 복원)">
+                ↻ 세션 재시작
+              </button>
             </div>
 
             <div>

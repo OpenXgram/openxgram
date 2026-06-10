@@ -277,7 +277,9 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         "ai_type": {"type": "string", "enum": ["claude", "codex", "gemini"], "description": "Phase 2: AI 종류 (동적 설정 탐지 분기). 기본 claude."},
                         "classification": {"type": "string", "enum": ["primary", "project", "special"], "description": "Phase 2: 명부 분류. primary=👑상시 / project=📁프로젝트 / special=⚙️특수. 기본 project."},
                         "execution_mode": {"type": "string", "enum": ["always", "on_demand", "heartbeat"], "description": "Phase 2: 실행모드. always=상시 / on_demand=선택 / heartbeat=깨움. 기본 on_demand."},
-                        "worktree": {"type": "string", "description": "Phase 2: git worktree 경로 (선택)."}
+                        "worktree": {"type": "string", "description": "Phase 2: git worktree 경로 (선택)."},
+                        "project_path": {"type": "string", "description": "에이전트 프로젝트 폴더 절대경로 (예: /home/llm/projects/starian-set). ACP 대화 cwd 로 사용 + 로스터 표시."},
+                        "group_name": {"type": "string", "description": "에이전트 그룹명 (선택, 예: 배포팀)."}
                     },
                     "required": ["role"]
                 }),
@@ -1701,12 +1703,18 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 let capabilities = args.get("capabilities")
                     .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "[]".into()));
                 let now = chrono::Utc::now().to_rfc3339();
+                // 프로젝트 폴더 + 그룹 — 에이전트가 생성 요청 시 지정 가능(GUI 추가 모달과 동일).
+                let project_path = args.get("project_path").and_then(|v| v.as_str());
+                let group_name = args.get("group_name").and_then(|v| v.as_str());
                 let _ = self.db.conn().execute(
-                    "INSERT INTO agent_capabilities (alias, role, description, capabilities, updated_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5) \
+                    "INSERT INTO agent_capabilities (alias, role, description, capabilities, project_path, group_name, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
                      ON CONFLICT(alias) DO UPDATE SET role=excluded.role, description=excluded.description, \
-                       capabilities=excluded.capabilities, updated_at=excluded.updated_at",
-                    rusqlite::params![entry.alias, role, description, capabilities, now],
+                       capabilities=excluded.capabilities, \
+                       project_path=COALESCE(excluded.project_path, project_path), \
+                       group_name=COALESCE(excluded.group_name, group_name), \
+                       updated_at=excluded.updated_at",
+                    rusqlite::params![entry.alias, role, description, capabilities, project_path, group_name, now],
                 );
                 // Phase 2 — 프로필 차원 upsert (agent_profiles). 미제공 시 기본값, 잘못된 enum 은 거부(rule #1).
                 let ai_type = args.get("ai_type").and_then(|v| v.as_str()).unwrap_or("claude");
