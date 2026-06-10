@@ -1,6 +1,6 @@
 {
   "name": "openxgram-web-app",
-  "version": "0.2.0-rc.290",
+  "version": "0.2.0-rc.291",
   "type": "module",
   "scripts": {
     "dev": "vite",
