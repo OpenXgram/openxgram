@@ -538,6 +538,13 @@ export function AcpConversation(props: {
           <Show when={bubbles().length === 0}>
             <div class="kk-talk-empty">세션 준비됨. 아래에서 첫 프롬프트를 보내세요.</div>
           </Show>
+          {/* 응답 대기 표시 — 메시지 보낸 뒤 에이전트 응답이 오기 전까지 '응답 중' 인디케이터. */}
+          <Show when={busy() && bubbles().length > 0}>
+            <div class="agent kk-acp-typing">
+              <div class="head"><span class="nm">⚡ 에이전트</span></div>
+              <div class="body"><span class="kk-typing"><i /><i /><i /></span> 응답 중…</div>
+            </div>
+          </Show>
         </div>
 
         {/* ── 컴포저 (TalkTab 정본 Claude Code 다크 재사용) ── */}

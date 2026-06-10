@@ -305,6 +305,13 @@
 .kk-talk-chat .composer .send:hover{filter:brightness(1.1);}
 .kk-talk-chat .composer .send.dis{background:#2b303a; color:#6b7280; cursor:not-allowed; filter:none;}
 .kk-talk-err{color:#ff8787; font-size:11.5px; margin-top:8px; font-family:ui-monospace,Menlo,monospace;}
+/* 응답 대기 타이핑 인디케이터 */
+.kk-acp-typing .body{color:#8a94a6; font-size:13px; display:flex; align-items:center; gap:7px;}
+.kk-typing{display:inline-flex; gap:3px;}
+.kk-typing i{width:5px; height:5px; border-radius:50%; background:#8a94a6; display:inline-block; animation:kk-typing-b 1s infinite ease-in-out;}
+.kk-typing i:nth-child(2){animation-delay:.15s;}
+.kk-typing i:nth-child(3){animation-delay:.3s;}
+@keyframes kk-typing-b{0%,60%,100%{opacity:.3; transform:translateY(0);} 30%{opacity:1; transform:translateY(-3px);}}
 
 /* ---------- 우측 상세 패널 (폴더·tmux·워크트리·워크플로우, 정본 #info lines 142-156 충실 포팅) ----------
    목업의 .info 는 flex 형제로 슬라이드인. 여기선 .kk-talk-chat(position:relative) 안에서
