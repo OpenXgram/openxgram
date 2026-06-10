@@ -159,15 +159,20 @@ fn spawn_opts_from_body(body: &CreateSessionBody) -> openxgram_acp::SpawnOpts {
     );
     let mut extra_env: Vec<(String, String)> = Vec::new();
     match body.model.as_deref() {
+        Some("haiku") => {
+            extra_env.push(("ANTHROPIC_MODEL".into(), "claude-haiku-4-5-20251001".into()))
+        }
         Some("sonnet") => extra_env.push(("ANTHROPIC_MODEL".into(), "claude-sonnet-4-6".into())),
         Some("opus") => extra_env.push(("ANTHROPIC_MODEL".into(), "claude-opus-4-8".into())),
         _ => {} // "default"/None → adapter default
     }
+    // thinking effort 5단계 → MAX_THINKING_TOKENS. off/None → 확장 사고 비활성(env 미설정).
     match body.thinking.as_deref() {
-        Some("high") => extra_env.push(("MAX_THINKING_TOKENS".into(), "31999".into())),
-        Some("medium") => extra_env.push(("MAX_THINKING_TOKENS".into(), "16000".into())),
+        Some("ultra") => extra_env.push(("MAX_THINKING_TOKENS".into(), "31999".into())),
+        Some("high") => extra_env.push(("MAX_THINKING_TOKENS".into(), "16000".into())),
+        Some("medium") => extra_env.push(("MAX_THINKING_TOKENS".into(), "10000".into())),
         Some("low") => extra_env.push(("MAX_THINKING_TOKENS".into(), "4000".into())),
-        _ => {}
+        _ => {} // "off"/None
     }
     openxgram_acp::SpawnOpts {
         permission_allow,

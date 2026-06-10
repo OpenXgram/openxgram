@@ -98,6 +98,10 @@ const ROUTES: Record<string, Route> = {
  // 기능 배선 — wiki 본문 CRUD · fs 트리/파일 · 머신 목록 (daemon_gui.rs 신규)
  wiki_body_get: { method: "GET", path: "/wiki/{ptype}/{slug}"},
  wiki_body_put: { method: "PUT", path: "/wiki/{ptype}/{slug}", body: true},
+ // ACP 대화 영속화 — 새로고침/재시작 후 복원.
+ acp_conv_list: { method: "GET", path: "/acp/conversations/{key}/messages", emptyAs: []},
+ acp_conv_add: { method: "POST", path: "/acp/conversations/{key}/messages", body: true},
+ acp_conv_clear: { method: "DELETE", path: "/acp/conversations/{key}/messages"},
  fs_tree: { method: "GET", path: "/fs/tree"},
  fs_file_get: { method: "GET", path: "/fs/file"},
  fs_file_put: { method: "PUT", path: "/fs/file", body: true},

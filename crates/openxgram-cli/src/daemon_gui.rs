@@ -461,6 +461,11 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/peers/{alias}/send-unsigned", post(gui_peer_send_unsigned))
         // 메신저 카드 v1.3 Step 0 — 메시지 송수신.
         .route("/v1/gui/messages", get(gui_messages_recent))
+        // ACP 대화 영속화 — 새로고침/재시작 후 복원.
+        .route(
+            "/v1/gui/acp/conversations/{key}/messages",
+            get(gui_acp_conv_list).post(gui_acp_conv_add).delete(gui_acp_conv_clear),
+        )
         // rc.212 — peer conversation unified view. 한 peer 와의 전 session (outbox/inbox/Peer·/Claude Code·) 합쳐서 시간순.
         .route("/v1/gui/peer_conversation/{alias}", get(gui_peer_conversation))
         .route("/v1/gui/peers/{alias}/send", post(gui_peer_send))
@@ -3480,6 +3485,61 @@ async fn gui_wiki_history(
     }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
         .filter_map(|r| r.ok()).collect();
     Ok(Json(rows))
+}
+
+// ── ACP 대화 영속화 — 새로고침/데몬 재시작 후 복원 (conv_key = 에이전트 alias) ──
+async fn gui_acp_conv_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT role, text, created_at FROM acp_messages WHERE conv_key = ?1 ORDER BY id",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
+    let rows = stmt.query_map(rusqlite::params![key], |r| {
+        Ok(serde_json::json!({
+            "role": r.get::<_, String>(0)?,
+            "text": r.get::<_, String>(1)?,
+            "created_at": r.get::<_, String>(2)?,
+        }))
+    }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(rows))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AcpConvAddBody { pub role: String, pub text: String }
+async fn gui_acp_conv_add(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+    Json(body): Json<AcpConvAddBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    if body.text.trim().is_empty() {
+        return Ok(Json(serde_json::json!({ "ok": false, "skipped": "empty" })));
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO acp_messages (conv_key, role, text, created_at) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![key, body.role, body.text, now],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("ins: {e}")})))?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn gui_acp_conv_clear(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    db.conn().execute("DELETE FROM acp_messages WHERE conv_key = ?1", rusqlite::params![key])
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("del: {e}")})))?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 #[derive(Debug, Deserialize)]

@@ -148,19 +148,23 @@ export function AcpConversation(props: {
   ];
 
   const PERM_OPTS = [
-    { v: "default", label: "Default" },
+    { v: "default", label: "Default (확인)" },
+    { v: "plan", label: "Plan (읽기전용)" },
     { v: "acceptEdits", label: "Accept Edits" },
     { v: "bypassPermissions", label: "🛡 Bypass Permissions" },
   ];
   const MODEL_OPTS = [
     { v: "default", label: "Default (recommended)" },
+    { v: "haiku", label: "Haiku 4.5" },
     { v: "sonnet", label: "Sonnet 4.6" },
     { v: "opus", label: "Opus 4.8" },
   ];
   const THINK_OPTS = [
-    { v: "high", label: "High" },
-    { v: "medium", label: "Medium" },
+    { v: "off", label: "Off (없음)" },
     { v: "low", label: "Low" },
+    { v: "medium", label: "Medium" },
+    { v: "high", label: "High" },
+    { v: "ultra", label: "Ultra (Max)" },
   ];
   const labelOf = (opts: { v: string; label: string }[], v: string) =>
     opts.find((o) => o.v === v)?.label ?? v;
@@ -168,6 +172,7 @@ export function AcpConversation(props: {
   // 모델별 컨텍스트 윈도우 + 대략 단가($/Mtok) — usage 표시(목업 `60k/1.00M (6%) · $..`)용.
   const MODEL_META: Record<string, { ctx: number; rate: number; name: string }> = {
     default: { ctx: 200000, rate: 15, name: "Opus 4.8" },
+    haiku: { ctx: 200000, rate: 1, name: "Haiku 4.5" },
     sonnet: { ctx: 1000000, rate: 3, name: "Sonnet 4.6" },
     opus: { ctx: 200000, rate: 15, name: "Opus 4.8" },
   };
@@ -413,6 +418,36 @@ export function AcpConversation(props: {
     }
   }
 
+  // ── 대화 영속화 — 에이전트 alias(preset.label) 기준 conv_key. 새로고침/재시작 후 복원. ──
+  function convKey(): string {
+    return props.preset?.label || props.preset?.adapter || "default";
+  }
+  async function recordMsg(role: "me" | "agent" | "note", text: string) {
+    if (!text.trim()) return;
+    try {
+      await invoke("acp_conv_add", { key: convKey(), role, text });
+    } catch {
+      /* 영속화 실패는 대화 흐름을 막지 않음 */
+    }
+  }
+  async function loadHistory(): Promise<boolean> {
+    try {
+      const rows = await invoke<{ role: string; text: string }[]>("acp_conv_list", { key: convKey() });
+      if (!Array.isArray(rows) || rows.length === 0) return false;
+      const restored: Bubble[] = rows.map((r) => {
+        if (r.role === "agent") return { id: nextId++, kind: "agent", segs: segmentText(r.text), time: "" };
+        if (r.role === "note") return { id: nextId++, kind: "note", text: r.text, time: "" };
+        return { id: nextId++, kind: "me", text: r.text, time: "" };
+      });
+      restored.push({ id: nextId++, kind: "note", text: "↑ 이전 대화 복원됨 — 이어서 대화하세요.", time: nowClock() });
+      setBubbles(restored);
+      scrollDown();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // 에이전트 선택 → 세션 생성 + SSE 구독.
   // cwd 생략 시 DEFAULT_ACP_CWD, execMode 생략 시 on_demand. label 은 헤더 표시명(생략 시 adapter).
   async function spawn(agent: string, opts?: SpawnArgs) {
@@ -461,6 +496,8 @@ export function AcpConversation(props: {
           pushBubble({ id: nextId++, kind: "note", text: `⚠ 스트림: ${msg}`, time: nowClock() });
         },
       );
+      // 영속화된 이전 대화 복원 (있으면 시작 note 를 대체). keepHistory(칩 재구동) 시엔 유지.
+      if (!opts?.keepHistory) await loadHistory();
     } catch (e) {
       setSpawnErr((e as Error)?.message ?? String(e));
     } finally {
@@ -474,7 +511,9 @@ export function AcpConversation(props: {
     if (!id || !text || busy()) return;
     setBusy(true);
     setSpawnErr(null);
+    const uid = nextId; // 이번 turn 의 user 버블 id — 이후 생성된 agent 버블 식별용.
     pushBubble({ id: nextId++, kind: "me", text, time: nowClock() });
+    void recordMsg("me", text); // 사용자 메시지 영속화.
     setDraft("");
     curAgentBubbleId = null;
     try {
@@ -496,6 +535,13 @@ export function AcpConversation(props: {
     } finally {
       setBusy(false);
     }
+    // turn 종료 후 에이전트 응답 텍스트 영속화(이번 turn 에 생성된 agent 버블 합산).
+    const aText = bubbles()
+      .filter((b) => b.kind === "agent" && b.id > uid)
+      .map((b) => (b.kind === "agent" ? b.segs.filter((s) => s.kind === "text").map((s) => s.text).join("") : ""))
+      .join("\n")
+      .trim();
+    if (aText) void recordMsg("agent", aText);
   }
 
   async function cancelTurn() {

@@ -258,6 +258,12 @@ const MIGRATIONS: &[Migration] = &[
         name: "agent_profiles",
         sql: include_str!("../migrations/0048_agent_profiles.sql"),
     },
+    // ACP 대화 영속화 — 새로고침/재시작 후 대화 기록·복원.
+    Migration {
+        version: 49,
+        name: "acp_messages",
+        sql: include_str!("../migrations/0049_acp_messages.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {
