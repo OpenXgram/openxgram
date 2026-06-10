@@ -238,7 +238,7 @@
 .kk-talk-roster .rcol .badge{background:#fa5252; color:#fff; font-size:10.5px; font-weight:800; border-radius:11px; min-width:18px; height:18px; padding:0 5px; display:flex; align-items:center; justify-content:center;}
 
 /* ---------- 우측 대화방 (정본 .chat / .chat-top / .pill) ---------- */
-.kk-talk-chat{flex:1; min-width:0; display:flex; flex-direction:column; background:var(--kk-surface);}
+.kk-talk-chat{flex:1; min-width:0; display:flex; flex-direction:column; background:var(--kk-surface); position:relative;}
 .kk-talk-blank{flex:1; display:flex; align-items:center; justify-content:center; color:var(--kk-sub); font-size:13px;}
 .kk-talk-chat .chat-top{background:#fff; padding:13px 20px; display:flex; align-items:center; gap:11px; border-bottom:1px solid var(--kk-line); flex:none;}
 .kk-talk-chat .chat-top .ava{width:34px; height:34px; border-radius:11px; flex:none; display:flex; align-items:center; justify-content:center; font-size:14px; color:#fff; font-weight:700;}
@@ -248,6 +248,8 @@
 .kk-talk-chat .pill .pdot{width:7px; height:7px; border-radius:50%; background:var(--kk-online);}
 .kk-talk-chat .pill.off{color:#9aa1ad; background:#f1f3f6;}
 .kk-talk-chat .pill.off .pdot{background:#c4c9d2;}
+.kk-talk-chat .pill.clk{cursor:pointer;}
+.kk-talk-chat .pill.clk:hover{background:#e4e8ee;}
 .kk-talk-chat .back{display:none; font-size:21px; color:#5b6678; cursor:pointer; margin-right:4px; align-items:center; line-height:1;}
 
 .kk-talk-chat .msgs{flex:1; overflow-y:auto; padding:20px 26px; display:flex; flex-direction:column; gap:16px; min-height:0;}
@@ -301,6 +303,24 @@
 .kk-talk-chat .composer .send:hover{filter:brightness(1.1);}
 .kk-talk-chat .composer .send.dis{background:#2b303a; color:#6b7280; cursor:not-allowed; filter:none;}
 .kk-talk-err{color:#ff8787; font-size:11.5px; margin-top:8px; font-family:ui-monospace,Menlo,monospace;}
+
+/* ---------- 우측 상세 패널 (폴더·tmux·워크트리·워크플로우, 정본 #info lines 142-156 충실 포팅) ----------
+   목업의 .info 는 flex 형제로 슬라이드인. 여기선 .kk-talk-chat(position:relative) 안에서
+   오른쪽 절대배치 슬라이드인으로 렌더(대화 페인 내부에 종속). */
+.kk-talk .info{position:absolute; top:0; right:0; bottom:0; width:250px; background:#fafbfc; border-left:1px solid var(--kk-line); display:none; flex-direction:column; padding:14px 16px 18px; gap:18px; overflow-y:auto; z-index:5; box-shadow:-6px 0 18px rgba(20,24,31,.06);}
+.kk-talk .info.show{display:flex;}
+.kk-talk .info-head{display:flex; align-items:center; justify-content:space-between; margin:-2px 0 -4px;}
+.kk-talk .info-head .t{font-size:13px; font-weight:800; color:var(--kk-ink);}
+.kk-talk .info-head .x{font-size:16px; color:#aab0bd; cursor:pointer; line-height:1;}
+.kk-talk .info h3{font-size:11px; font-weight:700; color:var(--kk-sub); letter-spacing:.4px; margin-bottom:9px; text-transform:uppercase;}
+.kk-talk .info .folder{font-size:12.5px; color:#3b4250; background:#eef1f5; border-radius:8px; padding:8px 10px; font-family:ui-monospace,Menlo,monospace; word-break:break-all;}
+.kk-talk .info .sess{display:flex; align-items:center; gap:9px; padding:8px 9px; border-radius:9px; background:#fff; border:1px solid var(--kk-line); margin-bottom:7px;}
+.kk-talk .info .sess .sd{width:8px; height:8px; border-radius:50%; background:var(--kk-online); flex:none;}
+.kk-talk .info .sess .sn{font-size:12.5px; color:#2b333f; font-family:ui-monospace,Menlo,monospace; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.kk-talk .info .sess .sx{font-size:10.5px; color:var(--kk-sub);}
+.kk-talk .info .wt{display:flex; align-items:center; gap:8px; font-size:12px; color:#3b4250; background:#fff; border:1px solid var(--kk-line); border-radius:9px; padding:8px 9px; font-family:ui-monospace,Menlo,monospace; margin-bottom:7px;}
+.kk-talk .info .wt .b{font-size:10px; color:#7b8494; background:#eef1f5; border-radius:6px; padding:1px 6px; margin-left:auto;}
+.kk-talk .info .info-empty{font-size:11.5px; color:#b6bcc6; line-height:1.5; padding:2px 0;}
 
 /* ---------- 모바일 반응형 (정본 @media max-width:900px lines 349-371 충실 포팅) ----------
    카카오톡 패턴: 좁은 폭 → 명부 전체화면 / 행 탭 시 대화방이 우→좌 슬라이드인 전체화면 + ← 뒤로.

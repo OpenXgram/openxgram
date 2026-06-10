@@ -30,6 +30,35 @@ interface PeerDto {
   machine?: string;
 }
 
+// sessions 라우트(SessionsDto) — Messenger.tsx 와 동일 contract. 이 에이전트의 tmux 세션·워크트리 소스.
+interface DetectedSession {
+  kind: "tmux" | "claude_project" | "xgram_session";
+  identifier: string;
+  display: string;
+  status: "active" | "attached" | "detached" | "stale";
+  windows: number | null;
+  attached: boolean | null;
+  created_at: string | null;
+  last_active_at: string | null;
+  agent_id: string | null;
+  // rc.228 — 세션에 nested 된 git worktree (path/branch). 패널 워크트리 섹션 소스.
+  worktrees?: { path: string; branch?: string | null }[];
+}
+interface SessionsDto {
+  machine: { hostname: string; alias: string; tailscale_ip: string | null };
+  sessions: DetectedSession[];
+}
+
+// workflows_list 라우트(FlowTab 과 동일 contract). orchestrator 로 이 에이전트 참여 여부 판정.
+interface WorkflowDto {
+  id: string;
+  name: string;
+  description?: string | null;
+  enabled?: boolean | null;
+  orchestrator?: string | null;
+  cron_expr?: string | null;
+}
+
 interface MessageDto {
   id: string;
   session_id: string;
@@ -153,6 +182,9 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
   const [agents] = createResource<AgentRow[]>(() => invoke("agents_list"));
   const [peers] = createResource<PeerDto[]>(() => invoke("peers_list"), { initialValue: [] });
   const [recent] = createResource<MessageDto[]>(() => invoke("messages_recent", { limit: 100 }), { initialValue: [] });
+  // 정보 패널 소스 — sessions(이 머신 tmux+워크트리) · workflows(orchestrator 매칭). 동적 only.
+  const [sessions] = createResource<SessionsDto | null>(() => invoke("sessions"), { initialValue: null });
+  const [workflows] = createResource<WorkflowDto[]>(() => invoke("workflows_list"), { initialValue: [] });
 
   const [selected, setSelected] = createSignal<string | null>(null);
   const [draft, setDraft] = createSignal("");
@@ -161,6 +193,8 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
   const [mobileChat, setMobileChat] = createSignal(false);
   // ACP 모드 — 활성 시 우측 패널이 peer 대화 대신 ACP 대화방을 렌더. peer 흐름은 그대로 유지.
   const [acpMode, setAcpMode] = createSignal(false);
+  // 정보 사이드 패널(폴더·tmux·워크트리·워크플로우) 열림. tmux/worktree pill 클릭 → 토글, ✕ → 닫힘.
+  const [infoOpen, setInfoOpen] = createSignal(false);
 
   const [convo, { refetch: refetchConvo }] = createResource(
     () => selected() ?? undefined,
@@ -216,6 +250,49 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
 
   const selAgent = createMemo(() => (agents() ?? []).find((a) => a.alias === selected()) ?? null);
   const selPeer = createMemo(() => peerMap().get((selected() ?? "").toLowerCase()) ?? null);
+
+  // selected 변경 시 정보 패널 닫음(다른 에이전트로 이동하면 상태 초기화).
+  createEffect(() => { selected(); setInfoOpen(false); });
+
+  // 선택 에이전트의 tmux 세션 — sessions 라우트에서 agent_id 또는 display/identifier 가 alias 와 매칭되는 것.
+  //   tmux kind 만(목업 "실행 중 tmux"). 매칭 데이터 없으면 빈 배열 → 패널은 빈 상태 힌트 렌더.
+  const selSessions = createMemo<DetectedSession[]>(() => {
+    const alias = (selected() ?? "").toLowerCase();
+    if (!alias) return [];
+    const all = sessions()?.sessions ?? [];
+    return all.filter((s) => {
+      if (s.kind !== "tmux") return false;
+      const aid = (s.agent_id ?? "").toLowerCase();
+      const disp = (s.display ?? "").toLowerCase();
+      const ident = (s.identifier ?? "").toLowerCase();
+      return aid === alias || disp === alias || ident === alias || ident === `tmux:${alias}`;
+    });
+  });
+
+  // 선택 에이전트 워크트리 — 매칭된 세션들의 nested worktrees 합집합(path 기준 dedup).
+  const selWorktrees = createMemo<{ path: string; branch?: string | null }[]>(() => {
+    const seen = new Set<string>();
+    const out: { path: string; branch?: string | null }[] = [];
+    for (const s of selSessions()) {
+      for (const w of s.worktrees ?? []) {
+        if (w.path && !seen.has(w.path)) { seen.add(w.path); out.push(w); }
+      }
+    }
+    return out;
+  });
+
+  // 폴더 끝 세그먼트만 짧게(목업 .sn 처럼). 전체 경로는 title 로.
+  const baseName = (p: string) => p.replace(/\/+$/, "").split("/").pop() || p;
+
+  // 참여 중 워크플로우 — orchestrator 가 이 에이전트인 것만(실제 소유 필드). 없으면 빈 배열.
+  const selWorkflows = createMemo<WorkflowDto[]>(() => {
+    const alias = (selected() ?? "").toLowerCase();
+    if (!alias) return [];
+    return (workflows() ?? []).filter((w) => (w.orchestrator ?? "").toLowerCase() === alias);
+  });
+
+  // 세션 시작 시각 — 목업 "claude · 9:02~" 의 시각 부분.
+  const sessStart = (s: DetectedSession) => fmtClock(s.created_at ?? s.last_active_at ?? "");
 
   // 메시지 + 날짜 구분선 삽입.
   const rows = createMemo(() => {
@@ -392,12 +469,9 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
                   >
                     <span class="pill"><span class="pdot" />온라인</span>
                   </Show>
-                  <Show when={a().machine || selPeer()?.machine}>
-                    <span class="pill">🖥 {a().machine || selPeer()?.machine}</span>
-                  </Show>
-                  <Show when={a().group_name}>
-                    <span class="pill">👥 {a().group_name}</span>
-                  </Show>
+                  {/* 정본 chat-top: 온라인 + tmux N + worktree N (클릭 → 정보 패널). 폴더·머신은 패널 안으로 이동. */}
+                  <span class="pill clk" onClick={() => setInfoOpen((v) => !v)}>⌗ tmux {selSessions().length}</span>
+                  <span class="pill clk" onClick={() => setInfoOpen((v) => !v)}>🌿 worktree {selWorktrees().length}</span>
                 </div>
               </div>
 
@@ -482,6 +556,81 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
                     </div>
                   </div>
                   <Show when={sendErr()}><div class="kk-talk-err">⚠ 전송 실패: {sendErr()}</div></Show>
+                </div>
+              </div>
+
+              {/* ── 정보 사이드 패널 (정본 #info) — tmux/worktree pill 클릭 시 슬라이드인 ── */}
+              <div class={`info${infoOpen() ? " show" : ""}`}>
+                <div class="info-head">
+                  <span class="t">{a().alias} · 상태</span>
+                  <span class="x" onClick={() => setInfoOpen(false)}>✕</span>
+                </div>
+
+                <div>
+                  <h3>폴더</h3>
+                  <Show when={a().project_path} fallback={<div class="folder">—</div>}>
+                    <div class="folder" title={a().project_path!}>{a().project_path}</div>
+                  </Show>
+                </div>
+
+                <div>
+                  <h3>
+                    실행 중 tmux · {selSessions().length}{" "}
+                    <span style="font-weight:500;color:#b6bcc6">(클릭 → 라이브 열기)</span>
+                  </h3>
+                  <Show
+                    when={selSessions().length > 0}
+                    fallback={<div class="info-empty">이 머신에서 감지된 tmux 세션이 없습니다.</div>}
+                  >
+                    <For each={selSessions()}>
+                      {(s) => (
+                        <div class="sess">
+                          <span class="sd" />
+                          <span class="sn">{s.display || s.identifier}</span>
+                          <span class="sx">{s.kind}{sessStart(s) ? ` · ${sessStart(s)}~` : ""}</span>
+                        </div>
+                      )}
+                    </For>
+                  </Show>
+                </div>
+
+                <div>
+                  <h3>워크트리 · {selWorktrees().length}</h3>
+                  <Show
+                    when={selWorktrees().length > 0}
+                    fallback={<div class="info-empty">git 워크트리가 없습니다.</div>}
+                  >
+                    <For each={selWorktrees()}>
+                      {(w) => (
+                        <div class="wt" title={w.path}>
+                          🌿 {baseName(w.path)}
+                          <Show when={w.branch}><span class="b">{w.branch}</span></Show>
+                        </div>
+                      )}
+                    </For>
+                  </Show>
+                </div>
+
+                <div>
+                  <h3>참여 중 워크플로우 · {selWorkflows().length}</h3>
+                  <Show
+                    when={selWorkflows().length > 0}
+                    fallback={<div class="info-empty">참여 중인 워크플로우가 없습니다.</div>}
+                  >
+                    <For each={selWorkflows()}>
+                      {(w) => (
+                        <div class="sess">
+                          <span class="sd" />
+                          <span class="sn" style="font-family:inherit;">{w.name}</span>
+                          <span class="sx">{w.enabled === false ? "중지됨" : "활성"}</span>
+                        </div>
+                      )}
+                    </For>
+                  </Show>
+                </div>
+
+                <div style="font-size:11px;color:#b6bcc6;line-height:1.5;">
+                  정보·설정 수정은 <b>에이전트 탭</b>에서.
                 </div>
               </div>
             </>
