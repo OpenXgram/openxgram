@@ -109,10 +109,26 @@ export function ConfigTab() {
     }
   }
 
-  // 물리 머신 목록 — 로컬 머신 먼저, 그다음 tailscale peer.
+  // Tailscale FUNNEL ingress infra(funnel-ingress-node 등)는 실제 머신이 아니므로 제외.
+  const isInfraHost = (h: string) => {
+    const s = h.toLowerCase();
+    return s === "funnel-ingress-node" || s.includes("funnel-ingress") || s.includes("ingress-node");
+  };
+
+  // 물리 머신 목록 — infra/noise 제외 → hostname 기준 dedupe(local 우선) → 로컬 머신 먼저.
   const machineRows = () => {
     const list = machines()?.machines ?? [];
-    return [...list].sort((a, b) => (b.is_local ? 1 : 0) - (a.is_local ? 1 : 0));
+    // 1) infra ingress 노드 제외 (hostname 없는 항목도 제외)
+    const real = list.filter((m) => m.hostname && !isInfraHost(m.hostname));
+    // 2) hostname 기준 dedupe — is_local 항목을 우선 보존
+    const byHost = new Map<string, MachineRow>();
+    for (const m of real) {
+      const key = m.hostname as string;
+      const existing = byHost.get(key);
+      if (!existing || (m.is_local && !existing.is_local)) byHost.set(key, m);
+    }
+    // 3) 로컬 머신 먼저
+    return [...byHost.values()].sort((a, b) => (b.is_local ? 1 : 0) - (a.is_local ? 1 : 0));
   };
   // 로컬 머신은 online 필드가 없음 — 항상 온라인으로 간주.
   const isMachineOnline = (m: MachineRow) => m.is_local === true || m.online === true;

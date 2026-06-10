@@ -105,7 +105,13 @@ function blocksToText(content: unknown): string {
   return parts.join("\n");
 }
 
-export function AcpConversation(props: { onClose: () => void; preset?: AcpPreset | null }) {
+export function AcpConversation(props: {
+  onClose: () => void;
+  preset?: AcpPreset | null;
+  // 선택: 우상단 pill 행 왼쪽에 끼워넣을 추가 토글(예: TalkTab 의 ⌗ 상태 패널 토글).
+  // 헤더 행에 인라인 배치되어 스트리밍/ACP/닫기 pill 과 겹치지 않는다.
+  headerExtra?: () => unknown;
+}) {
   const [agents, setAgents] = createSignal<AgentInfo[] | null>(null);
   const [agentsErr, setAgentsErr] = createSignal<string | null>(null);
   const [sessionId, setSessionId] = createSignal<string | null>(null);
@@ -441,6 +447,7 @@ export function AcpConversation(props: { onClose: () => void; preset?: AcpPreset
           <div class="ava c-claude">⚡</div>
           <div class="nm">{activeAgent()}</div>
           <div class="meta-r">
+            <Show when={props.headerExtra}>{props.headerExtra!() as never}</Show>
             <Show when={streaming()} fallback={<span class="pill off"><span class="pdot" />스트림 끊김</span>}>
               <span class="pill"><span class="pdot" />스트리밍</span>
             </Show>

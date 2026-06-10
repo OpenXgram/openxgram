@@ -207,9 +207,8 @@
    .me/.agent/.toolcall/pre.code/.composer 규칙을 verbatim 값으로 재현. 샘플 데이터만 라이브 바인딩.
    =========================================================== */
 .kk-talk{display:flex; height:100%; min-height:0; position:relative;}
-/* 정보 패널 토글 — ACP 대화 중 우상단 고정 pill(peer chat-top 제거로 별도 트리거). 패널 위(z-index)·우측 정렬. */
-.kk-talk .kk-info-toggle{position:absolute; top:12px; right:14px; z-index:6; font-size:11px; font-weight:700; background:#f1f3f6; color:#5b6678; border-radius:20px; padding:5px 11px; display:inline-flex; align-items:center; gap:5px; cursor:pointer; box-shadow:0 1px 4px rgba(20,24,31,.08);}
-.kk-talk .kk-info-toggle:hover{background:#e4e8ee;}
+/* ⌗ 상태 토글은 더 이상 절대 배치하지 않는다 — ACP 헤더(.chat-top .meta-r)에 인라인 pill 로
+   삽입되어(headerExtra) 스트리밍/⚡ACP/✕닫기 pill 과 같은 행에 놓여 겹치지 않는다. */
 
 /* ---------- 좌측 명부 (정본 .side / .side-top / .search / .list / .group-title / .row / .ava) ---------- */
 .kk-talk-roster{width:330px; flex:none; background:var(--kk-list); border-right:1px solid var(--kk-line); display:flex; flex-direction:column;}
@@ -310,7 +309,10 @@
 /* ---------- 우측 상세 패널 (폴더·tmux·워크트리·워크플로우, 정본 #info lines 142-156 충실 포팅) ----------
    목업의 .info 는 flex 형제로 슬라이드인. 여기선 .kk-talk-chat(position:relative) 안에서
    오른쪽 절대배치 슬라이드인으로 렌더(대화 페인 내부에 종속). */
-.kk-talk .info{position:absolute; top:0; right:0; bottom:0; width:250px; background:#fafbfc; border-left:1px solid var(--kk-line); display:none; flex-direction:column; padding:14px 16px 18px; gap:18px; overflow-y:auto; z-index:5; box-shadow:-6px 0 18px rgba(20,24,31,.06);}
+/* 정보 패널 — 우측 300px 슬라이드인 오버레이(목업 .info ~300px). 대화창 우측 일부만 가리고
+   전체를 덮지 않는다. 기본 닫힘(.show 일 때만 표시). z-index 는 ACP 헤더 pill(meta-r) 아래로 두어
+   토글 자체는 항상 보이게 한다. 부드러운 좌측 그림자로 떠 있는 느낌. */
+.kk-talk .info{position:absolute; top:0; right:0; bottom:0; width:300px; max-width:84%; background:#fafbfc; border-left:1px solid var(--kk-line); display:none; flex-direction:column; padding:14px 16px 18px; gap:18px; overflow-y:auto; z-index:8; box-shadow:-8px 0 26px rgba(20,24,31,.14);}
 .kk-talk .info.show{display:flex;}
 .kk-talk .info-head{display:flex; align-items:center; justify-content:space-between; margin:-2px 0 -4px;}
 .kk-talk .info-head .t{font-size:13px; font-weight:800; color:var(--kk-ink);}

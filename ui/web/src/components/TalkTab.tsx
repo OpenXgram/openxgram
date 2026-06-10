@@ -344,6 +344,13 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
             <AcpConversation
               preset={acpPreset()}
               onClose={() => setMobileChat(false)}
+              // ⌗ 상태 토글을 ACP 헤더 pill 행(.meta-r) 왼쪽에 인라인 배치 →
+              // 스트리밍/⚡ACP/✕닫기 pill 과 겹치지 않음(절대 배치 제거).
+              headerExtra={() => (
+                <span class="pill clk" onClick={() => setInfoOpen((v) => !v)}>
+                  ⌗ 상태{selSessions().length + selWorktrees().length > 0 ? ` ${selSessions().length + selWorktrees().length}` : ""}
+                </span>
+              )}
             />
           )}
         </Show>
@@ -354,14 +361,9 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
         </div>
       </Show>
 
-      {/* ── 정보 패널 토글 — 에이전트 선택 시(ACP 대화 중) 우상단 pill. peer chat-top 제거로 별도 트리거 필요. ── */}
-      <Show when={selAgent() && !acpMode()}>
-        <span class="kk-info-toggle pill clk" onClick={() => setInfoOpen((v) => !v)}>
-          ⌗ 상태 {selSessions().length + selWorktrees().length > 0 ? `(${selSessions().length + selWorktrees().length})` : ""}
-        </span>
-      </Show>
-
-      {/* ── 정보 사이드 패널 (정본 #info) — 선택 에이전트의 폴더·tmux·워크트리·워크플로우 ── */}
+      {/* ── 정보 사이드 패널 (정본 #info) — 선택 에이전트의 폴더·tmux·워크트리·워크플로우.
+          토글은 ACP 헤더(.meta-r)에 인라인 ⌗ 상태 pill 로 배치됨(headerExtra). 기본 닫힘.
+          열리면 우측 300px 슬라이드인으로 대화창 우측 일부만 오버레이(전체 가리지 않음). ── */}
       <Show when={selAgent()}>
         {(a) => (
           <div class={`info${infoOpen() ? " show" : ""}`}>
