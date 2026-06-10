@@ -1,5 +1,5 @@
 import { createSignal, createEffect, onCleanup, For, Show } from "solid-js";
-import { acpFetch, acpStream } from "../api/client";
+import { acpFetch, acpStream, invoke } from "../api/client";
 
 // ai_type(에이전트 명부의 LLM 종류) → ACP 어댑터 이름 매핑.
 // daemon registry(openxgram_acp::registry)의 어댑터 키와 1:1. 미인식 → claude 기본.
@@ -119,6 +119,32 @@ export function AcpConversation(props: {
   const [spawnErr, setSpawnErr] = createSignal<string | null>(null);
   const [bubbles, setBubbles] = createSignal<Bubble[]>([]);
   const [draft, setDraft] = createSignal("");
+
+  // 파일·문서 첨부 — content-addressed attachment_upload. 업로드 후 프롬프트에 attachment:// 참조 추가.
+  function attachFile() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.onchange = (ev: Event) => {
+      const f = (ev.target as HTMLInputElement)?.files?.[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const b64 = (reader.result as string).split(",")[1] ?? "";
+        try {
+          const res = await invoke<{ content_hash: string; size_bytes: number }>(
+            "attachment_upload",
+            { content_b64: b64, mime: f.type || "application/octet-stream" },
+          );
+          const ref = `📎 ${f.name} attachment://${res.content_hash} (${(res.size_bytes / 1024).toFixed(1)} KB)`;
+          setDraft(draft() ? `${draft()}\n${ref}` : ref);
+        } catch (e) {
+          setDraft(`${draft()}\n⚠ 첨부 실패: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      };
+      reader.readAsDataURL(f);
+    };
+    input.click();
+  }
   const [busy, setBusy] = createSignal(false); // 세션 생성/프롬프트 진행 중
   const [streaming, setStreaming] = createSignal(false);
 
@@ -528,9 +554,9 @@ export function AcpConversation(props: {
             />
             <div class="bar">
               <div class="bar-l">
-                <span class="ic-btn">@</span>
+                <span class="ic-btn" onClick={attachFile} title="파일·문서 첨부">@</span>
                 <span class="ic-btn">/</span>
-                <span class="ic-btn">📎</span>
+                <span class="ic-btn" onClick={attachFile} title="파일·문서 첨부">📎</span>
                 <span class="divv" />
                 <span class="mode perm">🛡 Bypass Permissions <span class="car">⌃</span></span>
                 <span class="mode model">Default (recommended) <span class="car">⌃</span></span>

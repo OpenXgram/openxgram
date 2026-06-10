@@ -309,10 +309,10 @@
 /* ---------- 우측 상세 패널 (폴더·tmux·워크트리·워크플로우, 정본 #info lines 142-156 충실 포팅) ----------
    목업의 .info 는 flex 형제로 슬라이드인. 여기선 .kk-talk-chat(position:relative) 안에서
    오른쪽 절대배치 슬라이드인으로 렌더(대화 페인 내부에 종속). */
-/* 정보 패널 — 우측 300px 슬라이드인 오버레이(목업 .info ~300px). 대화창 우측 일부만 가리고
-   전체를 덮지 않는다. 기본 닫힘(.show 일 때만 표시). z-index 는 ACP 헤더 pill(meta-r) 아래로 두어
-   토글 자체는 항상 보이게 한다. 부드러운 좌측 그림자로 떠 있는 느낌. */
-.kk-talk .info{position:absolute; top:0; right:0; bottom:0; width:300px; max-width:84%; background:#fafbfc; border-left:1px solid var(--kk-line); display:none; flex-direction:column; padding:14px 16px 18px; gap:18px; overflow-y:auto; z-index:8; box-shadow:-8px 0 26px rgba(20,24,31,.14);}
+/* 정보 패널 — 목업 정본 그대로: 데스크탑은 .kk-talk(flex) 안의 250px **사이드 컬럼**(형제).
+   열리면 대화창(AcpConversation .kk-talk-chat, flex:1)을 밀어 좁히고 **가리지 않는다**.
+   (모바일에서만 absolute 오버레이 — 아래 @media.) 기본 닫힘(.show 일 때만 표시). */
+.kk-talk .info{flex:none; width:250px; background:#fafbfc; border-left:1px solid var(--kk-line); display:none; flex-direction:column; padding:14px 16px 18px; gap:18px; overflow-y:auto;}
 .kk-talk .info.show{display:flex;}
 .kk-talk .info-head{display:flex; align-items:center; justify-content:space-between; margin:-2px 0 -4px;}
 .kk-talk .info-head .t{font-size:13px; font-weight:800; color:var(--kk-ink);}
@@ -335,6 +335,8 @@
   .kk-talk-roster{position:absolute; inset:0; width:100%; max-width:none; border-right:none; z-index:10;}
   .kk-talk-chat{position:absolute; inset:0; width:100%; z-index:20; transform:translateX(100%); transition:transform .24s ease;}
   .kk-talk.mchat .kk-talk-chat{transform:translateX(0);}
+  /* 모바일만 정보패널 = 우측 absolute 오버레이 (정본 #info @media L359). 데스크탑은 flex 컬럼. */
+  .kk-talk .info{position:absolute; right:0; top:0; bottom:0; left:auto; width:84%; max-width:300px; z-index:35; box-shadow:-2px 0 22px rgba(0,0,0,.18);}
   .kk-talk-chat .back{display:inline-flex;}
   .kk-talk-chat .composer{padding:12px 12px 8px;}
   .kk-talk-chat .composer .ph-input{padding-bottom:11px; font-size:13px;}
