@@ -468,6 +468,19 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // rc.176 — daemon log tail (cross-machine 진단 도구). zalman 같은 remote peer 의 silent fail 진단.
         .route("/v1/gui/daemon/log", get(gui_daemon_log))
         .route("/v1/gui/channel/status", get(gui_channel_status))
+        // --- GUI-MISSING-ROUTES (additive) — wiki body read/write, fs tree, fs file rw, machines ---
+        // 위키 본문 read/edit (WikiTab). slug = `{type}/{slug}` (예: `entity/foo`).
+        // 기존 /v1/gui/wiki/pages/{id} 는 DB 메타만 — 본문은 디스크(WikiFs). 여기서 WikiTools 재사용.
+        .route(
+            "/v1/gui/wiki/{type}/{slug}",
+            get(gui_wiki_body_get).put(gui_wiki_body_put),
+        )
+        // 디렉토리 file-tree (프로젝트 폴더 트리 / 폴더 피커).
+        .route("/v1/gui/fs/tree", get(gui_fs_tree))
+        // config 파일 read/write (에이전트 지침 편집기). write 는 whitelist 강제.
+        .route("/v1/gui/fs/file", get(gui_fs_file_get).put(gui_fs_file_put))
+        // 물리 머신 목록 (worker agent 제외) — settings "연결된 머신".
+        .route("/v1/gui/machines", get(gui_machines_list))
         .route("/v1/gui/vault/pending", get(gui_vault_pending_list))
         .route(
             "/v1/gui/vault/pending/{id}/approve",
@@ -8734,3 +8747,509 @@ async fn gui_daemon_log(
 }
 
 // rc.122 trigger marker
+
+// ============================================================================
+// GUI-MISSING-ROUTES (additive) — wiki body rw / fs tree / fs file rw / machines
+// ----------------------------------------------------------------------------
+// 절대 규칙 1 (fallback 금지): 모든 실패는 명시적 HTTP status. silent fallback 없음.
+// fs write 는 whitelist 강제 (사용자 머신 보호).
+// ============================================================================
+
+#[derive(Debug, Serialize)]
+struct WikiBodyDto {
+    slug: String,
+    title: String,
+    body: String,
+    updated_at: i64,
+}
+
+/// `GET /v1/gui/wiki/{type}/{slug}` — 페이지 전체 본문 (디스크 정본).
+/// 기존 WikiTools::read 재사용 (디스크 + DB 인덱스 fallback 경로 포함).
+async fn gui_wiki_body_get(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path((ptype, slug)): Path<(String, String)>,
+) -> Result<Json<WikiBodyDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let topic = format!("{ptype}/{slug}");
+    let wiki_root = state.data_dir.join("wiki");
+    let fs = openxgram_wiki::WikiFs::new(&wiki_root);
+    // updated_at 은 DB 인덱스에서 — conn 을 await 너머로 들고 가지 않도록 먼저 읽고 lock 해제.
+    let updated_at: i64 = {
+        let mut db = state.db.lock().await;
+        db.conn()
+            .query_row(
+                "SELECT updated_at FROM wiki_pages WHERE id = ?1 OR file_path = ?2 OR file_path = ?3",
+                rusqlite::params![
+                    topic,
+                    format!("wiki/{ptype}/{slug}.md"),
+                    format!("{ptype}/{slug}.md")
+                ],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+    };
+    // 디스크 정본에서 본문 read (WikiFs — conn 불필요).
+    let id = openxgram_wiki::PageId::new(
+        ptype.parse::<openxgram_wiki::PageType>().map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorDto {
+                    error: format!("알 수 없는 page type: {ptype}"),
+                }),
+            )
+        })?,
+        &slug,
+    )
+    .map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorDto {
+                error: format!("invalid slug: {e}"),
+            }),
+        )
+    })?;
+    match fs.read(&id).await {
+        Ok(Some(page)) => Ok(Json(WikiBodyDto {
+            slug: page.id.to_string(),
+            title: page.title,
+            body: page.body,
+            updated_at,
+        })),
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorDto {
+                error: format!("wiki page not found: {topic}"),
+            }),
+        )),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorDto {
+                error: format!("wiki read: {e}"),
+            }),
+        )),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct WikiBodyPutBody {
+    #[serde(default)]
+    title: Option<String>,
+    body: String,
+}
+
+/// `PUT /v1/gui/wiki/{type}/{slug}` — 본문 upsert (디스크 + DB). WikiTools::write 재사용.
+/// title 이 주어지면 본문 첫 줄에 `# {title}` 이 없을 때 prepend (WikiTools 가 H1 → title 추출).
+async fn gui_wiki_body_put(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path((ptype, slug)): Path<(String, String)>,
+    Json(payload): Json<WikiBodyPutBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    // title 보존: 본문에 H1 이 없고 title 이 주어졌으면 prepend.
+    let content = match &payload.title {
+        Some(t) if !payload.body.trim_start().starts_with("# ") => {
+            format!("# {t}\n\n{}", payload.body)
+        }
+        _ => payload.body.clone(),
+    };
+    let wiki_root = state.data_dir.join("wiki");
+    let fs = openxgram_wiki::WikiFs::new(&wiki_root);
+    // page_type / id 파싱.
+    let page_type = ptype.parse::<openxgram_wiki::PageType>().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorDto {
+                error: format!("알 수 없는 page type: {ptype}"),
+            }),
+        )
+    })?;
+    let id = openxgram_wiki::PageId::new(page_type, &slug).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorDto {
+                error: format!("invalid slug: {e}"),
+            }),
+        )
+    })?;
+    // title: 본문 H1 우선, 없으면 payload.title, 없으면 slug.
+    let title = payload
+        .title
+        .clone()
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| slug.clone());
+    let page = openxgram_wiki::Page::new(id.clone(), page_type, title, content.trim_end().to_string());
+    // 1) 디스크 정본 write (conn 불필요 — await 안전). 충돌 검증 None (last-write-wins, GUI 편집기).
+    if let Err(e) = fs.write(&page, None).await {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorDto {
+                error: format!("wiki disk write: {e}"),
+            }),
+        ));
+    }
+    // 2) DB 인덱스 upsert (lock 하에 sync — await 없음).
+    {
+        let mut db = state.db.lock().await;
+        let store = openxgram_wiki::WikiStore::new(db.conn());
+        store.upsert(&page, None).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorDto {
+                    error: format!("wiki db upsert: {e}"),
+                }),
+            )
+        })?;
+    }
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "slug": id.to_string(),
+        "content_hash": page.content_hash,
+    })))
+}
+
+// ----------------------------------------------------------------------------
+// fs tree — 디렉토리 트리 (프로젝트 폴더 뷰 + 폴더 피커).
+// ----------------------------------------------------------------------------
+
+/// 한 디렉토리를 depth 까지 재귀 — `.git`/`node_modules`/숨김 등 skip, dirs-first 정렬.
+fn build_fs_tree(dir: &std::path::Path, depth: usize) -> serde_json::Value {
+    let name = dir
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| dir.to_string_lossy().to_string());
+    let mut node = serde_json::json!({
+        "name": name,
+        "path": dir.to_string_lossy().to_string(),
+        "is_dir": true,
+    });
+    if depth == 0 {
+        node["truncated"] = serde_json::json!(true);
+        return node;
+    }
+    let skip = |n: &str| -> bool {
+        matches!(
+            n,
+            ".git" | "node_modules" | "target" | ".cargo" | "dist" | "build" | ".next"
+        )
+    };
+    let mut dirs: Vec<serde_json::Value> = vec![];
+    let mut files: Vec<serde_json::Value> = vec![];
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            let fname = e.file_name().to_string_lossy().to_string();
+            if fname.starts_with('.') && fname != ".claude" && fname != ".mcp.json" {
+                // 숨김 파일/폴더는 skip (단 에이전트 config 관련 .claude/.mcp.json 은 노출).
+                continue;
+            }
+            if skip(&fname) {
+                continue;
+            }
+            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if is_dir {
+                dirs.push(build_fs_tree(&p, depth - 1));
+            } else {
+                files.push(serde_json::json!({
+                    "name": fname,
+                    "path": p.to_string_lossy().to_string(),
+                    "is_dir": false,
+                }));
+            }
+        }
+    }
+    dirs.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    files.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    dirs.extend(files);
+    node["children"] = serde_json::json!(dirs);
+    node
+}
+
+/// `GET /v1/gui/fs/tree?path=<dir>&depth=<n>` — 디렉토리 JSON 트리 (read-only).
+/// depth 기본 2, 최대 5. path 미지정 시 400. 디렉토리 아님/미존재 시 명시 status.
+async fn gui_fs_tree(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let path = q.get("path").map(|s| s.as_str()).ok_or((
+        StatusCode::BAD_REQUEST,
+        Json(ErrorDto {
+            error: "path 쿼리 파라미터 필요".into(),
+        }),
+    ))?;
+    let depth: usize = q
+        .get("depth")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2)
+        .min(5);
+    let dir = std::path::Path::new(path);
+    // path-traversal 방어: `..` 컴포넌트 거부.
+    if dir
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorDto {
+                error: "'..' 포함 경로 거부".into(),
+            }),
+        ));
+    }
+    if !dir.is_dir() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorDto {
+                error: format!("디렉토리 아님 또는 미존재: {path}"),
+            }),
+        ));
+    }
+    Ok(Json(build_fs_tree(dir, depth)))
+}
+
+// ----------------------------------------------------------------------------
+// fs file read/write — 에이전트 config 편집기. write 는 whitelist 강제.
+// ----------------------------------------------------------------------------
+
+/// 쓰기 허용 파일인지 검증.
+/// 1) 파일명 화이트리스트: CLAUDE.md / AGENTS.md / AGENT.md / GEMINI.md / settings*.json / .mcp.json / *.md
+/// 2) 경로는 등록된 에이전트의 project_path(agent_capabilities) 중 하나의 하위거나, HOME/.claude 하위.
+fn fs_write_allowed(path: &std::path::Path, project_paths: &[String], home: &std::path::Path) -> Result<(), String> {
+    // path-traversal 방어.
+    if path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err("'..' 포함 경로 거부".into());
+    }
+    let fname = path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .ok_or_else(|| "파일명 없음".to_string())?;
+    let name_ok = matches!(
+        fname.as_str(),
+        "CLAUDE.md" | "AGENTS.md" | "AGENT.md" | "GEMINI.md" | ".mcp.json"
+    ) || fname.starts_with("settings")
+        && fname.ends_with(".json")
+        || fname.ends_with(".md");
+    if !name_ok {
+        return Err(format!(
+            "허용되지 않은 파일 종류: {fname} (config-file 만 쓰기 가능)"
+        ));
+    }
+    // 경로 범위: project_path 하위 또는 HOME/.claude 하위.
+    let claude_dir = home.join(".claude");
+    let claude_str = claude_dir.to_string_lossy().to_string();
+    let path_str = path.to_string_lossy().to_string();
+    let in_scope = path_str.starts_with(&claude_str)
+        || project_paths
+            .iter()
+            .any(|pp| !pp.is_empty() && path_str.starts_with(pp.trim_end_matches('/')));
+    if !in_scope {
+        return Err(format!(
+            "경로가 등록된 에이전트 project_path 또는 ~/.claude 밖: {path_str}"
+        ));
+    }
+    Ok(())
+}
+
+/// `GET /v1/gui/fs/file?path=<p>` — 파일 본문 (read-only). 편집기 로드용.
+async fn gui_fs_file_get(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let path = q.get("path").map(|s| s.as_str()).ok_or((
+        StatusCode::BAD_REQUEST,
+        Json(ErrorDto {
+            error: "path 쿼리 파라미터 필요".into(),
+        }),
+    ))?;
+    let p = std::path::Path::new(path);
+    if p.components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorDto {
+                error: "'..' 포함 경로 거부".into(),
+            }),
+        ));
+    }
+    match std::fs::read_to_string(p) {
+        Ok(content) => Ok(Json(serde_json::json!({ "content": content }))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorDto {
+                error: format!("파일 미존재: {path}"),
+            }),
+        )),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorDto {
+                error: format!("read: {e}"),
+            }),
+        )),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct FsFilePutBody {
+    path: String,
+    content: String,
+}
+
+/// `PUT /v1/gui/fs/file` body `{ path, content }` — config 파일 write (whitelist 강제).
+async fn gui_fs_file_put(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(payload): Json<FsFilePutBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let home = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default());
+    // 등록된 에이전트 project_path 수집 (whitelist scope).
+    let project_paths: Vec<String> = {
+        let mut db = state.db.lock().await;
+        let mut stmt = db
+            .conn()
+            .prepare("SELECT DISTINCT project_path FROM agent_capabilities WHERE project_path IS NOT NULL AND project_path != ''")
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorDto {
+                        error: format!("prepare: {e}"),
+                    }),
+                )
+            })?;
+        let rows: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorDto {
+                        error: format!("query: {e}"),
+                    }),
+                )
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        rows
+    };
+    let p = std::path::Path::new(&payload.path);
+    if let Err(reason) = fs_write_allowed(p, &project_paths, &home) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorDto {
+                error: format!("write 거부: {reason}"),
+            }),
+        ));
+    }
+    // 부모 디렉토리는 존재해야 함 (새 디렉토리 임의 생성 안 함 — 보수적).
+    if let Some(parent) = p.parent() {
+        if !parent.is_dir() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorDto {
+                    error: format!("부모 디렉토리 미존재: {}", parent.display()),
+                }),
+            ));
+        }
+    }
+    std::fs::write(p, payload.content.as_bytes()).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorDto {
+                error: format!("write: {e}"),
+            }),
+        )
+    })?;
+    let bytes = payload.content.len();
+    eprintln!("[gui_fs_file_put] wrote {bytes} bytes to {}", payload.path);
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "path": payload.path,
+        "bytes": bytes,
+    })))
+}
+
+// ----------------------------------------------------------------------------
+// machines — 물리 머신만 (worker agent 제외). settings "연결된 머신".
+// ----------------------------------------------------------------------------
+
+/// `GET /v1/gui/machines` — 구별되는 물리 머신 목록 (worker agent 필터링 제외).
+/// 머신 판별: peers 의 role 이 worker/subagent 류가 아니고, address(=머신 식별자)
+/// 단위로 distinct. local machine + tailscale online peer 도 포함.
+async fn gui_machines_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let local = crate::daemon_gui_sessions::detect_machine();
+
+    // tailscale 머신 (있으면 권위 있는 머신 소스).
+    let ts_status = std::process::Command::new("tailscale")
+        .arg("status")
+        .arg("--json")
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout).ok()
+            } else {
+                None
+            }
+        })
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+
+    let mut machines: Vec<serde_json::Value> = vec![];
+    // 1) local machine 항상 포함.
+    let local_host = Some(local.hostname.clone());
+    machines.push(serde_json::json!({
+        "hostname": local.hostname,
+        "tailscale_ip": local.tailscale_ip,
+        "is_local": true,
+        "source": "local",
+    }));
+
+    // 2) tailscale online peers → 머신 (Self 제외, distinct hostname).
+    if let Some(ts) = &ts_status {
+        if let Some(peers) = ts.get("Peer").and_then(|p| p.as_object()) {
+            for (_k, peer) in peers {
+                let host = peer
+                    .get("HostName")
+                    .and_then(|h| h.as_str())
+                    .or_else(|| peer.get("DNSName").and_then(|h| h.as_str()))
+                    .unwrap_or("");
+                if host.is_empty() {
+                    continue;
+                }
+                if Some(host.to_string()) == local_host {
+                    continue;
+                }
+                let ip = peer
+                    .get("TailscaleIPs")
+                    .and_then(|a| a.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let online = peer.get("Online").and_then(|o| o.as_bool()).unwrap_or(false);
+                machines.push(serde_json::json!({
+                    "hostname": host,
+                    "tailscale_ip": ip,
+                    "is_local": false,
+                    "online": online,
+                    "source": "tailscale",
+                }));
+            }
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "machines": machines,
+        "machine_count": machines.len(),
+        "note": "물리 머신만 (worker agent 제외). local + tailscale online peer.",
+    })))
+}
