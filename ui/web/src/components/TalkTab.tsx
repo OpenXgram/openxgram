@@ -2,7 +2,6 @@ import { createSignal, createResource, createMemo, createEffect, For, Show } fro
 import { invoke } from "../api/client";
 import { AcpConversation, aiTypeToAdapter, type AcpPreset } from "./AcpConversation";
 import { AddAgentModal } from "./AddAgentModal";
-import { TmuxLiveModal } from "./TmuxLiveModal";
 
 // 대화 탭 — 카카오톡 정본 목업(_mockups/kakao-mockup.html) 충실 이식.
 // 좌: 분류 그룹화 명부(👑 프라이머리 / 📌 상단 고정 / 📁 프로젝트 / ⚙️ 특수) + llm-type 아바타색
@@ -127,8 +126,14 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
   const [addOpen, setAddOpen] = createSignal(false);
   // 상세 패널 "세션 재시작" 트리거 — 증가시키면 AcpConversation 이 세션을 닫고 재구동.
   const [restartTick, setRestartTick] = createSignal(0);
-  // tmux 라이브 열기 — 클릭한 tmux 세션(없으면 null). 모달로 화면 폴링 + 입력.
-  const [tmuxLive, setTmuxLive] = createSignal<DetectedSession | null>(null);
+  // tmux 라이브 열기 — 새 창(?tmux=identifier). 창 재사용 시에도 명시적 이동(흰화면 방지).
+  function openTmuxPopout(identifier: string, display: string) {
+    const url = `${location.origin}${location.pathname}?tmux=${encodeURIComponent(identifier)}&label=${encodeURIComponent(display)}`;
+    const w = window.open("", `oxgtmux_${identifier}`, "width=820,height=620");
+    if (!w) { location.href = url; return; }
+    w.location.href = url;
+    w.focus();
+  }
   const [peers] = createResource<PeerDto[]>(() => invoke("peers_list"), { initialValue: [] });
   const [recent] = createResource<MessageDto[]>(() => invoke("messages_recent", { limit: 100 }), { initialValue: [] });
   // 정보 패널 소스 — sessions(이 머신 tmux+워크트리) · workflows(orchestrator 매칭). 동적 only.
@@ -412,7 +417,7 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
               >
                 <For each={selSessions()}>
                   {(s) => (
-                    <div class="sess" style="cursor:pointer;" title="클릭 → 라이브 화면 열기" onClick={() => setTmuxLive(s)}>
+                    <div class="sess" style="cursor:pointer;" title="클릭 → 라이브 화면 새 창" onClick={() => openTmuxPopout(s.identifier, s.display || s.identifier)}>
                       <span class="sd" />
                       <span class="sn">{s.display || s.identifier}</span>
                       <span class="sx">{s.kind}{sessStart(s) ? ` · ${sessStart(s)}~` : ""}</span>
@@ -461,17 +466,6 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
               정보·설정 수정은 <b>에이전트 탭</b>에서.
             </div>
           </div>
-        )}
-      </Show>
-
-      {/* tmux 라이브 모달 — 상세 패널의 tmux 세션 클릭 시. 화면 폴링 + 입력. */}
-      <Show when={tmuxLive()}>
-        {(s) => (
-          <TmuxLiveModal
-            identifier={s().identifier}
-            display={s().display || s().identifier}
-            onClose={() => setTmuxLive(null)}
-          />
         )}
       </Show>
 

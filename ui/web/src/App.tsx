@@ -20,10 +20,14 @@ import { ApprovalQueueBell } from "./components/ApprovalQueueBell";
 import { GlobalSearchModal } from "./components/GlobalSearchModal";
 import { KakaoShell } from "./components/KakaoShell";
 import { ChatPopup } from "./components/ChatPopup";
+import { TmuxLive } from "./components/TmuxLive";
 
-// 대화창 단독 팝업 — `?chat=<alias>` 면 앱 크롬 없이 그 에이전트 대화만 렌더.
+// 단독 팝업 — `?chat=<alias>`(대화) / `?tmux=<identifier>`(tmux 라이브) 면 앱 크롬 없이 해당 뷰만.
 // 같은 오리진이라 localStorage 세션 토큰 공유 → 팝업은 재로그인 없이 인증됨.
 const POPUP_CHAT = new URLSearchParams(window.location.search).get("chat");
+const POPUP_TMUX = new URLSearchParams(window.location.search).get("tmux");
+const POPUP_TMUX_LABEL = new URLSearchParams(window.location.search).get("label") || POPUP_TMUX || "";
+const ANY_POPUP = !!(POPUP_CHAT || POPUP_TMUX);
 
 // PRD-OpenXgram v1.4 §0 + UI-CARDS-IDENTITY v1.1: 홈 대시보드 = 8 카드 (4 가치 + 4 토대).
 // unlock 후 첫 화면 = HomeDashboard. 카드 클릭 시 해당 카드 전용 페이지 진입.
@@ -134,13 +138,20 @@ function AppInner() {
         <ChatPopup alias={POPUP_CHAT!} />
       </Show>
 
+      {/* tmux 라이브 단독 팝업 */}
+      <Show when={authed() === true && POPUP_TMUX}>
+        <div class="kk-popup-root">
+          <TmuxLive identifier={POPUP_TMUX!} display={POPUP_TMUX_LABEL} onClose={() => window.close()} />
+        </div>
+      </Show>
+
       {/* KakaoShell home — 풀스크린 단독(다크 app-shell 크롬 없음, 모바일 포함) */}
-      <Show when={authed() === true && !POPUP_CHAT && tab() === "home"}>
+      <Show when={authed() === true && !ANY_POPUP && tab() === "home"}>
         <KakaoShell onLogout={onLogout} />
       </Show>
 
       {/* 레거시 카드/탭 라우트 — app-shell 다크 크롬 */}
-      <Show when={authed() === true && !POPUP_CHAT && tab() !== "home"}>
+      <Show when={authed() === true && !ANY_POPUP && tab() !== "home"}>
         <div class="app-shell">
           <header class="app-header">
             <h1 class="app-title">
