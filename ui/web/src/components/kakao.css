@@ -274,3 +274,68 @@
   .kk-talk-composer .usage{display:none;}
   .kk-talk-top .meta-r{gap:5px;}
 }
+
+/* ===========================================================
+   위키 탭 — 카카오톡 네이티브 (WikiTab.tsx)
+   정본: _mockups/kakao-mockup.html (#wikiOvl · .wsearch · .witem · .wkind)
+   인라인 풀하이트 패널. --kk-* 토큰 재사용, kk-wiki 네임스페이스.
+   =========================================================== */
+.kk-wiki{display:flex; flex-direction:column; height:100%; min-height:0; background:var(--kk-list);}
+.kk-wiki-head{flex:none; padding:15px 22px 14px; display:flex; align-items:baseline; gap:11px; border-bottom:1px solid var(--kk-line); background:#fff; flex-wrap:wrap;}
+.kk-wiki-head h2{margin:0; font-size:17px; font-weight:800; color:var(--kk-ink);}
+.kk-wiki-head .sub{font-size:12px; color:#aab0bd;}
+.kk-wiki-body{flex:1; min-height:0; overflow-y:auto; padding:18px 22px 28px; max-width:740px;}
+.kk-wiki-search{width:100%; background:#f1f2f4; border:1px solid transparent; border-radius:10px; padding:10px 13px; font-size:13px; color:var(--kk-ink); margin-bottom:18px;}
+.kk-wiki-search::placeholder{color:var(--kk-sub);}
+.kk-wiki-search:focus{outline:none; border-color:var(--kk-accent); background:#fff;}
+.kk-wiki-sec{font-size:12px; font-weight:800; color:#54607a; text-transform:uppercase; letter-spacing:.3px; margin:6px 0 10px;}
+.kk-wiki-sec.evo{margin-top:22px; text-transform:none; letter-spacing:0; font-size:13px;}
+.kk-wiki-item{border:1px solid var(--kk-line); border-radius:10px; padding:11px 13px; margin-bottom:9px; background:#fcfcfd;}
+.kk-wiki-item .wt{font-size:12.5px; color:#2b333f; line-height:1.5; word-break:break-word;}
+.kk-wiki-item .wt b{font-weight:700;}
+.kk-wiki-item .wt .wd{color:#6b7280;}
+.kk-wiki-item .wm{font-size:11px; color:#9aa1ad; margin-top:6px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
+.kk-wiki-kind{font-size:10px; font-weight:800; border-radius:6px; padding:1px 7px;}
+.kk-wiki-kind.wk-insight{background:#eaf1ff; color:#2f6bd8;}
+.kk-wiki-kind.wk-order{background:#fff2e0; color:#c9760e;}
+.kk-wiki-kind.wk-decision{background:#e6f6ec; color:#1f9d4d;}
+.kk-wiki-kind.wk-evo{background:#f3ecff; color:#7c3aed;}
+.kk-wiki-empty{color:var(--kk-sub); font-size:12.5px; padding:20px 0; text-align:center; line-height:1.6;}
+.kk-wiki-empty.err{color:#d64545;}
+
+/* ===========================================================
+   설정 탭 — 카카오톡 네이티브 (ConfigTab.tsx)
+   정본: _mockups/kakao-mockup.html (#settingsOvl · "계정 · 머신 · 연동")
+   .apvsec·.apvgrid·.apvcard·.cfgrow 공유 클래스 재사용, kk-set 네임스페이스.
+   =========================================================== */
+.kk-set{display:flex; flex-direction:column; height:100%; min-height:0; background:var(--kk-surface);}
+.kk-set-head{flex:none; padding:15px 22px 14px; display:flex; align-items:baseline; gap:11px; border-bottom:1px solid var(--kk-line); background:#fff; flex-wrap:wrap;}
+.kk-set-head h2{margin:0; font-size:17px; font-weight:800; color:var(--kk-ink);}
+.kk-set-head .sub{font-size:12px; color:#aab0bd;}
+.kk-set-body{flex:1; min-height:0; overflow-y:auto; padding:18px 24px 30px; max-width:680px;}
+.kk-set-empty{color:var(--kk-sub); font-size:12.5px; padding:14px 0; line-height:1.6;}
+.kk-set-hint{font-size:11.5px; color:#9aa1ad; margin:0 0 10px; line-height:1.55;}
+.kk-set-label{display:block; font-size:12px; font-weight:700; color:#54607a; margin:12px 0 5px;}
+.kk-set-text{width:100%; font-size:13px; border:1px solid var(--kk-line); border-radius:9px; padding:9px 11px; color:var(--kk-ink); background:#fff;}
+.kk-set-text:focus{outline:none; border-color:var(--kk-accent);}
+.kk-set-row{display:flex; align-items:center; gap:8px; margin-top:8px; flex-wrap:wrap;}
+.kk-set-num{width:110px; font-size:13px; border:1px solid var(--kk-line); border-radius:9px; padding:9px 11px; color:var(--kk-ink); background:#fff;}
+.kk-set-num:focus{outline:none; border-color:var(--kk-accent);}
+.kk-set-unit{font-size:12px; color:var(--kk-sub);}
+.kk-set-btn{font-size:12.5px; font-weight:700; border:1px solid var(--kk-yellow-d); border-radius:9px; padding:9px 16px; cursor:pointer; background:var(--kk-yellow); color:#fff;}
+.kk-set-btn.alt{background:#eef1f5; color:#5b6678; border-color:var(--kk-line);}
+.kk-set-btn:hover{opacity:.92;}
+.kk-set-msg{font-size:11.5px; color:#5b6678; margin-top:8px; word-break:break-word;}
+.kk-set-note{font-size:12px; color:#7b8494; line-height:1.6; background:#fff; border:1px solid var(--kk-line); border-radius:10px; padding:12px 14px;}
+.kk-set-note b{color:#2b333f; font-weight:700;}
+.kk-set-ver{font-size:11px; color:#b6bcc6; margin-top:22px; font-family:ui-monospace,Menlo,monospace;}
+
+@media (max-width:900px){
+  .kk-wiki-body{max-width:none;}
+  .kk-set-body{max-width:none;}
+}
+@media (max-width:480px){
+  .kk-wiki-head, .kk-set-head{padding:13px 16px 12px;}
+  .kk-wiki-body{padding:16px 16px 24px;}
+  .kk-set-body{padding:16px 16px 24px;}
+}

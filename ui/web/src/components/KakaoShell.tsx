@@ -1,8 +1,8 @@
 import { createSignal, Show } from "solid-js";
 import "./kakao.css";
 import { TalkTab } from "./TalkTab";
-import { MemoryTab } from "./MemoryTab";
-import { SettingsTab } from "./SettingsTab";
+import { WikiTab } from "./WikiTab";
+import { ConfigTab } from "./ConfigTab";
 import { AgentsTab } from "./AgentsTab";
 
 // Phase 1 — 카카오톡 셸. 정본 디자인: _mockups/kakao-mockup.html
@@ -51,13 +51,13 @@ export function KakaoShell(props: { onLogout?: () => void }) {
             <div class="kk-embed"><TalkTab onJumpToSettings={() => setTab("settings")} /></div>
           </Show>
           <Show when={tab() === "wiki"}>
-            <div class="kk-embed"><MemoryTab /></div>
+            <WikiTab />
           </Show>
           <Show when={tab() === "agents"}>
             <div class="kk-embed"><AgentsTab onGotoChat={() => setTab("chat")} /></div>
           </Show>
           <Show when={tab() === "settings"}>
-            <div class="kk-embed"><SettingsTab /></div>
+            <ConfigTab />
           </Show>
           <Show when={tab() === "flow"}>
             <div class="kk-embed"><Placeholder title="🔀 워크플로우" phase="Phase 4 (엔진 + cron + 하트비트 큐)" /></div>
