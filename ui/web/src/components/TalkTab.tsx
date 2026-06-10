@@ -349,7 +349,14 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
                                   <Show when={tagLabel(a)}><span class="tag">{tagLabel(a)}</span></Show>
                                   <Show when={a.is_public}><span class="tag">공개</span></Show>
                                 </div>
-                                <div class="st">{preview(a)}</div>
+                                {/* 에이전트명(ID) · 역할 · AI종류 — display_name 설정 시 alias 도 표시. */}
+                                <div class="st kk-card-sub">
+                                  <Show when={a.display_name && a.display_name.trim() && a.display_name !== a.alias}>
+                                    <span class="kk-card-alias" title="에이전트명(ID)">@{a.alias}</span>
+                                  </Show>
+                                  <Show when={a.role}><span>🎭 {a.role}</span></Show>
+                                  <span>🤖 {a.ai_type || "claude"}</span>
+                                </div>
                               </div>
                               <div class="rcol">
                                 <div class="time">{previewTime(a)}</div>
