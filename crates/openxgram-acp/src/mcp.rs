@@ -26,6 +26,20 @@ use crate::{AcpError, Result};
 /// Opaque handle id for a spawned agent.
 pub type AgentHandleId = u64;
 
+/// Per-spawn options threaded from the GUI composer chips (permission mode,
+/// model, thinking). `extra_env` is appended to the agent's [`registry`] env
+/// (e.g. `ANTHROPIC_MODEL`, `MAX_THINKING_TOKENS`) before the process is
+/// launched; `permission_allow` swaps the default-deny permission handler for
+/// an auto-allow one so the agent can actually execute its own tools.
+#[derive(Debug, Clone, Default)]
+pub struct SpawnOpts {
+    /// `true` → auto-approve `session/request_permission` (Bypass Permissions).
+    /// `false` (default) → default-deny posture (tool calls are cancelled).
+    pub permission_allow: bool,
+    /// Extra env pairs appended to the agent process environment.
+    pub extra_env: Vec<(String, String)>,
+}
+
 /// Stateful ACP tool surface: owns the spawned-agent registry.
 #[derive(Clone, Default)]
 pub struct AcpTools {
@@ -50,10 +64,27 @@ impl AcpTools {
     }
 
     /// `acp_spawn` — spawn a known agent by name, run `initialize`, register it,
-    /// and return its handle id + negotiated capabilities.
+    /// and return its handle id + negotiated capabilities. Uses the default
+    /// (default-deny, no extra env) posture; see [`AcpTools::acp_spawn_with`] to
+    /// thread composer-chip options.
     pub async fn acp_spawn(&self, agent_name: &str) -> Result<Value> {
-        let spec = registry::lookup(agent_name)?;
-        let client = AcpClient::spawn_minimal(spec).await?;
+        self.acp_spawn_with(agent_name, SpawnOpts::default()).await
+    }
+
+    /// `acp_spawn_with` — like [`AcpTools::acp_spawn`] but applies [`SpawnOpts`]:
+    /// appends `extra_env` to the agent process env and, when `permission_allow`
+    /// is set, installs an auto-allow permission handler so the agent's own tool
+    /// calls are approved instead of cancelled.
+    pub async fn acp_spawn_with(&self, agent_name: &str, opts: SpawnOpts) -> Result<Value> {
+        let mut spec = registry::lookup(agent_name)?;
+        for (k, v) in &opts.extra_env {
+            spec.env.push((k.clone(), v.clone()));
+        }
+        let client = if opts.permission_allow {
+            AcpClient::spawn_allow(spec).await?
+        } else {
+            AcpClient::spawn_minimal(spec).await?
+        };
         let caps = serde_json::to_value(client.agent_capabilities())?;
 
         let id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);

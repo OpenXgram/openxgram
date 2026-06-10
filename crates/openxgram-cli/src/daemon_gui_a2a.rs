@@ -576,6 +576,10 @@ pub mod server {
                 cwd: cwd.to_string(),
                 mcp_servers: Vec::new(),
                 execution_mode: Some("always".to_string()),
+                // A2A 위임 = 받은 작업을 실제 수행해야 하므로 도구 실행 허용(default-deny 해제).
+                permission_mode: Some("bypassPermissions".to_string()),
+                model: None,
+                thinking: None,
             },
         )
         .await?;

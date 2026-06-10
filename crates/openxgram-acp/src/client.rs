@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use tokio::process::Child;
 
-use crate::handlers::{ClientSideHandlers, DefaultHandlers};
+use crate::handlers::{ClientSideHandlers, DefaultHandlers, PermissionDecision};
 use crate::registry::AgentSpec;
 use crate::rpc::RpcPeer;
 use crate::session::{AcpSession, PromptResult};
@@ -85,18 +85,38 @@ impl AcpClient {
     /// Convenience: spawn with default (minimal) client info and default-deny
     /// handlers, advertising no callbacks. Useful for the simplest prompt flow.
     pub async fn spawn_minimal(agent: AgentSpec) -> Result<AcpClient> {
-        let info = ClientInfo {
-            name: "openxgram".into(),
-            title: Some("OpenXgram".into()),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-        };
         Self::spawn(
             agent,
-            info,
+            Self::default_client_info(),
             ClientCapabilities::default(),
             DefaultHandlers::shared(),
         )
         .await
+    }
+
+    /// Like [`AcpClient::spawn_minimal`] but installs an auto-allow permission
+    /// handler — `session/request_permission` is approved (first offered option)
+    /// instead of cancelled. Used for "Bypass Permissions" mode so the agent can
+    /// actually execute its own tool calls.
+    pub async fn spawn_allow(agent: AgentSpec) -> Result<AcpClient> {
+        let handlers: Arc<dyn ClientSideHandlers> =
+            Arc::new(DefaultHandlers::new().with_permission(PermissionDecision::Allow));
+        Self::spawn(
+            agent,
+            Self::default_client_info(),
+            ClientCapabilities::default(),
+            handlers,
+        )
+        .await
+    }
+
+    /// The `ClientInfo` we advertise on `initialize`.
+    fn default_client_info() -> ClientInfo {
+        ClientInfo {
+            name: "openxgram".into(),
+            title: Some("OpenXgram".into()),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }
     }
 
     /// The agent capabilities negotiated at `initialize`.

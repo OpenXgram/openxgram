@@ -36,7 +36,7 @@ pub mod types;
 
 pub use client::AcpClient;
 pub use handlers::{ClientSideHandlers, DefaultHandlers, PermissionDecision};
-pub use mcp::AcpTools;
+pub use mcp::{AcpTools, SpawnOpts};
 pub use registry::{AgentSpec, AgentSpecBuilder};
 pub use rpc::{RpcPeer, RpcRequest, RpcResponse};
 pub use session::AcpSession;

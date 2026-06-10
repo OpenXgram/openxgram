@@ -1,4 +1,4 @@
-import { createSignal, createEffect, onCleanup, For, Show } from "solid-js";
+import { createSignal, createEffect, createMemo, onCleanup, For, Show } from "solid-js";
 import { acpFetch, acpStream, invoke } from "../api/client";
 
 // ai_type(에이전트 명부의 LLM 종류) → ACP 어댑터 이름 매핑.
@@ -61,6 +61,14 @@ type Bubble =
 
 type Seg = { kind: "text"; text: string } | { kind: "code"; text: string };
 
+// spawn() 인자 — preset/picker 진입 + 칩 변경 재구동 공용.
+type SpawnArgs = {
+  cwd?: string | null;
+  execMode?: string | null;
+  label?: string | null;
+  keepHistory?: boolean;
+};
+
 // 에이전트 본문을 펜스드 코드블록 기준으로 text/code 분해 (TalkTab.segmentBody 와 동일 정책).
 function segmentText(body: string): Seg[] {
   const out: Seg[] = [];
@@ -120,6 +128,71 @@ export function AcpConversation(props: {
   const [bubbles, setBubbles] = createSignal<Bubble[]>([]);
   const [draft, setDraft] = createSignal("");
 
+  // ── 컴포저 칩: 권한 모드 / 모델 / thinking. 클릭 → 드롭다운 → ACP 세션 spawn 옵션에 반영. ──
+  const [permMode, setPermMode] = createSignal("default");
+  const [model, setModel] = createSignal("default");
+  const [thinking, setThinking] = createSignal("high");
+  const [openMenu, setOpenMenu] = createSignal<"perm" | "model" | "think" | null>(null);
+
+  // ── 컴포저 좌측 버튼: @ 파일참조 / 슬래시명령 / 📎 첨부. ──
+  const [leftMenu, setLeftMenu] = createSignal<"at" | "slash" | null>(null);
+  const [fileList, setFileList] = createSignal<string[] | null>(null); // @ 파일 picker (cwd 상대경로)
+  const [fileFilter, setFileFilter] = createSignal("");
+  // 슬래시 명령 = 프롬프트 템플릿(에이전트가 실제 수행). 클릭 시 draft 에 삽입.
+  const SLASH_CMDS = [
+    { cmd: "/explain", tip: "코드 설명", text: "다음을 설명해줘:\n" },
+    { cmd: "/fix", tip: "버그 수정", text: "다음 버그를 고쳐줘:\n" },
+    { cmd: "/review", tip: "변경 리뷰", text: "이 변경을 리뷰해줘:\n" },
+    { cmd: "/test", tip: "테스트 작성", text: "다음에 대한 테스트를 작성해줘:\n" },
+    { cmd: "/refactor", tip: "리팩터링", text: "다음을 리팩터링해줘:\n" },
+  ];
+
+  const PERM_OPTS = [
+    { v: "default", label: "Default" },
+    { v: "acceptEdits", label: "Accept Edits" },
+    { v: "bypassPermissions", label: "🛡 Bypass Permissions" },
+  ];
+  const MODEL_OPTS = [
+    { v: "default", label: "Default (recommended)" },
+    { v: "sonnet", label: "Sonnet 4.6" },
+    { v: "opus", label: "Opus 4.8" },
+  ];
+  const THINK_OPTS = [
+    { v: "high", label: "High" },
+    { v: "medium", label: "Medium" },
+    { v: "low", label: "Low" },
+  ];
+  const labelOf = (opts: { v: string; label: string }[], v: string) =>
+    opts.find((o) => o.v === v)?.label ?? v;
+
+  // 모델별 컨텍스트 윈도우 + 대략 단가($/Mtok) — usage 표시(목업 `60k/1.00M (6%) · $..`)용.
+  const MODEL_META: Record<string, { ctx: number; rate: number; name: string }> = {
+    default: { ctx: 200000, rate: 15, name: "Opus 4.8" },
+    sonnet: { ctx: 1000000, rate: 3, name: "Sonnet 4.6" },
+    opus: { ctx: 200000, rate: 15, name: "Opus 4.8" },
+  };
+  const fmtTok = (n: number) =>
+    n >= 1_000_000 ? `${(n / 1_000_000).toFixed(2)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`;
+  // 어댑터가 표준 usage 를 안 주므로 대화 텍스트 누적 기반 토큰 추정(실데이터 기반·결정적).
+  const estTokens = createMemo(() => {
+    let chars = draft().length;
+    for (const b of bubbles()) {
+      if (b.kind === "agent") chars += b.segs.reduce((a, s) => a + s.text.length, 0);
+      else if (b.kind === "me" || b.kind === "note") chars += b.text.length;
+      else if (b.kind === "tool") chars += b.title.length;
+      else if (b.kind === "plan") chars += b.entries.reduce((a, e) => a + e.content.length, 0);
+    }
+    return Math.round(chars / 4);
+  });
+  const usageLabel = createMemo(() => {
+    const m = MODEL_META[model()] ?? MODEL_META.default;
+    const used = estTokens();
+    const pct = Math.min(100, Math.round((used / m.ctx) * 100));
+    const cost = (used / 1_000_000) * m.rate;
+    return `${fmtTok(used)}/${fmtTok(m.ctx)} (${pct}%) · $${cost.toFixed(4)}`;
+  });
+  const modelName = createMemo(() => (MODEL_META[model()] ?? MODEL_META.default).name);
+
   // 파일·문서 첨부 — content-addressed attachment_upload. 업로드 후 프롬프트에 attachment:// 참조 추가.
   // 클릭(📎/@) + 드래그앤드롭 공용.
   const [dragOver, setDragOver] = createSignal(false);
@@ -156,11 +229,69 @@ export function AcpConversation(props: {
     const fs = e.dataTransfer?.files;
     if (fs && fs.length) for (const f of Array.from(fs)) uploadFile(f);
   }
+
+  // ── @ 파일참조 picker — 세션 cwd 의 fs/tree 를 평탄화해 상대경로 목록 제공. ──
+  function currentCwd(): string {
+    return (lastSpawn?.opts?.cwd as string | undefined) || DEFAULT_ACP_CWD;
+  }
+  function flattenFiles(node: unknown, cwd: string, out: string[]) {
+    if (!node || typeof node !== "object") return;
+    const n = node as Record<string, unknown>;
+    if (n.is_dir === false && typeof n.path === "string") {
+      const rel = n.path.startsWith(cwd) ? n.path.slice(cwd.length).replace(/^\//, "") : (n.path as string);
+      out.push(rel);
+    }
+    if (Array.isArray(n.children)) for (const c of n.children) flattenFiles(c, cwd, out);
+  }
+  async function toggleAt() {
+    if (leftMenu() === "at") {
+      setLeftMenu(null);
+      return;
+    }
+    setLeftMenu("at");
+    if (fileList() == null) {
+      try {
+        const cwd = currentCwd();
+        const tree = await invoke<unknown>("fs_tree", { path: cwd, depth: 3 });
+        const out: string[] = [];
+        flattenFiles(tree, cwd, out);
+        setFileList(out.sort().slice(0, 500));
+      } catch {
+        setFileList([]);
+      }
+    }
+  }
+  function insertAt(rel: string) {
+    const d = draft();
+    setDraft(d ? `${d.replace(/\s*$/, "")} @${rel} ` : `@${rel} `);
+    setLeftMenu(null);
+    setFileFilter("");
+  }
+  function insertSlash(text: string) {
+    const d = draft();
+    setDraft(d ? `${d}\n${text}` : text);
+    setLeftMenu(null);
+  }
   const [busy, setBusy] = createSignal(false); // 세션 생성/프롬프트 진행 중
   const [streaming, setStreaming] = createSignal(false);
 
   let nextId = 1;
+  // 마지막 spawn 인자 — 칩 변경 시 같은 에이전트로 새 옵션 재구동(대화 보존)에 사용.
+  let lastSpawn: { agent: string; opts?: SpawnArgs } | null = null;
   let stopStream: (() => void) | null = null;
+
+  // 칩 선택 → 신호 갱신 + 메뉴 닫기. 세션이 이미 있으면 새 옵션으로 재구동(내역 보존).
+  function selectChip(kind: "perm" | "model" | "think", v: string) {
+    if (kind === "perm") setPermMode(v);
+    else if (kind === "model") setModel(v);
+    else setThinking(v);
+    setOpenMenu(null);
+    if (sessionId() && lastSpawn) {
+      const what = kind === "perm" ? "권한 모드" : kind === "model" ? "모델" : "thinking";
+      pushBubble({ id: nextId++, kind: "note", text: `· ${what} 변경 → 세션 재구동`, time: nowClock() });
+      void spawn(lastSpawn.agent, { ...(lastSpawn.opts ?? {}), keepHistory: true });
+    }
+  }
   // 현재 진행 중인 에이전트 turn 버블 id (chunk 누적용) + tool_call id→bubble id 매핑.
   let curAgentBubbleId: number | null = null;
   const toolBubbleByCall = new Map<string, number>();
@@ -276,18 +407,20 @@ export function AcpConversation(props: {
 
   // 에이전트 선택 → 세션 생성 + SSE 구독.
   // cwd 생략 시 DEFAULT_ACP_CWD, execMode 생략 시 on_demand. label 은 헤더 표시명(생략 시 adapter).
-  async function spawn(
-    agent: string,
-    opts?: { cwd?: string | null; execMode?: string | null; label?: string | null },
-  ) {
+  async function spawn(agent: string, opts?: SpawnArgs) {
     if (busy()) return;
     setBusy(true);
     setSpawnErr(null);
+    lastSpawn = { agent, opts };
     try {
       const body: Record<string, unknown> = {
         agent,
         cwd: opts?.cwd ?? DEFAULT_ACP_CWD,
-        executionMode: opts?.execMode || "on_demand",
+        // CreateSessionBody 는 rename 없음(snake_case 필드 그대로) — execution_mode/permission_mode 키로 전송.
+        execution_mode: opts?.execMode || "on_demand",
+        permission_mode: permMode(),
+        model: model(),
+        thinking: thinking(),
       };
       const r = await acpFetch<{ sessionId: string; agent: string; spawned: boolean }>(
         "POST",
@@ -296,15 +429,17 @@ export function AcpConversation(props: {
       );
       setSessionId(r.sessionId);
       setActiveAgent(opts?.label || agent);
-      setBubbles([]);
+      if (!opts?.keepHistory) {
+        setBubbles([]);
+        pushBubble({
+          id: nextId++,
+          kind: "note",
+          text: `⚡ ACP 세션 시작 — ${agent}${r.spawned ? " (구동됨)" : " (첫 프롬프트 시 구동)"}`,
+          time: nowClock(),
+        });
+      }
       curAgentBubbleId = null;
       toolBubbleByCall.clear();
-      pushBubble({
-        id: nextId++,
-        kind: "note",
-        text: `⚡ ACP 세션 시작 — ${agent}${r.spawned ? " (구동됨)" : " (첫 프롬프트 시 구동)"}`,
-        time: nowClock(),
-      });
       // SSE 구독 시작 (prompt turn 중 발생한 update 가 relay 됨).
       stopStream?.();
       setStreaming(true);
@@ -580,20 +715,106 @@ export function AcpConversation(props: {
             />
             <div class="bar">
               <div class="bar-l">
-                <span class="ic-btn" onClick={attachFile} title="파일·문서 첨부">@</span>
-                <span class="ic-btn">/</span>
+                {/* @ 파일 참조 — cwd 파일 목록 → @경로 삽입 */}
+                <span class="kk-chip-wrap">
+                  <span class="ic-btn" title="파일 참조(@경로 삽입)" onClick={() => void toggleAt()}>@</span>
+                  <Show when={leftMenu() === "at"}>
+                    <div class="kk-chip-menu kk-at-menu">
+                      <input
+                        class="kk-at-filter"
+                        placeholder="파일 검색…"
+                        value={fileFilter()}
+                        onInput={(e) => setFileFilter(e.currentTarget.value)}
+                      />
+                      <Show when={fileList() == null}>
+                        <div class="kk-chip-opt">로딩…</div>
+                      </Show>
+                      <Show when={fileList() != null && fileList()!.length === 0}>
+                        <div class="kk-chip-opt">파일 없음</div>
+                      </Show>
+                      <For
+                        each={(fileList() ?? [])
+                          .filter((f) => f.toLowerCase().includes(fileFilter().toLowerCase()))
+                          .slice(0, 60)}
+                      >
+                        {(f) => (
+                          <div class="kk-chip-opt" onClick={() => insertAt(f)}>{f}</div>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </span>
+                {/* / 슬래시 명령(프롬프트 템플릿) */}
+                <span class="kk-chip-wrap">
+                  <span class="ic-btn" title="슬래시 명령" onClick={() => setLeftMenu(leftMenu() === "slash" ? null : "slash")}>/</span>
+                  <Show when={leftMenu() === "slash"}>
+                    <div class="kk-chip-menu">
+                      <For each={SLASH_CMDS}>
+                        {(c) => (
+                          <div class="kk-chip-opt" onClick={() => insertSlash(c.text)}>
+                            <b>{c.cmd}</b> <span style="opacity:.6">{c.tip}</span>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </span>
+                {/* 📎 파일 첨부 */}
                 <span class="ic-btn" onClick={attachFile} title="파일·문서 첨부">📎</span>
                 <span class="divv" />
-                <span class="mode perm">🛡 Bypass Permissions <span class="car">⌃</span></span>
-                <span class="mode model">Default (recommended) <span class="car">⌃</span></span>
-                <span class="mode think">High <span class="car">⌃</span></span>
+                {/* 권한 모드 — Bypass Permissions 면 에이전트가 도구를 실제 실행(default-deny 해제). */}
+                <span class="kk-chip-wrap">
+                  <span class="mode perm" title="권한 모드" onClick={() => setOpenMenu(openMenu() === "perm" ? null : "perm")}>
+                    {labelOf(PERM_OPTS, permMode())} <span class="car">⌃</span>
+                  </span>
+                  <Show when={openMenu() === "perm"}>
+                    <div class="kk-chip-menu">
+                      <For each={PERM_OPTS}>
+                        {(o) => (
+                          <div class={`kk-chip-opt${permMode() === o.v ? " on" : ""}`} onClick={() => selectChip("perm", o.v)}>{o.label}</div>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </span>
+                {/* 모델 — ANTHROPIC_MODEL env 로 에이전트 프로세스에 전달. */}
+                <span class="kk-chip-wrap">
+                  <span class="mode model" title="모델" onClick={() => setOpenMenu(openMenu() === "model" ? null : "model")}>
+                    {labelOf(MODEL_OPTS, model())} <span class="car">⌃</span>
+                  </span>
+                  <Show when={openMenu() === "model"}>
+                    <div class="kk-chip-menu">
+                      <For each={MODEL_OPTS}>
+                        {(o) => (
+                          <div class={`kk-chip-opt${model() === o.v ? " on" : ""}`} onClick={() => selectChip("model", o.v)}>{o.label}</div>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </span>
+                {/* thinking — MAX_THINKING_TOKENS env. */}
+                <span class="kk-chip-wrap">
+                  <span class="mode think" title="thinking 강도" onClick={() => setOpenMenu(openMenu() === "think" ? null : "think")}>
+                    {labelOf(THINK_OPTS, thinking())} <span class="car">⌃</span>
+                  </span>
+                  <Show when={openMenu() === "think"}>
+                    <div class="kk-chip-menu">
+                      <For each={THINK_OPTS}>
+                        {(o) => (
+                          <div class={`kk-chip-opt${thinking() === o.v ? " on" : ""}`} onClick={() => selectChip("think", o.v)}>{o.label}</div>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </span>
               </div>
               <div class="spacer" />
               <div class="bar-r">
                 <Show when={busy()}>
                   <span class="kk-acp-cancel" onClick={() => void cancelTurn()}>■ 취소</span>
                 </Show>
-                <span class="usage">⚡ {activeAgent()}</span>
+                {/* 목업 정본: 토큰사용/컨텍스트윈도우 (%) · 비용. 모델명·버전은 모델 칩에 표시. */}
+                <span class="usage" title={`${modelName()} · ${activeAgent() ?? ""}`}>{usageLabel()}</span>
                 <span
                   class={`send${draft().trim() && !busy() ? "" : " dis"}`}
                   onClick={() => void sendPrompt()}

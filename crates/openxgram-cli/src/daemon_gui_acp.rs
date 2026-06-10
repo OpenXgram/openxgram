@@ -77,6 +77,9 @@ struct AcpHttpSession {
     /// `Some` once the agent has been spawned (always-mode at create, on_demand
     /// at first prompt). `None` means a lazy session not yet spawned.
     handle_id: Option<AgentHandleId>,
+    /// Composer-chip spawn options (permission posture + model/thinking env),
+    /// applied when the agent process is launched (eager or lazy).
+    spawn_opts: openxgram_acp::SpawnOpts,
     /// Broadcast channel for relaying `session/update` to `/stream` clients.
     updates_tx: broadcast::Sender<Value>,
 }
@@ -131,6 +134,45 @@ pub struct CreateSessionBody {
     /// Hosting mode; defaults to `on_demand` when omitted.
     #[serde(default)]
     pub execution_mode: Option<String>,
+    /// Composer "permission" chip: `bypassPermissions` / `acceptEdits` → auto-allow
+    /// tool calls; `default` / `plan` / omitted → default-deny.
+    #[serde(default)]
+    pub permission_mode: Option<String>,
+    /// Composer "model" chip: `default` (adapter default), `sonnet`, `opus`.
+    /// Mapped to an `ANTHROPIC_MODEL` env on the agent process.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Composer "thinking" chip: `high` / `medium` / `low`.
+    /// Mapped to a `MAX_THINKING_TOKENS` env on the agent process.
+    #[serde(default)]
+    pub thinking: Option<String>,
+}
+
+/// Translate the composer chip selections into crate-level [`SpawnOpts`]
+/// (permission posture + agent-process env). Unknown / `default` values are
+/// no-ops, so an unselected composer keeps the default-deny, adapter-default
+/// behaviour.
+fn spawn_opts_from_body(body: &CreateSessionBody) -> openxgram_acp::SpawnOpts {
+    let permission_allow = matches!(
+        body.permission_mode.as_deref(),
+        Some("bypassPermissions") | Some("bypass") | Some("acceptEdits")
+    );
+    let mut extra_env: Vec<(String, String)> = Vec::new();
+    match body.model.as_deref() {
+        Some("sonnet") => extra_env.push(("ANTHROPIC_MODEL".into(), "claude-sonnet-4-6".into())),
+        Some("opus") => extra_env.push(("ANTHROPIC_MODEL".into(), "claude-opus-4-8".into())),
+        _ => {} // "default"/None → adapter default
+    }
+    match body.thinking.as_deref() {
+        Some("high") => extra_env.push(("MAX_THINKING_TOKENS".into(), "31999".into())),
+        Some("medium") => extra_env.push(("MAX_THINKING_TOKENS".into(), "16000".into())),
+        Some("low") => extra_env.push(("MAX_THINKING_TOKENS".into(), "4000".into())),
+        _ => {}
+    }
+    openxgram_acp::SpawnOpts {
+        permission_allow,
+        extra_env,
+    }
 }
 
 /// `POST /v1/acp/sessions/{id}/prompt` body.
@@ -195,9 +237,10 @@ pub async fn create_session(
 
     let (updates_tx, _rx) = broadcast::channel::<Value>(256);
     let session_id = state.new_session_id();
+    let spawn_opts = spawn_opts_from_body(&body);
 
     let handle_id = if mode == ExecutionMode::Always {
-        Some(spawn_handle(state, &body.agent).await?)
+        Some(spawn_handle(state, &body.agent, spawn_opts.clone()).await?)
     } else {
         None
     };
@@ -207,6 +250,7 @@ pub async fn create_session(
         cwd: body.cwd.clone(),
         execution_mode: mode,
         handle_id,
+        spawn_opts,
         updates_tx,
     };
     state.sessions.lock().await.insert(session_id.clone(), sess);
@@ -223,10 +267,14 @@ pub async fn create_session(
 /// Spawn an agent via the crate registry, returning its handle id. The crate's
 /// `acp_spawn` runs `initialize`; failure (e.g. agent not installed) is surfaced
 /// explicitly.
-async fn spawn_handle(state: &AcpHttpState, agent: &str) -> Result<AgentHandleId, AcpHttpError> {
+async fn spawn_handle(
+    state: &AcpHttpState,
+    agent: &str,
+    opts: openxgram_acp::SpawnOpts,
+) -> Result<AgentHandleId, AcpHttpError> {
     let v = state
         .tools
-        .acp_spawn(agent)
+        .acp_spawn_with(agent, opts)
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("acp spawn failed: {e}")))?;
     v.get("handleId")
@@ -257,7 +305,7 @@ pub async fn prompt(
             .ok_or_else(|| (StatusCode::NOT_FOUND, format!("unknown session: {session_id}")))?;
         if sess.handle_id.is_none() {
             // on_demand / heartbeat: spawn on first prompt (§3 hosting).
-            let hid = spawn_handle(state, &sess.agent).await?;
+            let hid = spawn_handle(state, &sess.agent, sess.spawn_opts.clone()).await?;
             sess.handle_id = Some(hid);
         }
         let hid = sess.handle_id.ok_or_else(|| {
