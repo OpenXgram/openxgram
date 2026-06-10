@@ -4,6 +4,7 @@ import { TalkTab } from "./TalkTab";
 import { WikiTab } from "./WikiTab";
 import { ConfigTab } from "./ConfigTab";
 import { AgentsTab } from "./AgentsTab";
+import { FlowTab } from "./FlowTab";
 
 // Phase 1 — 카카오톡 셸. 정본 디자인: _mockups/kakao-mockup.html
 // 하단 6탭. 본문은 기존 실제 컴포넌트를 그대로 끼움(대화·위키·에이전트·설정).
@@ -60,7 +61,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
             <ConfigTab />
           </Show>
           <Show when={tab() === "flow"}>
-            <div class="kk-embed"><Placeholder title="🔀 워크플로우" phase="Phase 4 (엔진 + cron + 하트비트 큐)" /></div>
+            <FlowTab />
           </Show>
           <Show when={tab() === "market"}>
             <div class="kk-embed"><Placeholder title="🌐 OpenAgentX 마켓" phase="Phase 6 (마켓 + 지갑 + 수익)" /></div>

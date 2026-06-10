@@ -339,3 +339,53 @@
   .kk-wiki-body{padding:16px 16px 24px;}
   .kk-set-body{padding:16px 16px 24px;}
 }
+
+/* 흐름 탭 — 워크플로우/스케줄 네이티브 (정본: _mockups/kakao-mockup.html .wfcard·.trig·.onoff·.runline 포팅) */
+.kk-flow{display:flex; flex-direction:column; height:100%; min-height:0; background:var(--kk-surface);}
+.kk-flow-head{padding:14px 18px 10px; background:#fff; border-bottom:1px solid var(--kk-line); flex:none;}
+.kk-flow-seg{max-width:360px;}
+.kk-flow-body{flex:1; min-height:0; overflow-y:auto; padding:18px 22px 28px;}
+.kk-flow-sec{font-size:12px; font-weight:800; color:#54607a; letter-spacing:.3px; text-transform:uppercase; margin:6px 0 12px;}
+.kk-flow-sec .cnt{font-weight:600; color:#b6bcc6; text-transform:none; letter-spacing:0;}
+.kk-flow-empty{color:var(--kk-sub); font-size:13px; padding:40px 0; text-align:center; line-height:1.6;}
+.kk-flow-empty .sub{display:block; font-size:11.5px; color:#b6bcc6; margin-top:6px;}
+.kk-flow-empty.err{color:#c9760e;}
+
+.kk-flow-stats{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:18px;}
+.kk-statcard{border:1px solid var(--kk-line); border-radius:11px; padding:12px 8px; background:#fff; text-align:center;}
+.kk-statcard .v{display:block; font-size:20px; font-weight:800; color:var(--kk-ink);}
+.kk-statcard .l{display:block; font-size:11px; color:#9aa1ad; margin-top:3px;}
+
+.kk-wfcard{border:1px solid var(--kk-line); border-radius:12px; padding:14px 16px; margin-bottom:11px; background:#fcfcfd;}
+.kk-wftop{display:flex; align-items:center; gap:9px; margin-bottom:9px; flex-wrap:wrap;}
+.kk-wftop b{font-size:14.5px; color:var(--kk-ink);}
+.kk-trig{font-size:11.5px; font-weight:700; background:#eaf1ff; color:#2f6bd8; border-radius:20px; padding:3px 10px; white-space:nowrap;}
+.kk-trig.cron{background:#fff2e0; color:#c9760e;}
+.kk-onoff{margin-left:auto; font-size:10.5px; font-weight:800; border-radius:20px; padding:3px 11px;}
+.kk-onoff.on{background:#e6f6ec; color:#1f9d4d;}
+.kk-onoff.off{background:#f0f1f4; color:#9aa1ad;}
+.kk-onoff.status-pending{background:#fff2e0; color:#c9760e;}
+.kk-onoff.status-sent{background:#e6f6ec; color:#1f9d4d;}
+.kk-onoff.status-failed{background:#fdeaea; color:#d64545;}
+.kk-onoff.status-cancelled{background:#f0f1f4; color:#9aa1ad;}
+.kk-wfgoal{font-size:13px; color:#4b5563; line-height:1.45; margin-bottom:10px; word-break:break-word;}
+.kk-wfmeta{display:flex; gap:7px; flex-wrap:wrap; margin-bottom:4px;}
+.kk-wfchip{font-size:11px; font-weight:600; color:#5b6678; background:#eef1f5; border-radius:7px; padding:3px 9px;}
+.kk-wfnote{font-size:11.5px; color:#1f9d4d; background:#e6f6ec; border-radius:8px; padding:7px 10px; margin:6px 0; word-break:break-word;}
+.kk-wfnote.err{color:#d64545; background:#fdeaea;}
+.kk-wfrun{display:flex; align-items:center; gap:9px; margin-top:11px; padding-top:10px; border-top:1px dashed #eceef2; flex-wrap:wrap;}
+.kk-rdot{width:6px; height:6px; border-radius:50%; background:#1f9d4d; flex:none;}
+.kk-rdot.off{background:#c4c9d2;}
+.kk-wftime{font-size:11px; color:#9aa1ad; font-family:ui-monospace,Menlo,monospace;}
+.kk-wfbtn{margin-left:auto; font-size:11.5px; font-weight:700; color:#5b6678; background:#eef1f5; border:none; border-radius:8px; padding:7px 13px; cursor:pointer;}
+.kk-wfbtn + .kk-wfbtn{margin-left:0;}
+.kk-wfbtn:hover{background:#e3e7ee;}
+.kk-wfbtn.run{color:#fff; background:var(--kk-yellow);}
+.kk-wfbtn.run:hover{background:var(--kk-yellow-d);}
+.kk-wfbtn:disabled{opacity:.5; cursor:default;}
+
+@media (max-width:900px){
+  .kk-flow-body{padding:14px 14px 24px;}
+  .kk-flow-stats{gap:7px;}
+  .kk-statcard .v{font-size:17px;}
+}
