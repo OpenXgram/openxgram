@@ -4869,6 +4869,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "openxgram-acp"
+version = "0.2.0-rc.286"
+dependencies = [
+ "anyhow",
+ "openxgram-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "openxgram-adapter"
 version = "0.2.0-rc.286"
 dependencies = [
