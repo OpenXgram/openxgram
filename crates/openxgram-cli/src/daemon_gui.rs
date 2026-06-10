@@ -7274,24 +7274,11 @@ async fn gui_peer_send(
     )
     .await
     .map_err(|e| internal(&format!("peer_send: {e}")))?;
-    // L0 자동 저장 — outbound 메시지도 messages 테이블에 기록 (audit + reflection)
-    {
-        let session_id = format!("peer:{}", alias);
-        let mut db = state.db.lock().await;
-        let _ = crate::save_l0::save_l0_message(&mut db, crate::save_l0::L0SaveInput {
-            id: None,
-            session_id: &session_id,
-            session_title: Some(&format!("Peer · {}", alias)),
-            sender: "me",
-            body: &body.body,
-            signature: "outbound-signed",
-            timestamp: None,
-            parent_message_id: None,
-            conversation_id: body.conversation_id.as_deref(),
-            source: "messenger_outbound",
-            extra_metadata: Some(serde_json::json!({"peer_alias": alias})),
-        }, None);
-    }
+    // 더블버블 fix — outbound L0 저장은 run_peer_send_with_conv 내부 record_outbox 가
+    // 이미 수행 (session "outbox-to-{alias}", sender "self:{alias}", conversation_id 포함).
+    // 여기서 추가로 save_l0_message("Peer · {alias}", sender "me") 하면 같은 메시지가
+    // 두 세션에 저장되고 peer_conversation 쿼리(outbox-to OR Peer·)가 둘을 union 하여
+    // 말풍선이 2개로 보임 → 중복 저장 제거 (record_outbox 단일 경로로 일원화).
     // UI-MESSENGER-SPEC v1.3 S6 — LLM 토큰비 + x402 결제 합산.
     // 정확 cost: model + tokens_in + tokens_out 제공 시 정밀, 미제공 시 length proxy.
     let llm_micro: i64 = match (body.model.as_deref(), body.tokens_in, body.tokens_out) {
