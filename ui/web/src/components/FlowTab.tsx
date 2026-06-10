@@ -1,8 +1,10 @@
 import { createResource, createSignal, createMemo, For, Show } from "solid-js";
 import { invoke } from "../api/client";
 
-// 흐름 탭 — 카카오톡 네이티브 재구현. 정본: _mockups/kakao-mockup.html (#wfOvl · .wfcard · .trig · .onoff).
-// 오버레이가 아닌 인라인 풀하이트 패널 (AgentsTab/WikiTab 패턴). 세그먼트 토글: 워크플로우 / 스케줄.
+// 흐름 탭 — 카카오톡 정본 목업(_mockups/kakao-mockup.html) 충실 이식.
+// 정본 #wfOvl 의 .board / .bh / .bb / .wfcard / .wftop / .trig / .onoff / .goal / .runline / .rdot 마크업·CSS 를
+// 그대로(verbatim) 포팅하고, 샘플 텍스트만 라이브 데이터로 치환. 오버레이 chrome(.ovl/.bx) 은 탭 본문이라 제거.
+// 워크플로우 DTO 에 project 필드가 없으므로 .wfproj 그룹은 만들지 않고 flat 렌더(가짜 그룹 X). 카드 스타일은 정본 그대로.
 // 백엔드 contract 재사용 (신규 명령 발명 X — WorkflowPanel/ScheduleView 의 invoke 그대로):
 //   workflows_list   → Workflow[]   (워크플로우 보드)
 //   workflow_run     → { run_id }   (▶ 실행)
@@ -108,41 +110,47 @@ export function FlowTab() {
     }
   }
 
+  // 정본 .ovl > .board 구조를 탭 본문(.kk-flow)으로 인라인화. .board 의 .bh / .bb 그대로.
+  // 헤더는 세그먼트 토글(워크플로우/스케줄) 을 .bh 안에 배치.
   return (
     <div class="kk-flow">
-      <div class="kk-flow-head">
-        <div class="kk-seg kk-flow-seg">
-          <div class={`s${seg() === "workflows" ? " on" : ""}`} onClick={() => setSeg("workflows")}>
-            🔀 워크플로우
-          </div>
-          <div class={`s${seg() === "schedules" ? " on" : ""}`} onClick={() => setSeg("schedules")}>
-            ⏰ 스케줄
+      <div class="board">
+        <div class="bh">
+          <h2>🔀 흐름</h2>
+          <span class="sub">paperclip 대신 가볍게 · 목표 + 트리거(시간·webhook)</span>
+          <div class="kk-seg kk-flow-seg">
+            <div class={`s${seg() === "workflows" ? " on" : ""}`} onClick={() => setSeg("workflows")}>
+              🔀 워크플로우
+            </div>
+            <div class={`s${seg() === "schedules" ? " on" : ""}`} onClick={() => setSeg("schedules")}>
+              ⏰ 스케줄
+            </div>
           </div>
         </div>
-      </div>
 
-      <div class="kk-flow-body">
-        <Show when={seg() === "workflows"}>
-          <WorkflowsView
-            workflows={workflows()}
-            loading={workflows.loading}
-            error={workflows.error}
-            busy={busyWf()}
-            note={wfNote()}
-            onRun={runWorkflow}
-            onDelete={deleteWorkflow}
-          />
-        </Show>
+        <div class="bb">
+          <Show when={seg() === "workflows"}>
+            <WorkflowsView
+              workflows={workflows()}
+              loading={workflows.loading}
+              error={workflows.error}
+              busy={busyWf()}
+              note={wfNote()}
+              onRun={runWorkflow}
+              onDelete={deleteWorkflow}
+            />
+          </Show>
 
-        <Show when={seg() === "schedules"}>
-          <SchedulesView
-            schedules={schedules()}
-            loading={schedules.loading}
-            error={schedules.error}
-            stats={stats()}
-            onCancel={cancelSchedule}
-          />
-        </Show>
+          <Show when={seg() === "schedules"}>
+            <SchedulesView
+              schedules={schedules()}
+              loading={schedules.loading}
+              error={schedules.error}
+              stats={stats()}
+              onCancel={cancelSchedule}
+            />
+          </Show>
+        </div>
       </div>
     </div>
   );
@@ -180,22 +188,24 @@ function WorkflowsView(props: {
             </div>
           }
         >
-          <div class="kk-flow-sec">🔀 워크플로우 <span class="cnt">· {list().length}</span></div>
+          {/* 정본 .wfproj 는 project 필드가 DTO 에 없어 만들지 않음. flat 카운트 헤더만. */}
+          <div class="wfproj">🔀 워크플로우 <span class="cnt">· 흐름 {list().length}</span></div>
           <For each={list()}>
             {(w) => {
               const tg = trigInfo(w);
               const on = () => w.enabled !== false;
               return (
-                <div class="kk-wfcard">
-                  <div class="kk-wftop">
+                // 정본 .wfcard 그대로. project 그룹이 없으므로 들여쓰기(.wfcard margin-left)는 .flat 으로 0.
+                <div class="wfcard flat">
+                  <div class="wftop">
                     <b>{w.name || w.id}</b>
-                    <span class={`kk-trig${tg.cls ? " " + tg.cls : ""}`}>
+                    <span class={`trig${tg.cls ? " " + tg.cls : ""}`}>
                       {tg.icon} {tg.label}
                     </span>
-                    <span class={`kk-onoff${on() ? " on" : " off"}`}>{on() ? "ON" : "OFF"}</span>
+                    <span class={`onoff${on() ? " on" : " off"}`}>{on() ? "ON" : "OFF"}</span>
                   </div>
                   <Show when={w.description}>
-                    <div class="kk-wfgoal">{w.description}</div>
+                    <div class="goal">🎯 목표: {w.description}</div>
                   </Show>
                   <div class="kk-wfmeta">
                     <Show when={w.orchestrator}>
@@ -208,8 +218,8 @@ function WorkflowsView(props: {
                   <Show when={props.note && props.note.id === w.id}>
                     <div class={`kk-wfnote${props.note!.err ? " err" : ""}`}>{props.note!.text}</div>
                   </Show>
-                  <div class="kk-wfrun">
-                    <div class="kk-rdot" classList={{ off: !on() }} />
+                  <div class="runline">
+                    <span class="rdot" classList={{ off: !on() }} />
                     <button
                       class="kk-wfbtn run"
                       disabled={props.busy === w.id}
@@ -264,7 +274,7 @@ function SchedulesView(props: {
         </div>
       </div>
 
-      <div class="kk-flow-sec">⏰ 스케줄 · cron <span class="cnt">· {list().length}</span></div>
+      <div class="wfproj">⏰ 스케줄 · cron <span class="cnt">· {list().length}</span></div>
       <Show when={!props.loading} fallback={<div class="kk-flow-empty">불러오는 중…</div>}>
         <Show
           when={!props.error}
@@ -280,22 +290,22 @@ function SchedulesView(props: {
               {(s) => {
                 const cron = s.schedule_kind === "cron";
                 return (
-                  <div class="kk-wfcard">
-                    <div class="kk-wftop">
+                  <div class="wfcard flat">
+                    <div class="wftop">
                       <b>
                         {s.target_kind}: {s.target}
                       </b>
-                      <span class={`kk-trig${cron ? " cron" : ""}`}>
+                      <span class={`trig${cron ? " cron" : ""}`}>
                         {cron ? "⏰" : "📅"} {s.schedule_kind} · {s.schedule_value}
                       </span>
-                      <span class={`kk-onoff status-${s.status}`}>{s.status}</span>
+                      <span class={`onoff status-${s.status}`}>{s.status}</span>
                     </div>
-                    <div class="kk-wfgoal">{s.payload}</div>
+                    <div class="goal">{s.payload}</div>
                     <Show when={s.last_error}>
                       <div class="kk-wfnote err">에러: {s.last_error}</div>
                     </Show>
-                    <div class="kk-wfrun">
-                      <div class="kk-rdot" classList={{ off: s.status !== "pending" }} />
+                    <div class="runline">
+                      <span class="rdot" classList={{ off: s.status !== "pending" }} />
                       <span class="kk-wftime">
                         <Show when={s.next_due_at_kst} fallback={<>등록 {fmtTs(s.created_at_kst)}</>}>
                           다음 {fmtTs(s.next_due_at_kst)}

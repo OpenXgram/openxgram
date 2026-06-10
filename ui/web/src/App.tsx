@@ -124,8 +124,13 @@ function AppInner() {
         <LoginView onUnlock={() => refetchAuth()} />
       </Show>
 
-      {/* 메인 GUI — 인증된 사용자만. 여기서부터 app-shell 다크 크롬 */}
-      <Show when={authed() === true}>
+      {/* KakaoShell home — 풀스크린 단독(다크 app-shell 크롬 없음, 모바일 포함) */}
+      <Show when={authed() === true && tab() === "home"}>
+        <KakaoShell onLogout={onLogout} />
+      </Show>
+
+      {/* 레거시 카드/탭 라우트 — app-shell 다크 크롬 */}
+      <Show when={authed() === true && tab() !== "home"}>
         <div class="app-shell">
           <header class="app-header">
             <h1 class="app-title">
@@ -161,9 +166,6 @@ function AppInner() {
           <main>
             <Show when={tab() === "onboarding"}>
               <Onboarding onReady={() => setTab("home")} />
-            </Show>
-            <Show when={tab() === "home"}>
-              <KakaoShell onLogout={onLogout} />
             </Show>
             <Show when={tab() === "chat"}>
               <ChatTab onJumpToSettings={() => setTab("settings")} />

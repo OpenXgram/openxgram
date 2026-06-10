@@ -67,10 +67,8 @@
 
 /* 반응형 (카카오톡 모바일 패턴) */
 @media (max-width:900px){
-  .kk{position:relative;}
-  .kk-side{position:absolute; inset:0; width:100%; max-width:none; border-right:none; z-index:10;}
-  .kk-main{position:absolute; inset:0; width:100%; z-index:20; transform:translateX(100%); transition:transform .24s ease;}
-  .kk.mchat .kk-main{transform:translateX(0);}
+  /* .kk 는 모바일에서도 position:fixed 풀스크린 유지 (뒤의 다크 App 크롬 누수 방지).
+     대화 push-nav 은 아래 .kk-talk 모바일 규칙이 담당. */
   .kk-back{display:inline-flex;}
   .kk-top .meta-r{gap:5px;}
 }
@@ -117,7 +115,13 @@
 .kk-modal .chk{display:flex; align-items:center; gap:8px; margin-top:14px; font-size:13px; color:var(--kk-ink); cursor:pointer;}
 .kk-modal .chk input{width:auto;}
 .kk-modal .err{color:#e03131; font-size:12px; margin-top:10px;}
-@media (max-width:900px){ .apvgrid{grid-template-columns:1fr;} .kk-agents .kk-roster{width:100%;} }
+/* 에이전트 탭 모바일 — 명부 전체폭 위, 프로필 아래로 스택(카카오 친구탭 패턴). slide-in 은 셸 JS 미연동이라 column 스택으로. */
+@media (max-width:900px){
+  .apvgrid{grid-template-columns:1fr;}
+  .kk-agents{flex-direction:column;}
+  .kk-agents .kk-roster{width:100%; flex:none; max-height:46vh; border-right:none; border-bottom:1px solid var(--kk-line);}
+  .kk-prof{padding:16px 16px 24px;}
+}
 
 /* ===========================================================
    잠금 해제(로그인) 화면 — 카카오톡 정본 디자인 언어
@@ -298,11 +302,10 @@
 .kk-talk-chat .composer .send.dis{background:#2b303a; color:#6b7280; cursor:not-allowed; filter:none;}
 .kk-talk-err{color:#ff8787; font-size:11.5px; margin-top:8px; font-family:ui-monospace,Menlo,monospace;}
 
-/* ---------- 모바일 반응형 (정본 @media: 명부 전체화면 → 행 탭 시 대화 슬라이드인, ← 뒤로) ---------- */
+/* ---------- 모바일 반응형 (정본 @media max-width:900px lines 349-371 충실 포팅) ----------
+   카카오톡 패턴: 좁은 폭 → 명부 전체화면 / 행 탭 시 대화방이 우→좌 슬라이드인 전체화면 + ← 뒤로.
+   정본의 .side(전체화면)·.chat(translateX 슬라이드)·.app.mchat·.back·.composer 규칙을 kk-talk 네임스페이스로. */
 @media (max-width:900px){
-  .kk-talk-roster{width:280px;}
-}
-@media (max-width:600px){
   .kk-talk{position:relative; overflow:hidden;}
   .kk-talk-roster{position:absolute; inset:0; width:100%; max-width:none; border-right:none; z-index:10;}
   .kk-talk-chat{position:absolute; inset:0; width:100%; z-index:20; transform:translateX(100%); transition:transform .24s ease;}
@@ -321,43 +324,48 @@
 }
 
 /* ===========================================================
-   위키 탭 — 카카오톡 네이티브 (WikiTab.tsx)
-   정본: _mockups/kakao-mockup.html (#wikiOvl · .wsearch · .witem · .wkind)
-   인라인 풀하이트 패널. --kk-* 토큰 재사용, kk-wiki 네임스페이스.
+   공용 보드(.board/.bh/.bb) — 위키·설정·흐름 탭 공유 (TalkTab 충실도 기준)
+   정본: _mockups/kakao-mockup.html lines 160-166 (.board/.bh/.bb) verbatim 포팅.
+   오버레이(.ovl) 의 floating board 가 아닌 탭 본문이라, board 의 floating chrome
+   (고정 width / box-shadow / border-radius) 만 탭 풀하이트로 치환하고 .bh/.bb 는 그대로.
+   --surface/--line/--ink/--sub → --kk-* 토큰 매핑. 세 탭에서 1회만 정의(중복 없음).
    =========================================================== */
-.kk-wiki{display:flex; flex-direction:column; height:100%; min-height:0; background:var(--kk-list);}
-.kk-wiki-head{flex:none; padding:15px 22px 14px; display:flex; align-items:baseline; gap:11px; border-bottom:1px solid var(--kk-line); background:#fff; flex-wrap:wrap;}
-.kk-wiki-head h2{margin:0; font-size:17px; font-weight:800; color:var(--kk-ink);}
-.kk-wiki-head .sub{font-size:12px; color:#aab0bd;}
-.kk-wiki-body{flex:1; min-height:0; overflow-y:auto; padding:18px 22px 28px; max-width:740px;}
-.kk-wiki-search{width:100%; background:#f1f2f4; border:1px solid transparent; border-radius:10px; padding:10px 13px; font-size:13px; color:var(--kk-ink); margin-bottom:18px;}
-.kk-wiki-search::placeholder{color:var(--kk-sub);}
-.kk-wiki-search:focus{outline:none; border-color:var(--kk-accent); background:#fff;}
-.kk-wiki-sec{font-size:12px; font-weight:800; color:#54607a; text-transform:uppercase; letter-spacing:.3px; margin:6px 0 10px;}
-.kk-wiki-sec.evo{margin-top:22px; text-transform:none; letter-spacing:0; font-size:13px;}
-.kk-wiki-item{border:1px solid var(--kk-line); border-radius:10px; padding:11px 13px; margin-bottom:9px; background:#fcfcfd;}
-.kk-wiki-item .wt{font-size:12.5px; color:#2b333f; line-height:1.5; word-break:break-word;}
-.kk-wiki-item .wt b{font-weight:700;}
-.kk-wiki-item .wt .wd{color:#6b7280;}
-.kk-wiki-item .wm{font-size:11px; color:#9aa1ad; margin-top:6px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
-.kk-wiki-kind{font-size:10px; font-weight:800; border-radius:6px; padding:1px 7px;}
-.kk-wiki-kind.wk-insight{background:#eaf1ff; color:#2f6bd8;}
-.kk-wiki-kind.wk-order{background:#fff2e0; color:#c9760e;}
-.kk-wiki-kind.wk-decision{background:#e6f6ec; color:#1f9d4d;}
-.kk-wiki-kind.wk-evo{background:#f3ecff; color:#7c3aed;}
+.kk-wiki, .kk-set, .kk-flow{display:flex; flex-direction:column; height:100%; min-height:0; background:var(--kk-surface);}
+.kk-wiki > .board, .kk-set > .board, .kk-flow > .board{flex:1; min-height:0; display:flex; flex-direction:column; background:#fff; overflow:hidden;}
+.kk-wiki .bh, .kk-set .bh, .kk-flow .bh{padding:15px 20px; display:flex; align-items:center; gap:11px; border-bottom:1px solid var(--kk-line); flex:none; flex-wrap:wrap;}
+.kk-wiki .bh h2, .kk-set .bh h2, .kk-flow .bh h2{margin:0; font-size:17px; font-weight:800; color:var(--kk-ink);}
+.kk-wiki .bh .sub, .kk-set .bh .sub, .kk-flow .bh .sub{font-size:12px; color:#aab0bd;}
+.kk-wiki .bh .ver, .kk-set .bh .ver{margin-left:auto; font-size:11px; color:#b6bcc6; font-family:ui-monospace,Menlo,monospace;}
+.kk-wiki .bb, .kk-set .bb, .kk-flow .bb{padding:18px 20px; overflow-y:auto; flex:1; min-height:0;}
+
+/* ===========================================================
+   위키 탭 (WikiTab.tsx) — 정본 #wikiOvl markup/CSS verbatim.
+   .wsearch / .wsec / .witem / .wt2 / .wm / .wkind / .wk-* (lines 229-236).
+   샘플 텍스트만 라이브 데이터로 치환.
+   =========================================================== */
+.kk-wiki .wsearch{display:block; width:100%; background:#f1f2f4; border:1px solid transparent; border-radius:10px; padding:9px 13px; font-size:13px; color:var(--kk-ink); margin-bottom:16px;}
+.kk-wiki .wsearch::placeholder{color:var(--kk-sub);}
+.kk-wiki .wsearch:focus{outline:none; border-color:var(--kk-accent); background:#fff;}
+.kk-wiki .wsec{font-size:12px; font-weight:800; color:#54607a; margin:6px 0 9px; text-transform:uppercase; letter-spacing:.3px;}
+.kk-wiki .witem{border:1px solid var(--kk-line); border-radius:10px; padding:11px 13px; margin-bottom:9px; background:#fcfcfd;}
+.kk-wiki .witem .wt2{font-size:12.5px; color:#2b333f; line-height:1.5; word-break:break-word;}
+.kk-wiki .witem .wt2 b{font-weight:700;}
+.kk-wiki .witem .wt2 .wd{color:#6b7280;}
+.kk-wiki .witem .wm{font-size:11px; color:#9aa1ad; margin-top:5px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
+.kk-wiki .wkind{font-size:10px; font-weight:800; border-radius:6px; padding:1px 7px;}
+.kk-wiki .wk-insight{background:#eaf1ff; color:#2f6bd8;} .kk-wiki .wk-order{background:#fff2e0; color:#c9760e;}
+.kk-wiki .wk-decision{background:#e6f6ec; color:#1f9d4d;} .kk-wiki .wk-evo{background:#f3ecff; color:#7c3aed;}
 .kk-wiki-empty{color:var(--kk-sub); font-size:12.5px; padding:20px 0; text-align:center; line-height:1.6;}
 .kk-wiki-empty.err{color:#d64545;}
 
 /* ===========================================================
-   설정 탭 — 카카오톡 네이티브 (ConfigTab.tsx)
-   정본: _mockups/kakao-mockup.html (#settingsOvl · "계정 · 머신 · 연동")
-   .apvsec·.apvgrid·.apvcard·.cfgrow 공유 클래스 재사용, kk-set 네임스페이스.
+   설정 탭 (ConfigTab.tsx) — 정본 #settingsOvl board + .wsec 섹션.
+   계정·머신은 정본 공유 클래스 .apvgrid/.apvcard/.cfgrow (워크플로 보드 출처, 위 86-104 에 정의됨) 재사용.
+   .wsec 헤더는 위키와 동일 정본 클래스. kk-set 한정 입력/버튼 헬퍼만 추가.
    =========================================================== */
-.kk-set{display:flex; flex-direction:column; height:100%; min-height:0; background:var(--kk-surface);}
-.kk-set-head{flex:none; padding:15px 22px 14px; display:flex; align-items:baseline; gap:11px; border-bottom:1px solid var(--kk-line); background:#fff; flex-wrap:wrap;}
-.kk-set-head h2{margin:0; font-size:17px; font-weight:800; color:var(--kk-ink);}
-.kk-set-head .sub{font-size:12px; color:#aab0bd;}
-.kk-set-body{flex:1; min-height:0; overflow-y:auto; padding:18px 24px 30px; max-width:680px;}
+.kk-set .wsec{font-size:12px; font-weight:800; color:#54607a; margin:6px 0 9px; text-transform:uppercase; letter-spacing:.3px;}
+.kk-set .wsec .auto{font-weight:500; color:#b6bcc6; text-transform:none; letter-spacing:0;}
+.kk-set .bb{max-width:680px;}
 .kk-set-empty{color:var(--kk-sub); font-size:12.5px; padding:14px 0; line-height:1.6;}
 .kk-set-hint{font-size:11.5px; color:#9aa1ad; margin:0 0 10px; line-height:1.55;}
 .kk-set-label{display:block; font-size:12px; font-weight:700; color:#54607a; margin:12px 0 5px;}
@@ -373,54 +381,44 @@
 .kk-set-msg{font-size:11.5px; color:#5b6678; margin-top:8px; word-break:break-word;}
 .kk-set-note{font-size:12px; color:#7b8494; line-height:1.6; background:#fff; border:1px solid var(--kk-line); border-radius:10px; padding:12px 14px;}
 .kk-set-note b{color:#2b333f; font-weight:700;}
-.kk-set-ver{font-size:11px; color:#b6bcc6; margin-top:22px; font-family:ui-monospace,Menlo,monospace;}
 
-@media (max-width:900px){
-  .kk-wiki-body{max-width:none;}
-  .kk-set-body{max-width:none;}
-}
-@media (max-width:480px){
-  .kk-wiki-head, .kk-set-head{padding:13px 16px 12px;}
-  .kk-wiki-body{padding:16px 16px 24px;}
-  .kk-set-body{padding:16px 16px 24px;}
-}
-
-/* 흐름 탭 — 워크플로우/스케줄 네이티브 (정본: _mockups/kakao-mockup.html .wfcard·.trig·.onoff·.runline 포팅) */
-.kk-flow{display:flex; flex-direction:column; height:100%; min-height:0; background:var(--kk-surface);}
-.kk-flow-head{padding:14px 18px 10px; background:#fff; border-bottom:1px solid var(--kk-line); flex:none;}
-.kk-flow-seg{max-width:360px;}
-.kk-flow-body{flex:1; min-height:0; overflow-y:auto; padding:18px 22px 28px;}
-.kk-flow-sec{font-size:12px; font-weight:800; color:#54607a; letter-spacing:.3px; text-transform:uppercase; margin:6px 0 12px;}
-.kk-flow-sec .cnt{font-weight:600; color:#b6bcc6; text-transform:none; letter-spacing:0;}
+/* ===========================================================
+   흐름 탭 (FlowTab.tsx) — 정본 #wfOvl 워크플로우 보드 markup/CSS verbatim.
+   .wfproj / .wfcard / .wftop / .trig / .onoff / .goal / .runline / .rdot (lines 167-184).
+   워크플로우 DTO 에 project 필드 없어 .wfcard.flat 으로 들여쓰기(margin-left) 제거 — 가짜 그룹 X.
+   .kk-flow-* / .kk-wf*(stats·meta·chip·note·btn·time) 는 라이브 데이터 확장(정본 비대응) 헬퍼.
+   =========================================================== */
+.kk-flow .bh .kk-seg{margin-left:auto; max-width:300px; flex:none;}
+.kk-flow .wfproj{display:flex; align-items:center; gap:8px; font-size:13.5px; font-weight:800; color:var(--kk-ink); margin:20px 0 11px;}
+.kk-flow .wfproj:first-child{margin-top:0;}
+.kk-flow .wfproj .cnt{font-size:11px; font-weight:600; color:#9aa1ad;}
+.kk-flow .wfcard{border:1px solid var(--kk-line); border-radius:12px; padding:14px 16px; margin-bottom:11px; background:#fcfcfd; margin-left:14px;}
+.kk-flow .wfcard.flat{margin-left:0;}
+.kk-flow .wftop{display:flex; align-items:center; gap:9px; margin-bottom:9px; flex-wrap:wrap;}
+.kk-flow .wftop b{font-size:14.5px; color:var(--kk-ink);}
+.kk-flow .trig{font-size:11.5px; font-weight:700; background:#eaf1ff; color:#2f6bd8; border-radius:20px; padding:3px 10px; white-space:nowrap;}
+.kk-flow .trig.cron{background:#fff2e0; color:#c9760e;}
+.kk-flow .onoff{margin-left:auto; font-size:10.5px; font-weight:800; border-radius:20px; padding:3px 11px;}
+.kk-flow .onoff.on{background:#e6f6ec; color:#1f9d4d;} .kk-flow .onoff.off{background:#f0f1f4; color:#9aa1ad;}
+.kk-flow .onoff.status-pending{background:#fff2e0; color:#c9760e;}
+.kk-flow .onoff.status-sent{background:#e6f6ec; color:#1f9d4d;}
+.kk-flow .onoff.status-failed{background:#fdeaea; color:#d64545;}
+.kk-flow .onoff.status-cancelled{background:#f0f1f4; color:#9aa1ad;}
+.kk-flow .goal{font-size:13px; color:#4b5563; margin-bottom:12px; line-height:1.45; word-break:break-word;}
+.kk-flow .runline{font-size:11px; color:#9aa1ad; margin-top:11px; padding-top:10px; border-top:1px dashed #eceef2; display:flex; gap:9px; align-items:center; flex-wrap:wrap;}
+.kk-flow .runline .rdot{width:6px; height:6px; border-radius:50%; background:#1f9d4d; flex:none;}
+.kk-flow .runline .rdot.off{background:#c4c9d2;}
 .kk-flow-empty{color:var(--kk-sub); font-size:13px; padding:40px 0; text-align:center; line-height:1.6;}
 .kk-flow-empty .sub{display:block; font-size:11.5px; color:#b6bcc6; margin-top:6px;}
 .kk-flow-empty.err{color:#c9760e;}
-
 .kk-flow-stats{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:18px;}
 .kk-statcard{border:1px solid var(--kk-line); border-radius:11px; padding:12px 8px; background:#fff; text-align:center;}
 .kk-statcard .v{display:block; font-size:20px; font-weight:800; color:var(--kk-ink);}
 .kk-statcard .l{display:block; font-size:11px; color:#9aa1ad; margin-top:3px;}
-
-.kk-wfcard{border:1px solid var(--kk-line); border-radius:12px; padding:14px 16px; margin-bottom:11px; background:#fcfcfd;}
-.kk-wftop{display:flex; align-items:center; gap:9px; margin-bottom:9px; flex-wrap:wrap;}
-.kk-wftop b{font-size:14.5px; color:var(--kk-ink);}
-.kk-trig{font-size:11.5px; font-weight:700; background:#eaf1ff; color:#2f6bd8; border-radius:20px; padding:3px 10px; white-space:nowrap;}
-.kk-trig.cron{background:#fff2e0; color:#c9760e;}
-.kk-onoff{margin-left:auto; font-size:10.5px; font-weight:800; border-radius:20px; padding:3px 11px;}
-.kk-onoff.on{background:#e6f6ec; color:#1f9d4d;}
-.kk-onoff.off{background:#f0f1f4; color:#9aa1ad;}
-.kk-onoff.status-pending{background:#fff2e0; color:#c9760e;}
-.kk-onoff.status-sent{background:#e6f6ec; color:#1f9d4d;}
-.kk-onoff.status-failed{background:#fdeaea; color:#d64545;}
-.kk-onoff.status-cancelled{background:#f0f1f4; color:#9aa1ad;}
-.kk-wfgoal{font-size:13px; color:#4b5563; line-height:1.45; margin-bottom:10px; word-break:break-word;}
 .kk-wfmeta{display:flex; gap:7px; flex-wrap:wrap; margin-bottom:4px;}
 .kk-wfchip{font-size:11px; font-weight:600; color:#5b6678; background:#eef1f5; border-radius:7px; padding:3px 9px;}
 .kk-wfnote{font-size:11.5px; color:#1f9d4d; background:#e6f6ec; border-radius:8px; padding:7px 10px; margin:6px 0; word-break:break-word;}
 .kk-wfnote.err{color:#d64545; background:#fdeaea;}
-.kk-wfrun{display:flex; align-items:center; gap:9px; margin-top:11px; padding-top:10px; border-top:1px dashed #eceef2; flex-wrap:wrap;}
-.kk-rdot{width:6px; height:6px; border-radius:50%; background:#1f9d4d; flex:none;}
-.kk-rdot.off{background:#c4c9d2;}
 .kk-wftime{font-size:11px; color:#9aa1ad; font-family:ui-monospace,Menlo,monospace;}
 .kk-wfbtn{margin-left:auto; font-size:11.5px; font-weight:700; color:#5b6678; background:#eef1f5; border:none; border-radius:8px; padding:7px 13px; cursor:pointer;}
 .kk-wfbtn + .kk-wfbtn{margin-left:0;}
@@ -429,8 +427,15 @@
 .kk-wfbtn.run:hover{background:var(--kk-yellow-d);}
 .kk-wfbtn:disabled{opacity:.5; cursor:default;}
 
+/* ---------- 모바일 반응형 (정본 @media lines 349-375 충실: 보드 풀하이트 + apvgrid 1열) ---------- */
 @media (max-width:900px){
-  .kk-flow-body{padding:14px 14px 24px;}
+  .kk-wiki .bb, .kk-set .bb, .kk-flow .bb{padding:16px 16px 24px;}
+  .kk-set .bb{max-width:none;}
+  .kk-flow .bh .kk-seg{margin-left:0; max-width:none; flex:1 1 100%;}
   .kk-flow-stats{gap:7px;}
   .kk-statcard .v{font-size:17px;}
+}
+@media (max-width:480px){
+  .kk-wiki .bh, .kk-set .bh, .kk-flow .bh{padding:13px 16px 12px;}
+  .apvgrid{grid-template-columns:1fr;}
 }

@@ -76,7 +76,7 @@ const EXEC_MODES = [
 ];
 
 function avatarColor(ai?: string | null): string {
-  return (ai && AI_COLOR[ai]) || "c-group";
+  return (ai && AI_COLOR[ai.toLowerCase()]) || "c-group";
 }
 
 export function AgentsTab(props: { onGotoChat?: (alias: string) => void }) {

@@ -7,9 +7,10 @@ import {
   setDaemonUrl,
 } from "../api/client";
 
-// 설정 탭 — 카카오톡 네이티브 재디자인. 정본: _mockups/kakao-mockup.html (#settingsOvl · "계정 · 머신 · 연동").
-// 오버레이가 아닌 인라인 풀하이트 패널 (AgentsTab/TalkTab 패턴). .apvsec / .apvcard / .qbtn 공유 클래스 재사용.
-// 외부 채널 연동 = 에이전트 탭(에이전트별), 워크플로우 채널 = 흐름 탭 — 정본 안내 그대로.
+// 설정 탭 — 카카오톡 정본 목업(_mockups/kakao-mockup.html) 충실 이식.
+// 정본 #settingsOvl 의 .board / .bh("⚙️ 설정 · 계정·머신·연동") / .bb / .wsec / .qbtn 마크업·CSS 를
+// 그대로(verbatim) 포팅하고, 샘플 텍스트만 라이브 데이터로 치환. 오버레이 chrome(.ovl/.bx) 은 탭 본문이라 제거.
+// 정본 본문이 sparse(.qbtn 행) 하므로 계정·머신은 정본 공유 클래스 .apvgrid/.apvcard/.cfgrow(워크플로 보드와 동일 출처) 로 표현.
 //
 // 백엔드 contract 재사용(신규 명령 발명 X):
 //   status           → { initialized, alias, address }
@@ -123,91 +124,90 @@ export function ConfigTab() {
   };
 
   return (
+    // 정본 .ovl > .board 구조를 탭 본문(.kk-set)으로 인라인화. .board 의 .bh / .bb 그대로.
     <div class="kk-set">
-      <div class="kk-set-head">
-        <h2>⚙️ 설정</h2>
-        <span class="sub">계정 · 머신 · 연동</span>
-      </div>
-
-      <div class="kk-set-body">
-        {/* 계정 · 신원 */}
-        <div class="apvsec">계정 · 신원</div>
-        <Show when={!status.loading || !info.loading} fallback={<div class="kk-set-empty">불러오는 중…</div>}>
-          <div class="apvgrid">
-            <div class="apvcard"><div class="k">별칭(alias)</div><div class="v">{info()?.alias || status()?.alias || "—"}</div></div>
-            <div class="apvcard"><div class="k">주소(address)</div><div class="v">{status()?.address || "—"}</div></div>
-            <div class="apvcard"><div class="k">DID</div><div class="v">{info()?.did || "—"}</div></div>
-            <div class="apvcard"><div class="k">머신</div><div class="v">{info()?.machine || info()?.hostname || "—"}</div></div>
-            <div class="apvcard"><div class="k">HD 경로</div><div class="v">{info()?.hd_path || "—"}</div></div>
-            <div class="apvcard"><div class="k">상태</div><div class="v">{status()?.initialized ? "초기화됨" : "미초기화"}</div></div>
-          </div>
-        </Show>
-
-        {/* 자동 잠금 (편집 가능 — identity_settings 로 영구 저장) */}
-        <div class="apvsec">자동 잠금</div>
-        <p class="kk-set-hint">유휴 시 자동으로 잠그기까지의 분(min). 0 = 끔. 세션 토큰 TTL: {info()?.session_token_ttl_minutes ?? "—"}분.</p>
-        <div class="kk-set-row">
-          <input
-            class="kk-set-num"
-            type="number"
-            min="0"
-            value={lockValue()}
-            onInput={(e) => setAutoLock(parseInt(e.currentTarget.value, 10) || 0)}
-          />
-          <span class="kk-set-unit">분</span>
-          <button class="kk-set-btn" onClick={() => void saveAutoLock()}>저장</button>
+      <div class="board">
+        <div class="bh">
+          <h2>⚙️ 설정</h2>
+          <span class="sub">계정 · 머신 · 연동</span>
+          <Show when={versionLabel()}><span class="ver">버전 {versionLabel()}</span></Show>
         </div>
-        <Show when={lockMsg()}><div class="kk-set-msg">{lockMsg()}</div></Show>
-
-        {/* 연결된 머신 (ops_machines) */}
-        <div class="apvsec">연결된 머신 <span class="auto">(자동 탐지)</span></div>
-        <Show when={!machines.loading} fallback={<div class="kk-set-empty">불러오는 중…</div>}>
-          <Show
-            when={machineRows().length > 0}
-            fallback={<div class="kk-set-empty">연결된 머신 정보가 없습니다. (데몬 ops_machines 응답 비어있음)</div>}
-          >
-            <For each={machineRows()}>
-              {(m) => (
-                <div class="cfgrow">
-                  <span class="cfi">💻</span>
-                  <div>
-                    <div class="cfp">{m.alias || m.hostname || "—"}</div>
-                    <div class="cfc">
-                      {m.hostname || "—"}
-                      <Show when={m.tailscale_ip}> · {m.tailscale_ip}</Show>
-                      <Show when={m.last_seen}> · 최근 {m.last_seen}</Show>
-                    </div>
-                  </div>
-                  <span class="cfx">{m.role || "peer"}</span>
-                </div>
-              )}
-            </For>
+        <div class="bb">
+          {/* 계정 · 신원 (정본 .wsec 헤더 + .apvgrid/.apvcard 카드) */}
+          <div class="wsec">계정 · 신원</div>
+          <Show when={!status.loading || !info.loading} fallback={<div class="kk-set-empty">불러오는 중…</div>}>
+            <div class="apvgrid">
+              <div class="apvcard"><div class="k">별칭(alias)</div><div class="v">{info()?.alias || status()?.alias || "—"}</div></div>
+              <div class="apvcard"><div class="k">주소(address)</div><div class="v">{status()?.address || "—"}</div></div>
+              <div class="apvcard"><div class="k">DID</div><div class="v">{info()?.did || "—"}</div></div>
+              <div class="apvcard"><div class="k">머신</div><div class="v">{info()?.machine || info()?.hostname || "—"}</div></div>
+              <div class="apvcard"><div class="k">HD 경로</div><div class="v">{info()?.hd_path || "—"}</div></div>
+              <div class="apvcard"><div class="k">상태</div><div class="v">{status()?.initialized ? "초기화됨" : "미초기화"}</div></div>
+            </div>
           </Show>
-        </Show>
 
-        {/* 데몬 연결 (web GUI 전용) */}
-        <div class="apvsec">데몬 연결 <span class="auto">(이 브라우저)</span></div>
-        <p class="kk-set-hint">웹 GUI 가 접속할 데몬 주소와 인증 토큰. 이 브라우저에만 저장됩니다.</p>
-        <label class="kk-set-label">데몬 URL</label>
-        <input class="kk-set-text" type="text" value={url()} onInput={(e) => setUrl(e.currentTarget.value)} placeholder="/v1/gui 또는 http://localhost:47302/v1/gui" />
-        <label class="kk-set-label">인증 토큰 (Bearer)</label>
-        <input class="kk-set-text" type="password" value={token()} onInput={(e) => setToken(e.currentTarget.value)} placeholder="mcp-token" />
-        <div class="kk-set-row">
-          <button class="kk-set-btn" onClick={saveConn}>저장</button>
-          <button class="kk-set-btn alt" onClick={() => void testConn()}>연결 테스트</button>
+          {/* 자동 잠금 (편집 가능 — identity_settings 로 영구 저장) */}
+          <div class="wsec" style="margin-top:18px;">자동 잠금</div>
+          <p class="kk-set-hint">유휴 시 자동으로 잠그기까지의 분(min). 0 = 끔. 세션 토큰 TTL: {info()?.session_token_ttl_minutes ?? "—"}분.</p>
+          <div class="kk-set-row">
+            <input
+              class="kk-set-num"
+              type="number"
+              min="0"
+              value={lockValue()}
+              onInput={(e) => setAutoLock(parseInt(e.currentTarget.value, 10) || 0)}
+            />
+            <span class="kk-set-unit">분</span>
+            <button class="kk-set-btn" onClick={() => void saveAutoLock()}>저장</button>
+          </div>
+          <Show when={lockMsg()}><div class="kk-set-msg">{lockMsg()}</div></Show>
+
+          {/* 연결된 머신 (정본 .wsec + .cfgrow 행) */}
+          <div class="wsec" style="margin-top:18px;">연결된 머신 <span class="auto">(자동 탐지)</span></div>
+          <Show when={!machines.loading} fallback={<div class="kk-set-empty">불러오는 중…</div>}>
+            <Show
+              when={machineRows().length > 0}
+              fallback={<div class="kk-set-empty">연결된 머신 정보가 없습니다. (데몬 ops_machines 응답 비어있음)</div>}
+            >
+              <For each={machineRows()}>
+                {(m) => (
+                  <div class="cfgrow">
+                    <span class="cfi">💻</span>
+                    <div>
+                      <div class="cfp">{m.alias || m.hostname || "—"}</div>
+                      <div class="cfc">
+                        {m.hostname || "—"}
+                        <Show when={m.tailscale_ip}> · {m.tailscale_ip}</Show>
+                        <Show when={m.last_seen}> · 최근 {m.last_seen}</Show>
+                      </div>
+                    </div>
+                    <span class="cfx">{m.role || "peer"}</span>
+                  </div>
+                )}
+              </For>
+            </Show>
+          </Show>
+
+          {/* 데몬 연결 (web GUI 전용) */}
+          <div class="wsec" style="margin-top:18px;">데몬 연결 <span class="auto">(이 브라우저)</span></div>
+          <p class="kk-set-hint">웹 GUI 가 접속할 데몬 주소와 인증 토큰. 이 브라우저에만 저장됩니다.</p>
+          <label class="kk-set-label">데몬 URL</label>
+          <input class="kk-set-text" type="text" value={url()} onInput={(e) => setUrl(e.currentTarget.value)} placeholder="/v1/gui 또는 http://localhost:47302/v1/gui" />
+          <label class="kk-set-label">인증 토큰 (Bearer)</label>
+          <input class="kk-set-text" type="password" value={token()} onInput={(e) => setToken(e.currentTarget.value)} placeholder="mcp-token" />
+          <div class="kk-set-row">
+            <button class="kk-set-btn" onClick={saveConn}>저장</button>
+            <button class="kk-set-btn alt" onClick={() => void testConn()}>연결 테스트</button>
+          </div>
+          <Show when={connMsg()}><div class="kk-set-msg">{connMsg()}</div></Show>
+
+          {/* 연동 안내 (정본 hint) */}
+          <div class="wsec" style="margin-top:18px;">연동</div>
+          <div class="kk-set-note">
+            외부 채널 연동(디스코드·텔레그램 등)은 <b>에이전트 탭</b>에서 에이전트별로,
+            워크플로우 채널은 <b>흐름 탭</b>에서 설정합니다.
+          </div>
         </div>
-        <Show when={connMsg()}><div class="kk-set-msg">{connMsg()}</div></Show>
-
-        {/* 연동 안내 (정본 hint) */}
-        <div class="apvsec">연동</div>
-        <div class="kk-set-note">
-          외부 채널 연동(디스코드·텔레그램 등)은 <b>에이전트 탭</b>에서 에이전트별로,
-          워크플로우 채널은 <b>흐름 탭</b>에서 설정합니다.
-        </div>
-
-        <Show when={versionLabel()}>
-          <div class="kk-set-ver">버전 {versionLabel()}</div>
-        </Show>
       </div>
     </div>
   );
