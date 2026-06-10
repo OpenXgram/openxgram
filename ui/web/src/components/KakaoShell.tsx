@@ -1,6 +1,6 @@
 import { createSignal, Show } from "solid-js";
 import "./kakao.css";
-import { ChatTab } from "./ChatTab";
+import { TalkTab } from "./TalkTab";
 import { MemoryTab } from "./MemoryTab";
 import { SettingsTab } from "./SettingsTab";
 import { AgentsTab } from "./AgentsTab";
@@ -48,7 +48,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
       <div class="kk-main">
         <div class="kk-body">
           <Show when={tab() === "chat"}>
-            <div class="kk-embed"><ChatTab onJumpToSettings={() => setTab("settings")} /></div>
+            <div class="kk-embed"><TalkTab onJumpToSettings={() => setTab("settings")} /></div>
           </Show>
           <Show when={tab() === "wiki"}>
             <div class="kk-embed"><MemoryTab /></div>
