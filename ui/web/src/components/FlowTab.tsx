@@ -68,6 +68,30 @@ interface WfRun {
   total_cost?: number | null;
 }
 
+// Phase 3 — A2A(에이전트↔에이전트) DTO.
+// a2a_agents → { agents, note }. 현재 OpenXgram 에이전트는 AgentCard 호스팅 전이라
+// reachable:false + note(후속 안내)가 정직하게 내려온다 — UI 에서 숨기지 않는다.
+interface A2AAgent {
+  alias: string;
+  reachable: boolean;
+  agentCardUrl?: string | null;
+}
+interface A2AAgentsResp {
+  agents: A2AAgent[];
+  note?: string | null;
+}
+interface A2ASendResp {
+  taskId: string;
+  skill?: string | null;
+  fromAgent?: string | null;
+  target: string;
+  task?: string | null;
+}
+interface A2ATaskResp {
+  taskId: string;
+  task: unknown;
+}
+
 type Seg = "workflows" | "schedules";
 
 function fmtTs(ts?: number | null): string {
@@ -119,8 +143,9 @@ export function FlowTab() {
   // 빌더 (만들기) 상태 — 목업 #builder.
   const [showBuilder, setShowBuilder] = createSignal(false);
 
-  // 조직도 / 실행이력 오버레이 상태.
+  // 조직도 / 실행이력 / A2A 위임 오버레이 상태.
   const [orgOpen, setOrgOpen] = createSignal(false);
+  const [a2aOpen, setA2aOpen] = createSignal(false);
   const [runFor, setRunFor] = createSignal<Workflow | null>(null);
 
   async function runWorkflow(id: string) {
@@ -204,6 +229,7 @@ export function FlowTab() {
               onRun={runWorkflow}
               onDelete={deleteWorkflow}
               onOpenOrg={() => setOrgOpen(true)}
+              onOpenA2a={() => setA2aOpen(true)}
               onOpenRun={(w) => setRunFor(w)}
             />
           </Show>
@@ -222,6 +248,9 @@ export function FlowTab() {
 
       <Show when={orgOpen()}>
         <OrgOverlay onClose={() => setOrgOpen(false)} colorClass={colorClass} />
+      </Show>
+      <Show when={a2aOpen()}>
+        <A2AOverlay onClose={() => setA2aOpen(false)} />
       </Show>
       <Show when={runFor()}>
         <RunOverlay workflow={runFor()!} onClose={() => setRunFor(null)} />
@@ -448,6 +477,7 @@ function WorkflowsView(props: {
   onRun: (id: string) => void;
   onDelete: (id: string, name: string) => void;
   onOpenOrg: () => void;
+  onOpenA2a: () => void;
   onOpenRun: (w: Workflow) => void;
 }) {
   const list = createMemo(() => props.workflows ?? []);
@@ -459,6 +489,15 @@ function WorkflowsView(props: {
           <div class="kk-flow-empty err">⚠ 워크플로우를 불러오지 못했습니다. 데몬 연결을 확인하세요.</div>
         }
       >
+        {/* A2A 위임 진입 — 워크플로우 유무와 무관하게 항상 노출.
+            ACP(나↔에이전트)와 구분되는 에이전트↔에이전트 레이어. */}
+        <div class="a2a-entry">
+          <span class="a2a-entry-tit">🔗 A2A 위임</span>
+          <span class="a2a-entry-sub">에이전트↔에이전트 — 다른 A2A 에이전트에게 작업 위임</span>
+          <button class="a2abtn" onClick={props.onOpenA2a}>
+            열기
+          </button>
+        </div>
         <Show
           when={list().length > 0}
           fallback={
@@ -597,6 +636,237 @@ function OrgOverlay(props: { onClose: () => void; colorClass: (a: OrgAgent) => s
                 </For>
               </Show>
             </Show>
+          </Show>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── A2A 위임 (에이전트↔에이전트) ── Phase 3, ACP-A2A-CORE.md ──
+// ACP = 나↔에이전트, A2A = 에이전트↔에이전트. 이 뷰는 후자.
+// a2a_agents 로 A2A 도달 가능 에이전트를 나열하되, 현재 OpenXgram 에이전트는
+// AgentCard 호스팅 전이라 reachable:false + note(후속) 를 정직하게 렌더한다.
+// 그래서 위임 target 은 수동 외부 A2A 에이전트 base URL 입력으로 받는다.
+function A2AOverlay(props: { onClose: () => void }) {
+  const [resp] = createResource<A2AAgentsResp>(() => invoke<A2AAgentsResp>("a2a_agents"));
+  const agents = createMemo<A2AAgent[]>(() => {
+    const r = resp();
+    // a2a_agents emptyAs:[] → 배열로 올 수도, {agents,note} 객체로 올 수도 있으니 둘 다 수용.
+    if (Array.isArray(r)) return r as A2AAgent[];
+    return r?.agents ?? [];
+  });
+  const note = createMemo<string | null>(() => {
+    const r = resp();
+    return Array.isArray(r) ? null : (r?.note ?? null);
+  });
+  const reachableCount = createMemo(() => agents().filter((a) => a.reachable).length);
+
+  // 위임 폼 상태.
+  const [target, setTarget] = createSignal("");
+  const [skill, setSkill] = createSignal("");
+  const [task, setTask] = createSignal("");
+  const [fromAgent, setFromAgent] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+  const [err, setErr] = createSignal<string | null>(null);
+  const [sent, setSent] = createSignal<A2ASendResp | null>(null);
+
+  // 폴링 상태.
+  const [polling, setPolling] = createSignal(false);
+  const [pollErr, setPollErr] = createSignal<string | null>(null);
+  const [taskState, setTaskState] = createSignal<A2ATaskResp | null>(null);
+
+  // target 선택 헬퍼 — reachable 에이전트의 agentCardUrl 을 폼에 채운다.
+  function pick(a: A2AAgent) {
+    if (a.agentCardUrl) setTarget(a.agentCardUrl);
+  }
+
+  async function send() {
+    const t = target().trim();
+    if (!t) {
+      setErr("target — 외부 A2A 에이전트 URL 을 입력하세요.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    setSent(null);
+    setTaskState(null);
+    setPollErr(null);
+    try {
+      const args: Record<string, unknown> = { target: t };
+      if (skill().trim()) args.skill = skill().trim();
+      if (task().trim()) args.task = task().trim();
+      if (fromAgent().trim()) args.from_agent = fromAgent().trim();
+      const r = await invoke<A2ASendResp>("a2a_send", args);
+      setSent(r);
+    } catch (e) {
+      // discovery 실패 / 광고된 skill 없음 등 — 메시지 그대로 노출.
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function poll() {
+    const s = sent();
+    if (!s) return;
+    setPolling(true);
+    setPollErr(null);
+    try {
+      const r = await invoke<A2ATaskResp>("a2a_task_get", { id: s.taskId, target: s.target });
+      setTaskState(r);
+    } catch (e) {
+      setPollErr((e as Error).message);
+    } finally {
+      setPolling(false);
+    }
+  }
+
+  return (
+    <div class="ovl" onClick={props.onClose}>
+      <div class="board wide" onClick={(e) => e.stopPropagation()}>
+        <div class="bh">
+          <h2>🔗 A2A 위임</h2>
+          <span class="sub">에이전트↔에이전트 (A2A) — ACP(나↔에이전트)와 다른 레이어</span>
+          <span class="bx" onClick={props.onClose}>
+            ✕
+          </span>
+        </div>
+        <div class="bb">
+          <div class="a2a-explain">
+            이 화면은 <b>에이전트↔에이전트(A2A)</b> 위임 레이어입니다. 내가 직접 에이전트와 대화하는
+            ACP(나↔에이전트)와 달리, 한 에이전트가 다른 에이전트의 AgentCard 를 통해 작업을 위임합니다.
+          </div>
+
+          {/* A2A 도달 가능 에이전트 목록 */}
+          <div class="a2a-sec-tit">A2A 도달 가능 에이전트</div>
+          <Show when={!resp.loading} fallback={<div class="org-empty">불러오는 중…</div>}>
+            <Show
+              when={!resp.error}
+              fallback={
+                <div class="org-empty">⚠ A2A 에이전트를 불러오지 못했습니다. 데몬 연결을 확인하세요.</div>
+              }
+            >
+              <Show when={note()}>
+                <div class="a2a-note">ℹ {note()}</div>
+              </Show>
+              <Show
+                when={agents().length > 0}
+                fallback={
+                  <div class="org-empty">
+                    현재 A2A 로 도달 가능한 OpenXgram 에이전트가 없습니다.
+                    <br />
+                    <span class="a2a-mut">
+                      OpenXgram 에이전트의 AgentCard 호스팅은 후속 작업입니다. 그 전까지는 아래에서
+                      외부 A2A 에이전트 URL 을 직접 입력해 위임하세요.
+                    </span>
+                  </div>
+                }
+              >
+                <Show when={reachableCount() === 0}>
+                  <div class="a2a-mut" style={{ "margin-bottom": "8px" }}>
+                    아래 에이전트는 아직 AgentCard 를 호스팅하지 않아 모두 <b>도달 불가</b> 상태입니다
+                    (후속 작업). 위임은 외부 A2A 에이전트 URL 입력으로 진행하세요.
+                  </div>
+                </Show>
+                <For each={agents()}>
+                  {(a) => (
+                    <div class="a2a-agent">
+                      <span class="a2a-ag-name">{a.alias}</span>
+                      <Show when={a.agentCardUrl}>
+                        <span class="a2a-ag-url">{a.agentCardUrl}</span>
+                      </Show>
+                      <span class={`a2a-rb${a.reachable ? " ok" : " no"}`}>
+                        {a.reachable ? "도달 가능" : "도달 불가"}
+                      </span>
+                      <Show when={a.reachable && a.agentCardUrl}>
+                        <button class="a2a-pick" onClick={() => pick(a)}>
+                          target 채우기
+                        </button>
+                      </Show>
+                    </div>
+                  )}
+                </For>
+              </Show>
+            </Show>
+          </Show>
+
+          {/* 위임 폼 */}
+          <div class="a2a-sec-tit" style={{ "margin-top": "18px" }}>
+            작업 위임 (A2A task 전송)
+          </div>
+          <div class="bl2">외부 A2A 에이전트 URL (target)</div>
+          <input
+            class="ctl2"
+            placeholder="예: https://agent.example.com (AgentCard base URL)"
+            value={target()}
+            onInput={(e) => setTarget(e.currentTarget.value)}
+          />
+          <div class="bl2">skill (대상이 광고하는 스킬 이름 — 선택)</div>
+          <input
+            class="ctl2"
+            placeholder="예: summarize"
+            value={skill()}
+            onInput={(e) => setSkill(e.currentTarget.value)}
+          />
+          <div class="bl2">task (위임할 작업 내용)</div>
+          <input
+            class="ctl2"
+            placeholder="예: 이 문서를 3줄로 요약해줘"
+            value={task()}
+            onInput={(e) => setTask(e.currentTarget.value)}
+          />
+          <div class="bl2">from_agent (보내는 에이전트 alias — 선택)</div>
+          <input
+            class="ctl2"
+            placeholder="예: Starian"
+            value={fromAgent()}
+            onInput={(e) => setFromAgent(e.currentTarget.value)}
+          />
+
+          <Show when={err()}>
+            <div class="a2a-err">⚠ 전송 실패: {err()}</div>
+          </Show>
+
+          <div style={{ "margin-top": "12px" }}>
+            <button class="savewf" disabled={busy()} onClick={send}>
+              {busy() ? "전송 중…" : "🔗 작업 위임"}
+            </button>
+          </div>
+
+          {/* 전송 결과 + 폴링 */}
+          <Show when={sent()}>
+            <div class="a2a-result">
+              <div class="a2a-res-row">
+                <b>taskId</b> <span class="a2a-mono">{sent()!.taskId}</span>
+              </div>
+              <div class="a2a-res-row">
+                <b>target</b> <span class="a2a-mono">{sent()!.target}</span>
+              </div>
+              <Show when={sent()!.skill}>
+                <div class="a2a-res-row">
+                  <b>skill</b> {sent()!.skill}
+                </div>
+              </Show>
+              <Show when={sent()!.fromAgent}>
+                <div class="a2a-res-row">
+                  <b>from</b> {sent()!.fromAgent}
+                </div>
+              </Show>
+              <div style={{ "margin-top": "10px" }}>
+                <button class="kk-wfbtn run" disabled={polling()} onClick={poll}>
+                  {polling() ? "조회 중…" : "↻ 상태 조회"}
+                </button>
+              </div>
+              <Show when={pollErr()}>
+                <div class="a2a-err" style={{ "margin-top": "8px" }}>
+                  ⚠ 상태 조회 실패: {pollErr()}
+                </div>
+              </Show>
+              <Show when={taskState()}>
+                <div class="a2a-tasklog">{JSON.stringify(taskState()!.task, null, 2)}</div>
+              </Show>
+            </div>
           </Show>
         </div>
       </div>

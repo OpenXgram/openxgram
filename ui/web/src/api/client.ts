@@ -102,6 +102,10 @@ const ROUTES: Record<string, Route> = {
  fs_file_get: { method: "GET", path: "/fs/file"},
  fs_file_put: { method: "PUT", path: "/fs/file", body: true},
  machines_list: { method: "GET", path: "/machines", emptyAs: []},
+ // Phase 3 — A2A(에이전트↔에이전트)
+ a2a_agents: { method: "GET", path: "/a2a/agents", emptyAs: []},
+ a2a_send: { method: "POST", path: "/a2a/send", body: true},
+ a2a_task_get: { method: "GET", path: "/a2a/tasks/{id}"},
  // Phase 2-D — 에이전트 프로필 (classification/execution_mode/ai_type/worktree/public + folder/group/role)
  agent_profile_get: { method: "GET", path: "/agent/{alias}/profile"},
  agent_profile_set: { method: "POST", path: "/agent/{alias}/profile", body: true},

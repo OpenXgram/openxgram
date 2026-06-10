@@ -467,3 +467,167 @@
   padding: 24px 4px;
   text-align: center;
 }
+
+/* ── A2A 위임 (에이전트↔에이전트) ── Phase 3, ACP-A2A-CORE.md ── */
+.kk-flow .a2a-entry {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--kk-line);
+  border-radius: 12px;
+  padding: 11px 14px;
+  margin-bottom: 13px;
+  background: #f7f9ff;
+}
+.kk-flow .a2a-entry .a2a-entry-tit {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--kk-ink);
+}
+.kk-flow .a2a-entry .a2a-entry-sub {
+  font-size: 11.5px;
+  color: #7b8494;
+}
+.kk-flow .a2abtn {
+  margin-left: auto;
+  border: 1px solid #cdd9f5;
+  background: #fff;
+  color: #2f6bd8;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+.kk-flow .a2a-explain {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #4b5563;
+  background: #f3f6ff;
+  border: 1px solid #e0e8fb;
+  border-radius: 10px;
+  padding: 11px 13px;
+  margin-bottom: 14px;
+}
+.kk-flow .a2a-sec-tit {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: #54607a;
+  margin: 0 0 9px;
+}
+.kk-flow .a2a-note {
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: #8a6d12;
+  background: #fff7e0;
+  border: 1px solid #f4e3ad;
+  border-radius: 9px;
+  padding: 9px 12px;
+  margin-bottom: 10px;
+}
+.kk-flow .a2a-mut {
+  font-size: 11.5px;
+  color: #9aa1ad;
+  line-height: 1.55;
+}
+.kk-flow .a2a-agent {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--kk-line);
+  border-radius: 10px;
+  padding: 9px 12px;
+  background: #fcfcfd;
+  margin-bottom: 8px;
+}
+.kk-flow .a2a-agent .a2a-ag-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--kk-ink);
+}
+.kk-flow .a2a-agent .a2a-ag-url {
+  font-size: 11px;
+  color: #9aa1ad;
+  font-family: ui-monospace, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+.kk-flow .a2a-rb {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 800;
+  border-radius: 6px;
+  padding: 2px 9px;
+}
+.kk-flow .a2a-rb.ok {
+  background: #e6f6ec;
+  color: #1f9d4d;
+}
+.kk-flow .a2a-rb.no {
+  background: #f1f2f5;
+  color: #9aa1ad;
+}
+.kk-flow .a2a-pick {
+  border: 1px solid #cdd9f5;
+  background: #fff;
+  color: #2f6bd8;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 7px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.kk-flow .bl2 {
+  font-size: 12px;
+  font-weight: 700;
+  color: #54607a;
+  margin: 11px 0 6px;
+}
+.kk-flow .a2a-err {
+  font-size: 12px;
+  color: #d64545;
+  background: #fdeaea;
+  border: 1px solid #f4c9c9;
+  border-radius: 9px;
+  padding: 9px 12px;
+  margin-top: 10px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+.kk-flow .a2a-result {
+  border: 1px solid var(--kk-line);
+  border-radius: 11px;
+  padding: 12px 14px;
+  margin-top: 14px;
+  background: #fafbfc;
+}
+.kk-flow .a2a-res-row {
+  font-size: 12px;
+  color: #4b5563;
+  padding: 3px 0;
+}
+.kk-flow .a2a-res-row b {
+  display: inline-block;
+  min-width: 54px;
+  color: #54607a;
+}
+.kk-flow .a2a-mono {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11.5px;
+  color: #2b333f;
+  word-break: break-all;
+}
+.kk-flow .a2a-tasklog {
+  background: #0d1117;
+  color: #c9d1d9;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  font-family: ui-monospace, Menlo, monospace;
+  margin-top: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
