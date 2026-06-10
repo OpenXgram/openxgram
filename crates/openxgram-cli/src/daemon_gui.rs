@@ -3748,12 +3748,21 @@ async fn gui_agents_list(
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     let mut db = state.db.lock().await;
     // Phase 2-C — agent_profiles LEFT JOIN: 명부 그룹화용 classification/execution_mode/ai_type/public.
+    // 아키텍처 수정 — 로스터 = 마스터가 의도적으로 생성한 에이전트만.
+    //   소스 테이블은 agent_capabilities 그대로 유지한다("에이전트 추가"(gui_agents_register)
+    //   가 agent_capabilities 에 기록하고, agent_profiles 는 생성 시점에 채워지지 않으므로
+    //   profile-first 로 바꾸면 로스터가 비게 됨 — 라이브 DB 에서 agent_profiles 가 빈 것을 확인).
+    //   대신 과거 auto_seed_local_tmux_agents 가 박아둔 tmux 세션 행(role='tmux')을 제외하여
+    //   로스터에 tmux 세션이 섞이지 않게 한다. tmux 는 DETAIL 패널(/v1/gui/sessions)에서만 노출.
+    //   (auto_seed 의 신규 INSERT 는 daemon.rs 에서 이미 중단됨 — 이 WHERE 는 기존 라이브 DB 의
+    //    잔존 행을 view 레벨에서 정리. 파괴적 DELETE 마이그레이션 없이 표시만 교정.)
     let mut stmt = db.conn().prepare(
         "SELECT ac.alias, ac.role, ac.description, ac.capabilities, ac.tool_list, ac.project_path, \
                 ac.group_name, ac.messenger_enabled, ac.orchestration_role, ac.special_instructions, ac.updated_at, \
                 p.classification, p.execution_mode, p.ai_type, p.is_public, p.machine \
          FROM agent_capabilities ac \
          LEFT JOIN agent_profiles p ON p.alias = ac.alias \
+         WHERE ac.role IS NOT 'tmux' \
          ORDER BY ac.messenger_enabled DESC, ac.alias ASC",
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
     let rows = stmt.query_map([], |r| {

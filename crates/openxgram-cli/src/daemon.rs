@@ -1210,8 +1210,9 @@ fn auto_seed_local_tmux_agents(data_dir: &std::path::Path) -> anyhow::Result<usi
         path: openxgram_core::paths::db_path(data_dir),
         ..Default::default()
     })?;
-    let now = chrono::Utc::now().to_rfc3339();
-    let mut seeded = 0;
+    // 아키텍처 수정 — auto-seed 는 더 이상 명부(agent_capabilities) 행을 만들지 않는다.
+    // seeded 는 0 으로 고정(로스터 등록 없음). peers.session_identifier 갱신만 수행.
+    let seeded = 0;
     for sn in &local_sessions {
         // alias 추출: 'aoe_<alias>_<id>' → alias / 그 외 → session_name 그대로
         let alias: String = if let Some(s) = sn.strip_prefix("aoe_") {
@@ -1237,17 +1238,13 @@ fn auto_seed_local_tmux_agents(data_dir: &std::path::Path) -> anyhow::Result<usi
             tracing::debug!(alias = %alias, tmux = %sn, "rc.232 auto-seed skip — pane 에 LLM 미검출 (shell/placeholder)");
             continue;
         }
-        // INSERT OR IGNORE — 이미 있으면 messenger_enabled 만 1 로 update (auto-enable).
-        let affected = db.conn().execute(
-            "INSERT INTO agent_capabilities (alias, role, description, messenger_enabled, updated_at) \
-             VALUES (?1, 'tmux', ?2, 1, ?3) \
-             ON CONFLICT(alias) DO UPDATE SET messenger_enabled=1, updated_at=excluded.updated_at",
-            rusqlite::params![&alias, &format!("auto-seed from tmux: {sn}"), &now],
-        ).unwrap_or(0);
-        if affected > 0 {
-            seeded += 1;
-            tracing::info!(alias = %alias, tmux = %sn, "rc.201 auto-seed: agent_capabilities");
-        }
+        // 아키텍처 수정 — tmux 세션을 명부(agent_capabilities) 에이전트로 자동 등록하지 않는다.
+        // 마스터 결정: 에이전트는 마스터가 "에이전트 추가"로 의도적으로 생성한다(agent_profiles).
+        // tmux 는 에이전트가 도는 장소일 뿐 — DETAIL 패널(/v1/gui/sessions)에서 alias/project_path
+        // 로 매핑되어 보이며, 명부 로스터에는 나타나지 않는다.
+        // 따라서 여기서 agent_capabilities INSERT 를 더 이상 하지 않는다(로스터 오염 방지).
+        // 단, 아래 peers.session_identifier UPDATE 는 통신/세션-매핑 경로용이므로 유지한다
+        // (이미 존재하는 peer 가 있을 때만 no-op 갱신 — 새 명부 행을 만들지 않음).
         // rc.245 — 결정적 세션 매핑: peer row 에 명시적 session_identifier 저장.
         // format 은 collect_sessions(/v1/gui/sessions) 의 local tmux entry 와 동일 ("tmux:<name>").
         // capture_session 이 이 식별자를 바로 resolve → Messenger.tsx normalizeAlias 추정 불필요.
