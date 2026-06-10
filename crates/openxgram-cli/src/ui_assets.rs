@@ -14,6 +14,59 @@ use include_dir::{include_dir, Dir};
 
 static UI_DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../ui/web/dist");
 
+/// 디스크 우선 서빙 디렉토리 (env `XGRAM_GUI_DIR`).
+/// 설정돼 있고 디렉토리가 존재하면 요청 시 디스크에서 읽어 서빙 → 프론트 변경 시
+/// cargo 재빌드 없이 `dist` 복사만으로 즉시 반영. 없으면 임베드 UI_DIST fallback.
+fn disk_dir() -> Option<std::path::PathBuf> {
+    let d = std::env::var("XGRAM_GUI_DIR").ok()?;
+    let p = std::path::PathBuf::from(d);
+    if p.is_dir() {
+        Some(p)
+    } else {
+        None
+    }
+}
+
+fn cache_for(path: &str) -> &'static str {
+    if path == "index.html" {
+        "no-store, no-cache, must-revalidate"
+    } else {
+        "public, max-age=3600"
+    }
+}
+
+/// `XGRAM_GUI_DIR` 에서 파일을 읽어 서빙 (path traversal 차단). 없으면 None → 임베드 fallback.
+fn try_disk(path: &str) -> Option<Response> {
+    let dir = disk_dir()?;
+    let safe = path.trim_start_matches('/');
+    if safe.contains("..") {
+        return None;
+    }
+    if let Ok(bytes) = std::fs::read(dir.join(safe)) {
+        let mime = mime_guess::from_path(safe).first_or_octet_stream();
+        return Some(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, mime.as_ref())
+                .header(header::CACHE_CONTROL, cache_for(safe))
+                .body(Body::from(bytes))
+                .expect("response build"),
+        );
+    }
+    // SPA fallback — 디스크 index.html.
+    if let Ok(bytes) = std::fs::read(dir.join("index.html")) {
+        return Some(
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+                .header(header::CACHE_CONTROL, "no-store, no-cache, must-revalidate")
+                .body(Body::from(bytes))
+                .expect("response build"),
+        );
+    }
+    None
+}
+
 /// `GET /gui` → index.html.
 pub async fn gui_root() -> Response {
     serve("index.html")
@@ -27,6 +80,11 @@ pub async fn gui_asset_path(Path(path): Path<String>) -> Response {
 }
 
 fn serve(path: &str) -> Response {
+    // 1. 디스크 우선 (XGRAM_GUI_DIR) — 프론트 변경 시 cargo 재빌드 불필요.
+    if let Some(resp) = try_disk(path) {
+        return resp;
+    }
+    // 2. 임베드 fallback (기존 동작).
     if let Some(file) = UI_DIST.get_file(path) {
         let mime = mime_guess::from_path(path).first_or_octet_stream();
         let cache = if path == "index.html" {
