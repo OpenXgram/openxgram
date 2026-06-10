@@ -2,12 +2,27 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OpenXgram — Web GUI</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>OpenXgram</title>
+    <!-- PWA (정본 _mockups/kakao-mockup.html head 기준) -->
+    <meta name="theme-color" content="#262b33" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="OpenXgram" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="icon.svg" />
+    <link rel="apple-touch-icon" href="icon.svg" />
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("sw.js", { scope: "/gui/" }).catch(() => {});
+        });
+      }
+    </script>
     <!-- page-picker widget (issue report) — server-seoul site -->
     <script src="https://page-picker.starian.us/widget.js" data-pp-api-key="pp_42zlg8iRn2eQSCWZYTnTniohtLI" async></script>
   </body>
