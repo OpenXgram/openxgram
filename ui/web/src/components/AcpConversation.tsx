@@ -121,29 +121,40 @@ export function AcpConversation(props: {
   const [draft, setDraft] = createSignal("");
 
   // 파일·문서 첨부 — content-addressed attachment_upload. 업로드 후 프롬프트에 attachment:// 참조 추가.
+  // 클릭(📎/@) + 드래그앤드롭 공용.
+  const [dragOver, setDragOver] = createSignal(false);
+  function uploadFile(f: File) {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const b64 = (reader.result as string).split(",")[1] ?? "";
+      try {
+        const res = await invoke<{ content_hash: string; size_bytes: number }>(
+          "attachment_upload",
+          { content_b64: b64, mime: f.type || "application/octet-stream" },
+        );
+        const ref = `📎 ${f.name} attachment://${res.content_hash} (${(res.size_bytes / 1024).toFixed(1)} KB)`;
+        setDraft(draft() ? `${draft()}\n${ref}` : ref);
+      } catch (e) {
+        setDraft(`${draft()}\n⚠ 첨부 실패: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    };
+    reader.readAsDataURL(f);
+  }
   function attachFile() {
     const input = document.createElement("input");
     input.type = "file";
+    input.multiple = true;
     input.onchange = (ev: Event) => {
-      const f = (ev.target as HTMLInputElement)?.files?.[0];
-      if (!f) return;
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const b64 = (reader.result as string).split(",")[1] ?? "";
-        try {
-          const res = await invoke<{ content_hash: string; size_bytes: number }>(
-            "attachment_upload",
-            { content_b64: b64, mime: f.type || "application/octet-stream" },
-          );
-          const ref = `📎 ${f.name} attachment://${res.content_hash} (${(res.size_bytes / 1024).toFixed(1)} KB)`;
-          setDraft(draft() ? `${draft()}\n${ref}` : ref);
-        } catch (e) {
-          setDraft(`${draft()}\n⚠ 첨부 실패: ${e instanceof Error ? e.message : String(e)}`);
-        }
-      };
-      reader.readAsDataURL(f);
+      const fs = (ev.target as HTMLInputElement)?.files;
+      if (fs) for (const f of Array.from(fs)) uploadFile(f);
     };
     input.click();
+  }
+  function onDrop(e: DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    const fs = e.dataTransfer?.files;
+    if (fs && fs.length) for (const f of Array.from(fs)) uploadFile(f);
   }
   const [busy, setBusy] = createSignal(false); // 세션 생성/프롬프트 진행 중
   const [streaming, setStreaming] = createSignal(false);
@@ -467,7 +478,15 @@ export function AcpConversation(props: {
       }
     >
       {/* ── ACP 대화방 (세션 활성) — peer 대화와 동일 마크업 ── */}
-      <div class="kk-talk-chat">
+      <div
+        class={`kk-talk-chat${dragOver() ? " dragover" : ""}`}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={onDrop}
+      >
+        <Show when={dragOver()}>
+          <div class="kk-drop-hint">📎 파일을 여기에 놓아 첨부</div>
+        </Show>
         <div class="chat-top">
           <span class="back" onClick={() => void closeSession()}>←</span>
           <div class="ava c-claude">⚡</div>
