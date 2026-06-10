@@ -1,0 +1,136 @@
+//! MCP tool methods — `AcpTools` (§2.2, §3.1).
+//!
+//! These are the domain methods (`acp_spawn`, `acp_prompt`, `acp_cancel`,
+//! `acp_list_agents`, `acp_close`) that `openxgram-cli/src/mcp_serve.rs` will
+//! wrap into the MCP JSON-RPC dispatch (with the `block_in_place(|| handle.
+//! block_on(...))` bridge) in Phase B-2. This crate provides ONLY the tool
+//! methods + the in-process agent registry; no MCP/JSON-RPC framing here.
+//!
+//! Long-lived spawned agents are held in a `HashMap<handle_id, AcpClient>`
+//! behind an async `Mutex`, so they survive between separate MCP calls (§3.1 /
+//! §5 — agents must outlive a single request frame). In B-1 this registry lives
+//! in `AcpTools`; B-2 moves ownership into the daemon while keeping this API.
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
+use serde_json::{json, Value};
+use tokio::sync::Mutex;
+
+use crate::client::AcpClient;
+use crate::registry::{self, KNOWN_AGENTS};
+use crate::types::ContentBlock;
+use crate::{AcpError, Result};
+
+/// Opaque handle id for a spawned agent.
+pub type AgentHandleId = u64;
+
+/// Stateful ACP tool surface: owns the spawned-agent registry.
+#[derive(Clone, Default)]
+pub struct AcpTools {
+    inner: Arc<AcpToolsInner>,
+}
+
+#[derive(Default)]
+struct AcpToolsInner {
+    next_id: AtomicU64,
+    agents: Mutex<HashMap<AgentHandleId, AcpClient>>,
+}
+
+impl AcpTools {
+    /// New empty tool surface.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// `acp_list_agents` — the built-in registry of known agent names.
+    pub fn acp_list_agents(&self) -> Value {
+        json!({ "agents": KNOWN_AGENTS })
+    }
+
+    /// `acp_spawn` — spawn a known agent by name, run `initialize`, register it,
+    /// and return its handle id + negotiated capabilities.
+    pub async fn acp_spawn(&self, agent_name: &str) -> Result<Value> {
+        let spec = registry::lookup(agent_name)?;
+        let client = AcpClient::spawn_minimal(spec).await?;
+        let caps = serde_json::to_value(client.agent_capabilities())?;
+
+        let id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
+        self.inner.agents.lock().await.insert(id, client);
+
+        Ok(json!({
+            "handleId": id,
+            "agent": agent_name,
+            "agentCapabilities": caps,
+        }))
+    }
+
+    /// `acp_prompt` — run one prompt turn against a spawned agent. `text` is sent
+    /// as a single text ContentBlock; `cwd` is the session working directory.
+    pub async fn acp_prompt(
+        &self,
+        handle_id: AgentHandleId,
+        cwd: &str,
+        text: &str,
+    ) -> Result<Value> {
+        let agents = self.inner.agents.lock().await;
+        let client = agents.get(&handle_id).ok_or(AcpError::SessionClosed)?;
+        let result = client
+            .prompt(cwd.to_string(), vec![ContentBlock::text(text)])
+            .await?;
+        let updates = serde_json::to_value(&result.updates)?;
+        let stop_reason = serde_json::to_value(result.stop_reason)?;
+        Ok(json!({
+            "stopReason": stop_reason,
+            "updates": updates,
+        }))
+    }
+
+    /// `acp_cancel` — send `session/cancel` for a session on a spawned agent.
+    pub async fn acp_cancel(&self, handle_id: AgentHandleId, session_id: &str) -> Result<Value> {
+        let agents = self.inner.agents.lock().await;
+        let client = agents.get(&handle_id).ok_or(AcpError::SessionClosed)?;
+        client.cancel(session_id)?;
+        Ok(json!({ "cancelled": true }))
+    }
+
+    /// `acp_close` — kill + reap a spawned agent, removing it from the registry.
+    pub async fn acp_close(&self, handle_id: AgentHandleId) -> Result<Value> {
+        let client = self.inner.agents.lock().await.remove(&handle_id);
+        match client {
+            Some(c) => {
+                c.close().await?;
+                Ok(json!({ "closed": true, "handleId": handle_id }))
+            }
+            None => Err(AcpError::SessionClosed),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_agents_includes_known() {
+        let t = AcpTools::new();
+        let v = t.acp_list_agents();
+        let arr = v["agents"].as_array().expect("array");
+        assert!(arr.iter().any(|a| a == "claude-agent-acp"));
+    }
+
+    #[tokio::test]
+    async fn spawn_unknown_agent_errors() {
+        let t = AcpTools::new();
+        let err = t.acp_spawn("totally-unknown").await.unwrap_err();
+        matches!(err, AcpError::UnknownAgent(_));
+    }
+
+    #[tokio::test]
+    async fn prompt_unknown_handle_errors() {
+        let t = AcpTools::new();
+        let err = t.acp_prompt(999, "/tmp", "hi").await.unwrap_err();
+        matches!(err, AcpError::SessionClosed);
+    }
+}
