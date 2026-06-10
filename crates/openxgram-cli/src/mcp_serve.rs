@@ -111,6 +111,10 @@ pub struct OpenxgramDispatcher {
     vault_password: Option<String>,
     /// HTTP transport 측에서 Bearer 토큰 검증 후 주입. None 이면 master 호출 가정.
     current_agent: Option<String>,
+    /// ACP (Agent Client Protocol) tool 표면 — spawn 된 agent process registry 를
+    /// 내부에 보유 (HashMap<handleId, AcpClient> behind async Mutex). dispatch 간
+    /// 영속 (§3.1 — agent 가 단일 request frame 보다 오래 살아야 함). Phase B-2.
+    acp_tools: openxgram_acp::AcpTools,
 }
 
 impl OpenxgramDispatcher {
@@ -131,6 +135,7 @@ impl OpenxgramDispatcher {
             data_dir: data_dir.to_path_buf(),
             vault_password,
             current_agent: None,
+            acp_tools: openxgram_acp::AcpTools::new(),
         })
     }
 
@@ -542,6 +547,59 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 "required": ["message_id"]
             }),
         });
+
+        // ACP (Agent Client Protocol) tools — spawn/drive ACP agent subprocess.
+        // Phase B-2. 항상 노출 (vault 무관). spawn 은 agent binary 가 설치돼야 성공.
+        tools.extend([
+            ToolSpec {
+                name: "acp_list_agents".into(),
+                description: "알려진 ACP agent adapter 목록 (claude-agent-acp, codex-acp, gemini, opencode).".into(),
+                input_schema: json!({"type": "object", "properties": {}}),
+            },
+            ToolSpec {
+                name: "acp_spawn".into(),
+                description: "ACP agent 를 subprocess 로 spawn + initialize. handleId 반환 (이후 acp_prompt/cancel/close 에 사용).".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": { "agent": {"type": "string"} },
+                    "required": ["agent"]
+                }),
+            },
+            ToolSpec {
+                name: "acp_prompt".into(),
+                description: "spawn 된 ACP agent 에 한 prompt turn 실행. {stopReason, updates} 반환.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "handleId": {"type": "integer"},
+                        "cwd": {"type": "string"},
+                        "text": {"type": "string"}
+                    },
+                    "required": ["handleId", "cwd", "text"]
+                }),
+            },
+            ToolSpec {
+                name: "acp_cancel".into(),
+                description: "ACP session 의 현재 turn 을 session/cancel notification 으로 중단.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "handleId": {"type": "integer"},
+                        "sessionId": {"type": "string"}
+                    },
+                    "required": ["handleId", "sessionId"]
+                }),
+            },
+            ToolSpec {
+                name: "acp_close".into(),
+                description: "spawn 된 ACP agent process 를 kill + reap, registry 에서 제거.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": { "handleId": {"type": "integer"} },
+                    "required": ["handleId"]
+                }),
+            },
+        ]);
 
         // vault tools — XGRAM_KEYSTORE_PASSWORD 환경에 있을 때만 노출
         if self.vault_password.is_some() {
@@ -2163,6 +2221,72 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     .record(&pattern_id, success, duration_ms)
                     .map_err(internal)?;
                 Ok(json!({"recorded": true, "pattern_id": pattern_id, "success": success}))
+            }
+            // ── ACP (Agent Client Protocol) tools — Phase B-2 ──────────────
+            // §2.4: 모든 public ACP API 는 async; 여기 sync dispatch 에서
+            // block_in_place(|| handle.block_on(...)) 로 bridge (runtime-in-runtime
+            // panic 우회, rc.195/197/286 과 동일 패턴). acp_tools 는 Clone (내부
+            // Arc registry) — clone 해 가져온 뒤 bridge 안에서 await.
+            "acp_list_agents" => Ok(self.acp_tools.acp_list_agents()),
+            "acp_spawn" => {
+                let agent = args
+                    .get("agent")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'agent'"))?
+                    .to_string();
+                let tools = self.acp_tools.clone();
+                let handle = tokio::runtime::Handle::current();
+                tokio::task::block_in_place(|| handle.block_on(async move { tools.acp_spawn(&agent).await }))
+                    .map_err(internal)
+            }
+            "acp_prompt" => {
+                let handle_id = args
+                    .get("handleId")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| invalid("missing 'handleId'"))?;
+                let cwd = args
+                    .get("cwd")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'cwd'"))?
+                    .to_string();
+                let text = args
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'text'"))?
+                    .to_string();
+                let tools = self.acp_tools.clone();
+                let handle = tokio::runtime::Handle::current();
+                tokio::task::block_in_place(|| {
+                    handle.block_on(async move { tools.acp_prompt(handle_id, &cwd, &text).await })
+                })
+                .map_err(internal)
+            }
+            "acp_cancel" => {
+                let handle_id = args
+                    .get("handleId")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| invalid("missing 'handleId'"))?;
+                let session_id = args
+                    .get("sessionId")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'sessionId'"))?
+                    .to_string();
+                let tools = self.acp_tools.clone();
+                let handle = tokio::runtime::Handle::current();
+                tokio::task::block_in_place(|| {
+                    handle.block_on(async move { tools.acp_cancel(handle_id, &session_id).await })
+                })
+                .map_err(internal)
+            }
+            "acp_close" => {
+                let handle_id = args
+                    .get("handleId")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| invalid("missing 'handleId'"))?;
+                let tools = self.acp_tools.clone();
+                let handle = tokio::runtime::Handle::current();
+                tokio::task::block_in_place(|| handle.block_on(async move { tools.acp_close(handle_id).await }))
+                    .map_err(internal)
             }
             other => Err(JsonRpcError {
                 code: ERR_METHOD_NOT_FOUND,

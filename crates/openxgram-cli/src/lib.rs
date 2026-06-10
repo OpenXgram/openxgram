@@ -14,6 +14,7 @@ pub mod channel;
 pub mod channels;
 pub mod daemon;
 pub mod daemon_gui;
+pub mod daemon_gui_acp;
 pub mod daemon_gui_sessions;
 pub mod daemon_gui_wallets;
 pub mod daemon_peer_sync;
