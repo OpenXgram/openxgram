@@ -1343,6 +1343,8 @@ async fn gui_sessions(
                                 created_at: created,
                                 last_active_at: last_active,
                                 agent_id: None,
+                                // rc.234 — cross-machine peer 세션은 보고측 머신에서 worktree 종합(미전달). 빈 Vec.
+                                worktrees: Vec::new(),
                             });
                         }
                 }

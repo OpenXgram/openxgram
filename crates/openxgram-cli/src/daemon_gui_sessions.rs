@@ -37,6 +37,14 @@ pub enum SessionStatus {
     Stale,
 }
 
+/// 카톡 셸 목업 구성요소: 에이전트별 "워크트리" — project_path 에서 로컬 git 으로 종합.
+/// portal 의존 없이 `git -C <path> worktree list --porcelain` 로 직접 수집한다.
+#[derive(Debug, Serialize, Clone)]
+pub struct Worktree {
+    pub path: String,
+    pub branch: Option<String>,
+}
+
 #[derive(Debug, Serialize, Clone)]
 pub struct DetectedSession {
     pub kind: SessionKind,
@@ -48,6 +56,10 @@ pub struct DetectedSession {
     pub created_at: Option<String>,
     pub last_active_at: Option<String>,
     pub agent_id: Option<String>, // ULID — instrumented 면 채움 (Phase 2)
+    /// rc.234 — 이 세션(에이전트)에 종속된 git worktree 목록. 로컬 `git worktree list` 로 종합.
+    /// portal 의존 제거 — OpenXgram 데몬이 자기 머신에서 직접 집계 (per-daemon self-contained).
+    #[serde(default)]
+    pub worktrees: Vec<Worktree>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -56,50 +68,107 @@ pub struct SessionsDto {
     pub sessions: Vec<DetectedSession>,
 }
 
-/// rc.148 — portal AoE API 의 tmux_session_name → activity_state map.
-/// "active" = LLM 작업 중 (녹색), "waiting" = 사용자 입력 대기 (노랑).
-fn aoe_activity_map() -> std::collections::HashMap<String, String> {
+/// rc.234 — tmux session_name → agent alias 매핑 (auto_seed_local_tmux_agents 와 동일 규칙).
+/// 'aoe_<alias>_<id>' → alias / 그 외 → session_name 그대로.
+fn session_name_to_alias(session_name: &str) -> String {
+    if let Some(s) = session_name.strip_prefix("aoe_") {
+        match s.rsplit_once('_') {
+            Some((a, _id)) => a.to_string(),
+            None => s.to_string(),
+        }
+    } else {
+        session_name.to_string()
+    }
+}
+
+/// rc.234 — agent_capabilities 에서 alias → project_path map 을 로컬 SQLite 에서 읽는다.
+/// portal 호출 없음. 안티패턴 1(fallback 금지): DB 열기/쿼리 실패 시 빈 map + 명시 로그.
+fn agent_project_paths() -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
-    let url = portal_url_base();
-    let token = portal_token();
-    let client = match reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(2))
-        .danger_accept_invalid_certs(true)
-        .build() {
-        Ok(c) => c,
-        Err(_) => return map,
+    let data_dir = match openxgram_core::paths::default_data_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!(error = %e, "agent_project_paths: data_dir 확인 실패 — worktree 종합 skip");
+            return map;
+        }
     };
-    if let Ok(resp) = client.get(format!("{}/api/aoe/sessions?token={}", url.trim_end_matches('/'), token)).send() {
-        if let Ok(v) = resp.json::<serde_json::Value>() {
-            if let Some(sessions) = v.get("sessions").and_then(|s| s.as_array()) {
-                for sess in sessions {
-                    if let (Some(name), Some(state)) = (
-                        sess.get("tmux_session_name").and_then(|x| x.as_str()),
-                        sess.get("activity_state").and_then(|x| x.as_str()),
-                    ) {
-                        map.insert(name.to_string(), state.to_string());
-                    }
-                }
+    let db_path = data_dir.join("db.sqlite");
+    let conn = match rusqlite::Connection::open_with_flags(
+        &db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+    ) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = %e, db = ?db_path, "agent_project_paths: DB 열기 실패 — worktree 종합 skip");
+            return map;
+        }
+    };
+    let mut stmt = match conn.prepare(
+        "SELECT alias, project_path FROM agent_capabilities \
+         WHERE project_path IS NOT NULL AND project_path != ''",
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "agent_project_paths: prepare 실패 — worktree 종합 skip");
+            return map;
+        }
+    };
+    let rows = stmt.query_map([], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    });
+    match rows {
+        Ok(iter) => {
+            for row in iter.flatten() {
+                map.insert(row.0.to_lowercase(), row.1);
             }
         }
+        Err(e) => tracing::warn!(error = %e, "agent_project_paths: query 실패"),
     }
     map
 }
 
-/// rc.147 — attached=true 인 tmux session_name set. portal entry 상태 매핑용.
-fn tmux_attached_set() -> std::collections::HashSet<String> {
-    let mut set = std::collections::HashSet::new();
-    if let Ok(out) = Command::new("tmux").args(["ls", "-F", "#{session_name}|#{session_attached}"]).output() {
-        if out.status.success() {
-            for line in String::from_utf8_lossy(&out.stdout).lines() {
-                let parts: Vec<&str> = line.splitn(2, '|').collect();
-                if parts.len() == 2 && parts[1] != "0" {
-                    set.insert(parts[0].to_string());
-                }
-            }
+/// rc.234 — 로컬 `git -C <path> worktree list --porcelain` 으로 worktree(path+branch) 종합.
+/// portal 의존 없음. git 미설치·비-repo 면 빈 Vec + 실제 사유 로그 (안티패턴 1: 조작된 fallback 금지).
+fn git_worktrees(project_path: &str) -> Vec<Worktree> {
+    let out = match Command::new("git")
+        .args(["-C", project_path, "worktree", "list", "--porcelain"])
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::debug!(path = %project_path, error = %e, "git_worktrees: git 실행 실패 (미설치?)");
+            return vec![];
+        }
+    };
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        tracing::debug!(path = %project_path, stderr = %err.trim(), "git_worktrees: non-zero exit (비-repo?)");
+        return vec![];
+    }
+    // --porcelain block: "worktree <path>" / "HEAD <sha>" / "branch refs/heads/<name>" / "" (구분)
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut worktrees = Vec::new();
+    let mut cur_path: Option<String> = None;
+    let mut cur_branch: Option<String> = None;
+    let flush = |path: &mut Option<String>, branch: &mut Option<String>, acc: &mut Vec<Worktree>| {
+        if let Some(p) = path.take() {
+            acc.push(Worktree { path: p, branch: branch.take() });
+        } else {
+            *branch = None;
+        }
+    };
+    for line in stdout.lines() {
+        if let Some(p) = line.strip_prefix("worktree ") {
+            flush(&mut cur_path, &mut cur_branch, &mut worktrees);
+            cur_path = Some(p.trim().to_string());
+        } else if let Some(b) = line.strip_prefix("branch ") {
+            cur_branch = Some(b.trim().trim_start_matches("refs/heads/").to_string());
+        } else if line.trim() == "detached" {
+            cur_branch = Some("(detached)".to_string());
         }
     }
-    set
+    flush(&mut cur_path, &mut cur_branch, &mut worktrees);
+    worktrees
 }
 
 /// `tmux ls -F '#{session_name}|#{session_windows}|#{session_attached}|#{session_created}'`
@@ -122,6 +191,8 @@ fn detect_tmux() -> Vec<DetectedSession> {
         .lines()
         .filter_map(|l| l.split('|').next().map(|s| s.to_string()))
         .collect();
+    // rc.234 — 에이전트 project_path map (로컬 DB). worktree 종합·agent_id 매핑용.
+    let project_paths = agent_project_paths();
     let mut sessions = Vec::new();
     for line in stdout.lines() {
         let parts: Vec<&str> = line.splitn(5, '|').collect();
@@ -141,6 +212,17 @@ fn detect_tmux() -> Vec<DetectedSession> {
         let created = parts[3].parse::<i64>().ok().and_then(|ts| {
             chrono::DateTime::from_timestamp(ts, 0).map(|dt| dt.to_rfc3339())
         });
+        // rc.234 — 세션 → 에이전트 alias 매핑(local 규칙) + 그 에이전트의 project_path 로컬 git worktree 종합.
+        let alias = session_name_to_alias(&name);
+        let agent_id = if project_paths.contains_key(&alias.to_lowercase()) {
+            Some(alias.clone())
+        } else {
+            None
+        };
+        let worktrees = project_paths
+            .get(&alias.to_lowercase())
+            .map(|p| git_worktrees(p))
+            .unwrap_or_default();
         // session 자체
         sessions.push(DetectedSession {
             kind: SessionKind::Tmux,
@@ -155,7 +237,8 @@ fn detect_tmux() -> Vec<DetectedSession> {
             attached: Some(attached),
             created_at: created.clone(),
             last_active_at: None,
-            agent_id: None,
+            agent_id: agent_id.clone(),
+            worktrees: worktrees.clone(),
         });
         // tmux windows 도 별개 entry 로 enumerate (starian-portal 같이 windows 가 = 사용자가 보는 터미널)
         if windows > 1 {
@@ -180,7 +263,9 @@ fn detect_tmux() -> Vec<DetectedSession> {
                             attached: Some(active && attached),
                             created_at: created.clone(),
                             last_active_at: None,
-                            agent_id: None,
+                            // rc.234 — window 는 세션과 같은 에이전트. worktree 는 세션 entry 에만(중복 git 호출 방지).
+                            agent_id: agent_id.clone(),
+                            worktrees: Vec::new(),
                         });
                     }
                 }
@@ -190,105 +275,9 @@ fn detect_tmux() -> Vec<DetectedSession> {
     sessions
 }
 
-/// starian-portal API — 두 endpoint fetch 해서 sessions 통합.
-///   1. `/api/terminals`     → identifier `portal:<tmuxSession>:<tmuxIndex>` (rc.89~)
-///   2. `/api/aoe/sessions`  → identifier `aoe:<tmuxSession>:<aoe_id>:<title>` (rc.89~)
-///
-/// 둘 다 capture 시 portal-new `/api/tmux/capture?session=<tmuxSession>&window=<idx>` 호출.
-fn detect_starian_portal() -> Vec<DetectedSession> {
-    let url_base = portal_url_base();
-    let token = portal_token();
-    let client = match reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(3))
-        .danger_accept_invalid_certs(true)
-        .build() {
-        Ok(c) => c,
-        Err(_) => return vec![],
-    };
-    let mut out: Vec<DetectedSession> = Vec::new();
-    // rc.250 — portal/aoe API 는 fleet 전체의 글로벌 세션 목록을 반환한다. 이 머신에서
-    //   실제로 도는 세션만 포함해야 한다 (예: macmini 는 로컬 tmux 가 없는데 portal 글로벌
-    //   목록의 zalman 에이전트들을 자기 것처럼 보고 → "안 맞음"). 로컬 tmux 에 실제 존재하는
-    //   tmux_session_name 만 통과시킨다.
-    let local_tmux: std::collections::HashSet<String> = {
-        let mut set = std::collections::HashSet::new();
-        if let Ok(o) = Command::new("tmux").args(["ls", "-F", "#{session_name}"]).output() {
-            if o.status.success() {
-                for line in String::from_utf8_lossy(&o.stdout).lines() {
-                    set.insert(line.trim().to_string());
-                }
-            }
-        }
-        set
-    };
-    // (1) /api/terminals — tmuxSession + tmuxIndex 사용
-    let terms_url = format!("{}/api/terminals?token={}", url_base, token);
-    if let Ok(resp) = client.get(&terms_url).send() {
-        if resp.status().is_success() {
-            if let Ok(v) = resp.json::<serde_json::Value>() {
-                if let Some(terms) = v.get("terminals").and_then(|t| t.as_array()) {
-                    for t in terms.iter() {
-                        let id = t.get("id").and_then(|x| x.as_str()).unwrap_or("?");
-                        let name = t.get("name").and_then(|x| x.as_str()).unwrap_or(id);
-                        let origin = t.get("origin").and_then(|x| x.as_str()).unwrap_or("");
-                        let path = t.get("path").and_then(|x| x.as_str()).unwrap_or("");
-                        let group = t.get("group").and_then(|x| x.as_str()).unwrap_or("");
-                        let tmux_session = t.get("tmuxSession").and_then(|x| x.as_str()).unwrap_or("starian");
-                        let tmux_index = t.get("tmuxIndex").and_then(|x| x.as_u64()).unwrap_or(0);
-                        // rc.250 — 로컬 tmux 에 없는 세션(다른 머신 것)은 제외.
-                        if !local_tmux.contains(tmux_session) { continue; }
-                        out.push(DetectedSession {
-                            kind: SessionKind::Tmux,
-                            identifier: format!("portal:{}:{}", tmux_session, tmux_index),
-                            display: format!("{} [{}]", name, origin),
-                            status: SessionStatus::Detached,
-                            windows: Some(1),
-                            attached: None,
-                            created_at: None,
-                            last_active_at: Some(format!("id:{} · group:{} · path:{}", id, group, path)),
-                            agent_id: None,
-                        });
-                    }
-                }
-            }
-        }
-    }
-    // (2) /api/aoe/sessions
-    let aoe_url = format!("{}/api/aoe/sessions?token={}", url_base, token);
-    if let Ok(resp) = client.get(&aoe_url).send() {
-        if resp.status().is_success() {
-            if let Ok(v) = resp.json::<serde_json::Value>() {
-                if v.get("available").and_then(|b| b.as_bool()).unwrap_or(false) {
-                    if let Some(sess) = v.get("sessions").and_then(|s| s.as_array()) {
-                        for s in sess {
-                            let id = s.get("id").and_then(|x| x.as_str()).unwrap_or("?");
-                            let title = s.get("title").and_then(|x| x.as_str()).unwrap_or(id);
-                            let project_path = s.get("project_path").and_then(|x| x.as_str()).unwrap_or("");
-                            let status = s.get("status").and_then(|x| x.as_str()).unwrap_or("");
-                            let alive = s.get("tmux_alive").and_then(|b| b.as_bool()).unwrap_or(false);
-                            let tmux_name = s.get("tmux_session_name").and_then(|x| x.as_str()).unwrap_or("");
-                            // rc.250 — 로컬 tmux 에 없는 aoe 세션(다른 머신 것)은 제외.
-                            if tmux_name.is_empty() || !local_tmux.contains(tmux_name) { continue; }
-                            // identifier 에 tmux session 직접 인코딩 — 그 tmux:0 캡쳐로 화면 보임.
-                            out.push(DetectedSession {
-                                kind: SessionKind::Tmux,
-                                identifier: format!("aoe:{}:{}:{}", tmux_name, id, title),
-                                display: format!("aoe·{} [{}]", title, status),
-                                status: if alive { SessionStatus::Active } else { SessionStatus::Detached },
-                                windows: Some(1),
-                                attached: None,
-                                created_at: s.get("created_at").and_then(|x| x.as_str()).map(String::from),
-                                last_active_at: Some(format!("tmux:{} · path:{}", tmux_name, project_path)),
-                                agent_id: None,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
-    out
-}
+// rc.234 — `detect_starian_portal` (portal /api/terminals + /api/aoe/sessions fetch) 제거.
+//   sessions 종합은 이제 portal 독립 (collect_fresh = detect_tmux 로컬 + detect_processes).
+//   portal capture (capture_portal_session/capture_aoe) 는 screen 라우트 전용으로 유지된다.
 
 fn portal_url_base() -> String {
     std::env::var("XGRAM_PORTAL_URL")
@@ -441,6 +430,7 @@ fn detect_claude_projects() -> Vec<DetectedSession> {
             created_at: None,
             last_active_at,
             agent_id: None,
+            worktrees: Vec::new(),
         });
     }
     } // for projects_dir in dirs
@@ -539,6 +529,7 @@ fn detect_processes() -> Vec<DetectedSession> {
             created_at: None,
             last_active_at: Some(format!("etime {etime}")),
             agent_id: None,
+            worktrees: Vec::new(),
         });
     }
     sessions
@@ -603,63 +594,20 @@ fn collect_fresh() -> SessionsDto {
     let machine = detect_machine();
     let mut sessions = Vec::new();
 
-    // rc.255 — 로컬 tmux 가 이 머신의 권위 있는 소스. 항상 먼저 수집한다.
-    //   이전(rc.~254): portal 이 비었을 때만 detect_tmux 를 실행(`if !had_portal`).
-    //   그런데 portal-zalman 은 중앙 fleet 집계기라 모든 머신이 글로벌 세션 목록을 받고,
-    //   그러면 had_portal=true 가 되어 자기 로컬 tmux 가 통째로 스킵됐다. 게다가 세션
-    //   이름충돌(여러 머신이 "starian" 사용)로 남의 머신 세션을 자기 것처럼 표시했다
-    //   (예: macmini 가 server-seoul 의 starian 을 표시 + 자기 3 윈도우는 누락).
+    // rc.234 — PORTAL 독립 종합. 이 데몬이 자기 머신에서 직접 집계한다 (self-contained).
+    //   이전(rc.~233): portal-zalman(/api/aoe/sessions, /api/terminals) 을 호출해 tmux activity
+    //   를 가져왔다 → OpenXgram 이 portal 에 결합. 카톡 셸 정본 목업 구성요소(작업폴더·실행 중
+    //   tmux 세션·워크트리·워크플로우)는 per-daemon 로컬 종합이 옳다.
+    //   • tmux: 로컬 `tmux list-sessions` (detect_tmux) — name/windows/attached/created.
+    //   • worktrees: 에이전트 project_path 별 로컬 `git worktree list --porcelain` (detect_tmux 내부).
+    //   • agent 매핑: session_name → alias (auto_seed 와 동일 규칙).
+    //   Cross-machine: 로컬 detection 은 이 머신의 tmux 만 본다 (독립성상 올바름). 다른 머신
+    //   세션 종합이 필요하면 peer network (peer_send/recv) 경유로 확장 — portal 경유 금지.
+    //   현재 구현은 로컬 전용 (per-daemon).
     let local = detect_tmux();
-    let local_names: std::collections::HashSet<String> = local
-        .iter()
-        .filter_map(|s| s.identifier.strip_prefix("tmux:"))
-        .map(|rest| rest.split(':').next().unwrap_or(rest).to_string())
-        .collect();
-
-    let mut portal = detect_starian_portal();
-    // 로컬 tmux 와 이름이 겹치는 portal/aoe 엔트리는 버린다 — 로컬 detect_tmux 가 그 세션의
-    // 정확한 윈도우/상태를 이미 권위 있게 갖고 있고, cross-machine 이름충돌 오염을 막는다.
-    portal.retain(|s| {
-        let name = s
-            .identifier
-            .strip_prefix("portal:")
-            .or_else(|| s.identifier.strip_prefix("aoe:"))
-            .and_then(|r| r.split(':').next());
-        match name {
-            Some(n) => !local_names.contains(n),
-            None => true,
-        }
-    });
-    // rc.148 — portal entry 의 status 를 AoE activity_state 기반으로 매핑.
-    // active = LLM 작업 중 → 녹색 (Attached 로 표시)
-    // waiting = 사용자 입력 대기 → 노랑 (Detached 로 표시)
-    // 이전 (rc.147): tmux attached/detached 만 봐서 의미 부정확. 사용자 의도 = 에이전트 작동 상태.
-    let activity_map = aoe_activity_map();
-    for s in &mut portal {
-        let tmux_name: Option<String> = if let Some(rest) = s.identifier.strip_prefix("portal:") {
-            rest.split(':').next().map(String::from)
-        } else if let Some(rest) = s.identifier.strip_prefix("aoe:") {
-            rest.split(':').next().map(String::from)
-        } else { None };
-        if let Some(name) = tmux_name {
-            if let Some(state) = activity_map.get(&name) {
-                match state.as_str() {
-                    "active" => {
-                        s.status = SessionStatus::Active;
-                        s.attached = Some(true); // green dot
-                    }
-                    _ => {
-                        s.status = SessionStatus::Detached;
-                        s.attached = Some(false); // yellow dot
-                    }
-                }
-            }
-        }
-    }
-    sessions.extend(portal);
-    // rc.266 — 메신저 카드는 실제 tmux 세션만 (마스터 핵심 지시·반복 회귀 금지). claude_project 수집 비활성화.
+    // rc.266 — 메신저 카드는 실제 tmux 세션만 (마스터 핵심 지시·반복 회귀 금지). claude_project 비활성.
     // sessions.extend(detect_claude_projects());
-    sessions.extend(local); // rc.255 — 로컬 tmux 는 항상 포함 (권위 소스)
+    sessions.extend(local); // 로컬 tmux 는 항상 포함 (권위 소스)
     sessions.extend(detect_processes());
     SessionsDto { machine, sessions }
 }
