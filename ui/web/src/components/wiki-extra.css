@@ -1,0 +1,51 @@
+/* 위키 본문 보기·편집 — WikiTab 전용 추가 스타일.
+   kakao.css 의 .kk-wiki / .board / .witem / .wkind 정본 클래스 톤을 그대로 따른다.
+   (kakao.css 는 손대지 않고 여기만 import — 정본 .wk-* 색 팔레트 재사용.) */
+
+/* 클릭 가능한 위키 카드 — 정본 .witem 에 hover/cursor 만 추가. */
+.kk-wiki .witem.wclick { cursor: pointer; transition: border-color .12s, background .12s, box-shadow .12s; }
+.kk-wiki .witem.wclick:hover { border-color: var(--kk-accent); background: #fff; box-shadow: 0 1px 6px rgba(45, 90, 220, .08); }
+
+/* 상세/편집 헤더 줄 — 뒤로가기 + 제목 + 액션 버튼. */
+.kk-wiki .wdetail-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.kk-wiki .wback {
+  flex: none; cursor: pointer; border: 1px solid var(--kk-line); background: #fcfcfd;
+  border-radius: 9px; padding: 6px 11px; font-size: 12.5px; color: #2b333f; font-weight: 700;
+}
+.kk-wiki .wback:hover { border-color: var(--kk-accent); background: #fff; }
+.kk-wiki .wdetail-bar .wslug { font-size: 11px; color: #9aa1ad; font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
+.kk-wiki .wdetail-actions { margin-left: auto; display: flex; gap: 8px; }
+
+.kk-wiki .wbtn {
+  flex: none; cursor: pointer; border: 1px solid var(--kk-accent); background: var(--kk-accent);
+  color: #fff; border-radius: 9px; padding: 6px 13px; font-size: 12.5px; font-weight: 700;
+}
+.kk-wiki .wbtn.ghost { background: #fcfcfd; color: #2b333f; border-color: var(--kk-line); }
+.kk-wiki .wbtn.ghost:hover { border-color: var(--kk-accent); background: #fff; }
+.kk-wiki .wbtn:disabled { opacity: .55; cursor: default; }
+
+/* 상세 제목 + 본문 (읽기 모드). */
+.kk-wiki .wdetail-title { font-size: 16px; font-weight: 800; color: var(--kk-ink); margin: 2px 0 12px; line-height: 1.4; word-break: break-word; }
+.kk-wiki .wbody {
+  font-size: 13px; line-height: 1.72; color: #2b333f; white-space: pre-wrap; word-break: break-word;
+  background: #fcfcfd; border: 1px solid var(--kk-line); border-radius: 10px; padding: 14px 16px;
+  font-family: inherit; margin: 0;
+}
+
+/* 편집 모드 입력. */
+.kk-wiki .wedit-title {
+  display: block; width: 100%; box-sizing: border-box; background: #fff; border: 1px solid var(--kk-line);
+  border-radius: 10px; padding: 9px 13px; font-size: 14px; font-weight: 700; color: var(--kk-ink); margin-bottom: 10px;
+}
+.kk-wiki .wedit-body {
+  display: block; width: 100%; box-sizing: border-box; min-height: 320px; resize: vertical;
+  background: #fff; border: 1px solid var(--kk-line); border-radius: 10px; padding: 13px 15px;
+  font-size: 13px; line-height: 1.7; color: #2b333f; font-family: ui-monospace, Menlo, monospace;
+}
+.kk-wiki .wedit-title:focus, .kk-wiki .wedit-body:focus { outline: none; border-color: var(--kk-accent); }
+
+/* 상태 메시지 (저장 성공/실패/로딩). */
+.kk-wiki .wstatus { font-size: 12px; margin: 10px 0 0; padding: 9px 12px; border-radius: 9px; line-height: 1.5; }
+.kk-wiki .wstatus.ok { background: #e6f6ec; color: #1f7a3d; }
+.kk-wiki .wstatus.err { background: #fdecec; color: #c0392b; }
+.kk-wiki .wstatus.busy { background: #eef1f6; color: #54607a; }

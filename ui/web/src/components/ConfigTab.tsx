@@ -16,7 +16,8 @@ import {
 //   status           → { initialized, alias, address }
 //   identity_info    → { alias, did, machine, hostname, hd_path, auto_lock_minutes, session_token_ttl_minutes }
 //   identity_settings (POST, body.auto_lock_minutes)  ← 편집 가능 필드(자동 잠금)
-//   ops_machines     → { local_machine:{alias,hostname,...}, registered_peers:[...], peer_count }
+//   machines_list    → { machines:[{hostname,tailscale_ip,is_local,online,source}], machine_count }
+//                       물리 머신만(worker agent 제외). local + tailscale online peer.
 //   version_info     → { ... } (버전 표기)
 //   daemon URL/token ← localStorage (getDaemonUrl/setDaemonUrl/getBearer/setBearer) — web GUI 전용 설정.
 
@@ -36,18 +37,18 @@ interface IdentityInfo {
   session_token_ttl_minutes?: number;
 }
 
+// machines_list 라우트 row — 물리 머신만(worker agent 제외).
 interface MachineRow {
-  alias?: string;
   hostname?: string;
   tailscale_ip?: string | null;
-  last_seen?: string | null;
-  role?: string | null;
+  is_local?: boolean;
+  online?: boolean;
+  source?: string | null;
 }
 
 interface MachinesDto {
-  local_machine?: MachineRow;
-  registered_peers?: MachineRow[];
-  peer_count?: number;
+  machines?: MachineRow[];
+  machine_count?: number;
 }
 
 export function ConfigTab() {
@@ -58,7 +59,7 @@ export function ConfigTab() {
     try { return await invoke<IdentityInfo>("identity_info"); } catch { return null; }
   });
   const [machines] = createResource<MachinesDto | null>(async () => {
-    try { return await invoke<MachinesDto>("ops_machines"); } catch { return null; }
+    try { return await invoke<MachinesDto>("machines_list"); } catch { return null; }
   });
   const [version] = createResource<Record<string, unknown> | null>(async () => {
     try { return await invoke<Record<string, unknown>>("version_info"); } catch { return null; }
@@ -108,14 +109,13 @@ export function ConfigTab() {
     }
   }
 
+  // 물리 머신 목록 — 로컬 머신 먼저, 그다음 tailscale peer.
   const machineRows = () => {
-    const m = machines();
-    if (!m) return [] as MachineRow[];
-    const out: MachineRow[] = [];
-    if (m.local_machine) out.push({ ...m.local_machine, role: "이 머신" });
-    for (const p of m.registered_peers ?? []) out.push(p);
-    return out;
+    const list = machines()?.machines ?? [];
+    return [...list].sort((a, b) => (b.is_local ? 1 : 0) - (a.is_local ? 1 : 0));
   };
+  // 로컬 머신은 online 필드가 없음 — 항상 온라인으로 간주.
+  const isMachineOnline = (m: MachineRow) => m.is_local === true || m.online === true;
 
   const versionLabel = () => {
     const v = version();
@@ -162,26 +162,31 @@ export function ConfigTab() {
           </div>
           <Show when={lockMsg()}><div class="kk-set-msg">{lockMsg()}</div></Show>
 
-          {/* 연결된 머신 (정본 .wsec + .cfgrow 행) */}
-          <div class="wsec" style="margin-top:18px;">연결된 머신 <span class="auto">(자동 탐지)</span></div>
+          {/* 연결된 머신 — 물리 머신만(worker agent 제외, machines_list). 정본 .wsec + .cfgrow 행. */}
+          <div class="wsec" style="margin-top:18px;">연결된 머신 <span class="auto">(물리 머신 · 자동 탐지)</span></div>
           <Show when={!machines.loading} fallback={<div class="kk-set-empty">불러오는 중…</div>}>
             <Show
               when={machineRows().length > 0}
-              fallback={<div class="kk-set-empty">연결된 머신 정보가 없습니다. (데몬 ops_machines 응답 비어있음)</div>}
+              fallback={<div class="kk-set-empty">연결된 머신 정보가 없습니다. (데몬 machines_list 응답 비어있음)</div>}
             >
               <For each={machineRows()}>
                 {(m) => (
                   <div class="cfgrow">
                     <span class="cfi">💻</span>
                     <div>
-                      <div class="cfp">{m.alias || m.hostname || "—"}</div>
-                      <div class="cfc">
+                      <div class="cfp">
+                        <span class={`mdot${isMachineOnline(m) ? " on" : ""}`} />
                         {m.hostname || "—"}
-                        <Show when={m.tailscale_ip}> · {m.tailscale_ip}</Show>
-                        <Show when={m.last_seen}> · 최근 {m.last_seen}</Show>
+                        <Show when={m.is_local}><span class="mbadge">이 머신</span></Show>
+                      </div>
+                      <div class="cfc">
+                        <Show when={m.tailscale_ip} fallback="Tailscale IP 미설정">
+                          {m.tailscale_ip}
+                        </Show>
+                        <Show when={m.source}> · {m.source}</Show>
                       </div>
                     </div>
-                    <span class="cfx">{m.role || "peer"}</span>
+                    <span class="cfx">{isMachineOnline(m) ? "온라인" : "오프라인"}</span>
                   </div>
                 )}
               </For>

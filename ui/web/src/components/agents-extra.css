@@ -425,3 +425,115 @@
   margin-top: 10px;
   text-align: center;
 }
+
+/* ---------- 편집 모달 저장 상태 (item 2) ---------- */
+.ax-esave {
+  margin: 6px 14px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.ax-esave.ok {
+  background: rgba(35, 134, 54, .12);
+  color: #1a7f37;
+  border: 1px solid rgba(35, 134, 54, .35);
+}
+.ax-esave.err {
+  background: rgba(248, 81, 73, .1);
+  color: #d1242f;
+  border: 1px solid rgba(248, 81, 73, .35);
+}
+
+/* ---------- 파일 트리 (item 7·8 공용) ---------- */
+.ax-fttree {
+  border: 1px solid var(--kk-line, #e6e8ec);
+  border-radius: 10px;
+  background: #fafbfc;
+  max-height: 320px;
+  overflow: auto;
+  padding: 4px 0;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.ax-ftrow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  padding-right: 8px;
+  cursor: pointer;
+  border-radius: 6px;
+  user-select: none;
+}
+.ax-ftrow:hover {
+  background: rgba(0, 0, 0, .045);
+}
+.ax-ftrow.dir .ax-ftnm {
+  font-weight: 600;
+  color: var(--kk-ink, #1a1d21);
+}
+.ax-ftrow.file .ax-ftnm {
+  color: var(--kk-sub, #5a6068);
+}
+.ax-ftrow.picked {
+  background: rgba(250, 196, 0, .22);
+  outline: 1px solid var(--kk-yellow, #fac400);
+}
+.ax-ftic {
+  width: 12px;
+  text-align: center;
+  color: #9aa0a8;
+  flex: none;
+}
+.ax-ftem {
+  flex: none;
+}
+.ax-ftnm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ax-ftmsg {
+  font-size: 12px;
+  color: var(--kk-sub, #5a6068);
+  padding: 10px;
+}
+.ax-ftmsg.err {
+  color: #d1242f;
+}
+
+/* ---------- 추가 모달 폴더 선택 (item 8) ---------- */
+.ax-folderrow {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.ax-folderrow .ctl {
+  flex: 1;
+  min-width: 0;
+}
+.ax-browse {
+  flex: none;
+  border: 1px solid var(--kk-line, #e6e8ec);
+  background: #fff;
+  border-radius: 10px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--kk-ink, #1a1d21);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ax-browse:hover {
+  background: #f3f4f6;
+}
+.ax-pickerbox {
+  margin-top: 8px;
+}
+.ax-pickerhint {
+  font-size: 11px;
+  color: #aab0bd;
+  margin-bottom: 2px;
+}

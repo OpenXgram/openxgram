@@ -504,3 +504,76 @@
 /* 컴포저 취소 컨트롤 */
 .kk-talk-chat .composer .kk-acp-cancel{font-size:11px; font-weight:700; color:#d64545; background:#2b1416; border:1px solid #5b2326; border-radius:8px; padding:5px 10px; cursor:pointer; margin-right:8px;}
 .kk-talk-chat .composer .kk-acp-cancel:hover{filter:brightness(1.15);}
+
+/* ===========================================================
+   설정 탭 — 연결된 머신(machines_list) 행 보강.
+   .mdot(온라인 점) / .mbadge([이 머신] 배지). 기존 .cfgrow 안에서 사용.
+   =========================================================== */
+.kk-set .cfgrow .cfp .mdot{display:inline-block; width:7px; height:7px; border-radius:50%; background:#c4c9d2; margin-right:7px; vertical-align:middle; flex:none;}
+.kk-set .cfgrow .cfp .mdot.on{background:var(--kk-online);}
+.kk-set .cfgrow .cfp .mbadge{font-size:9.5px; font-weight:800; color:var(--kk-accent); background:#e6f6ec; border-radius:6px; padding:2px 7px; margin-left:8px; vertical-align:middle;}
+
+/* ===========================================================
+   대화 탭 — 파일 드래그앤드롭 시각 힌트.
+   .kk-talk-chat.dragover 일 때 .kk-drop-hint 오버레이 표시.
+   =========================================================== */
+.kk-talk-chat.dragover{outline:2px dashed var(--kk-accent); outline-offset:-6px;}
+.kk-drop-hint{position:absolute; inset:0; z-index:8; display:flex; align-items:center; justify-content:center; background:rgba(47,158,68,.06); pointer-events:none;}
+.kk-drop-box{font-size:14px; font-weight:700; color:var(--kk-accent); background:#fff; border:2px dashed var(--kk-accent); border-radius:14px; padding:18px 28px; box-shadow:0 6px 18px rgba(20,24,31,.10);}
+
+/* ===========================================================
+   커스텀 스크롤바 — 깔끔한 라이트 카카오 톤(얇고 은은하게).
+   라이트 스크롤 영역에만 적용. .msgs(라이트 메시지)·.board·명부·프로필·리스트.
+   --kk-line 회색 계열 thumb. Firefox(scrollbar-color)도 함께 지정.
+   =========================================================== */
+.kk-list,
+.kk-talk-roster .list,
+.kk-prof,
+.kk-agents .kk-roster,
+.kk-wiki .bb, .kk-set .bb, .kk-flow .bb,
+.kk-talk-chat .msgs,
+.kk-talk .info,
+.kk-modal{
+  scrollbar-width:thin;
+  scrollbar-color:#cdd2db transparent;
+}
+.kk-list::-webkit-scrollbar,
+.kk-talk-roster .list::-webkit-scrollbar,
+.kk-prof::-webkit-scrollbar,
+.kk-agents .kk-roster::-webkit-scrollbar,
+.kk-wiki .bb::-webkit-scrollbar, .kk-set .bb::-webkit-scrollbar, .kk-flow .bb::-webkit-scrollbar,
+.kk-talk-chat .msgs::-webkit-scrollbar,
+.kk-talk .info::-webkit-scrollbar,
+.kk-modal::-webkit-scrollbar{
+  width:8px; height:8px;
+}
+.kk-list::-webkit-scrollbar-track,
+.kk-talk-roster .list::-webkit-scrollbar-track,
+.kk-prof::-webkit-scrollbar-track,
+.kk-agents .kk-roster::-webkit-scrollbar-track,
+.kk-wiki .bb::-webkit-scrollbar-track, .kk-set .bb::-webkit-scrollbar-track, .kk-flow .bb::-webkit-scrollbar-track,
+.kk-talk-chat .msgs::-webkit-scrollbar-track,
+.kk-talk .info::-webkit-scrollbar-track,
+.kk-modal::-webkit-scrollbar-track{
+  background:transparent;
+}
+.kk-list::-webkit-scrollbar-thumb,
+.kk-talk-roster .list::-webkit-scrollbar-thumb,
+.kk-prof::-webkit-scrollbar-thumb,
+.kk-agents .kk-roster::-webkit-scrollbar-thumb,
+.kk-wiki .bb::-webkit-scrollbar-thumb, .kk-set .bb::-webkit-scrollbar-thumb, .kk-flow .bb::-webkit-scrollbar-thumb,
+.kk-talk-chat .msgs::-webkit-scrollbar-thumb,
+.kk-talk .info::-webkit-scrollbar-thumb,
+.kk-modal::-webkit-scrollbar-thumb{
+  background:#d3d8e0; border-radius:8px; border:2px solid transparent; background-clip:padding-box;
+}
+.kk-list::-webkit-scrollbar-thumb:hover,
+.kk-talk-roster .list::-webkit-scrollbar-thumb:hover,
+.kk-prof::-webkit-scrollbar-thumb:hover,
+.kk-agents .kk-roster::-webkit-scrollbar-thumb:hover,
+.kk-wiki .bb::-webkit-scrollbar-thumb:hover, .kk-set .bb::-webkit-scrollbar-thumb:hover, .kk-flow .bb::-webkit-scrollbar-thumb:hover,
+.kk-talk-chat .msgs::-webkit-scrollbar-thumb:hover,
+.kk-talk .info::-webkit-scrollbar-thumb:hover,
+.kk-modal::-webkit-scrollbar-thumb:hover{
+  background:#b6bdc9;
+}

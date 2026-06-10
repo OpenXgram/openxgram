@@ -95,6 +95,13 @@ const ROUTES: Record<string, Route> = {
  agent_detail: { method: "GET", path: "/agent/{alias}/detail"},
  // Phase 2-A — 동적 설정 탐지 (ai_type/path_hint 는 query 로 전송)
  agent_config_chain: { method: "GET", path: "/agent/{alias}/config-chain"},
+ // 기능 배선 — wiki 본문 CRUD · fs 트리/파일 · 머신 목록 (daemon_gui.rs 신규)
+ wiki_body_get: { method: "GET", path: "/wiki/{ptype}/{slug}"},
+ wiki_body_put: { method: "PUT", path: "/wiki/{ptype}/{slug}", body: true},
+ fs_tree: { method: "GET", path: "/fs/tree"},
+ fs_file_get: { method: "GET", path: "/fs/file"},
+ fs_file_put: { method: "PUT", path: "/fs/file", body: true},
+ machines_list: { method: "GET", path: "/machines", emptyAs: []},
  // Phase 2-D — 에이전트 프로필 (classification/execution_mode/ai_type/worktree/public + folder/group/role)
  agent_profile_get: { method: "GET", path: "/agent/{alias}/profile"},
  agent_profile_set: { method: "POST", path: "/agent/{alias}/profile", body: true},
@@ -229,12 +236,6 @@ const ROUTES: Record<string, Route> = {
  external_listing_add: { method: "POST", path: "/external/listings", body: true},
  external_reputation: { method: "GET", path: "/external/reputation"},
  external_protocols: { method: "GET", path: "/external/protocols"},
- workflows_list: { method: "GET", path: "/workflows"},
- workflow_upsert: { method: "POST", path: "/workflows", body: true},
- workflow_get: { method: "GET", path: "/workflows/{id}"},
- workflow_delete: { method: "POST", path: "/workflows/{id}", body: true},
- workflow_run: { method: "POST", path: "/workflows/{id}/run", body: true},
- workflow_runs: { method: "GET", path: "/workflows/{id}/runs"},
  // Identity 깊은
  identity_bip39: { method: "POST", path: "/identity/bip39", body: true},
  identity_sub_dids: { method: "GET", path: "/identity/sub-dids"},
@@ -349,8 +350,6 @@ const ROUTES: Record<string, Route> = {
  peer_send_unsigned: { method: "POST", path: "/peers/{alias}/send-unsigned", body: true},
  // rc.228 — ex Peer thread 삭제 (self_alias↔other_alias 의 outbox/inbox sessions + messages + outbound_queue).
  ex_peer_delete: { method: "DELETE", path: "/peer/{self_alias}/ex_peer/{other_alias}"},
- attachment_upload: { method: "POST", path: "/attachments", body: true},
- attachment_get: { method: "GET", path: "/attachments/{hash}"},
  workflow_approve_run: { method: "POST", path: "/workflows/runs/{run_id}/approve", body: true},
 };
 

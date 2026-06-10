@@ -195,6 +195,8 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
   const [acpMode, setAcpMode] = createSignal(false);
   // 정보 사이드 패널(폴더·tmux·워크트리·워크플로우) 열림. tmux/worktree pill 클릭 → 토글, ✕ → 닫힘.
   const [infoOpen, setInfoOpen] = createSignal(false);
+  // 파일 드래그앤드롭 진행 중 — 대화/컴포저 영역에 시각 힌트 표시.
+  const [dragOver, setDragOver] = createSignal(false);
 
   const [convo, { refetch: refetchConvo }] = createResource(
     () => selected() ?? undefined,
@@ -355,30 +357,58 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
     }
   }
 
-  // 파일·문서 첨부 — content-addressed attachment_upload (Messenger 와 동일 백엔드).
+  // 파일 1건 업로드 → 초안에 attachment:// 참조 추가. 클릭(📎)·드래그앤드롭 공용 로직.
+  // content-addressed attachment_upload (Messenger 와 동일 백엔드).
+  function uploadFile(f: File) {
+    const reader = new FileReader();
+    reader.onerror = () => setSendErr(`첨부 실패: ${f.name} 파일을 읽지 못했습니다.`);
+    reader.onload = async () => {
+      const b64 = (reader.result as string).split(",")[1] ?? "";
+      try {
+        const res = await invoke<{ content_hash: string; size_bytes: number; storage: string }>(
+          "attachment_upload",
+          { content_b64: b64, mime: f.type || "application/octet-stream" },
+        );
+        const ref = `📎 ${f.name} attachment://${res.content_hash} (${(res.size_bytes / 1024).toFixed(1)} KB)`;
+        setDraft(draft() ? `${draft()}\n${ref}` : ref);
+      } catch (e) {
+        setSendErr(`첨부 실패: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    };
+    reader.readAsDataURL(f);
+  }
+
+  // 📎 클릭 첨부 — 파일 선택 다이얼로그 → uploadFile.
   function attachFile() {
     const input = document.createElement("input");
     input.type = "file";
+    input.multiple = true;
     input.onchange = (ev: Event) => {
-      const f = (ev.target as HTMLInputElement)?.files?.[0];
-      if (!f) return;
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const b64 = (reader.result as string).split(",")[1] ?? "";
-        try {
-          const res = await invoke<{ content_hash: string; size_bytes: number; storage: string }>(
-            "attachment_upload",
-            { content_b64: b64, mime: f.type || "application/octet-stream" },
-          );
-          const ref = `📎 ${f.name} attachment://${res.content_hash} (${(res.size_bytes / 1024).toFixed(1)} KB)`;
-          setDraft(draft() ? `${draft()}\n${ref}` : ref);
-        } catch (e) {
-          setSendErr(`첨부 실패: ${e instanceof Error ? e.message : String(e)}`);
-        }
-      };
-      reader.readAsDataURL(f);
+      const files = (ev.target as HTMLInputElement)?.files;
+      if (!files) return;
+      for (const f of Array.from(files)) uploadFile(f);
     };
     input.click();
+  }
+
+  // 드래그앤드롭 첨부 — 대화/컴포저 영역에 파일을 끌어놓으면 uploadFile.
+  function onDragOver(e: DragEvent) {
+    if (!selected()) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    setDragOver(true);
+  }
+  function onDragLeave(e: DragEvent) {
+    // 자식 요소로 이동할 때의 leave 는 무시 (영역 밖으로 나갈 때만 해제).
+    if (e.currentTarget === e.target) setDragOver(false);
+  }
+  function onDrop(e: DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    if (!selected()) return;
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+    for (const f of Array.from(files)) uploadFile(f);
   }
 
   // .st 미리보기: 마지막 메시지 본문, 없으면 역할/설명.
@@ -461,13 +491,21 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
         <AcpConversation onClose={() => { setAcpMode(false); setMobileChat(false); }} />
       </Show>
       <Show when={!acpMode()}>
-      <div class="kk-talk-chat">
+      <div
+        class={`kk-talk-chat${dragOver() ? " dragover" : ""}`}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
         <Show
           when={selAgent()}
           fallback={<div class="kk-talk-blank">좌측에서 대화할 에이전트를 선택하세요.</div>}
         >
           {(a) => (
             <>
+              <Show when={dragOver()}>
+                <div class="kk-drop-hint"><div class="kk-drop-box">📎 파일을 놓아 첨부</div></div>
+              </Show>
               <div class="chat-top">
                 <span class="back" onClick={() => setMobileChat(false)}>←</span>
                 <div class={`ava ${a().classification === "primary" ? "c-primary" : avatarColor(a().ai_type)}`}>

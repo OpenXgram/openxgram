@@ -8,7 +8,8 @@ import "./agents-extra.css";
 //
 // 정본 목업의 외부채널(channelOvl)·tmux 터미널(termOvl)·지침/MCP 편집(edOvl) 3개 오버레이를
 // 프로필 진입점(qbtn·cfgrow)에서 열도록 이식. 실데이터: bindings_status(채널) /
-// session_screen(tmux 라이브 화면) / config-chain.raw(편집 모달 본문, 쓰기 라우트 없음 → 읽기전용).
+// session_screen(tmux 라이브 화면) / fs_file_get·fs_file_put(편집 모달 본문 — 읽기·쓰기).
+// 프로필에 project_path 파일트리(fs_tree), 추가 모달에 폴더 선택 트리(fs_tree)도 연결.
 
 interface AgentRow {
   alias: string;
@@ -61,6 +62,14 @@ interface ConfigChain {
   env_keys: string[];
   skills: string[];
   error?: string;
+}
+
+// 파일 트리 노드 — fs_tree 라우트 반환 형태.
+interface FsNode {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  children?: FsNode[];
 }
 
 // 외부 채널 바인딩 — bindings_status 라우트 (Messenger.tsx 와 동일). agent_id 로 키.
@@ -292,6 +301,36 @@ function ProfileView(props: {
         <div class="apvcard"><div class="k">공개</div><div class="v">{p().is_public ? "🌐 공개" : "비공개"}</div></div>
         <div class="apvcard"><div class="k">워크트리</div><div class="v">{p().worktree || "—"}</div></div>
       </div>
+
+      <div class="apvsec">프로젝트 폴더 <span class="auto">(파일 트리)</span></div>
+      <Show
+        when={p().folder}
+        fallback={<div class="apvhint">이 에이전트에 설정된 프로젝트 폴더가 없습니다. (추가/수정 시 폴더 지정)</div>}
+      >
+        <div class="apvhint">
+          <code>{p().folder}</code> — 폴더는 펼쳐서 탐색, 지침/설정 파일은 클릭해 편집할 수 있습니다.
+        </div>
+        <FileTree
+          rootPath={p().folder!}
+          depth={2}
+          onPick={(node) => {
+            // 편집 화이트리스트 대상 파일이면 편집 모달로 연다 (CLAUDE/AGENTS/GEMINI/settings*/.mcp.json/*.md).
+            if (node.is_dir) return;
+            const nm = node.name.toLowerCase();
+            const editable =
+              nm.endsWith(".md") || nm === ".mcp.json" ||
+              (nm.startsWith("settings") && nm.endsWith(".json"));
+            if (!editable) return;
+            props.onOpenEditor({
+              title: node.name,
+              path: node.path,
+              scope: "project",
+              body: "",
+              hasRaw: false,
+            });
+          }}
+        />
+      </Show>
 
       <div class="apvsec">실행 모드</div>
       <div class="kk-seg">
@@ -574,8 +613,76 @@ function TerminalOverlay(props: { alias: string; onClose: () => void }) {
   );
 }
 
-// ── 지침/MCP 편집 모달 (목업 edOvl) — config-chain.raw 본문 표시. 쓰기 라우트 없음 → 읽기전용.
+// ── 지침/MCP 편집 모달 (목업 edOvl).
+// item 2: 탐지된 지침/설정 파일을 fs_file_get 으로 로드 → textarea 편집 → fs_file_put 으로 저장.
+// 화이트리스트(CLAUDE.md/AGENTS.md/GEMINI.md/settings*.json/.mcp.json/*.md) 밖이면 403 → 명시적 안내.
+// path 없거나 env/skill 처럼 가짜 경로면 편집 불가(읽기전용 요약)로 분기.
 function EditorOverlay(props: { file: EditorFile; onClose: () => void }) {
+  // env(값 마스킹)·MCP 요약·skills 등은 실제 디스크 파일이 아니므로 편집 비대상.
+  const editable = () => {
+    const p = props.file.path || "";
+    if (!p || p === "env") return false;
+    if (props.file.scope === "env" || props.file.scope === "skill") return false;
+    return true;
+  };
+
+  const [body, setBody] = createSignal("");
+  const [loading, setLoading] = createSignal(true);
+  const [loadErr, setLoadErr] = createSignal<string | null>(null);
+  const [saving, setSaving] = createSignal(false);
+  // 저장 결과: null=없음 / {ok:true, bytes} / {ok:false, msg, forbidden}
+  const [saveMsg, setSaveMsg] = createSignal<{ ok: boolean; text: string } | null>(null);
+  const [dirty, setDirty] = createSignal(false);
+
+  async function load() {
+    if (!editable()) {
+      setBody(props.file.body);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setLoadErr(null);
+    try {
+      const r = await invoke<{ content: string }>("fs_file_get", { path: props.file.path });
+      setBody(r.content ?? "");
+      setDirty(false);
+    } catch (e) {
+      // 파일이 아직 없거나 읽기 실패 — config-chain raw 본문을 fallback 으로 채움(있으면).
+      setLoadErr(String((e as Error).message || e));
+      setBody(props.file.hasRaw ? props.file.body : "");
+    } finally {
+      setLoading(false);
+    }
+  }
+  load();
+
+  async function save() {
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      const r = await invoke<{ ok: boolean; path: string; bytes: number }>("fs_file_put", {
+        path: props.file.path,
+        content: body(),
+      });
+      setDirty(false);
+      setSaveMsg({ ok: true, text: `저장됨 · ${r.bytes ?? body().length}B · ${r.path || props.file.path}` });
+    } catch (e) {
+      const msg = String((e as Error).message || e);
+      // 화이트리스트 밖이면 데몬이 403 반환 → invoke 가 "HTTP 403: ..." throw.
+      if (/\b403\b|forbidden|whitelist|화이트리스트/i.test(msg)) {
+        setSaveMsg({
+          ok: false,
+          text: "❌ 저장 거부됨 (403) — 이 경로는 편집 허용 목록 밖입니다. " +
+            "허용: CLAUDE.md · AGENTS.md · GEMINI.md · settings*.json · .mcp.json · *.md (프로젝트 폴더 또는 ~/.claude 내부).",
+        });
+      } else {
+        setSaveMsg({ ok: false, text: `❌ 저장 실패 — ${msg}` });
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div class="ax-ovl" onClick={(e) => { if (e.target === e.currentTarget) props.onClose(); }}>
       <div class="ax-editor">
@@ -584,14 +691,111 @@ function EditorOverlay(props: { file: EditorFile; onClose: () => void }) {
           <span class="ax-ep">{props.file.path}</span>
           <span class="ax-ex" onClick={props.onClose}>✕</span>
         </div>
-        <textarea spellcheck={false} readOnly value={props.file.hasRaw ? props.file.body : `${props.file.body}\n\n(이 파일 본문은 config-chain 에 raw 로 노출되지 않습니다. 경로·요약만 표시.)`} />
+        <Show
+          when={editable()}
+          fallback={
+            <textarea
+              spellcheck={false}
+              readOnly
+              value={`${props.file.body}\n\n(이 항목은 실제 편집 가능한 파일이 아닙니다 — 경로·요약만 표시.)`}
+            />
+          }
+        >
+          <Show when={!loading()} fallback={<textarea spellcheck={false} readOnly value="불러오는 중…" />}>
+            <textarea
+              spellcheck={false}
+              value={body()}
+              onInput={(e) => { setBody(e.currentTarget.value); setDirty(true); setSaveMsg(null); }}
+            />
+          </Show>
+        </Show>
+        <Show when={loadErr()}>
+          <div class="ax-esave err">⚠ 읽기 실패: {loadErr()} (저장 시 새로 생성될 수 있습니다)</div>
+        </Show>
+        <Show when={saveMsg()}>
+          <div class={`ax-esave${saveMsg()!.ok ? " ok" : " err"}`}>{saveMsg()!.text}</div>
+        </Show>
         <div class="ax-ef">
-          <span class="ax-rohint">🔒 읽기전용 — 편집 백엔드(쓰기 라우트) 미연결</span>
+          <Show
+            when={editable()}
+            fallback={<span class="ax-rohint">🔒 읽기전용 — 디스크 파일 아님(요약 표시)</span>}
+          >
+            <span class="ax-rohint">{dirty() ? "● 저장되지 않은 변경" : "✓ 저장됨/변경 없음"}</span>
+          </Show>
           <button class="c" onClick={props.onClose}>닫기</button>
-          <button class="s" disabled>저장 (미연결)</button>
+          <button class="s" disabled={!editable() || saving() || loading()} onClick={save}>
+            {saving() ? "저장 중…" : "저장"}
+          </button>
         </div>
       </div>
     </div>
+  );
+}
+
+// ── 파일 트리 (item 7·8 공용) — fs_tree 의 children 을 재귀 렌더.
+// 폴더는 펼침/접힘, onPick(노드) 콜백으로 폴더 선택(추가 모달) 또는 파일 클릭(프로필) 처리.
+function FsTreeNode(props: {
+  node: FsNode;
+  depth: number;
+  onPick?: (n: FsNode) => void;
+  picked?: () => string | null;
+}) {
+  const n = () => props.node;
+  const hasChildren = () => !!(n().children && n().children!.length > 0);
+  const [open, setOpen] = createSignal(props.depth < 1);
+  const isPicked = () => props.picked && props.picked() === n().path;
+
+  return (
+    <div class="ax-ftnode">
+      <div
+        class={`ax-ftrow${n().is_dir ? " dir" : " file"}${isPicked() ? " picked" : ""}`}
+        style={{ "padding-left": `${6 + props.depth * 16}px` }}
+        onClick={() => {
+          if (n().is_dir) {
+            if (hasChildren()) setOpen((v) => !v);
+            props.onPick?.(n());
+          } else {
+            props.onPick?.(n());
+          }
+        }}
+      >
+        <span class="ax-ftic">
+          {n().is_dir ? (hasChildren() ? (open() ? "▾" : "▸") : "▪") : "·"}
+        </span>
+        <span class="ax-ftem">{n().is_dir ? "📁" : "📄"}</span>
+        <span class="ax-ftnm">{n().name}</span>
+      </div>
+      <Show when={n().is_dir && open() && hasChildren()}>
+        <For each={n().children}>
+          {(c) => <FsTreeNode node={c} depth={props.depth + 1} onPick={props.onPick} picked={props.picked} />}
+        </For>
+      </Show>
+    </div>
+  );
+}
+
+// 루트 경로 → fs_tree 호출 + 렌더 래퍼. 에러/로딩 명시 표시.
+function FileTree(props: {
+  rootPath: string;
+  depth?: number;
+  onPick?: (n: FsNode) => void;
+  picked?: () => string | null;
+}) {
+  const [tree] = createResource(
+    () => props.rootPath,
+    (path) => invoke<FsNode>("fs_tree", { path, depth: props.depth ?? 2 }),
+  );
+  return (
+    <Show when={!tree.loading} fallback={<div class="ax-ftmsg">파일 트리 불러오는 중…</div>}>
+      <Show
+        when={!tree.error && tree()}
+        fallback={<div class="ax-ftmsg err">⚠ 트리 로드 실패: {String((tree.error as Error)?.message || tree.error || "경로 없음")}</div>}
+      >
+        <div class="ax-fttree">
+          <FsTreeNode node={tree()!} depth={0} onPick={props.onPick} picked={props.picked} />
+        </div>
+      </Show>
+    </Show>
   );
 }
 
@@ -611,6 +815,9 @@ const ADD_GROUPS = ["없음", "배포팀", "+ 새 그룹"];
 function AddAgentModal(props: { onClose: () => void; onCreated: (alias: string) => void }) {
   const [busy, setBusy] = createSignal(false);
   const [err, setErr] = createSignal("");
+  const [showPicker, setShowPicker] = createSignal(false);
+  // 폴더 브라우저 루트 — 홈의 projects 부터 드릴다운. 데몬이 ~ 확장 처리.
+  const pickerRoot = "~/projects";
   const [d, setD] = createSignal({
     machine: ADD_MACHINES[0], folder: "~/projects/starian-set", ai_type: "claude",
     name: "", role: "", classification: "project", group: "없음",
@@ -668,8 +875,28 @@ function AddAgentModal(props: { onClose: () => void; onCreated: (alias: string) 
 
         <div class="fld">
           <label>2 · 프로젝트 폴더</label>
-          <input class="ctl" value={d().folder} placeholder="~/projects/starian-set"
-            onInput={(e) => set("folder", e.currentTarget.value)} />
+          <div class="ax-folderrow">
+            <input class="ctl" value={d().folder} placeholder="~/projects/starian-set"
+              onInput={(e) => set("folder", e.currentTarget.value)} />
+            <button
+              type="button"
+              class="ax-browse"
+              onClick={() => setShowPicker((v) => !v)}
+            >
+              {showPicker() ? "닫기" : "📁 찾아보기"}
+            </button>
+          </div>
+          <Show when={showPicker()}>
+            <div class="ax-pickerbox">
+              <div class="ax-pickerhint">폴더를 클릭해 선택하세요 (펼치려면 펼침 아이콘 클릭).</div>
+              <FileTree
+                rootPath={pickerRoot}
+                depth={2}
+                picked={() => d().folder}
+                onPick={(node) => { if (node.is_dir) set("folder", node.path); }}
+              />
+            </div>
+          </Show>
         </div>
 
         <div class="mrow">
