@@ -198,7 +198,23 @@ impl ContentBlock {
     }
 }
 
-/// `session/update` notification (§1.3) — tagged on `sessionUpdate`.
+/// `session/update` notification body (§1.3) — tagged on `sessionUpdate`.
+///
+/// IMPORTANT (wire shape): on the real ACP wire this object is nested inside the
+/// `session/update` params under the `update` key, alongside `sessionId`:
+///
+/// ```json
+/// { "sessionId": "...", "update": { "sessionUpdate": "agent_message_chunk", "content": {...} } }
+/// ```
+///
+/// So callers must deserialize `params["update"]` into [`SessionUpdate`], not the
+/// whole `params` object. See [`SessionNotification`] and [`AcpSession::prompt`].
+///
+/// Discriminators come straight from the upstream `@agentclientprotocol/sdk`
+/// schema. Any value we do not model explicitly deserializes into
+/// [`SessionUpdate::Unknown`] rather than failing the whole frame — and the
+/// caller logs the raw discriminator + payload (it is surfaced, never silently
+/// discarded; 절대 규칙 1).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "sessionUpdate", rename_all = "snake_case")]
 pub enum SessionUpdate {
@@ -237,6 +253,51 @@ pub enum SessionUpdate {
         #[serde(default)]
         content: Vec<Value>,
     },
+    /// Token/usage accounting for the turn (`usage_update`).
+    UsageUpdate {
+        /// Raw usage payload (free-form; surfaced verbatim).
+        #[serde(flatten)]
+        fields: serde_json::Map<String, Value>,
+    },
+    /// The set of slash commands the agent currently exposes
+    /// (`available_commands_update`).
+    AvailableCommandsUpdate {
+        /// Command descriptors (`{name, description, ...}`).
+        #[serde(default, rename = "availableCommands")]
+        available_commands: Vec<Value>,
+    },
+    /// The agent's current operating mode changed (`current_mode_update`).
+    CurrentModeUpdate {
+        /// Raw mode payload (free-form; surfaced verbatim).
+        #[serde(flatten)]
+        fields: serde_json::Map<String, Value>,
+    },
+    /// A configuration option changed (`config_option_update`).
+    ConfigOptionUpdate {
+        /// Raw config payload (free-form; surfaced verbatim).
+        #[serde(flatten)]
+        fields: serde_json::Map<String, Value>,
+    },
+    /// Any discriminator we do not model explicitly. Lets the frame deserialize
+    /// instead of failing; the caller logs the raw discriminator + payload from
+    /// the original `Value` so it is surfaced rather than dropped.
+    #[serde(other)]
+    Unknown,
+}
+
+/// `session/update` notification params (§1.3).
+///
+/// This is the exact wire shape the agent sends as the `params` of a
+/// `session/update` notification: a `sessionId` for routing plus the nested
+/// `update` body. Deserializing the *whole* params into [`SessionUpdate`] is a
+/// bug — the discriminator lives one level down, under `update`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionNotification {
+    /// The session this update pertains to (used for listener routing).
+    pub session_id: String,
+    /// The actual update body (tagged on `sessionUpdate`).
+    pub update: SessionUpdate,
 }
 
 /// A tool call surfaced via `session/update` (§1.5).

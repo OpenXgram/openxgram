@@ -12,6 +12,42 @@ use crate::rpc::RpcPeer;
 use crate::types::{SessionPromptResponse, SessionUpdate, StopReason};
 use crate::{AcpError, Result};
 
+/// Parse one raw `session/update` params object (`{sessionId, update:{…}}`) into
+/// a [`SessionUpdate`].
+///
+/// The discriminator (`sessionUpdate`) is nested under `update` on the real ACP
+/// wire, so we deserialize that sub-object — not the whole params. Unparseable
+/// frames are surfaced (logged with the raw discriminator) and skipped rather
+/// than silently dropped (절대 규칙 1). Forward-compat: an *unknown* discriminator
+/// still deserializes via [`SessionUpdate::Unknown`] and is logged.
+fn parse_update(raw: &serde_json::Value) -> Option<SessionUpdate> {
+    // Real wire shape: params = { sessionId, update: { sessionUpdate, … } }.
+    // Tolerate a flat shape too (params already being the update body) for
+    // robustness against transports that pre-unwrap.
+    let body = raw.get("update").unwrap_or(raw);
+    match serde_json::from_value::<SessionUpdate>(body.clone()) {
+        Ok(SessionUpdate::Unknown) => {
+            let disc = body
+                .get("sessionUpdate")
+                .and_then(|d| d.as_str())
+                .unwrap_or("<missing>");
+            tracing::warn!(
+                target: "acp.session",
+                "unknown session/update discriminator '{disc}' surfaced (not dropped): {body}"
+            );
+            Some(SessionUpdate::Unknown)
+        }
+        Ok(u) => Some(u),
+        Err(e) => {
+            tracing::warn!(
+                target: "acp.session",
+                "unparseable session/update skipped: {e}; raw={raw}"
+            );
+            None
+        }
+    }
+}
+
 /// Result of a completed prompt turn.
 #[derive(Debug, Clone)]
 pub struct PromptResult {
@@ -81,9 +117,10 @@ impl AcpSession {
                     let value = resp?;
                     let parsed: SessionPromptResponse = serde_json::from_value(value)
                         .map_err(AcpError::Serde)?;
-                    // Drain any remaining buffered updates without blocking.
+                    // Drain any remaining buffered updates without blocking, so
+                    // updates that arrived just before the stopReason are not lost.
                     while let Ok(raw) = self.updates.try_recv() {
-                        if let Ok(u) = serde_json::from_value::<SessionUpdate>(raw) {
+                        if let Some(u) = parse_update(&raw) {
                             collected.push(u);
                         }
                     }
@@ -98,12 +135,10 @@ impl AcpSession {
                         Some(raw) => {
                             // Forward-compat: skip updates we cannot parse rather
                             // than aborting the turn, but never the response path.
-                            match serde_json::from_value::<SessionUpdate>(raw) {
-                                Ok(u) => collected.push(u),
-                                Err(e) => tracing::debug!(
-                                    target: "acp.session",
-                                    "unparsable session/update skipped: {e}"
-                                ),
+                            // The discriminator is nested under `update` on the
+                            // wire — `parse_update` handles the unwrap + logging.
+                            if let Some(u) = parse_update(&raw) {
+                                collected.push(u);
                             }
                         }
                         None => {

@@ -43,7 +43,7 @@ pub use session::AcpSession;
 pub use types::{
     AgentCapabilities, AgentInfo, ClientCapabilities, ClientInfo, ContentBlock, FsCapabilities,
     InitializeRequest, InitializeResponse, PromptCapabilities, SessionNewRequest,
-    SessionNewResponse, SessionUpdate, StopReason, ToolCall, ToolCallStatus,
+    SessionNewResponse, SessionNotification, SessionUpdate, StopReason, ToolCall, ToolCallStatus,
 };
 
 use thiserror::Error;

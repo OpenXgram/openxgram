@@ -51,16 +51,24 @@ for line in sys.stdin:
     elif method == "session/prompt":
         params = msg.get("params", {})
         sid = params.get("sessionId", "mock-sess-1")
-        # Stream one agent_message_chunk update (notification, no id).
-        send({
-            "jsonrpc": "2.0",
-            "method": "session/update",
-            "params": {
-                "sessionId": sid,
-                "sessionUpdate": "agent_message_chunk",
-                "content": {"type": "text", "text": "hello from mock"}
-            }
-        })
+        # Stream session/update notifications using the REAL ACP wire shape:
+        # the discriminator + payload are nested under params.update, alongside
+        # params.sessionId (matches @agentclientprotocol/sdk SessionNotification).
+        def update(body):
+            send({
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {"sessionId": sid, "update": body},
+            })
+        # 1) a thought chunk, 2) two message chunks, in order.
+        update({"sessionUpdate": "agent_thought_chunk",
+                "content": {"type": "text", "text": "thinking"}})
+        update({"sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": "hello from mock"}})
+        update({"sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": " (part two)"}})
+        # A future/unmodeled update kind — must be surfaced as Unknown, not dropped.
+        update({"sessionUpdate": "some_future_update_kind", "blob": {"x": 1}})
         # Resolve the turn.
         send({"jsonrpc": "2.0", "id": mid, "result": {"stopReason": "end_turn"}})
     elif method == "session/cancel":
@@ -112,20 +120,51 @@ async fn mock_agent_full_turn() {
         .expect("prompt turn");
 
     assert_eq!(result.stop_reason, StopReason::EndTurn);
-    assert!(
-        !result.updates.is_empty(),
-        "expected at least one session/update"
+
+    // REGRESSION (streaming gap): the agent streamed four `session/update`
+    // notifications DURING the turn (before the stopReason). They use the real
+    // wire shape (`params.update.sessionUpdate`), so they MUST be collected and
+    // returned — not lost to a deser/shape mismatch (the rc.294 empty-updates bug).
+    use openxgram_acp::types::SessionUpdate;
+    assert_eq!(
+        result.updates.len(),
+        4,
+        "expected all 4 streamed session/update notifications, got {}: {:?}",
+        result.updates.len(),
+        result.updates
     );
 
-    // The streamed chunk should carry our mock text.
-    let has_chunk = result.updates.iter().any(|u| {
-        matches!(
-            u,
-            openxgram_acp::types::SessionUpdate::AgentMessageChunk { content }
-            if matches!(content, ContentBlock::Text { text } if text == "hello from mock")
-        )
-    });
-    assert!(has_chunk, "expected agent_message_chunk with mock text");
+    // ...and IN ORDER: thought, message, message, unknown(usage_update).
+    let texts: Vec<&str> = result
+        .updates
+        .iter()
+        .filter_map(|u| match u {
+            SessionUpdate::AgentThoughtChunk {
+                content: ContentBlock::Text { text },
+            }
+            | SessionUpdate::AgentMessageChunk {
+                content: ContentBlock::Text { text },
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        texts,
+        vec!["thinking", "hello from mock", " (part two)"],
+        "streamed chunks must be collected in arrival order"
+    );
+
+    assert!(
+        matches!(result.updates[0], SessionUpdate::AgentThoughtChunk { .. }),
+        "first update should be the thought chunk"
+    );
+
+    // The unmodeled `usage_update` must be surfaced as Unknown (not dropped).
+    assert!(
+        matches!(result.updates[3], SessionUpdate::Unknown),
+        "unknown update kind must be surfaced as Unknown, got {:?}",
+        result.updates[3]
+    );
 
     client.close().await.expect("close + reap");
 }

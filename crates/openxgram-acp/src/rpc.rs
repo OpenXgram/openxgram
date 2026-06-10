@@ -333,14 +333,18 @@ mod tests {
     async fn notification_routes_to_session_listener() {
         let (peer, _writer_rx, reader_tx) = test_peer();
         let mut updates = peer.register_listener("sess-1".into()).await;
+        // Real ACP wire shape: discriminator nested under params.update,
+        // routed by the top-level params.sessionId.
         reader_tx
             .send(Ok(json!({
                 "jsonrpc":"2.0",
                 "method":"session/update",
-                "params":{"sessionId":"sess-1","sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hi"}}
+                "params":{"sessionId":"sess-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hi"}}}
             })))
             .expect("inject");
         let got = updates.recv().await.expect("update");
         assert_eq!(got["sessionId"], "sess-1");
+        // The nested update body is forwarded verbatim for the session to parse.
+        assert_eq!(got["update"]["sessionUpdate"], "agent_message_chunk");
     }
 }
