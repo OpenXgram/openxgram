@@ -184,12 +184,16 @@ export function AcpConversation(props: {
     }
     return Math.round(chars / 4);
   });
+  // 어댑터 usage_update({size,used}) 실데이터 — 있으면 추정보다 우선.
+  const [usedTok, setUsedTok] = createSignal(0);
+  const [ctxSize, setCtxSize] = createSignal(0);
   const usageLabel = createMemo(() => {
     const m = MODEL_META[model()] ?? MODEL_META.default;
-    const used = estTokens();
-    const pct = Math.min(100, Math.round((used / m.ctx) * 100));
+    const used = usedTok() > 0 ? usedTok() : estTokens();
+    const ctx = ctxSize() > 0 ? ctxSize() : m.ctx;
+    const pct = Math.min(100, Math.round((used / ctx) * 100));
     const cost = (used / 1_000_000) * m.rate;
-    return `${fmtTok(used)}/${fmtTok(m.ctx)} (${pct}%) · $${cost.toFixed(4)}`;
+    return `${fmtTok(used)}/${fmtTok(ctx)} (${pct}%) · $${cost.toFixed(4)}`;
   });
   const modelName = createMemo(() => (MODEL_META[model()] ?? MODEL_META.default).name);
 
@@ -400,6 +404,10 @@ export function AcpConversation(props: {
         : [];
       pushBubble({ id: nextId++, kind: "plan", entries, time: nowClock() });
       curAgentBubbleId = null;
+    } else if (tag === "usage_update") {
+      // 어댑터 실제 토큰 usage → 컴포저 usage 표시(60k/200k (30%)) 실데이터.
+      if (typeof o.used === "number") setUsedTok(o.used as number);
+      if (typeof o.size === "number") setCtxSize(o.size as number);
     } else if (tag === "user_message_chunk") {
       // 에이전트가 user 입력을 replay — 이미 .me 로 그렸으므로 무시.
     }
@@ -431,6 +439,8 @@ export function AcpConversation(props: {
       setActiveAgent(opts?.label || agent);
       if (!opts?.keepHistory) {
         setBubbles([]);
+        setUsedTok(0);
+        setCtxSize(0);
         pushBubble({
           id: nextId++,
           kind: "note",
