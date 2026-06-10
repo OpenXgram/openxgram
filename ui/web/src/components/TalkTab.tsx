@@ -5,9 +5,10 @@ import { AcpConversation, aiTypeToAdapter, type AcpPreset } from "./AcpConversat
 // 대화 탭 — 카카오톡 정본 목업(_mockups/kakao-mockup.html) 충실 이식.
 // 좌: 분류 그룹화 명부(👑 프라이머리 / 📌 상단 고정 / 📁 프로젝트 / ⚙️ 특수) + llm-type 아바타색
 //     + 마지막 메시지 미리보기/시각(messages_recent 파생).
-// 우: .chat-top(온라인/머신 pill) + .msgs(.me 그레이 말풍선 / .agent 전체폭) + Claude-Code 다크 컴포저.
+// 우: 선택 에이전트의 ACP 세션(<AcpConversation preset=…>) — 대화는 전적으로 ACP가 구동.
+//     레거시 peer_send(tmux-inject) 대화 경로는 제거됨(ACP 단일화, Phase 4-4).
 // 데이터: agents_list(분류·ai_type·그룹) · peers_list(online) · messages_recent(미리보기)
-//         · peer_conversation(대화) · peer_send(전송). 동적 only — 가짜 데이터 없음.
+//         · sessions(tmux/worktree) · workflows_list(워크플로우). 동적 only — 가짜 데이터 없음.
 
 // agents_list row (AgentsTab.tsx 와 동일 contract — 재정의해 둠).
 interface AgentRow {
@@ -84,14 +85,6 @@ const CLASS_GROUPS = [
   { key: "special", title: "⚙️ 특수·시스템 (깨움 선택)" },
 ];
 
-// Messenger.tsx isSelfSender 와 동일 규칙: self/me/user → 내 발신(오른쪽).
-function isSelfSender(sender: string): boolean {
-  const s = (sender || "").toLowerCase();
-  if (s === "me" || s === "user") return true;
-  if (s.startsWith("self:") || s.startsWith("me:")) return true;
-  return false;
-}
-
 // Messenger.tsx connTier 와 동일: 1h 이내 online.
 function isOnline(lastSeen?: string): boolean {
   if (!lastSeen) return false;
@@ -127,57 +120,6 @@ function fmtPreviewTime(iso: string): string {
   }
 }
 
-function fmtDay(iso: string): string {
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
-    return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일`;
-  } catch {
-    return "";
-  }
-}
-
-// 본문이 펜스드 코드 블록을 포함하면 .code 로, peer_send/tool 한 줄이면 .toolcall 로 best-effort 분해.
-type Seg =
-  | { kind: "text"; text: string }
-  | { kind: "code"; text: string }
-  | { kind: "tool"; text: string };
-
-function segmentBody(body: string): Seg[] {
-  const out: Seg[] = [];
-  const fence = /```[\w-]*\n?([\s\S]*?)```/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = fence.exec(body)) !== null) {
-    if (m.index > last) pushText(out, body.slice(last, m.index));
-    out.push({ kind: "code", text: m[1].replace(/\n$/, "") });
-    last = fence.lastIndex;
-  }
-  if (last < body.length) pushText(out, body.slice(last));
-  if (out.length === 0) pushText(out, body);
-  return out;
-}
-
-// 코드 블록 밖 텍스트: tool 라인(✓/✗ 으로 시작하거나 peer_send/Bash 같은 호출 한 줄)은 .toolcall 로.
-function pushText(out: Seg[], chunk: string) {
-  const trimmed = chunk.replace(/^\n+|\n+$/g, "");
-  if (!trimmed) return;
-  const lines = trimmed.split("\n");
-  let buf: string[] = [];
-  const flush = () => {
-    if (buf.length) { out.push({ kind: "text", text: buf.join("\n") }); buf = []; }
-  };
-  for (const line of lines) {
-    if (/^\s*(?:[✓✗⌗]|peer_send\b|Bash\b|Tool\b)/.test(line) && line.length < 120) {
-      flush();
-      out.push({ kind: "tool", text: line.trim() });
-    } else {
-      buf.push(line);
-    }
-  }
-  flush();
-}
-
 export function TalkTab(props: { onJumpToSettings?: () => void }) {
   const [agents] = createResource<AgentRow[]>(() => invoke("agents_list"));
   const [peers] = createResource<PeerDto[]>(() => invoke("peers_list"), { initialValue: [] });
@@ -187,23 +129,11 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
   const [workflows] = createResource<WorkflowDto[]>(() => invoke("workflows_list"), { initialValue: [] });
 
   const [selected, setSelected] = createSignal<string | null>(null);
-  const [draft, setDraft] = createSignal("");
-  const [sending, setSending] = createSignal(false);
-  const [sendErr, setSendErr] = createSignal<string | null>(null);
   const [mobileChat, setMobileChat] = createSignal(false);
   // ACP picker 모드 — 어댑터를 직접 고르는 진입(에이전트 미선택). preset 경로와 별개.
   const [acpMode, setAcpMode] = createSignal(false);
-  // peerMode — 선택 에이전트의 기본(ACP) 대신 peer_send(tmux-inject) 대화를 볼 때만 true.
-  const [peerMode, setPeerMode] = createSignal(false);
   // 정보 사이드 패널(폴더·tmux·워크트리·워크플로우) 열림. tmux/worktree pill 클릭 → 토글, ✕ → 닫힘.
   const [infoOpen, setInfoOpen] = createSignal(false);
-  // 파일 드래그앤드롭 진행 중 — 대화/컴포저 영역에 시각 힌트 표시.
-  const [dragOver, setDragOver] = createSignal(false);
-
-  const [convo, { refetch: refetchConvo }] = createResource(
-    () => selected() ?? undefined,
-    (alias) => invoke<MessageDto[]>("peer_conversation", { alias, limit: 500 }),
-  );
 
   // peers_list → alias 별 last_seen / machine 조회용 맵.
   const peerMap = createMemo(() => {
@@ -253,7 +183,6 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
   });
 
   const selAgent = createMemo(() => (agents() ?? []).find((a) => a.alias === selected()) ?? null);
-  const selPeer = createMemo(() => peerMap().get((selected() ?? "").toLowerCase()) ?? null);
 
   // 선택 에이전트 → ACP preset(어댑터/cwd/실행모드/라벨). 우측 대화방을 ACP 세션으로 구동.
   //   adapter   = ai_type 매핑(claude→claude-agent-acp, codex→codex-acp, gemini→gemini, 그 외 기본)
@@ -313,36 +242,10 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
   // 세션 시작 시각 — 목업 "claude · 9:02~" 의 시각 부분.
   const sessStart = (s: DetectedSession) => fmtClock(s.created_at ?? s.last_active_at ?? "");
 
-  // 메시지 + 날짜 구분선 삽입.
-  const rows = createMemo(() => {
-    const msgs = convo() ?? [];
-    const out: ({ kind: "day"; label: string } | { kind: "msg"; m: MessageDto })[] = [];
-    let lastDay = "";
-    for (const m of msgs) {
-      const day = fmtDay(m.timestamp);
-      if (day && day !== lastDay) {
-        out.push({ kind: "day", label: day });
-        lastDay = day;
-      }
-      out.push({ kind: "msg", m });
-    }
-    return out;
-  });
-
-  let msgsRef: HTMLDivElement | undefined;
-  createEffect(() => {
-    rows();
-    queueMicrotask(() => {
-      if (msgsRef) msgsRef.scrollTop = msgsRef.scrollHeight;
-    });
-  });
-
-  // 에이전트 선택 → 기본 대화 = ACP 세션(preset). peer_send 대화는 peerMode 토글로만.
+  // 에이전트 선택 → 대화 = ACP 세션(preset). 좌측 명부 row 클릭으로 진입.
   function pick(alias: string) {
-    setPeerMode(false);
     setAcpMode(false);
     setSelected(alias);
-    setSendErr(null);
     setMobileChat(true);
   }
 
@@ -350,84 +253,6 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
   function openAcp() {
     setAcpMode(true);
     setMobileChat(true);
-  }
-
-  async function send() {
-    const alias = selected();
-    const body = draft().trim();
-    if (!alias || !body || sending()) return;
-    setSending(true);
-    setSendErr(null);
-    try {
-      await invoke("peer_send", { alias, body });
-      setDraft("");
-      await refetchConvo();
-    } catch (e) {
-      setSendErr(typeof e === "string" ? e : (e as Error)?.message ?? String(e));
-    } finally {
-      setSending(false);
-    }
-  }
-
-  function onKey(e: KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void send();
-    }
-  }
-
-  // 파일 1건 업로드 → 초안에 attachment:// 참조 추가. 클릭(📎)·드래그앤드롭 공용 로직.
-  // content-addressed attachment_upload (Messenger 와 동일 백엔드).
-  function uploadFile(f: File) {
-    const reader = new FileReader();
-    reader.onerror = () => setSendErr(`첨부 실패: ${f.name} 파일을 읽지 못했습니다.`);
-    reader.onload = async () => {
-      const b64 = (reader.result as string).split(",")[1] ?? "";
-      try {
-        const res = await invoke<{ content_hash: string; size_bytes: number; storage: string }>(
-          "attachment_upload",
-          { content_b64: b64, mime: f.type || "application/octet-stream" },
-        );
-        const ref = `📎 ${f.name} attachment://${res.content_hash} (${(res.size_bytes / 1024).toFixed(1)} KB)`;
-        setDraft(draft() ? `${draft()}\n${ref}` : ref);
-      } catch (e) {
-        setSendErr(`첨부 실패: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    };
-    reader.readAsDataURL(f);
-  }
-
-  // 📎 클릭 첨부 — 파일 선택 다이얼로그 → uploadFile.
-  function attachFile() {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.multiple = true;
-    input.onchange = (ev: Event) => {
-      const files = (ev.target as HTMLInputElement)?.files;
-      if (!files) return;
-      for (const f of Array.from(files)) uploadFile(f);
-    };
-    input.click();
-  }
-
-  // 드래그앤드롭 첨부 — 대화/컴포저 영역에 파일을 끌어놓으면 uploadFile.
-  function onDragOver(e: DragEvent) {
-    if (!selected()) return;
-    e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
-    setDragOver(true);
-  }
-  function onDragLeave(e: DragEvent) {
-    // 자식 요소로 이동할 때의 leave 는 무시 (영역 밖으로 나갈 때만 해제).
-    if (e.currentTarget === e.target) setDragOver(false);
-  }
-  function onDrop(e: DragEvent) {
-    e.preventDefault();
-    setDragOver(false);
-    if (!selected()) return;
-    const files = e.dataTransfer?.files;
-    if (!files || files.length === 0) return;
-    for (const f of Array.from(files)) uploadFile(f);
   }
 
   // .st 미리보기: 마지막 메시지 본문, 없으면 역할/설명.
@@ -507,12 +332,12 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
 
       {/* ── 우측 대화방 ──
           1) acpMode  : 어댑터 picker(에이전트 미리 안 정함)
-          2) 에이전트 선택 + !peerMode : 기본 = 그 에이전트의 ACP 세션(preset 구동·스트리밍)
-          3) peerMode : peer_send(tmux-inject) 대화 — 명시적으로 볼 때만 */}
+          2) 에이전트 선택 : 그 에이전트의 ACP 세션(preset 구동·스트리밍)
+          ACP 가 유일한 대화 메커니즘 — 레거시 peer_send 경로는 제거됨(Phase 4-4). */}
       <Show when={acpMode()}>
         <AcpConversation onClose={() => { setAcpMode(false); setMobileChat(false); }} />
       </Show>
-      <Show when={!acpMode() && acpPreset() && !peerMode()}>
+      <Show when={!acpMode() && acpPreset()}>
         {/* key=alias 로 에이전트 전환 시 컴포넌트 재마운트 → 새 ACP 세션 구동 */}
         <Show when={selected()} keyed>
           {(_alias) => (
@@ -523,203 +348,96 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
           )}
         </Show>
       </Show>
-      <Show when={!acpMode() && (!acpPreset() || peerMode())}>
-      <div
-        class={`kk-talk-chat${dragOver() ? " dragover" : ""}`}
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        onDrop={onDrop}
-      >
-        <Show
-          when={selAgent()}
-          fallback={<div class="kk-talk-blank">좌측에서 대화할 에이전트를 선택하세요.</div>}
-        >
-          {(a) => (
-            <>
-              <Show when={dragOver()}>
-                <div class="kk-drop-hint"><div class="kk-drop-box">📎 파일을 놓아 첨부</div></div>
+      <Show when={!acpMode() && !acpPreset()}>
+        <div class="kk-talk-chat">
+          <div class="kk-talk-blank">좌측에서 대화할 에이전트를 선택하세요.</div>
+        </div>
+      </Show>
+
+      {/* ── 정보 패널 토글 — 에이전트 선택 시(ACP 대화 중) 우상단 pill. peer chat-top 제거로 별도 트리거 필요. ── */}
+      <Show when={selAgent() && !acpMode()}>
+        <span class="kk-info-toggle pill clk" onClick={() => setInfoOpen((v) => !v)}>
+          ⌗ 상태 {selSessions().length + selWorktrees().length > 0 ? `(${selSessions().length + selWorktrees().length})` : ""}
+        </span>
+      </Show>
+
+      {/* ── 정보 사이드 패널 (정본 #info) — 선택 에이전트의 폴더·tmux·워크트리·워크플로우 ── */}
+      <Show when={selAgent()}>
+        {(a) => (
+          <div class={`info${infoOpen() ? " show" : ""}`}>
+            <div class="info-head">
+              <span class="t">{a().alias} · 상태</span>
+              <span class="x" onClick={() => setInfoOpen(false)}>✕</span>
+            </div>
+
+            <div>
+              <h3>폴더</h3>
+              <Show when={a().project_path} fallback={<div class="folder">—</div>}>
+                <div class="folder" title={a().project_path!}>{a().project_path}</div>
               </Show>
-              <div class="chat-top">
-                <span class="back" onClick={() => setMobileChat(false)}>←</span>
-                <div class={`ava ${a().classification === "primary" ? "c-primary" : avatarColor(a().ai_type)}`}>
-                  {a().classification === "primary" ? "👑" : a().alias.slice(0, 1).toUpperCase()}
-                </div>
-                <div class="nm">{a().alias}</div>
-                <div class="meta-r">
-                  <Show
-                    when={isOnline(selPeer()?.last_seen)}
-                    fallback={<span class="pill off"><span class="pdot" />오프라인</span>}
-                  >
-                    <span class="pill"><span class="pdot" />온라인</span>
-                  </Show>
-                  {/* 정본 chat-top: 온라인 + tmux N + worktree N (클릭 → 정보 패널). 폴더·머신은 패널 안으로 이동. */}
-                  <span class="pill clk" onClick={() => setInfoOpen((v) => !v)}>⌗ tmux {selSessions().length}</span>
-                  <span class="pill clk" onClick={() => setInfoOpen((v) => !v)}>🌿 worktree {selWorktrees().length}</span>
-                </div>
-              </div>
+            </div>
 
-              <div class="msgs" ref={msgsRef}>
-                <Show when={!convo.loading} fallback={<div class="kk-talk-empty">대화 불러오는 중…</div>}>
-                  <Show when={!convo.error} fallback={<div class="kk-talk-empty">대화를 불러오지 못했습니다.</div>}>
-                    <Show
-                      when={(convo() ?? []).length > 0}
-                      fallback={<div class="kk-talk-empty">아직 주고받은 메시지가 없습니다.<br />아래에서 첫 메시지를 보내보세요.</div>}
-                    >
-                      <For each={rows()}>
-                        {(r) =>
-                          r.kind === "day" ? (
-                            <div class="day">{r.label}</div>
-                          ) : isSelfSender(r.m.sender) ? (
-                            <div class="me">
-                              <div class="mr"><div class="tm">{fmtClock(r.m.timestamp)}</div></div>
-                              <div class="b">{r.m.body}</div>
-                            </div>
-                          ) : (
-                            <div class="agent">
-                              <div class="head">
-                                <div class={`av ${avatarColor(a().ai_type)}`}>
-                                  {(r.m.sender || a().alias).replace(/^peer:/, "").slice(0, 1).toUpperCase()}
-                                </div>
-                                <div class="nm">{a().alias}</div>
-                                <div class="tm">{fmtClock(r.m.timestamp)}</div>
-                              </div>
-                              <div class="body">
-                                <For each={segmentBody(r.m.body)}>
-                                  {(seg) =>
-                                    seg.kind === "code" ? (
-                                      <pre class="code">{seg.text}</pre>
-                                    ) : seg.kind === "tool" ? (
-                                      <div class="toolcall"><span class="ok">✓</span> <span class="cmd">{seg.text.replace(/^[✓✗⌗]\s*/, "")}</span></div>
-                                    ) : (
-                                      <p>{seg.text}</p>
-                                    )
-                                  }
-                                </For>
-                              </div>
-                            </div>
-                          )
-                        }
-                      </For>
-                    </Show>
-                  </Show>
-                </Show>
-              </div>
-
-              {/* ── 컴포저 (정본: Claude Code 다크 + 칩 + 토큰미터) ── */}
-              <div class="composer-wrap">
-                <div class="composer">
-                  <textarea
-                    class="ph-input"
-                    rows="2"
-                    placeholder="메시지 입력···  Type @ for files, / for commands"
-                    value={draft()}
-                    disabled={sending()}
-                    onInput={(e) => setDraft(e.currentTarget.value)}
-                    onKeyDown={onKey}
-                  />
-                  <div class="bar">
-                    <div class="bar-l">
-                      <span class="ic-btn" onClick={attachFile} title="파일·문서 첨부">@</span>
-                      <span class="ic-btn">/</span>
-                      <span class="ic-btn" onClick={attachFile} title="파일·문서 첨부">📎</span>
-                      <span class="divv" />
-                      <span class="mode perm">🛡 Bypass Permissions <span class="car">⌃</span></span>
-                      <span class="mode model">Default (recommended) <span class="car">⌃</span></span>
-                      <span class="mode think">High <span class="car">⌃</span></span>
+            <div>
+              <h3>
+                실행 중 tmux · {selSessions().length}{" "}
+                <span style="font-weight:500;color:#b6bcc6">(클릭 → 라이브 열기)</span>
+              </h3>
+              <Show
+                when={selSessions().length > 0}
+                fallback={<div class="info-empty">이 머신에서 감지된 tmux 세션이 없습니다.</div>}
+              >
+                <For each={selSessions()}>
+                  {(s) => (
+                    <div class="sess">
+                      <span class="sd" />
+                      <span class="sn">{s.display || s.identifier}</span>
+                      <span class="sx">{s.kind}{sessStart(s) ? ` · ${sessStart(s)}~` : ""}</span>
                     </div>
-                    <div class="spacer" />
-                    <div class="bar-r">
-                      <span class="usage">0 / 1.00M (0%)</span>
-                      <span
-                        class={`send${draft().trim() && !sending() ? "" : " dis"}`}
-                        onClick={() => void send()}
-                      >
-                        {sending() ? "…" : "➤"}
-                      </span>
+                  )}
+                </For>
+              </Show>
+            </div>
+
+            <div>
+              <h3>워크트리 · {selWorktrees().length}</h3>
+              <Show
+                when={selWorktrees().length > 0}
+                fallback={<div class="info-empty">git 워크트리가 없습니다.</div>}
+              >
+                <For each={selWorktrees()}>
+                  {(w) => (
+                    <div class="wt" title={w.path}>
+                      🌿 {baseName(w.path)}
+                      <Show when={w.branch}><span class="b">{w.branch}</span></Show>
                     </div>
-                  </div>
-                  <Show when={sendErr()}><div class="kk-talk-err">⚠ 전송 실패: {sendErr()}</div></Show>
-                </div>
-              </div>
+                  )}
+                </For>
+              </Show>
+            </div>
 
-              {/* ── 정보 사이드 패널 (정본 #info) — tmux/worktree pill 클릭 시 슬라이드인 ── */}
-              <div class={`info${infoOpen() ? " show" : ""}`}>
-                <div class="info-head">
-                  <span class="t">{a().alias} · 상태</span>
-                  <span class="x" onClick={() => setInfoOpen(false)}>✕</span>
-                </div>
+            <div>
+              <h3>참여 중 워크플로우 · {selWorkflows().length}</h3>
+              <Show
+                when={selWorkflows().length > 0}
+                fallback={<div class="info-empty">참여 중인 워크플로우가 없습니다.</div>}
+              >
+                <For each={selWorkflows()}>
+                  {(w) => (
+                    <div class="sess">
+                      <span class="sd" />
+                      <span class="sn" style="font-family:inherit;">{w.name}</span>
+                      <span class="sx">{w.enabled === false ? "중지됨" : "활성"}</span>
+                    </div>
+                  )}
+                </For>
+              </Show>
+            </div>
 
-                <div>
-                  <h3>폴더</h3>
-                  <Show when={a().project_path} fallback={<div class="folder">—</div>}>
-                    <div class="folder" title={a().project_path!}>{a().project_path}</div>
-                  </Show>
-                </div>
-
-                <div>
-                  <h3>
-                    실행 중 tmux · {selSessions().length}{" "}
-                    <span style="font-weight:500;color:#b6bcc6">(클릭 → 라이브 열기)</span>
-                  </h3>
-                  <Show
-                    when={selSessions().length > 0}
-                    fallback={<div class="info-empty">이 머신에서 감지된 tmux 세션이 없습니다.</div>}
-                  >
-                    <For each={selSessions()}>
-                      {(s) => (
-                        <div class="sess">
-                          <span class="sd" />
-                          <span class="sn">{s.display || s.identifier}</span>
-                          <span class="sx">{s.kind}{sessStart(s) ? ` · ${sessStart(s)}~` : ""}</span>
-                        </div>
-                      )}
-                    </For>
-                  </Show>
-                </div>
-
-                <div>
-                  <h3>워크트리 · {selWorktrees().length}</h3>
-                  <Show
-                    when={selWorktrees().length > 0}
-                    fallback={<div class="info-empty">git 워크트리가 없습니다.</div>}
-                  >
-                    <For each={selWorktrees()}>
-                      {(w) => (
-                        <div class="wt" title={w.path}>
-                          🌿 {baseName(w.path)}
-                          <Show when={w.branch}><span class="b">{w.branch}</span></Show>
-                        </div>
-                      )}
-                    </For>
-                  </Show>
-                </div>
-
-                <div>
-                  <h3>참여 중 워크플로우 · {selWorkflows().length}</h3>
-                  <Show
-                    when={selWorkflows().length > 0}
-                    fallback={<div class="info-empty">참여 중인 워크플로우가 없습니다.</div>}
-                  >
-                    <For each={selWorkflows()}>
-                      {(w) => (
-                        <div class="sess">
-                          <span class="sd" />
-                          <span class="sn" style="font-family:inherit;">{w.name}</span>
-                          <span class="sx">{w.enabled === false ? "중지됨" : "활성"}</span>
-                        </div>
-                      )}
-                    </For>
-                  </Show>
-                </div>
-
-                <div style="font-size:11px;color:#b6bcc6;line-height:1.5;">
-                  정보·설정 수정은 <b>에이전트 탭</b>에서.
-                </div>
-              </div>
-            </>
-          )}
-        </Show>
-      </div>
+            <div style="font-size:11px;color:#b6bcc6;line-height:1.5;">
+              정보·설정 수정은 <b>에이전트 탭</b>에서.
+            </div>
+          </div>
+        )}
       </Show>
     </div>
   );

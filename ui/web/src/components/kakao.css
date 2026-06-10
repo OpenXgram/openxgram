@@ -206,7 +206,10 @@
    .kk-talk 네임스페이스 아래에 mockup 의 .side-top/.row/.ava/.group-title/.chat-top/
    .me/.agent/.toolcall/pre.code/.composer 규칙을 verbatim 값으로 재현. 샘플 데이터만 라이브 바인딩.
    =========================================================== */
-.kk-talk{display:flex; height:100%; min-height:0;}
+.kk-talk{display:flex; height:100%; min-height:0; position:relative;}
+/* 정보 패널 토글 — ACP 대화 중 우상단 고정 pill(peer chat-top 제거로 별도 트리거). 패널 위(z-index)·우측 정렬. */
+.kk-talk .kk-info-toggle{position:absolute; top:12px; right:14px; z-index:6; font-size:11px; font-weight:700; background:#f1f3f6; color:#5b6678; border-radius:20px; padding:5px 11px; display:inline-flex; align-items:center; gap:5px; cursor:pointer; box-shadow:0 1px 4px rgba(20,24,31,.08);}
+.kk-talk .kk-info-toggle:hover{background:#e4e8ee;}
 
 /* ---------- 좌측 명부 (정본 .side / .side-top / .search / .list / .group-title / .row / .ava) ---------- */
 .kk-talk-roster{width:330px; flex:none; background:var(--kk-list); border-right:1px solid var(--kk-line); display:flex; flex-direction:column;}
