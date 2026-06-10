@@ -355,6 +355,32 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
     }
   }
 
+  // 파일·문서 첨부 — content-addressed attachment_upload (Messenger 와 동일 백엔드).
+  function attachFile() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.onchange = (ev: Event) => {
+      const f = (ev.target as HTMLInputElement)?.files?.[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const b64 = (reader.result as string).split(",")[1] ?? "";
+        try {
+          const res = await invoke<{ content_hash: string; size_bytes: number; storage: string }>(
+            "attachment_upload",
+            { content_b64: b64, mime: f.type || "application/octet-stream" },
+          );
+          const ref = `📎 ${f.name} attachment://${res.content_hash} (${(res.size_bytes / 1024).toFixed(1)} KB)`;
+          setDraft(draft() ? `${draft()}\n${ref}` : ref);
+        } catch (e) {
+          setSendErr(`첨부 실패: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      };
+      reader.readAsDataURL(f);
+    };
+    input.click();
+  }
+
   // .st 미리보기: 마지막 메시지 본문, 없으면 역할/설명.
   function preview(a: AgentRow): string {
     const m = lastMsgByAlias().get(a.alias.toLowerCase());
@@ -377,25 +403,11 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
       <div class="kk-talk-roster">
         <div class="side-top">
           <h1>OpenXgram</h1>
-          <div class="side-top-actions">
-            <button class={`add-btn acp${acpMode() ? " active" : ""}`} onClick={openAcp}>⚡ ACP 세션</button>
-            <button class="add-btn" onClick={() => props.onJumpToSettings?.()}>＋ 에이전트 추가</button>
-          </div>
+          <button class="add-btn" onClick={() => props.onJumpToSettings?.()}>＋ 에이전트 추가</button>
         </div>
         <div class="search">🔍 에이전트·대화 검색</div>
 
         <div class="list">
-          {/* ⚡ ACP 에이전트 섹션 — peer 명부와 별개. 로컬 ACP subprocess 구동. */}
-          <div class="group-title">⚡ ACP 에이전트 <span class="gt-sub">(로컬)</span></div>
-          <div class={`row acp-row${acpMode() ? " active" : ""}`} onClick={openAcp}>
-            <div class="ava c-claude">⚡<span class="dot" /></div>
-            <div class="meta">
-              <div class="nm">ACP 세션<span class="tag">local</span></div>
-              <div class="st">로컬 ACP 에이전트 구동 + 실시간 스트리밍</div>
-            </div>
-            <div class="rcol"><div class="time">＋</div></div>
-          </div>
-
           <Show when={!agents.loading} fallback={<div class="empty">불러오는 중…</div>}>
             <Show when={!agents.error} fallback={<div class="empty">명부를 불러오지 못했습니다.<br />데몬 연결을 확인하세요.</div>}>
               <Show
@@ -536,9 +548,9 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
                   />
                   <div class="bar">
                     <div class="bar-l">
-                      <span class="ic-btn">@</span>
+                      <span class="ic-btn" onClick={attachFile} title="파일·문서 첨부">@</span>
                       <span class="ic-btn">/</span>
-                      <span class="ic-btn">📎</span>
+                      <span class="ic-btn" onClick={attachFile} title="파일·문서 첨부">📎</span>
                       <span class="divv" />
                       <span class="mode perm">🛡 Bypass Permissions <span class="car">⌃</span></span>
                       <span class="mode model">Default (recommended) <span class="car">⌃</span></span>
