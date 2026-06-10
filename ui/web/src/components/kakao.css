@@ -288,8 +288,8 @@
 .kk-talk-chat .composer .ph-input{width:100%; background:none; border:none; outline:none; resize:none; color:#e6ebf2; font-size:14px; line-height:1.45; font-family:inherit; padding:2px 0 14px;}
 .kk-talk-chat .composer .ph-input::placeholder{color:#8a94a6;}
 .kk-talk-chat .composer .ph-input:disabled{opacity:.6;}
-.kk-talk-chat .composer .bar{display:flex; align-items:center; gap:10px; flex-wrap:wrap; width:auto; height:auto; background:none; border-radius:0; overflow:visible;}
-.kk-talk-chat .composer .bar-l{display:flex; align-items:center; gap:8px; flex-wrap:wrap; flex:1 1 auto;}
+.kk-talk-chat .composer .bar{display:flex; align-items:center; gap:10px; flex-wrap:nowrap; width:auto; height:auto; background:none; border-radius:0; overflow:visible;}
+.kk-talk-chat .composer .bar-l{display:flex; align-items:center; gap:8px; flex-wrap:wrap; flex:1 1 auto; min-width:0;}
 .kk-talk-chat .composer .bar-r{display:flex; align-items:center; gap:8px; flex:0 0 auto;}
 .kk-talk-chat .composer .ic-btn{color:#9aa1ad; font-size:14px; cursor:pointer; padding:2px 4px; font-family:ui-monospace,Menlo,monospace;}
 .kk-talk-chat .composer .ic-btn:hover{color:#cfd5de;}
@@ -299,7 +299,7 @@
 .kk-talk-chat .composer .mode.perm{color:#f06595; border-color:#5a2740;}
 .kk-talk-chat .composer .mode.model{color:#cfd5de;}
 .kk-talk-chat .composer .mode.think{color:#cfd5de;}
-.kk-talk-chat .composer .spacer{flex:0 0 100%; height:0;}
+.kk-talk-chat .composer .spacer{flex:1 1 auto; height:0; min-width:8px;}
 .kk-talk-chat .composer .usage{font-size:12px; color:#6b7280; font-family:ui-monospace,Menlo,monospace; margin-left:auto;}
 .kk-talk-chat .composer .send{width:34px; height:34px; border-radius:50%; background:var(--kk-accent); display:flex; align-items:center; justify-content:center; font-size:15px; color:#fff; cursor:pointer; margin-left:6px;}
 .kk-talk-chat .composer .send:hover{filter:brightness(1.1);}
@@ -321,6 +321,23 @@
 .kk-statusline{display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; padding:0 4px 8px; font-size:11px; color:#7b8494;}
 .kk-statusline .kk-sl{display:inline-flex; align-items:center; gap:3px; white-space:nowrap; max-width:280px; overflow:hidden; text-overflow:ellipsis;}
 .kk-statusline .kk-sl-usage{margin-left:auto; font-family:ui-monospace,Menlo,monospace; color:#6b7280;}
+/* tmux 라이브 모달 */
+.kk-tmux-modal{width:760px; max-width:94vw; height:560px; max-height:88vh; background:#0d1117; border:1px solid #2b303a; border-radius:14px; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 24px 70px rgba(0,0,0,.5);}
+.kk-tmux-head{display:flex; align-items:center; gap:10px; padding:11px 14px; border-bottom:1px solid #2b303a; background:#161b22;}
+.kk-tmux-head .t{font-size:13px; font-weight:700; color:#e6edf3;}
+.kk-tmux-note{font-size:11px; color:#7b8494; font-family:ui-monospace,Menlo,monospace; margin-left:auto;}
+.kk-tmux-head .x{cursor:pointer; color:#9aa1ad; font-size:14px; padding:2px 6px;}
+.kk-tmux-head .x:hover{color:#fff;}
+.kk-tmux-err{color:#ff8787; font-size:12px; padding:6px 14px; background:#2a1518;}
+.kk-tmux-screen{flex:1; margin:0; overflow:auto; padding:12px 14px; background:#0d1117; color:#c9d1d9; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; line-height:1.4; white-space:pre-wrap; word-break:break-all;}
+.kk-tmux-input{display:flex; gap:6px; padding:9px 11px; border-top:1px solid #2b303a; background:#161b22;}
+.kk-tmux-input input{flex:1; background:#0d1117; border:1px solid #2b303a; border-radius:8px; color:#e6edf3; font-size:12.5px; padding:8px 10px; font-family:ui-monospace,Menlo,monospace; outline:none;}
+.kk-tmux-input input:focus{border-color:#3a4a6a;}
+.kk-tmux-key{background:#21262d; border:1px solid #2b303a; border-radius:7px; color:#c9d1d9; font-size:12px; padding:0 10px; cursor:pointer; font-family:ui-monospace,Menlo,monospace;}
+.kk-tmux-key:hover{background:#2a3038;}
+.kk-tmux-send{background:#238636; border:none; border-radius:7px; color:#fff; font-size:12.5px; font-weight:700; padding:0 14px; cursor:pointer;}
+.kk-tmux-send:hover{background:#2ea043;}
+.kk-tmux-key:disabled,.kk-tmux-send:disabled{opacity:.5; cursor:default;}
 .info-actions{padding:10px 14px 4px;}
 .kk-restart-btn{width:100%; background:#222732; color:#cfd5de; border:1px solid #2b303a; border-radius:8px; padding:9px; font-size:12.5px; font-weight:600; cursor:pointer;}
 .kk-restart-btn:hover{background:#2a3140; border-color:#3a4a6a;}

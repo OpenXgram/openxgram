@@ -127,10 +127,16 @@ export function AcpConversation(props: {
   // status line 데이터 — 폴더/역할/공개여부/연결 워크플로우 수(모델·토큰은 내부 값 사용).
   status?: () => { folder?: string | null; role?: string | null; isPublic?: boolean; workflows?: number };
 }) {
-  // 대화창만 별도 창으로 — 카톡식. 같은 alias 는 같은 창 이름으로 재사용.
+  // 대화창만 별도 창으로. 절대 URL(origin+pathname) 사용 — 프록시/경로 환경에서도 정확히 로드.
   function openPopout(alias: string) {
-    const url = `${location.pathname}?chat=${encodeURIComponent(alias)}`;
-    window.open(url, `oxgchat_${alias}`, "width=480,height=820,menubar=no,toolbar=no,location=no");
+    const url = `${location.origin}${location.pathname}?chat=${encodeURIComponent(alias)}`;
+    const w = window.open(url, `oxgchat_${alias}`, "width=480,height=820");
+    if (!w) {
+      // 팝업 차단됨 → 같은 창에서 열기(최소한 흰 창 방치 방지).
+      location.href = url;
+      return;
+    }
+    w.focus();
   }
   const [agents, setAgents] = createSignal<AgentInfo[] | null>(null);
   const [agentsErr, setAgentsErr] = createSignal<string | null>(null);
