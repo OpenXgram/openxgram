@@ -189,6 +189,26 @@ fn spawn_opts_from_body(body: &CreateSessionBody) -> openxgram_acp::SpawnOpts {
     }
 }
 
+// cwd 의 선행 `~` 를 절대 home 으로 확장. ACP 어댑터는 절대경로만 받음.
+// 머신별 home: 잘만=/home/pasia, 맥미니=/Users(추정), 로컬=데몬 $HOME.
+fn expand_home(cwd: &str, machine: Option<&str>) -> String {
+    if !cwd.starts_with('~') {
+        return cwd.to_string();
+    }
+    let home = match machine.map(|m| m.trim().to_lowercase()).as_deref() {
+        Some("잘만") | Some("zalman") => "/home/pasia".to_string(),
+        _ => std::env::var("HOME").unwrap_or_else(|_| "/home/llm".to_string()),
+    };
+    if cwd == "~" {
+        home
+    } else if let Some(rest) = cwd.strip_prefix("~/") {
+        format!("{}/{}", home.trim_end_matches('/'), rest)
+    } else {
+        // "~user/..." 형태는 그대로 둠(드묾).
+        cwd.to_string()
+    }
+}
+
 // 원격 머신 ACP spawn 명령 — `ssh -T <host> 'wsl -- bash -lc "...claude-agent-acp"'`.
 // ssh 프로세스의 stdio 가 ACP JSON-RPC 채널이 된다(SSH-stdio). Windows→WSL 따옴표깨짐
 // 방지 위해 bash 명령을 base64 로 전달. env(모델/thinking)는 원격 bash 에 export.
@@ -290,6 +310,9 @@ pub async fn create_session(
     openxgram_acp::registry::lookup(&body.agent)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("{e}")))?;
 
+    // ACP 어댑터는 절대경로 cwd 요구 — `~` 를 home 으로 확장(머신별: 잘만=/home/pasia, 로컬=$HOME).
+    let cwd = expand_home(&body.cwd, body.machine.as_deref());
+
     let (updates_tx, _rx) = broadcast::channel::<Value>(256);
     let session_id = state.new_session_id();
     let spawn_opts = spawn_opts_from_body(&body);
@@ -302,7 +325,7 @@ pub async fn create_session(
 
     let sess = AcpHttpSession {
         agent: body.agent.clone(),
-        cwd: body.cwd.clone(),
+        cwd: cwd.clone(),
         execution_mode: mode,
         handle_id,
         spawn_opts,
@@ -313,7 +336,7 @@ pub async fn create_session(
     Ok(json!({
         "sessionId": session_id,
         "agent": body.agent,
-        "cwd": body.cwd,
+        "cwd": cwd,
         "executionMode": mode,
         "spawned": handle_id.is_some(),
     }))

@@ -60,7 +60,7 @@ const CLASS_OPTS = [
 
 export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: string) => void }) {
   const [machine, setMachine] = createSignal(MACHINES[0]);
-  const [folder, setFolder] = createSignal("~/projects/starian-set");
+  const [folder, setFolder] = createSignal("/home/llm/projects/starian-set");
   const [aiType, setAiType] = createSignal("claude");
   const [alias, setAlias] = createSignal("");
   const [role, setRole] = createSignal("");
