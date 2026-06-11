@@ -404,8 +404,11 @@
 /* 정보 패널 — 목업 정본 그대로: 데스크탑은 .kk-talk(flex) 안의 250px **사이드 컬럼**(형제).
    열리면 대화창(AcpConversation .kk-talk-chat, flex:1)을 밀어 좁히고 **가리지 않는다**.
    (모바일에서만 absolute 오버레이 — 아래 @media.) 기본 닫힘(.show 일 때만 표시). */
-.kk-talk .info{flex:none; width:250px; background:#fafbfc; border-left:1px solid var(--kk-line); display:none; flex-direction:column; padding:14px 16px 18px; gap:18px; overflow-y:auto;}
+.kk-talk .info{flex:none; width:var(--info-w, 250px); background:#fafbfc; border-left:1px solid var(--kk-line); display:none; flex-direction:column; padding:14px 16px 18px; gap:18px; overflow-y:auto; position:relative;}
 .kk-talk .info.show{display:flex;}
+/* 상세 패널 너비 조절 핸들 (좌측 가장자리 드래그) */
+.kk-info-resize{position:absolute; left:-3px; top:0; bottom:0; width:7px; cursor:col-resize; z-index:5;}
+.kk-info-resize:hover{background:linear-gradient(90deg, rgba(58,74,106,.35), transparent);}
 .kk-talk .info-head{display:flex; align-items:center; justify-content:space-between; margin:-2px 0 -4px;}
 .kk-talk .info-head .t{font-size:13px; font-weight:800; color:var(--kk-ink);}
 .kk-talk .info-head .x{font-size:16px; color:#aab0bd; cursor:pointer; line-height:1;}

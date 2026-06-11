@@ -131,6 +131,24 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
   const [addOpen, setAddOpen] = createSignal(false);
   // 상세 패널 "세션 재시작" 트리거 — 증가시키면 AcpConversation 이 세션을 닫고 재구동.
   const [restartTick, setRestartTick] = createSignal(0);
+  // 상세(info) 패널 너비 — 좌측 핸들 드래그로 조절(데스크톱). CSS 변수 --info-w 로 적용.
+  const [infoWidth, setInfoWidth] = createSignal(250);
+  function startInfoResize(e: MouseEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = infoWidth();
+    const onMove = (ev: MouseEvent) => {
+      // 패널이 우측에 있어 왼쪽으로 드래그하면 넓어짐.
+      setInfoWidth(Math.max(200, Math.min(680, startW + (startX - ev.clientX))));
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
   // 대화명 편집 — 상세 패널에서. null=비편집, 문자열=편집중 값.
   const [renameVal, setRenameVal] = createSignal<string | null>(null);
   const [renameBusy, setRenameBusy] = createSignal(false);
@@ -349,14 +367,14 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
                                   <Show when={tagLabel(a)}><span class="tag">{tagLabel(a)}</span></Show>
                                   <Show when={a.is_public}><span class="tag">공개</span></Show>
                                 </div>
-                                {/* 에이전트명(ID) · 역할 · AI종류 — display_name 설정 시 alias 도 표시. */}
-                                <div class="st kk-card-sub">
-                                  <Show when={a.display_name && a.display_name.trim() && a.display_name !== a.alias}>
-                                    <span class="kk-card-alias" title="에이전트명(ID)">@{a.alias}</span>
-                                  </Show>
-                                  <Show when={a.role}><span>🎭 {a.role}</span></Show>
-                                  <span>🤖 {a.ai_type || "claude"}</span>
+                                {/* 에이전트명(ID) · AI모델 · 역할 */}
+                                <div class="kk-card-sub">
+                                  <span class="kk-card-alias" title="에이전트명(ID)">@{a.alias}</span>
+                                  <span title="AI 모델">🤖 {a.ai_type || "claude"}</span>
+                                  <Show when={a.role}><span title="역할">🎭 {a.role}</span></Show>
                                 </div>
+                                {/* 최근/읽지 않은 메시지 미리보기 */}
+                                <div class="st">{preview(a)}</div>
                               </div>
                               <div class="rcol">
                                 <div class="time">{previewTime(a)}</div>
@@ -418,7 +436,8 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
           열리면 우측 300px 슬라이드인으로 대화창 우측 일부만 오버레이(전체 가리지 않음). ── */}
       <Show when={selAgent()}>
         {(a) => (
-          <div class={`info${infoOpen() ? " show" : ""}`}>
+          <div class={`info${infoOpen() ? " show" : ""}`} style={`--info-w:${infoWidth()}px`}>
+            <div class="kk-info-resize" onMouseDown={startInfoResize} title="너비 조절 (드래그)" />
             <div class="info-head">
               <Show
                 when={renameVal() !== null}
