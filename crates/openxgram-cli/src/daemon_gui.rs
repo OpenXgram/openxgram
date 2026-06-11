@@ -4809,6 +4809,14 @@ async fn gui_agent_profile_set(
            is_public=excluded.is_public, display_name=COALESCE(excluded.display_name, display_name), updated_at=excluded.updated_at",
         rusqlite::params![alias, ai_type, classification, execution_mode, machine, worktree, is_public as i64, now, body.display_name],
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("upsert profile: {e}")})))?;
+    // 단일 프라이머리 강제 — primary 로 지정하면 기존 다른 primary 는 project 로 강등(중복 방지).
+    if classification == "primary" {
+        db.conn().execute(
+            "UPDATE agent_profiles SET classification='project', updated_at=?2 \
+             WHERE classification='primary' AND alias != ?1",
+            rusqlite::params![alias, now],
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("demote primary: {e}")})))?;
+    }
     // folder/group/role/description 제공 시 agent_capabilities 반영 (COALESCE 로 기존 보존).
     if body.role.is_some() || body.group.is_some() || body.folder.is_some() || body.description.is_some() {
         db.conn().execute(

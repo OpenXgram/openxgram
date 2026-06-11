@@ -26,6 +26,8 @@ export interface AcpPreset {
   label?: string | null;
   // 대화명(표시 이름). 헤더에 label 대신 노출(convKey 는 label 유지). 생략 시 label.
   displayName?: string | null;
+  // 분류(primary/project/special). primary 면 권한 기본값 = bypassPermissions(전체 도구 권한).
+  classification?: string | null;
 }
 
 // ACP 대화방 (Phase B-3) — 로컬 ACP 에이전트 subprocess 를 daemon `/v1/acp/*` 로
@@ -149,7 +151,10 @@ export function AcpConversation(props: {
   const [draft, setDraft] = createSignal("");
 
   // ── 컴포저 칩: 권한 모드 / 모델 / thinking. 클릭 → 드롭다운 → ACP 세션 spawn 옵션에 반영. ──
-  const [permMode, setPermMode] = createSignal("default");
+  // 프라이머리(총괄) 에이전트는 전체 도구 권한 → 권한 기본값 bypassPermissions.
+  const [permMode, setPermMode] = createSignal(
+    props.preset?.classification === "primary" ? "bypassPermissions" : "default",
+  );
   const [model, setModel] = createSignal("default");
   const [thinking, setThinking] = createSignal("high");
   const [openMenu, setOpenMenu] = createSignal<"perm" | "model" | "think" | null>(null);
@@ -743,7 +748,7 @@ export function AcpConversation(props: {
         <div class="chat-top">
           <span class="back" onClick={() => props.onClose()}>←</span>
           <div class="ava c-claude">⚡</div>
-          <div class="nm">{activeAgent()}</div>
+          <div class="nm">{props.preset?.displayName || activeAgent()}</div>
           <div class="meta-r">
             <Show when={props.headerExtra}>{props.headerExtra!() as never}</Show>
             <Show when={streaming()} fallback={<span class="pill off"><span class="pdot" />스트림 끊김</span>}>
@@ -796,7 +801,7 @@ export function AcpConversation(props: {
                 <div class="agent">
                   <div class="head">
                     <div class="av c-claude">⚡</div>
-                    <div class="nm">{activeAgent()}</div>
+                    <div class="nm">{props.preset?.displayName || activeAgent()}</div>
                     <div class="tm">{b.time}</div>
                   </div>
                   <div class="body">

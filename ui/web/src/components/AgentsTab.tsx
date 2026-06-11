@@ -184,6 +184,14 @@ export function AgentsTab(props: { onGotoChat?: (alias: string) => void; onGotoM
     await refetchAgents();
   }
 
+  async function setClassification(cls: string) {
+    const a = selected();
+    if (!a) return;
+    await invoke("agent_profile_set", { alias: a, classification: cls });
+    await refetchProfile();
+    await refetchAgents();
+  }
+
   return (
     <div class="kk-agents">
       <div class="kk-roster">
@@ -238,6 +246,7 @@ export function AgentsTab(props: { onGotoChat?: (alias: string) => void; onGotoM
                 chainLoading={chain.loading}
                 onExec={setExecMode}
                 onRename={setDisplayName}
+                onSetClass={setClassification}
                 onGotoChat={props.onGotoChat}
                 onGotoMarket={props.onGotoMarket}
                 onOpenChannel={() => setShowChannel(true)}
@@ -279,6 +288,7 @@ function ProfileView(props: {
   chainLoading: boolean;
   onExec: (mode: string) => void;
   onRename: (name: string) => void;
+  onSetClass: (cls: string) => void;
   onGotoChat?: (alias: string) => void;
   onGotoMarket?: () => void;
   onOpenChannel: () => void;
@@ -332,7 +342,20 @@ function ProfileView(props: {
         </div>
         <div class="apvcard"><div class="k">에이전트명 (ID)</div><div class="v" style="font-family:ui-monospace,Menlo,monospace; font-size:12px;">{p().alias}</div></div>
         <div class="apvcard"><div class="k">AI 종류</div><div class="v">{p().ai_type}</div></div>
-        <div class="apvcard"><div class="k">분류</div><div class="v">{CLASS_LABEL[p().classification] || p().classification}</div></div>
+        {/* 분류 — 클릭해서 변경. primary 로 지정하면 기존 프라이머리는 자동 강등(단일 프라이머리). */}
+        <div class="apvcard">
+          <div class="k">분류 <span style="opacity:.6">(클릭 변경)</span></div>
+          <div class="v" style="display:flex; gap:5px; flex-wrap:wrap; margin-top:2px;">
+            {(["primary", "project", "special"] as const).map((c) => (
+              <span
+                onClick={() => { if (p().classification !== c) props.onSetClass(c); }}
+                style={`cursor:pointer; font-size:11.5px; padding:4px 8px; border-radius:7px; border:1px solid ${p().classification === c ? "#fee500" : "#2b303a"}; background:${p().classification === c ? "#fee50022" : "transparent"}; color:${p().classification === c ? "#e6c200" : "#9aa1ad"}; font-weight:${p().classification === c ? 700 : 400};`}
+              >
+                {CLASS_LABEL[c] || c}
+              </span>
+            ))}
+          </div>
+        </div>
         <div class="apvcard"><div class="k">머신</div><div class="v">{p().machine || "—"}</div></div>
         <div class="apvcard"><div class="k">폴더</div><div class="v">{p().folder || "—"}</div></div>
         <div class="apvcard"><div class="k">역할</div><div class="v">{p().role || "—"}</div></div>

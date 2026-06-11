@@ -251,6 +251,7 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
       execMode: a.execution_mode ?? null,
       label: a.alias, // convKey(영속화 키) — 안정적 alias 유지.
       displayName: agentName(a), // 헤더 표시용(대화명).
+      classification: a.classification ?? null, // primary 면 권한 기본 bypass.
     };
   });
 
