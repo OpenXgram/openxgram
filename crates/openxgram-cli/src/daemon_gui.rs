@@ -1886,12 +1886,29 @@ async fn do_local_session_input(
     let target = resolve_tmux_session(&raw_target);
     let send_data = data.to_string();
     let result = tokio::task::spawn_blocking(move || -> std::io::Result<std::process::Output> {
+        // 줄바꿈(\n)으로 끝나면 = 제출. 리터럴 \n 은 TUI 앱(Claude Code 등)에서 줄바꿈일 뿐
+        // 제출 Enter 가 아니므로, 텍스트는 -l 리터럴 → 딜레이 → 실제 Enter 키(-l 없음) 순으로 송신.
+        let has_enter = send_data.ends_with('\n');
+        if !has_enter {
+            // 제어문자(^C=\x03)·방향키(\x1b[A) 등은 리터럴 그대로.
+            return std::process::Command::new("tmux")
+                .args(["send-keys", "-t", target.as_str(), "-l", send_data.as_str()])
+                .output();
+        }
+        let text = send_data.trim_end_matches('\n');
+        if !text.is_empty() {
+            let out = std::process::Command::new("tmux")
+                .args(["send-keys", "-t", target.as_str(), "-l", text])
+                .output()?;
+            if !out.status.success() {
+                return Ok(out);
+            }
+            // 앱이 입력 텍스트를 반영할 시간을 준 뒤 Enter (제출). 딜레이 없으면 빈 제출/유실 가능.
+            std::thread::sleep(std::time::Duration::from_millis(60));
+        }
+        // 실제 Enter 키 (리터럴 아님) → 제출.
         std::process::Command::new("tmux")
-            .arg("send-keys")
-            .arg("-t")
-            .arg(&target)
-            .arg("-l")
-            .arg(&send_data)
+            .args(["send-keys", "-t", target.as_str(), "Enter"])
             .output()
     })
     .await
