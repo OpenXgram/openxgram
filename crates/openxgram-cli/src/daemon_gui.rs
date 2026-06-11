@@ -9294,6 +9294,89 @@ fn build_fs_tree(dir: &std::path::Path, depth: usize) -> serde_json::Value {
 
 /// `GET /v1/gui/fs/tree?path=<dir>&depth=<n>` — 디렉토리 JSON 트리 (read-only).
 /// depth 기본 2, 최대 5. path 미지정 시 400. 디렉토리 아님/미존재 시 명시 status.
+// 머신 라벨 → (ssh host, wsl 래퍼 여부). None = 로컬(이 데몬 머신).
+// cross-machine 폴더 browse 용 — SSH-stdio 방식(원격 데몬 불필요).
+fn machine_ssh(machine: &str) -> Option<(&'static str, bool)> {
+    match machine.trim().to_lowercase().as_str() {
+        "" | "서울" | "seoul" | "server-seoul" | "local" => None,
+        "잘만" | "zalman" => Some(("zalman", true)), // WSL 경유
+        "맥미니" | "macmini" | "mac-mini" => Some(("macmini", false)),
+        _ => None, // 미지원/미설정 머신 → 로컬로 fallback
+    }
+}
+
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+// 원격 머신의 디렉토리 트리 — SSH 로 find 실행 후 경로 목록을 nested 트리로 변환.
+// Windows→WSL(zalman) 경유의 따옴표/특수문자 깨짐 방지를 위해 bash 명령을 base64 로 전달.
+// 경로가 원격에 없으면 원격 $HOME 으로 fallback(머신마다 home 다름).
+fn remote_fs_tree(host: &str, wsl: bool, path: &str, depth: usize) -> Result<serde_json::Value, String> {
+    use base64::Engine;
+    let find_cmd = format!(
+        "D={}; [ -d \"$D\" ] || D=\"$HOME\"; find \"$D\" -maxdepth {} \\( -name node_modules -o -name .git -o -name target -o -name dist -o -name build -o -name .next \\) -prune -o -type d -print 2>/dev/null | head -2000",
+        sh_quote(path), depth
+    );
+    let b64 = base64::engine::general_purpose::STANDARD.encode(find_cmd.as_bytes());
+    let inner = format!("echo {b64} | base64 -d | bash");
+    let remote = if wsl {
+        format!("wsl -- bash -lc \"{inner}\"")
+    } else {
+        format!("bash -lc \"{inner}\"")
+    };
+    let out = std::process::Command::new("ssh")
+        .args(["-o", "ConnectTimeout=10", "-o", "BatchMode=yes", host, &remote])
+        .output()
+        .map_err(|e| format!("ssh spawn: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "ssh {host} 실패: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let paths: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|s| s.trim_end_matches('/').trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if paths.is_empty() {
+        return Err(format!("원격 {host} 에서 디렉토리를 찾지 못함 (경로/SSH 확인)"));
+    }
+    // find 는 시작 디렉토리를 먼저 출력 → 첫 줄이 실제 root(HOME fallback 반영).
+    let root = paths[0].clone();
+    Ok(build_tree_from_paths(&root, &paths))
+}
+
+// 평탄한 디렉토리 경로 목록 → nested {name, path, is_dir, children} 트리 (build_fs_tree 와 동일 shape).
+fn build_tree_from_paths(root: &str, paths: &[String]) -> serde_json::Value {
+    use std::collections::BTreeMap;
+    let mut children: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for p in paths {
+        if p == root {
+            continue;
+        }
+        if let Some(idx) = p.rfind('/') {
+            let parent = p[..idx].to_string();
+            children.entry(parent).or_default().push(p.clone());
+        }
+    }
+    fn node(path: &str, children: &BTreeMap<String, Vec<String>>) -> serde_json::Value {
+        let name = path.rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or(path);
+        let kids: Vec<serde_json::Value> = children
+            .get(path)
+            .map(|v| {
+                let mut v2 = v.clone();
+                v2.sort();
+                v2.dedup();
+                v2.iter().map(|c| node(c, children)).collect()
+            })
+            .unwrap_or_default();
+        serde_json::json!({ "name": name, "path": path, "is_dir": true, "children": kids })
+    }
+    node(root, &children)
+}
+
 async fn gui_fs_tree(
     State(state): State<GuiServerState>,
     headers: HeaderMap,
@@ -9323,6 +9406,29 @@ async fn gui_fs_tree(
                 error: "'..' 포함 경로 거부".into(),
             }),
         ));
+    }
+    // cross-machine — machine 파라미터가 원격이면 SSH 로 원격 디렉토리 트리 조회.
+    let machine = q.get("machine").map(|s| s.as_str()).unwrap_or("");
+    if let Some((host, wsl)) = machine_ssh(machine) {
+        let path_owned = path.to_string();
+        let res = tokio::task::spawn_blocking(move || remote_fs_tree(host, wsl, &path_owned, depth))
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorDto {
+                        error: format!("ssh join: {e}"),
+                    }),
+                )
+            })?;
+        return res.map(Json).map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ErrorDto {
+                    error: format!("원격 폴더 조회({machine}): {e}"),
+                }),
+            )
+        });
     }
     if !dir.is_dir() {
         return Err((

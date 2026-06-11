@@ -81,8 +81,10 @@ export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: s
   async function loadTree(root: string) {
     setTreeErr(null);
     try {
-      const t = await invoke<FsNode>("fs_tree", { path: root, depth: 4 });
+      // 선택 머신 전달 — 원격 머신이면 데몬이 SSH 로 그 머신 디렉토리를 조회.
+      const t = await invoke<FsNode>("fs_tree", { path: root, depth: 4, machine: machine() });
       setTree(t);
+      setTreeRoot(t.path); // 원격 HOME fallback 등으로 root 가 바뀌면 입력에도 반영.
       setExpanded(new Set([t.path])); // 루트 펼침.
     } catch (e) {
       setTreeErr((e as Error)?.message ?? String(e));
@@ -144,7 +146,7 @@ export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: s
         <div class="mrow">
           <div class="fld">
             <label>1 · 머신</label>
-            <select class="ctl" value={machine()} onChange={(e) => setMachine(e.currentTarget.value)}>
+            <select class="ctl" value={machine()} onChange={(e) => { setMachine(e.currentTarget.value); setTree(null); setTreeErr(null); if (treeOpen()) void loadTree(treeRoot()); }}>
               {MACHINES.map((m) => <option value={m}>{m}</option>)}
             </select>
           </div>
