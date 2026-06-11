@@ -270,6 +270,12 @@ const MIGRATIONS: &[Migration] = &[
         name: "agent_display_name",
         sql: include_str!("../migrations/0050_agent_display_name.sql"),
     },
+    // ACP 대화 읽음 상태 — 안읽음 배지/정렬.
+    Migration {
+        version: 51,
+        name: "acp_read",
+        sql: include_str!("../migrations/0051_acp_read.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

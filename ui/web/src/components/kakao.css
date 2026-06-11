@@ -340,6 +340,8 @@
 .kk-tmux-send{background:#238636; border:none; border-radius:7px; color:#fff; font-size:12.5px; font-weight:700; padding:0 14px; cursor:pointer;}
 .kk-tmux-send:hover{background:#2ea043;}
 .kk-tmux-key:disabled,.kk-tmux-send:disabled{opacity:.5; cursor:default;}
+/* 안읽음 카운트 배지 */
+.kk-unread{background:#fa5252; color:#fff; font-size:10.5px; font-weight:700; min-width:18px; height:18px; border-radius:9px; display:inline-flex; align-items:center; justify-content:center; padding:0 5px; margin-top:4px; line-height:1;}
 .kk-card-sub{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
 .kk-card-sub span{white-space:nowrap;}
 .kk-card-alias{color:#8a94a6; font-family:ui-monospace,Menlo,monospace; font-size:11px;}

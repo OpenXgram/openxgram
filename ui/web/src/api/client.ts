@@ -102,6 +102,7 @@ const ROUTES: Record<string, Route> = {
  acp_conv_list: { method: "GET", path: "/acp/conversations/{key}/messages", emptyAs: []},
  acp_conv_add: { method: "POST", path: "/acp/conversations/{key}/messages", body: true},
  acp_conv_clear: { method: "DELETE", path: "/acp/conversations/{key}/messages"},
+ acp_conv_read: { method: "POST", path: "/acp/conversations/{key}/read"},
  fs_tree: { method: "GET", path: "/fs/tree"},
  fs_file_get: { method: "GET", path: "/fs/file"},
  fs_file_put: { method: "PUT", path: "/fs/file", body: true},

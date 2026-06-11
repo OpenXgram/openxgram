@@ -165,14 +165,10 @@ export function AcpConversation(props: {
   const [leftMenu, setLeftMenu] = createSignal<"at" | "slash" | null>(null);
   const [fileList, setFileList] = createSignal<string[] | null>(null); // @ 파일 picker (cwd 상대경로)
   const [fileFilter, setFileFilter] = createSignal("");
-  // 슬래시 명령 = 프롬프트 템플릿(에이전트가 실제 수행). 클릭 시 draft 에 삽입.
-  const SLASH_CMDS = [
-    { cmd: "/explain", tip: "코드 설명", text: "다음을 설명해줘:\n" },
-    { cmd: "/fix", tip: "버그 수정", text: "다음 버그를 고쳐줘:\n" },
-    { cmd: "/review", tip: "변경 리뷰", text: "이 변경을 리뷰해줘:\n" },
-    { cmd: "/test", tip: "테스트 작성", text: "다음에 대한 테스트를 작성해줘:\n" },
-    { cmd: "/refactor", tip: "리팩터링", text: "다음을 리팩터링해줘:\n" },
-  ];
+  // 슬래시 명령 = 에이전트의 실제 availableCommands(ACP available_commands_update).
+  // 하드코딩 아님 — 세션에서 동적으로 받음(deep-research, code-review, brainstorming 등).
+  const [availCmds, setAvailCmds] = createSignal<{ name: string; description?: string }[]>([]);
+  const [slashFilter, setSlashFilter] = createSignal("");
 
   const PERM_OPTS = [
     { v: "default", label: "Default (확인)" },
@@ -185,6 +181,7 @@ export function AcpConversation(props: {
     { v: "haiku", label: "Haiku 4.5" },
     { v: "sonnet", label: "Sonnet 4.6" },
     { v: "opus", label: "Opus 4.8" },
+    { v: "__custom__", label: "✎ 직접 입력…" }, // 새 모델(claude-fable-5 등) — 하드코딩 불필요.
   ];
   const THINK_OPTS = [
     { v: "off", label: "Off (없음)" },
@@ -227,7 +224,8 @@ export function AcpConversation(props: {
     const cost = (used / 1_000_000) * m.rate;
     return `${fmtTok(used)}/${fmtTok(ctx)} (${pct}%) · $${cost.toFixed(4)}`;
   });
-  const modelName = createMemo(() => (MODEL_META[model()] ?? MODEL_META.default).name);
+  // 프리셋이면 이름, 커스텀 모델 id 면 그 id 를 그대로 표시.
+  const modelName = createMemo(() => MODEL_META[model()]?.name ?? model());
 
   // 파일·문서 첨부 — content-addressed attachment_upload. 업로드 후 프롬프트에 attachment:// 참조 추가.
   // 클릭(📎/@) + 드래그앤드롭 공용.
@@ -303,10 +301,13 @@ export function AcpConversation(props: {
     setLeftMenu(null);
     setFileFilter("");
   }
-  function insertSlash(text: string) {
+  // 실제 슬래시 명령 삽입 — `/name `(에이전트가 전송 시 실행). 빈 draft 면 그대로.
+  function insertSlash(name: string) {
+    const cmd = `/${name} `;
     const d = draft();
-    setDraft(d ? `${d}\n${text}` : text);
+    setDraft(d && !d.endsWith(" ") ? `${d} ${cmd}` : `${d}${cmd}`);
     setLeftMenu(null);
+    setSlashFilter("");
   }
   const [busy, setBusy] = createSignal(false); // 세션 생성/프롬프트 진행 중
   const [streaming, setStreaming] = createSignal(false);
@@ -321,8 +322,22 @@ export function AcpConversation(props: {
   // 칩 선택 → 신호 갱신 + 메뉴 닫기. 세션이 이미 있으면 새 옵션으로 재구동(내역 보존).
   function selectChip(kind: "perm" | "model" | "think", v: string) {
     if (kind === "perm") setPermMode(v);
-    else if (kind === "model") setModel(v);
-    else setThinking(v);
+    else if (kind === "model") {
+      // 직접 입력 — 모델 id(예: claude-fable-5) 받아서 사용. 새 모델 코드수정 불필요.
+      if (v === "__custom__") {
+        const cur = MODEL_META[model()] ? "" : model();
+        const id = window.prompt("모델 id 입력 (예: claude-opus-4-8, claude-fable-5)", cur);
+        setOpenMenu(null);
+        if (!id || !id.trim()) return;
+        setModel(id.trim());
+        if (sessionId() && lastSpawn) {
+          pushBubble({ id: nextId++, kind: "note", text: `· 모델 변경(${id.trim()}) → 세션 재구동`, time: nowClock() });
+          void spawn(lastSpawn.agent, { ...(lastSpawn.opts ?? {}), keepHistory: true });
+        }
+        return;
+      }
+      setModel(v);
+    } else setThinking(v);
     setOpenMenu(null);
     if (sessionId() && lastSpawn) {
       const what = kind === "perm" ? "권한 모드" : kind === "model" ? "모델" : "thinking";
@@ -442,6 +457,19 @@ export function AcpConversation(props: {
       // 어댑터 실제 토큰 usage → 컴포저 usage 표시(60k/200k (30%)) 실데이터.
       if (typeof o.used === "number") setUsedTok(o.used as number);
       if (typeof o.size === "number") setCtxSize(o.size as number);
+    } else if (tag === "available_commands_update") {
+      // 에이전트의 실제 슬래시 명령 → `/` 드롭다운에 노출(하드코딩 아님).
+      const cmds = o.availableCommands;
+      if (Array.isArray(cmds)) {
+        setAvailCmds(
+          cmds
+            .map((c) => {
+              const cc = c as Record<string, unknown>;
+              return { name: String(cc.name ?? ""), description: cc.description ? String(cc.description) : undefined };
+            })
+            .filter((c) => c.name),
+        );
+      }
     } else if (tag === "user_message_chunk") {
       // 에이전트가 user 입력을 replay — 이미 .me 로 그렸으므로 무시.
     }
@@ -598,6 +626,8 @@ export function AcpConversation(props: {
       .join("\n")
       .trim();
     if (aText) void recordMsg("agent", aText);
+    // 대화 중이므로 방금 받은 응답은 읽음 처리(안읽음 배지 누적 방지).
+    void invoke("acp_conv_read", { key: convKey() }).catch(() => {});
   }
 
   async function cancelTurn() {
@@ -888,15 +918,25 @@ export function AcpConversation(props: {
                     </div>
                   </Show>
                 </span>
-                {/* / 슬래시 명령(프롬프트 템플릿) */}
+                {/* / 슬래시 명령 — 에이전트의 실제 availableCommands(하드코딩 아님) */}
                 <span class="kk-chip-wrap">
                   <span class="ic-btn" title="슬래시 명령" onClick={() => setLeftMenu(leftMenu() === "slash" ? null : "slash")}>/</span>
                   <Show when={leftMenu() === "slash"}>
-                    <div class="kk-chip-menu">
-                      <For each={SLASH_CMDS}>
+                    <div class="kk-chip-menu kk-at-menu">
+                      <input
+                        class="kk-at-filter"
+                        placeholder="명령 검색…"
+                        value={slashFilter()}
+                        onInput={(e) => setSlashFilter(e.currentTarget.value)}
+                      />
+                      <Show when={availCmds().length === 0}>
+                        <div class="kk-chip-opt" style="opacity:.6">명령 로딩 중… (첫 응답 후 표시)</div>
+                      </Show>
+                      <For each={availCmds().filter((c) => c.name.toLowerCase().includes(slashFilter().toLowerCase())).slice(0, 80)}>
                         {(c) => (
-                          <div class="kk-chip-opt" onClick={() => insertSlash(c.text)}>
-                            <b>{c.cmd}</b> <span style="opacity:.6">{c.tip}</span>
+                          <div class="kk-chip-opt" onClick={() => insertSlash(c.name)} title={c.description ?? ""}>
+                            <b>/{c.name}</b>
+                            <Show when={c.description}><span style="opacity:.55; margin-left:6px;">{c.description!.slice(0, 40)}</span></Show>
                           </div>
                         )}
                       </For>

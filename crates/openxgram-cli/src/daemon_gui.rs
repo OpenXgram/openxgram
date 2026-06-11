@@ -466,6 +466,10 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
             "/v1/gui/acp/conversations/{key}/messages",
             get(gui_acp_conv_list).post(gui_acp_conv_add).delete(gui_acp_conv_clear),
         )
+        .route(
+            "/v1/gui/acp/conversations/{key}/read",
+            post(gui_acp_conv_read),
+        )
         // rc.212 — peer conversation unified view. 한 peer 와의 전 session (outbox/inbox/Peer·/Claude Code·) 합쳐서 시간순.
         .route("/v1/gui/peer_conversation/{alias}", get(gui_peer_conversation))
         .route("/v1/gui/peers/{alias}/send", post(gui_peer_send))
@@ -3562,6 +3566,23 @@ async fn gui_acp_conv_clear(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+// 대화 읽음 처리 — last_read=now. 안읽음 배지/정렬 기준. 에이전트 대화 열 때 호출.
+async fn gui_acp_conv_read(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO acp_read (conv_key, last_read) VALUES (?1, ?2) \
+         ON CONFLICT(conv_key) DO UPDATE SET last_read = excluded.last_read",
+        rusqlite::params![key, now],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("read: {e}")})))?;
+    Ok(Json(serde_json::json!({ "ok": true, "last_read": now })))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct WikiShareBody { pub mode: String, pub expires_at: Option<String>, pub noindex: Option<bool> }
 async fn gui_wiki_share(
@@ -3874,7 +3895,9 @@ async fn gui_agents_list(
     let mut stmt = db.conn().prepare(
         "SELECT ac.alias, ac.role, ac.description, ac.capabilities, ac.tool_list, ac.project_path, \
                 ac.group_name, ac.messenger_enabled, ac.orchestration_role, ac.special_instructions, ac.updated_at, \
-                p.classification, p.execution_mode, p.ai_type, p.is_public, p.machine, p.display_name \
+                p.classification, p.execution_mode, p.ai_type, p.is_public, p.machine, p.display_name, \
+                (SELECT COUNT(*) FROM acp_messages am WHERE am.conv_key = ac.alias AND am.role='agent' \
+                   AND am.created_at > COALESCE((SELECT last_read FROM acp_read WHERE conv_key = ac.alias), '')) AS unread \
          FROM agent_capabilities ac \
          JOIN agent_profiles p ON p.alias = ac.alias \
          WHERE ac.role IS NOT 'tmux' \
@@ -3899,6 +3922,7 @@ async fn gui_agents_list(
             "is_public": r.get::<_, Option<i64>>(14)?.map(|v| v != 0),
             "machine": r.get::<_, Option<String>>(15)?,
             "display_name": r.get::<_, Option<String>>(16)?,
+            "unread": r.get::<_, i64>(17)?,
         }))
     }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
         .filter_map(|r| r.ok()).collect();

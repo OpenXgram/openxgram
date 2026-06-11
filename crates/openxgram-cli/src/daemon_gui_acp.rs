@@ -162,12 +162,14 @@ fn spawn_opts_from_body(body: &CreateSessionBody) -> openxgram_acp::SpawnOpts {
     );
     let mut extra_env: Vec<(String, String)> = Vec::new();
     match body.model.as_deref() {
+        None | Some("") | Some("default") => {} // adapter default
         Some("haiku") => {
             extra_env.push(("ANTHROPIC_MODEL".into(), "claude-haiku-4-5-20251001".into()))
         }
         Some("sonnet") => extra_env.push(("ANTHROPIC_MODEL".into(), "claude-sonnet-4-6".into())),
         Some("opus") => extra_env.push(("ANTHROPIC_MODEL".into(), "claude-opus-4-8".into())),
-        _ => {} // "default"/None → adapter default
+        // 프리셋 외 = 사용자 직접 입력한 모델 id(claude-fable-5 등) → 그대로 사용(하드코딩 불필요).
+        Some(other) => extra_env.push(("ANTHROPIC_MODEL".into(), other.to_string())),
     }
     // thinking effort 5단계 → MAX_THINKING_TOKENS. off/None → 확장 사고 비활성(env 미설정).
     match body.thinking.as_deref() {

@@ -25,6 +25,7 @@ interface AgentRow {
   is_public?: boolean | null;
   machine?: string | null;
   display_name?: string | null;
+  unread?: number | null;
 }
 
 // 표시 이름 — display_name 있으면 그것, 없으면 alias.
@@ -230,8 +231,10 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
       return m ? Date.parse(m.timestamp) : 0;
     };
     const onl = (a: AgentRow) => (isOnline(peerMap().get(a.alias.toLowerCase())?.last_seen) ? 1 : 0);
+    const ur = (a: AgentRow) => a.unread ?? 0;
     for (const k of Object.keys(by)) {
-      by[k].sort((x, y) => onl(y) - onl(x) || ts(y) - ts(x));
+      // 안읽음 있는 카드 최상단 → 안읽음 수 → 온라인 → 최근시각.
+      by[k].sort((x, y) => ur(y) - ur(x) || onl(y) - onl(x) || ts(y) - ts(x));
     }
     return by;
   });
@@ -304,6 +307,15 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
     setAcpMode(false);
     setSelected(alias);
     setMobileChat(true);
+    // 대화 열람 = 읽음 처리 → 배지 제거. convKey = alias.
+    void (async () => {
+      try {
+        await invoke("acp_conv_read", { key: alias });
+        await refetchAgents();
+      } catch {
+        /* 읽음 처리 실패는 무시 */
+      }
+    })();
   }
 
   // ⚡ 에이전트 미리 정하지 않고 ACP 어댑터 picker 진입(기존 경로 유지).
@@ -378,6 +390,10 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
                               </div>
                               <div class="rcol">
                                 <div class="time">{previewTime(a)}</div>
+                                {/* 안읽음 카운트 배지 — 에이전트가 보낸 미확인 메시지 수. */}
+                                <Show when={(a.unread ?? 0) > 0}>
+                                  <span class="kk-unread">{(a.unread ?? 0) > 99 ? "99+" : a.unread}</span>
+                                </Show>
                               </div>
                             </div>
                           );
