@@ -15,7 +15,7 @@ type KkTab = "agents" | "chat" | "flow" | "wiki" | "market" | "settings";
 const TABS: { id: KkTab; ic: string; label: string }[] = [
   { id: "agents", ic: "🙂", label: "에이전트" },
   { id: "chat", ic: "💬", label: "대화" },
-  { id: "flow", ic: "🔀", label: "흐름" },
+  { id: "flow", ic: "🔀", label: "워크플로우" },
   { id: "wiki", ic: "📚", label: "위키" },
   { id: "market", ic: "🌐", label: "마켓" },
   { id: "settings", ic: "⚙️", label: "설정" },

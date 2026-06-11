@@ -189,8 +189,8 @@ export function FlowTab() {
     <div class="kk-flow">
       <div class="board">
         <div class="bh">
-          <h2>🔀 흐름</h2>
-          <span class="sub">paperclip 대신 가볍게 · 목표 + 트리거(시간·webhook)</span>
+          <h2>🔀 워크플로우</h2>
+          <span class="sub">목표 + 보유 에이전트 단계 + 트리거(시간·webhook)</span>
           <div class="kk-seg kk-flow-seg">
             <div class={`s${seg() === "workflows" ? " on" : ""}`} onClick={() => setSeg("workflows")}>
               🔀 워크플로우
@@ -272,6 +272,8 @@ function Builder(props: { onClose: () => void; onSaved: () => void }) {
   const [dragIdx, setDragIdx] = createSignal<number | null>(null);
   const [busy, setBusy] = createSignal(false);
   const [note, setNote] = createSignal<{ text: string; err: boolean } | null>(null);
+  // 보유 에이전트(로스터) — 목표에 투입할 후보. 클릭 시 단계로 추가(스펙: 등록 에이전트 선택).
+  const [agents] = createResource<any[]>(() => invoke("agents_list"));
 
   function addStep() {
     const v = stepDraft().trim();
@@ -355,17 +357,33 @@ function Builder(props: { onClose: () => void; onSaved: () => void }) {
       />
 
       <button class="autoplan-btn" onClick={() => setAutoplan(!autoplan())}>
-        🪄 목표로 자동 구성 — 필요한 에이전트 자동 배치/고용 (준비 중)
+        🧩 보유 에이전트로 구성 — 클릭해서 단계 추가 {autoplan() ? "▲" : "▼"}
       </button>
       <Show when={autoplan()}>
         <div class="autoplan">
           <div class="ap-head">
-            자동 구성(autoplan)은 준비 중입니다. 목표를 분석해 단계·담당 에이전트를 제안하는 기능은
-            백엔드 연동 후 활성화됩니다. 지금은 아래에서 단계를 직접 추가하세요.
+            목표에 투입할 <b>보유 에이전트</b>를 클릭하면 아래 단계로 추가됩니다. 더 필요하면
+            <b> 에이전트 탭 → 템플릿으로 고용</b> 후 다시 선택하세요. (LLM 자동 분석은 ops 에이전트 연동 시 추가)
           </div>
-          <div class="aprow">
-            <span class="miss">⚠</span> 목표 자동 분석 · 에이전트 추천{" "}
-            <span class="have">준비 중</span>
+          <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;">
+            <For each={agents() ?? []}>
+              {(a) => (
+                <button
+                  type="button"
+                  title={`${a.role || a.classification || ""} · @${a.alias}`}
+                  style="background:#1f6f43; color:#fff; border:none; border-radius:7px; padding:5px 9px; font-size:12px; cursor:pointer;"
+                  onClick={() => setSteps([...steps(), `${a.alias} · `])}
+                >
+                  ＋ {a.display_name || a.alias}
+                </button>
+              )}
+            </For>
+            <Show when={(agents() ?? []).length === 0}>
+              <span class="miss">보유 에이전트 없음 — 에이전트 탭에서 먼저 생성/고용하세요.</span>
+            </Show>
+          </div>
+          <div class="aprow" style="margin-top:8px;">
+            <span class="have">보유 {(agents() ?? []).length}개</span> · 고용 필요 시 에이전트 탭 템플릿 사용
           </div>
         </div>
       </Show>
@@ -428,6 +446,21 @@ function Builder(props: { onClose: () => void; onSaved: () => void }) {
           )}
         </For>
         <span class="schip" style={{ "border-style": "dashed" }}>
+          <select
+            class="ctl2"
+            style={{ border: "none", background: "transparent", "max-width": "130px" }}
+            title="등록 에이전트 선택 → 단계 앞에 채움"
+            onInput={(e) => {
+              const v = e.currentTarget.value;
+              if (v) setStepDraft(`${v} · `);
+              e.currentTarget.value = "";
+            }}
+          >
+            <option value="">에이전트 선택…</option>
+            <For each={agents() ?? []}>
+              {(a) => <option value={a.alias}>{a.display_name || a.alias}</option>}
+            </For>
+          </select>
           <input
             class="ctl2"
             style={{ border: "none", padding: "0", background: "transparent" }}
