@@ -273,6 +273,20 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
     };
     let state_clone = state.clone();
 
+    // 하트비트 — execution_mode='heartbeat' 에이전트를 주기적으로 ACP 로 wake(기본 30분).
+    // on_demand 와의 차이: heartbeat 모드 에이전트만 정기 깨움(점검 프롬프트). 로컬 한정, 비용은
+    // heartbeat 로 지정한 에이전트 수에 비례(마스터 opt-in).
+    {
+        let hb_state = state.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(120)).await; // startup race 방지
+            loop {
+                heartbeat_wake(&hb_state).await;
+                tokio::time::sleep(std::time::Duration::from_secs(1800)).await; // 30분
+            }
+        });
+    }
+
     let app = Router::new()
         .route("/v1/gui/health", get(gui_health))
         .route("/v1/gui/status", get(gui_status))
@@ -3192,6 +3206,8 @@ async fn gui_attachment_upload(
 struct DropFileBody {
     filename: String,
     content_b64: String,
+    #[serde(default)]
+    machine: Option<String>,
 }
 
 /// `POST /v1/gui/sessions/{identifier}/dropfile` — tmux 창에 드래그드롭한 파일을 서버
@@ -3213,6 +3229,38 @@ async fn gui_session_dropfile(
         .filter(|s| !s.is_empty())
         .unwrap_or("dropped.bin")
         .to_string();
+    // 원격 머신이면 SSH stdin 파이프로 그 머신에 저장(WSL 커맨드라인 길이제한 회피).
+    // 스크립트는 base64 로 작게 전송, 파일 payload 는 ssh stdin → base64 -d (remote_acp_command 와 동일 패턴).
+    if let Some(m) = body.machine.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(cfg) = crate::daemon_gui::machine_lookup(m) {
+            use base64::Engine;
+            let safe_sh: String = safe.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' { c } else { '_' }).collect();
+            let dest = format!("$HOME/.openxgram/drops/{safe_sh}");
+            let script = format!("mkdir -p \"$HOME/.openxgram/drops\"; base64 -d > \"{dest}\"; printf '%s' \"{dest}\"");
+            let sb64 = base64::engine::general_purpose::STANDARD.encode(script.as_bytes());
+            let run = format!("echo {sb64}|base64 -d>/tmp/oxgdrop.$$.sh;exec bash /tmp/oxgdrop.$$.sh");
+            let remote_cmd = if cfg.wsl { format!("wsl -- bash -lc \"{run}\"") } else { format!("bash -lc \"{run}\"") };
+            use tokio::io::AsyncWriteExt;
+            let mut child = tokio::process::Command::new("ssh")
+                .arg("-T").arg(&cfg.ssh_host).arg(&remote_cmd)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("ssh spawn: {e}")})))?;
+            if let Some(mut si) = child.stdin.take() {
+                let _ = si.write_all(body.content_b64.as_bytes()).await;
+                let _ = si.shutdown().await;
+            }
+            let out = child.wait_with_output().await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("ssh: {e}")})))?;
+            if !out.status.success() {
+                return Err((StatusCode::BAD_GATEWAY, Json(ErrorDto{error: format!("원격 저장 실패: {}", String::from_utf8_lossy(&out.stderr).trim())})));
+            }
+            let rpath = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            return Ok(Json(serde_json::json!({ "ok": true, "path": rpath, "remote": m, "size_bytes": raw.len() })));
+        }
+    }
     let dir = state.data_dir.join("drops");
     std::fs::create_dir_all(&dir)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("mkdir: {e}")})))?;
@@ -6490,6 +6538,39 @@ async fn gui_workflow_delete(
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
     }
     Ok(Json(serde_json::json!({"deleted": id})))
+}
+
+/// 하트비트 wake — execution_mode='heartbeat' 로컬 에이전트를 ACP 로 spawn + 점검 프롬프트.
+/// on_demand 와 달리 heartbeat 모드 에이전트만 주기적으로 깨운다(daemon_gui 서버 task, 30분).
+async fn heartbeat_wake(state: &GuiServerState) {
+    let agents: Vec<(String, String, String)> = {
+        let mut db = state.db.lock().await;
+        let conn = db.conn();
+        let mut stmt = match conn.prepare(
+            "SELECT ac.alias, COALESCE(p.ai_type,'claude'), COALESCE(ac.project_path,'') \
+             FROM agent_capabilities ac JOIN agent_profiles p ON p.alias=ac.alias \
+             WHERE p.execution_mode='heartbeat' AND COALESCE(p.machine,'')=''",
+        ) { Ok(s) => s, Err(_) => return };
+        let it = match stmt.query_map([], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+        ))) { Ok(i) => i, Err(_) => return };
+        it.filter_map(|x| x.ok()).filter(|(_, _, c)| !c.trim().is_empty()).collect()
+    };
+    for (alias, ai_type, cwd) in agents {
+        let adapter = match ai_type.as_str() { "codex" => "codex-acp", "gemini" => "gemini", _ => "claude-agent-acp" };
+        let create = match crate::daemon_gui_acp::create_session(&state.acp, crate::daemon_gui_acp::CreateSessionBody {
+            agent: adapter.to_string(), cwd, mcp_servers: Vec::new(),
+            execution_mode: Some("always".to_string()), permission_mode: Some("bypassPermissions".to_string()),
+            model: None, thinking: None, machine: None,
+        }).await { Ok(v) => v, Err(_) => continue };
+        let sid = create.get("sessionId").and_then(|s| s.as_str()).unwrap_or("").to_string();
+        if sid.is_empty() { continue; }
+        let _ = crate::daemon_gui_acp::prompt(&state.acp, &sid, crate::daemon_gui_acp::PromptBody {
+            text: "정기 하트비트 점검입니다. 처리할 일이 있으면 진행하고, 없으면 한 문장으로 '대기 중'만 보고하세요.".to_string(),
+        }).await;
+        let _ = crate::daemon_gui_acp::close(&state.acp, &sid).await;
+        tracing::info!(alias = %alias, "heartbeat wake 완료");
+    }
 }
 
 // ── OpenXgram 런타임(하네스) — 컴포저↔어댑터 사이 제어/설정/메모리주입 레이어 ──

@@ -246,7 +246,7 @@ export function AcpConversation(props: {
       try {
         const res = await invoke<{ path?: string }>(
           "session_dropfile",
-          { identifier: convKey(), filename: f.name, content_b64: b64 },
+          { identifier: convKey(), filename: f.name, content_b64: b64, machine: props.preset?.machine ?? null },
         );
         const ref = res?.path ? `📎 ${f.name} → ${res.path}` : "⚠ 첨부 경로 없음";
         setDraft(draft() ? `${draft()}\n${ref}` : ref);
@@ -734,6 +734,13 @@ export function AcpConversation(props: {
     // /clear — ACP 메신저엔 CLI 하니스가 없어 자동 처리 안 됨(텍스트로 떨어져 에이전트가 설명만 함).
     // 우리가 직접: 영속 기록 삭제 + UI 비우기 + ACP subprocess 재시작(새 session/new = 컨텍스트 초기화).
     if (text === "/clear") { setDraft(""); void clearConversation(); return; }
+    // /model <id> — 모델 변경(어댑터엔 안 닿는 CLI 빌트인이라 우리가 가로채 칩으로 처리 + 세션 재구동).
+    if (text.startsWith("/model ")) {
+      const mid = text.slice(7).trim();
+      setDraft("");
+      if (mid) selectChip("model", mid);
+      return;
+    }
     if (busy()) {
       setQueue([...queue(), text]);
       setDraft("");
