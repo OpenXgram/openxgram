@@ -318,6 +318,8 @@ export function AcpConversation(props: {
   }
   const [busy, setBusy] = createSignal(false); // 세션 생성/프롬프트 진행 중
   const [streaming, setStreaming] = createSignal(false);
+  // 응답 중(busy)에 입력한 후속 메시지 대기열 — 현재 턴 종료 시 순서대로 자동 전송.
+  const [queue, setQueue] = createSignal<string[]>([]);
 
   let nextId = 1;
   // 마지막 spawn 인자 — 칩 변경 시 같은 에이전트로 새 옵션 재구동(대화 보존)에 사용.
@@ -647,6 +649,13 @@ export function AcpConversation(props: {
     if (aText) void recordMsg("agent", aText);
     // 대화 중이므로 방금 받은 응답은 읽음 처리(안읽음 배지 누적 방지).
     void invoke("acp_conv_read", { key: convKey() }).catch(() => {});
+    // 대기열에 후속 메시지가 있으면 턴 종료 후 순서대로 자동 전송.
+    const q = queue();
+    if (q.length > 0) {
+      setQueue(q.slice(1));
+      setDraft(q[0]);
+      void sendPrompt();
+    }
   }
 
   async function cancelTurn() {
@@ -698,10 +707,22 @@ export function AcpConversation(props: {
     return v;
   });
 
+  // 전송 — 응답 중(busy)이면 대기열에 적재(턴 종료 시 자동 전송), 아니면 즉시 전송.
+  function submit() {
+    const text = draft().trim();
+    if (!text) return;
+    if (busy()) {
+      setQueue([...queue(), text]);
+      setDraft("");
+      return;
+    }
+    void sendPrompt();
+  }
+
   function onKey(e: KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      void sendPrompt();
+      submit();
     }
   }
 
@@ -896,13 +917,25 @@ export function AcpConversation(props: {
             </Show>
             <span class="kk-sl kk-sl-usage">⚡ {usageLabel()}</span>
           </div>
+          <Show when={queue().length > 0}>
+            <div style="border:1px solid #2f6a3a; border-radius:8px; padding:6px 8px; margin-bottom:6px; background:#16241b;">
+              <div style="color:#7fc99a; font-size:11.5px; margin-bottom:4px;">⏱ 대기열 ({queue().length}) — 현재 턴 끝나면 순서대로 전송</div>
+              <For each={queue()}>
+                {(q, i) => (
+                  <div style="display:flex; align-items:center; gap:8px; padding:3px 0;">
+                    <span style="flex:1; color:#cfe3d6; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{q}</span>
+                    <span style="cursor:pointer; color:#9aa1ad;" title="대기열에서 제거" onClick={() => setQueue(queue().filter((_, j) => j !== i()))}>✕</span>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
           <div class="composer">
             <textarea
               class="ph-input"
               rows="2"
-              placeholder="프롬프트 입력···  ⚡ ACP 에이전트로 전송"
+              placeholder={busy() ? "후속 메시지 대기열에 추가… (현재 턴 끝나면 전송)" : "프롬프트 입력···  ⚡ ACP 에이전트로 전송"}
               value={draft()}
-              disabled={busy()}
               onInput={(e) => setDraft(e.currentTarget.value)}
               onKeyDown={onKey}
             />
@@ -1041,10 +1074,11 @@ export function AcpConversation(props: {
                 {/* 목업 정본: 토큰사용/컨텍스트윈도우 (%) · 비용. 모델명·버전은 모델 칩에 표시. */}
                 {/* 토큰 사용량은 status line(composer 상단)으로 이동 — 중복 제거. */}
                 <span
-                  class={`send${draft().trim() && !busy() ? "" : " dis"}`}
-                  onClick={() => void sendPrompt()}
+                  class={`send${draft().trim() ? "" : " dis"}`}
+                  title={busy() ? "대기열에 추가 (턴 종료 시 전송)" : "전송"}
+                  onClick={() => submit()}
                 >
-                  {busy() ? "…" : "➤"}
+                  {busy() ? (draft().trim() ? "➕" : "…") : "➤"}
                 </span>
               </div>
             </div>
