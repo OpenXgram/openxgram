@@ -4699,7 +4699,7 @@ async fn gui_agent_profile_get(
     use rusqlite::OptionalExtension;
     let mut db = state.db.lock().await;
     let prof = db.conn().query_row(
-        "SELECT ai_type, classification, execution_mode, machine, worktree, is_public, created_at, updated_at \
+        "SELECT ai_type, classification, execution_mode, machine, worktree, is_public, created_at, updated_at, display_name \
          FROM agent_profiles WHERE alias = ?1",
         rusqlite::params![alias],
         |r| Ok(serde_json::json!({
@@ -4711,6 +4711,7 @@ async fn gui_agent_profile_get(
             "is_public": r.get::<_, i64>(5)? != 0,
             "created_at": r.get::<_, String>(6)?,
             "updated_at": r.get::<_, String>(7)?,
+            "display_name": r.get::<_, Option<String>>(8)?,
         })),
     ).optional().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("profile: {e}")})))?;
     let caps = db.conn().query_row(
@@ -4729,6 +4730,7 @@ async fn gui_agent_profile_get(
         "ai_type": "claude", "classification": "project", "execution_mode": "on_demand",
         "machine": serde_json::Value::Null, "worktree": serde_json::Value::Null, "is_public": false,
         "created_at": serde_json::Value::Null, "updated_at": serde_json::Value::Null,
+        "display_name": serde_json::Value::Null,
     }));
     Ok(Json(serde_json::json!({
         "ok": true,
@@ -4740,6 +4742,7 @@ async fn gui_agent_profile_get(
         "machine": p["machine"],
         "worktree": p["worktree"],
         "is_public": p["is_public"],
+        "display_name": p["display_name"],
         "role": role,
         "group": group,
         "folder": folder,

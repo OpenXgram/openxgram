@@ -28,6 +28,7 @@ interface AgentRow {
 interface Profile {
   alias: string;
   exists: boolean;
+  display_name?: string | null;
   ai_type: string;
   classification: string;
   execution_mode: string;
@@ -175,6 +176,14 @@ export function AgentsTab(props: { onGotoChat?: (alias: string) => void; onGotoM
     await refetchAgents();
   }
 
+  async function setDisplayName(name: string) {
+    const a = selected();
+    if (!a) return;
+    await invoke("agent_profile_set", { alias: a, display_name: name });
+    await refetchProfile();
+    await refetchAgents();
+  }
+
   return (
     <div class="kk-agents">
       <div class="kk-roster">
@@ -228,6 +237,7 @@ export function AgentsTab(props: { onGotoChat?: (alias: string) => void; onGotoM
                 chain={chain()}
                 chainLoading={chain.loading}
                 onExec={setExecMode}
+                onRename={setDisplayName}
                 onGotoChat={props.onGotoChat}
                 onGotoMarket={props.onGotoMarket}
                 onOpenChannel={() => setShowChannel(true)}
@@ -268,6 +278,7 @@ function ProfileView(props: {
   chain: ConfigChain | undefined;
   chainLoading: boolean;
   onExec: (mode: string) => void;
+  onRename: (name: string) => void;
   onGotoChat?: (alias: string) => void;
   onGotoMarket?: () => void;
   onOpenChannel: () => void;
@@ -275,6 +286,8 @@ function ProfileView(props: {
   onOpenEditor: (f: EditorFile) => void;
 }) {
   const p = () => props.p;
+  // 대화명(표시 이름) 인라인 편집 — null=비편집.
+  const [dnEdit, setDnEdit] = createSignal<string | null>(null);
   const locked = () => p().classification === "primary" || p().classification === "special";
   const lockedMode = () => (p().classification === "primary" ? "always" : "heartbeat");
   const [walletNote, setWalletNote] = createSignal(false);
@@ -292,6 +305,32 @@ function ProfileView(props: {
     <div>
       <div class="apvsec">정보</div>
       <div class="apvgrid">
+        {/* 대화명(표시 이름) — 수정 가능. 비우면 에이전트명(alias) 으로 표시. */}
+        <div class="apvcard">
+          <div class="k">대화명 <span style="opacity:.6">(표시 이름)</span></div>
+          <Show
+            when={dnEdit() !== null}
+            fallback={
+              <div class="v" style="display:flex; align-items:center; gap:6px;">
+                <span>{p().display_name || p().alias}</span>
+                <span style="cursor:pointer; opacity:.6;" title="대화명 수정" onClick={() => setDnEdit(p().display_name || "")}>✏</span>
+              </div>
+            }
+          >
+            <div style="display:flex; gap:5px; align-items:center;">
+              <input
+                style="flex:1; min-width:0; background:#0f1216; border:1px solid #2b303a; border-radius:6px; color:#cfd5de; font-size:13px; padding:5px 8px; outline:none;"
+                value={dnEdit() ?? ""}
+                placeholder={p().alias}
+                onInput={(e) => setDnEdit(e.currentTarget.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { props.onRename((dnEdit() ?? "").trim()); setDnEdit(null); } if (e.key === "Escape") setDnEdit(null); }}
+              />
+              <button style="background:#2f6a3a; border:none; border-radius:6px; color:#fff; font-size:11.5px; padding:5px 9px; cursor:pointer;" onClick={() => { props.onRename((dnEdit() ?? "").trim()); setDnEdit(null); }}>저장</button>
+              <button style="background:#222732; border:1px solid #2b303a; border-radius:6px; color:#cfd5de; font-size:11.5px; padding:5px 8px; cursor:pointer;" onClick={() => setDnEdit(null)}>✕</button>
+            </div>
+          </Show>
+        </div>
+        <div class="apvcard"><div class="k">에이전트명 (ID)</div><div class="v" style="font-family:ui-monospace,Menlo,monospace; font-size:12px;">{p().alias}</div></div>
         <div class="apvcard"><div class="k">AI 종류</div><div class="v">{p().ai_type}</div></div>
         <div class="apvcard"><div class="k">분류</div><div class="v">{CLASS_LABEL[p().classification] || p().classification}</div></div>
         <div class="apvcard"><div class="k">머신</div><div class="v">{p().machine || "—"}</div></div>
