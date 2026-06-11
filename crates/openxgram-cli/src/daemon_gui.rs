@@ -6548,9 +6548,10 @@ async fn gui_workflow_plan(
     let adapter = match ai_type.as_str() { "codex" => "codex-acp", "gemini" => "gemini", _ => "claude-agent-acp" };
     let prompt = format!(
         "너는 OpenXgram 워크플로우 플래너다. 아래 목표를 달성할 워크플로우를 설계해라.\n\
-         보유 에이전트(steps.agent 에는 이들 alias 또는 새로 고용할 NEW 만 사용): {roster}\n\
+         보유 에이전트(steps.agent 에는 이들 alias 또는 새로 고용할 alias 사용): {roster}\n\
          반드시 아래 형식의 JSON 한 개만 출력(설명·코드펜스 금지):\n\
-         {{\"steps\":[{{\"agent\":\"<alias 또는 NEW>\",\"action\":\"<할 일>\"}}],\"hire\":[{{\"role\":\"<필요한 새 역할>\",\"why\":\"<이유>\"}}]}}\n\
+         {{\"steps\":[{{\"agent\":\"<보유 alias 또는 새 고용 alias>\",\"action\":\"<할 일>\"}}],\"hire\":[{{\"alias\":\"<새 영문소문자 alias>\",\"role\":\"<역할>\",\"why\":\"<이유>\"}}]}}\n\
+         새 에이전트가 필요하면 hire 에 영문 소문자 alias 를 정하고(예: deploy_reporter), steps.agent 에 같은 alias 를 써라. 이 hire 는 자동 고용된다.\n\
          보유로 충분하면 hire 는 빈 배열. 목표: {goal}",
         roster = roster, goal = body.goal.trim(),
     );
@@ -6578,9 +6579,76 @@ async fn gui_workflow_plan(
             }
         }
     }
+    let plan = extract_first_json(&text);
+    // 고용까지 자동 실행 — plan.hire[] 각 항목을 실제 에이전트로 생성(템플릿 매칭→capabilities+profiles).
+    let mut hired: Vec<serde_json::Value> = Vec::new();
+    if let Some(hires) = plan.get("hire").and_then(|h| h.as_array()) {
+        let now = chrono::Utc::now().to_rfc3339();
+        for h in hires {
+            let role = h.get("role").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let alias_src = h.get("alias").and_then(|v| v.as_str()).map(str::trim)
+                .filter(|s| !s.is_empty()).map(String::from).unwrap_or_else(|| role.clone());
+            let alias = sanitize_alias(&alias_src);
+            if alias.is_empty() { continue; }
+            let why = h.get("why").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let kw = role.split_whitespace().next().unwrap_or("").to_lowercase();
+            let (tpl_id, body, already) = {
+                let mut db = state.db.lock().await;
+                let exists: i64 = db.conn().query_row(
+                    "SELECT COUNT(*) FROM agent_capabilities WHERE alias=?1",
+                    rusqlite::params![alias], |r| r.get(0)).unwrap_or(0);
+                if exists > 0 {
+                    (None, String::new(), true)
+                } else {
+                    let row = if kw.is_empty() { None } else {
+                        db.conn().query_row(
+                            "SELECT id, body FROM agent_templates WHERE lower(name||' '||category) LIKE ?1 LIMIT 1",
+                            rusqlite::params![format!("%{kw}%")],
+                            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+                        ).optional().ok().flatten()
+                    };
+                    match row {
+                        Some((i, b)) => (Some(i), b, false),
+                        None => (None, format!("# {role}\n\n역할: {role}\n사유: {why}\n"), false),
+                    }
+                }
+            };
+            if already {
+                hired.push(serde_json::json!({"alias": alias, "role": role, "status": "exists"}));
+                continue;
+            }
+            let dir = state.data_dir.join("agents").join(&alias);
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::write(dir.join("CLAUDE.md"), &body);
+            let cwd = dir.to_string_lossy().to_string();
+            let desc: String = body.chars().take(200).collect();
+            {
+                let mut db = state.db.lock().await;
+                let _ = db.conn().execute(
+                    "INSERT OR IGNORE INTO agent_capabilities (alias, role, description, project_path, messenger_enabled, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, 1, ?5)",
+                    rusqlite::params![alias, role, desc, cwd, now]);
+                let _ = db.conn().execute(
+                    "INSERT INTO agent_profiles (alias, ai_type, classification, execution_mode, source, activated, is_public, created_at, updated_at) \
+                     VALUES (?1, 'claude', 'project', 'on_demand', 'user', 1, 0, ?2, ?2) \
+                     ON CONFLICT(alias) DO UPDATE SET updated_at=?2",
+                    rusqlite::params![alias, now]);
+            }
+            hired.push(serde_json::json!({"alias": alias, "role": role, "template": tpl_id, "status": "hired"}));
+        }
+    }
     Ok(Json(serde_json::json!({
-        "ok": true, "planner": planner, "plan": extract_first_json(&text), "raw": text,
+        "ok": true, "planner": planner, "plan": plan, "hired": hired, "raw": text,
     })))
+}
+
+/// alias 정규화 — 공백→_, ASCII 영숫자/_/- 만 유지, 소문자, 최대 40자.
+fn sanitize_alias(s: &str) -> String {
+    let cleaned: String = s.trim().chars()
+        .map(|c| if c.is_whitespace() { '_' } else { c })
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .collect();
+    cleaned.to_lowercase().chars().take(40).collect()
 }
 
 async fn gui_workflow_run(

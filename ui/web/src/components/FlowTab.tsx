@@ -273,7 +273,7 @@ function Builder(props: { onClose: () => void; onSaved: () => void }) {
   const [busy, setBusy] = createSignal(false);
   const [note, setNote] = createSignal<{ text: string; err: boolean } | null>(null);
   // 보유 에이전트(로스터) — 목표에 투입할 후보. 클릭 시 단계로 추가(스펙: 등록 에이전트 선택).
-  const [agents] = createResource<any[]>(() => invoke("agents_list"));
+  const [agents, { refetch: refetchAgents }] = createResource<any[]>(() => invoke("agents_list"));
   const [planBusy, setPlanBusy] = createSignal(false);
   const [planNote, setPlanNote] = createSignal<string | null>(null);
 
@@ -287,8 +287,9 @@ function Builder(props: { onClose: () => void; onSaved: () => void }) {
       if (ps.length) {
         setSteps([...steps(), ...ps.map((s) => `${s.agent || "NEW"} · ${s.action || ""}`)]);
       }
-      const hire = (r?.plan?.hire ?? []) as { role?: string }[];
-      const hireTxt = hire.length ? ` · 고용 추천: ${hire.map((h) => h.role).join(", ")}` : "";
+      const hired = (r?.hired ?? []) as { alias?: string; status?: string }[];
+      if (hired.length) await refetchAgents(); // 자동 고용된 에이전트가 보유 칩에 즉시 반영.
+      const hireTxt = hired.length ? ` · 자동 고용: ${hired.map((h) => `${h.alias}(${h.status})`).join(", ")}` : "";
       setPlanNote(ps.length
         ? `🤖 ops가 ${ps.length}단계 제안${hireTxt}`
         : `ops 응답 파싱 실패 — 원문: ${(r?.raw || "").slice(0, 140)}`);
