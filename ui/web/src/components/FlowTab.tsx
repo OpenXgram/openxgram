@@ -274,6 +274,28 @@ function Builder(props: { onClose: () => void; onSaved: () => void }) {
   const [note, setNote] = createSignal<{ text: string; err: boolean } | null>(null);
   // 보유 에이전트(로스터) — 목표에 투입할 후보. 클릭 시 단계로 추가(스펙: 등록 에이전트 선택).
   const [agents] = createResource<any[]>(() => invoke("agents_list"));
+  const [planBusy, setPlanBusy] = createSignal(false);
+  const [planNote, setPlanNote] = createSignal<string | null>(null);
+
+  // ops(또는 orchestrator) 에이전트를 ACP 로 구동해 목표→단계 자동 생성 (LLM 플래너).
+  async function runOpsPlan() {
+    if (!goal().trim()) { setPlanNote("목표를 먼저 입력하세요."); return; }
+    setPlanBusy(true); setPlanNote(null);
+    try {
+      const r = await invoke<any>("workflow_plan", { goal: goal().trim() });
+      const ps = (r?.plan?.steps ?? []) as { agent?: string; action?: string }[];
+      if (ps.length) {
+        setSteps([...steps(), ...ps.map((s) => `${s.agent || "NEW"} · ${s.action || ""}`)]);
+      }
+      const hire = (r?.plan?.hire ?? []) as { role?: string }[];
+      const hireTxt = hire.length ? ` · 고용 추천: ${hire.map((h) => h.role).join(", ")}` : "";
+      setPlanNote(ps.length
+        ? `🤖 ops가 ${ps.length}단계 제안${hireTxt}`
+        : `ops 응답 파싱 실패 — 원문: ${(r?.raw || "").slice(0, 140)}`);
+    } catch (e) {
+      setPlanNote(`플래너 실패: ${(e as Error).message}`);
+    } finally { setPlanBusy(false); }
+  }
 
   function addStep() {
     const v = stepDraft().trim();
@@ -361,6 +383,17 @@ function Builder(props: { onClose: () => void; onSaved: () => void }) {
       </button>
       <Show when={autoplan()}>
         <div class="autoplan">
+          <button
+            class="autoplan-btn"
+            style="background:#3a2f6a; margin-bottom:6px;"
+            disabled={planBusy()}
+            onClick={runOpsPlan}
+          >
+            {planBusy() ? "🤖 ops 플래너 분석 중… (수십 초 소요)" : "🤖 ops 플래너로 목표 분석 → 단계 자동 생성"}
+          </button>
+          <Show when={planNote()}>
+            <div class="ap-head" style="color:#9ecbff;">{planNote()}</div>
+          </Show>
           <div class="ap-head">
             목표에 투입할 <b>보유 에이전트</b>를 클릭하면 아래 단계로 추가됩니다. 더 필요하면
             <b> 에이전트 탭 → 템플릿으로 고용</b> 후 다시 선택하세요. (LLM 자동 분석은 ops 에이전트 연동 시 추가)

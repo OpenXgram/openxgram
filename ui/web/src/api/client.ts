@@ -119,6 +119,7 @@ const ROUTES: Record<string, Route> = {
  agent_activate: { method: "POST", path: "/agents/{alias}/activate", body: true},
  agent_composer_set: { method: "POST", path: "/agent/{alias}/composer", body: true},
  session_dropfile: { method: "POST", path: "/sessions/{identifier}/dropfile", body: true},
+ workflow_plan: { method: "POST", path: "/workflows/plan", body: true},
  // rc.245 — 결정적 세션 매핑 사용자 override (PATCH; body.session_identifier = string|null)
  peer_set_session: { method: "PATCH", path: "/peers/{alias}/session", body: true},
 

@@ -442,6 +442,7 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/external/protocols", get(gui_external_protocols))
         // UI-MESSENGER-SPEC v1.4 §20 — 오케스트레이션 워크플로 (W-1 ~ W-10)
         .route("/v1/gui/workflows", get(gui_workflows_list).post(gui_workflow_upsert))
+        .route("/v1/gui/workflows/plan", post(gui_workflow_plan))
         .route("/v1/gui/workflows/{id}", get(gui_workflow_get).post(gui_workflow_delete))
         .route("/v1/gui/workflows/{id}/run", post(gui_workflow_run))
         .route("/v1/gui/workflows/{id}/runs", get(gui_workflow_runs))
@@ -6486,6 +6487,100 @@ async fn gui_workflow_delete(
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
     }
     Ok(Json(serde_json::json!({"deleted": id})))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct WorkflowPlanBody {
+    goal: String,
+    #[serde(default)]
+    orchestrator: Option<String>,
+}
+
+/// 텍스트에서 첫 '{' ~ 마지막 '}' 구간을 JSON 으로 파싱(코드펜스/설명 섞여도 추출).
+fn extract_first_json(s: &str) -> serde_json::Value {
+    if let (Some(a), Some(b)) = (s.find('{'), s.rfind('}')) {
+        if b > a {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s[a..=b]) {
+                return v;
+            }
+        }
+    }
+    serde_json::Value::Null
+}
+
+/// `POST /v1/gui/workflows/plan` — ops(또는 지정 orchestrator) 에이전트를 ACP 로 구동해
+/// 목표를 워크플로우 단계로 분해한 계획(JSON)을 받아 반환. A2A handle_task 와 동일한
+/// create_session→prompt→close→collect 패턴 재사용(서버측 ACP 라운드트립).
+async fn gui_workflow_plan(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<WorkflowPlanBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use rusqlite::OptionalExtension;
+    if body.goal.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorDto{error: "goal 필수".into()})));
+    }
+    let planner = body.orchestrator.clone().unwrap_or_else(|| "xgram-ops".to_string());
+    // 플래너 ai_type+cwd + 보유 에이전트 로스터 조회 (락 한 번).
+    let (ai_type, cwd, roster) = {
+        let mut db = state.db.lock().await;
+        let row = db.conn().query_row(
+            "SELECT COALESCE(p.ai_type,'claude'), COALESCE(ac.project_path,'') \
+             FROM agent_capabilities ac JOIN agent_profiles p ON p.alias=ac.alias WHERE ac.alias=?1",
+            rusqlite::params![planner],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        ).optional().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("planner: {e}")})))?;
+        let (ai_type, cwd) = match row {
+            Some((a, c)) if !c.trim().is_empty() => (a, c),
+            Some(_) => return Err((StatusCode::UNPROCESSABLE_ENTITY, Json(ErrorDto{error: format!("플래너 '{planner}' 에 cwd(project_path) 없음 — 활성화/설정 필요")}))),
+            None => return Err((StatusCode::NOT_FOUND, Json(ErrorDto{error: format!("플래너 에이전트 '{planner}' 없음 — xgram-ops 활성화 또는 orchestrator 지정")}))),
+        };
+        let mut stmt = db.conn().prepare(
+            "SELECT ac.alias, COALESCE(ac.role,'') FROM agent_capabilities ac \
+             JOIN agent_profiles p ON p.alias=ac.alias WHERE ac.role IS NOT 'tmux' ORDER BY ac.alias",
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("roster: {e}")})))?;
+        let rl: Vec<String> = stmt.query_map([], |r| Ok(format!("{} ({})", r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("roster q: {e}")})))?
+            .filter_map(|x| x.ok()).collect();
+        (ai_type, cwd, rl.join(", "))
+    };
+    let adapter = match ai_type.as_str() { "codex" => "codex-acp", "gemini" => "gemini", _ => "claude-agent-acp" };
+    let prompt = format!(
+        "너는 OpenXgram 워크플로우 플래너다. 아래 목표를 달성할 워크플로우를 설계해라.\n\
+         보유 에이전트(steps.agent 에는 이들 alias 또는 새로 고용할 NEW 만 사용): {roster}\n\
+         반드시 아래 형식의 JSON 한 개만 출력(설명·코드펜스 금지):\n\
+         {{\"steps\":[{{\"agent\":\"<alias 또는 NEW>\",\"action\":\"<할 일>\"}}],\"hire\":[{{\"role\":\"<필요한 새 역할>\",\"why\":\"<이유>\"}}]}}\n\
+         보유로 충분하면 hire 는 빈 배열. 목표: {goal}",
+        roster = roster, goal = body.goal.trim(),
+    );
+    // 서버측 ACP 라운드트립.
+    let create = crate::daemon_gui_acp::create_session(
+        &state.acp,
+        crate::daemon_gui_acp::CreateSessionBody {
+            agent: adapter.to_string(), cwd, mcp_servers: Vec::new(),
+            execution_mode: Some("always".to_string()),
+            permission_mode: Some("bypassPermissions".to_string()),
+            model: None, thinking: None, machine: None,
+        },
+    ).await.map_err(|(c, m)| (c, Json(ErrorDto{error: m})))?;
+    let sid = create.get("sessionId").and_then(|s| s.as_str()).unwrap_or("").to_string();
+    let res = crate::daemon_gui_acp::prompt(&state.acp, &sid, crate::daemon_gui_acp::PromptBody{ text: prompt }).await;
+    let _ = crate::daemon_gui_acp::close(&state.acp, &sid).await;
+    let acp_result = res.map_err(|(c, m)| (c, Json(ErrorDto{error: m})))?;
+    let mut text = String::new();
+    if let Some(updates) = acp_result.get("updates").and_then(|u| u.as_array()) {
+        for u in updates {
+            if u.get("sessionUpdate").and_then(|s| s.as_str()) == Some("agent_message_chunk") {
+                if let Some(t) = u.get("content").and_then(|c| c.get("text")).and_then(|t| t.as_str()) {
+                    text.push_str(t);
+                }
+            }
+        }
+    }
+    Ok(Json(serde_json::json!({
+        "ok": true, "planner": planner, "plan": extract_first_json(&text), "raw": text,
+    })))
 }
 
 async fn gui_workflow_run(
