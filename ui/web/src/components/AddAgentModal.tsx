@@ -1,4 +1,4 @@
-import { createSignal, Show, For } from "solid-js";
+import { createSignal, createResource, Show, For } from "solid-js";
 import { invoke } from "@/api/client";
 
 // fs/tree 노드 — 디렉토리 트리 선택용.
@@ -50,7 +50,7 @@ function TreeNode(p: {
 // POST agents_register → agent_capabilities + agent_profiles 둘 다 기록(이게 있어야 로스터에 노출).
 // 만들면 바로 대화방. onCreated(alias) 로 부모가 새로고침 + 선택.
 
-const MACHINES = ["서울", "잘만", "맥미니", "sm-s936n"];
+const MACHINES_FALLBACK = ["서울"]; // config 로드 실패 시 로컬만.
 const AI_TYPES = ["claude", "codex", "gemini", "ollama", "hermes"];
 const CLASS_OPTS = [
   { v: "project", label: "📁 프로젝트 에이전트" },
@@ -59,7 +59,19 @@ const CLASS_OPTS = [
 ];
 
 export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: string) => void }) {
-  const [machine, setMachine] = createSignal(MACHINES[0]);
+  // 머신 목록 — config(machines.json) 기반(하드코딩 제거). 로컬 + 설정 머신.
+  const [machines] = createResource<string[]>(
+    async () => {
+      try {
+        const r = await invoke<{ machines: string[] }>("agent_machines");
+        return r?.machines?.length ? r.machines : MACHINES_FALLBACK;
+      } catch {
+        return MACHINES_FALLBACK;
+      }
+    },
+    { initialValue: MACHINES_FALLBACK },
+  );
+  const [machine, setMachine] = createSignal(MACHINES_FALLBACK[0]);
   const [folder, setFolder] = createSignal("/home/llm/projects/starian-set");
   const [aiType, setAiType] = createSignal("claude");
   const [alias, setAlias] = createSignal("");
@@ -147,7 +159,7 @@ export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: s
           <div class="fld">
             <label>1 · 머신</label>
             <select class="ctl" value={machine()} onChange={(e) => { setMachine(e.currentTarget.value); setTree(null); setTreeErr(null); if (treeOpen()) void loadTree(treeRoot()); }}>
-              {MACHINES.map((m) => <option value={m}>{m}</option>)}
+              {(machines() ?? MACHINES_FALLBACK).map((m) => <option value={m}>{m}</option>)}
             </select>
           </div>
           <div class="fld">

@@ -496,6 +496,7 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/fs/file", get(gui_fs_file_get).put(gui_fs_file_put))
         // 물리 머신 목록 (worker agent 제외) — settings "연결된 머신".
         .route("/v1/gui/machines", get(gui_machines_list))
+        .route("/v1/gui/agent-machines", get(gui_agent_machines))
         .route("/v1/gui/vault/pending", get(gui_vault_pending_list))
         .route(
             "/v1/gui/vault/pending/{id}/approve",
@@ -9296,13 +9297,116 @@ fn build_fs_tree(dir: &std::path::Path, depth: usize) -> serde_json::Value {
 /// depth 기본 2, 최대 5. path 미지정 시 400. 디렉토리 아님/미존재 시 명시 status.
 // 머신 라벨 → (ssh host, wsl 래퍼 여부). None = 로컬(이 데몬 머신).
 // cross-machine 폴더 browse 용 — SSH-stdio 방식(원격 데몬 불필요).
-fn machine_ssh(machine: &str) -> Option<(&'static str, bool)> {
-    match machine.trim().to_lowercase().as_str() {
-        "" | "서울" | "seoul" | "server-seoul" | "local" => None,
-        "잘만" | "zalman" => Some(("zalman", true)), // WSL 경유
-        "맥미니" | "macmini" | "mac-mini" => Some(("macmini", false)),
-        _ => None, // 미지원/미설정 머신 → 로컬로 fallback
+// ── cross-machine 머신 설정 (config-driven — 하드코딩 제거, 일반 배포 가능) ──
+// ~/.openxgram/machines.json: {"machines":[{"label":"잘만","ssh_host":"zalman","wsl":true}]}
+// 없으면 예시 시드 생성. remote_home/adapter 미지정 시 동적 해석(SSH $HOME, PATH).
+#[derive(serde::Deserialize, Clone)]
+pub(crate) struct MachineCfg {
+    pub label: String,
+    pub ssh_host: String,
+    #[serde(default)]
+    pub wsl: bool,
+    #[serde(default)]
+    pub remote_home: Option<String>,
+    #[serde(default)]
+    pub adapter: Option<String>,
+}
+
+fn machines_config_path() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+    std::path::PathBuf::from(home).join(".openxgram").join("machines.json")
+}
+
+pub(crate) fn load_machines() -> Vec<MachineCfg> {
+    let p = machines_config_path();
+    match std::fs::read_to_string(&p) {
+        Ok(s) => serde_json::from_str::<serde_json::Value>(&s)
+            .ok()
+            .and_then(|v| v.get("machines").and_then(|m| m.as_array()).cloned())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| serde_json::from_value::<MachineCfg>(m.clone()).ok())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        Err(_) => {
+            // 첫 실행 — 편집 가능한 예시 시드 생성. 다른 사용자는 자기 머신으로 수정.
+            let seed = serde_json::json!({
+                "_comment": "cross-machine 에이전트. ssh_host=SSH 접속명, wsl=Windows WSL 경유. remote_home/adapter 비우면 동적($HOME/PATH).",
+                "machines": [{"label": "잘만", "ssh_host": "zalman", "wsl": true}]
+            });
+            if let Some(dir) = p.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::write(&p, serde_json::to_string_pretty(&seed).unwrap_or_default());
+            vec![MachineCfg {
+                label: "잘만".into(),
+                ssh_host: "zalman".into(),
+                wsl: true,
+                remote_home: None,
+                adapter: None,
+            }]
+        }
     }
+}
+
+// 머신 라벨 → 설정. 로컬(서울 등)이면 None(이 데몬 머신에서 실행).
+pub(crate) fn machine_lookup(machine: &str) -> Option<MachineCfg> {
+    let l = machine.trim();
+    if matches!(
+        l.to_lowercase().as_str(),
+        "" | "서울" | "seoul" | "server-seoul" | "local"
+    ) {
+        return None;
+    }
+    load_machines()
+        .into_iter()
+        .find(|m| m.label.eq_ignore_ascii_case(l) || m.ssh_host.eq_ignore_ascii_case(l))
+}
+
+// 원격 머신 $HOME — remote_home 설정 있으면 그것, 없으면 SSH 로 동적 조회(캐시).
+pub(crate) fn machine_home(cfg: &MachineCfg) -> Option<String> {
+    if let Some(h) = &cfg.remote_home {
+        return Some(h.clone());
+    }
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<std::collections::HashMap<String, String>>> = Mutex::new(None);
+    if let Ok(g) = CACHE.lock() {
+        if let Some(m) = g.as_ref() {
+            if let Some(h) = m.get(&cfg.ssh_host) {
+                return Some(h.clone());
+            }
+        }
+    }
+    let remote = if cfg.wsl {
+        "wsl -- bash -lc \"echo $HOME\"".to_string()
+    } else {
+        "bash -lc \"echo $HOME\"".to_string()
+    };
+    let out = std::process::Command::new("ssh")
+        .args([
+            "-o",
+            "ConnectTimeout=8",
+            "-o",
+            "BatchMode=yes",
+            &cfg.ssh_host,
+            &remote,
+        ])
+        .output()
+        .ok()?;
+    let home = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .next()?
+        .trim()
+        .to_string();
+    if home.is_empty() || !home.starts_with('/') {
+        return None;
+    }
+    if let Ok(mut g) = CACHE.lock() {
+        g.get_or_insert_with(Default::default)
+            .insert(cfg.ssh_host.clone(), home.clone());
+    }
+    Some(home)
 }
 
 fn sh_quote(s: &str) -> String {
@@ -9409,9 +9513,10 @@ async fn gui_fs_tree(
     }
     // cross-machine — machine 파라미터가 원격이면 SSH 로 원격 디렉토리 트리 조회.
     let machine = q.get("machine").map(|s| s.as_str()).unwrap_or("");
-    if let Some((host, wsl)) = machine_ssh(machine) {
+    if let Some(cfg) = machine_lookup(machine) {
         let path_owned = path.to_string();
-        let res = tokio::task::spawn_blocking(move || remote_fs_tree(host, wsl, &path_owned, depth))
+        let (host, wsl) = (cfg.ssh_host.clone(), cfg.wsl);
+        let res = tokio::task::spawn_blocking(move || remote_fs_tree(&host, wsl, &path_owned, depth))
             .await
             .map_err(|e| {
                 (
@@ -9610,6 +9715,26 @@ async fn gui_fs_file_put(
 // ----------------------------------------------------------------------------
 // machines — 물리 머신만 (worker agent 제외). settings "연결된 머신".
 // ----------------------------------------------------------------------------
+
+/// `GET /v1/gui/agent-machines` — 에이전트 생성 시 선택 가능한 머신 라벨.
+/// 로컬(서울) + machines.json 설정 머신. 하드코딩 제거 — config-driven.
+async fn gui_agent_machines(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    // 로컬 머신 라벨(기본 "서울"; machines.json 의 local_label 로 override 가능).
+    let local_label = std::fs::read_to_string(machines_config_path())
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("local_label").and_then(|l| l.as_str()).map(String::from))
+        .unwrap_or_else(|| "서울".to_string());
+    let mut labels: Vec<String> = vec![local_label];
+    for m in load_machines() {
+        labels.push(m.label);
+    }
+    Ok(Json(serde_json::json!({ "machines": labels })))
+}
 
 /// `GET /v1/gui/machines` — 구별되는 물리 머신 목록 (worker agent 필터링 제외).
 /// 머신 판별: peers 의 role 이 worker/subagent 류가 아니고, address(=머신 식별자)

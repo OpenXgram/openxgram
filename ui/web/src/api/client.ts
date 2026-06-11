@@ -106,6 +106,7 @@ const ROUTES: Record<string, Route> = {
  fs_file_get: { method: "GET", path: "/fs/file"},
  fs_file_put: { method: "PUT", path: "/fs/file", body: true},
  machines_list: { method: "GET", path: "/machines", emptyAs: []},
+ agent_machines: { method: "GET", path: "/agent-machines"},
  // Phase 3 — A2A(에이전트↔에이전트)
  a2a_agents: { method: "GET", path: "/a2a/agents", emptyAs: []},
  a2a_send: { method: "POST", path: "/a2a/send", body: true},

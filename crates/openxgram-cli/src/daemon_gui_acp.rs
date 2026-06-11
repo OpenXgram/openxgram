@@ -195,9 +195,11 @@ fn expand_home(cwd: &str, machine: Option<&str>) -> String {
     if !cwd.starts_with('~') {
         return cwd.to_string();
     }
-    let home = match machine.map(|m| m.trim().to_lowercase()).as_deref() {
-        Some("잘만") | Some("zalman") => "/home/pasia".to_string(),
-        _ => std::env::var("HOME").unwrap_or_else(|_| "/home/llm".to_string()),
+    // config-driven — 원격 머신이면 machine_home(설정값 or SSH $HOME 동적조회), 로컬이면 $HOME.
+    let local_home = || std::env::var("HOME").unwrap_or_else(|_| "/home/llm".to_string());
+    let home = match machine.and_then(crate::daemon_gui::machine_lookup) {
+        Some(cfg) => crate::daemon_gui::machine_home(&cfg).unwrap_or_else(local_home),
+        None => local_home(),
     };
     if cwd == "~" {
         home
@@ -215,17 +217,21 @@ fn expand_home(cwd: &str, machine: Option<&str>) -> String {
 // None = 로컬(서울) → registry 기본 spawn.
 fn remote_acp_command(machine: &str, extra_env: &[(String, String)]) -> Option<(String, Vec<String>)> {
     use base64::Engine;
-    let (host, wsl, adapter): (&str, bool, &str) = match machine.trim().to_lowercase().as_str() {
-        "잘만" | "zalman" => ("zalman", true, "/home/pasia/.npm-global/bin/claude-agent-acp"),
-        "맥미니" | "macmini" | "mac-mini" => ("macmini", false, "claude-agent-acp"),
-        _ => return None, // 서울/로컬/미지원
-    };
+    // config-driven — ~/.openxgram/machines.json 에서 ssh_host/wsl 조회(하드코딩 제거).
+    let cfg = crate::daemon_gui::machine_lookup(machine)?;
+    let host = cfg.ssh_host.clone();
+    let wsl = cfg.wsl;
+    // adapter 미지정 시 동적 PATH 로 claude-agent-acp 해석(npm global bin — 머신마다 위치 다름).
+    let adapter = cfg.adapter.clone().unwrap_or_else(|| "claude-agent-acp".to_string());
     let sh_quote = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
     let mut exports = String::new();
     for (k, v) in extra_env {
         exports.push_str(&format!("export {}={}; ", k, sh_quote(v)));
     }
-    let inner = format!("export PATH=\"$PATH:/home/pasia/.npm-global/bin\"; {exports}exec {adapter}");
+    // PATH 에 npm global bin 동적 추가(npm prefix -g + 흔한 위치). /home/pasia 하드코딩 제거.
+    let inner = format!(
+        "export PATH=\"$PATH:$(npm prefix -g 2>/dev/null)/bin:$HOME/.npm-global/bin:$HOME/.local/bin\"; {exports}exec {adapter}"
+    );
     let b64 = base64::engine::general_purpose::STANDARD.encode(inner.as_bytes());
     // ⚠ `echo B64|base64 -d|bash` 는 마지막 bash 의 stdin 이 파이프(스크립트)라 어댑터가
     // ssh stdin 을 못 받고 EOF 종료됨. 임시파일로 디코드 후 `exec bash file` → 어댑터가
