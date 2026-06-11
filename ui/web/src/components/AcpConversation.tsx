@@ -202,10 +202,10 @@ export function AcpConversation(props: {
 
   // 모델별 컨텍스트 윈도우 + 대략 단가($/Mtok) — usage 표시(목업 `60k/1.00M (6%) · $..`)용.
   const MODEL_META: Record<string, { ctx: number; rate: number; name: string }> = {
-    default: { ctx: 200000, rate: 15, name: "Opus 4.8" },
+    default: { ctx: 1000000, rate: 15, name: "Opus 4.8" }, // Opus 4.8 = 1M 컨텍스트
     haiku: { ctx: 200000, rate: 1, name: "Haiku 4.5" },
     sonnet: { ctx: 1000000, rate: 3, name: "Sonnet 4.6" },
-    opus: { ctx: 200000, rate: 15, name: "Opus 4.8" },
+    opus: { ctx: 1000000, rate: 15, name: "Opus 4.8" },
   };
   const fmtTok = (n: number) =>
     n >= 1_000_000 ? `${(n / 1_000_000).toFixed(2)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`;
@@ -713,12 +713,28 @@ export function AcpConversation(props: {
   function submit() {
     const text = draft().trim();
     if (!text) return;
+    // /clear — ACP 메신저엔 CLI 하니스가 없어 자동 처리 안 됨(텍스트로 떨어져 에이전트가 설명만 함).
+    // 우리가 직접: 영속 기록 삭제 + UI 비우기 + ACP subprocess 재시작(새 session/new = 컨텍스트 초기화).
+    if (text === "/clear") { setDraft(""); void clearConversation(); return; }
     if (busy()) {
       setQueue([...queue(), text]);
       setDraft("");
       return;
     }
     void sendPrompt();
+  }
+
+  async function clearConversation() {
+    await invoke("acp_conv_clear", { key: convKey() }).catch(() => {});
+    setBubbles([]);
+    setUsedTok(0);
+    setCtxSize(0);
+    pendingContext = null;
+    pushBubble({ id: nextId++, kind: "note", text: "🧹 /clear — 대화·컨텍스트 초기화 (세션 재시작)", time: nowClock() });
+    // ACP subprocess 재시작 = 새 session/new = 깨끗한 컨텍스트. DB 를 비웠으니 복원도 빈 상태.
+    if (lastSpawn) {
+      await spawn(lastSpawn.agent, { ...(lastSpawn.opts ?? {}), keepHistory: false });
+    }
   }
 
   function onKey(e: KeyboardEvent) {
