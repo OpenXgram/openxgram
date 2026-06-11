@@ -5178,6 +5178,12 @@ async fn gui_agents_delete(
         "DELETE FROM agent_capabilities WHERE alias = ?1",
         rusqlite::params![alias],
     ).ok();
+    // 로스터는 capabilities JOIN profiles 라, profile 행을 안 지우면 고아 행이 남는다
+    // (재생성 시 stale classification/source 잔존). 양 테이블 모두 제거.
+    db.conn().execute(
+        "DELETE FROM agent_profiles WHERE alias = ?1",
+        rusqlite::params![alias],
+    ).ok();
     Ok(Json(serde_json::json!({"deleted": alias})))
 }
 
