@@ -234,7 +234,9 @@ export function AcpConversation(props: {
   // 프리셋이면 이름, 커스텀 모델 id 면 그 id 를 그대로 표시.
   const modelName = createMemo(() => MODEL_META[model()]?.name ?? model());
 
-  // 파일·문서 첨부 — content-addressed attachment_upload. 업로드 후 프롬프트에 attachment:// 참조 추가.
+  // 파일·문서 첨부 — 실제 경로로 저장 후 절대경로를 프롬프트에 삽입.
+  // (이전엔 attachment://<hash> 텍스트만 넣어 에이전트가 파일을 못 읽었음. 에이전트는 URI 해석 불가 →
+  //  서버 <data_dir>/drops/ 에 저장하고 절대경로를 넣어, 같은 머신 에이전트가 그 경로로 직접 읽게 함.)
   // 클릭(📎/@) + 드래그앤드롭 공용.
   const [dragOver, setDragOver] = createSignal(false);
   function uploadFile(f: File) {
@@ -242,11 +244,11 @@ export function AcpConversation(props: {
     reader.onload = async () => {
       const b64 = (reader.result as string).split(",")[1] ?? "";
       try {
-        const res = await invoke<{ content_hash: string; size_bytes: number }>(
-          "attachment_upload",
-          { content_b64: b64, mime: f.type || "application/octet-stream" },
+        const res = await invoke<{ path?: string }>(
+          "session_dropfile",
+          { identifier: convKey(), filename: f.name, content_b64: b64 },
         );
-        const ref = `📎 ${f.name} attachment://${res.content_hash} (${(res.size_bytes / 1024).toFixed(1)} KB)`;
+        const ref = res?.path ? `📎 ${f.name} → ${res.path}` : "⚠ 첨부 경로 없음";
         setDraft(draft() ? `${draft()}\n${ref}` : ref);
       } catch (e) {
         setDraft(`${draft()}\n⚠ 첨부 실패: ${e instanceof Error ? e.message : String(e)}`);

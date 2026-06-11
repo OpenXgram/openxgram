@@ -320,6 +320,15 @@ pub async fn create_session(
     // ACP 어댑터는 절대경로 cwd 요구 — `~` 를 home 으로 확장(머신별: 잘만=/home/pasia, 로컬=$HOME).
     let cwd = expand_home(&body.cwd, body.machine.as_deref());
 
+    // 권한모드를 어댑터(claude-agent-acp)가 실제로 읽는 곳에 반영 — 컴포저 칩/_meta 가 아니라
+    // `<cwd>/.claude/settings.json` 의 permissions.defaultMode 만 읽기 때문(우리 ACP 자동승인과 별개).
+    // 자격증명·기타 설정은 머지로 보존. 로컬 에이전트만(원격은 그 머신 settings 사용).
+    if body.machine.as_deref().filter(|s| !s.is_empty()).is_none() {
+        if let Err(e) = ensure_permission_settings(&cwd, body.permission_mode.as_deref()) {
+            tracing::warn!(error = %e, cwd = %cwd, "ACP 권한 settings 기록 실패(계속)");
+        }
+    }
+
     let (updates_tx, _rx) = broadcast::channel::<Value>(256);
     let session_id = state.new_session_id();
     let spawn_opts = spawn_opts_from_body(&body);
@@ -347,6 +356,40 @@ pub async fn create_session(
         "executionMode": mode,
         "spawned": handle_id.is_some(),
     }))
+}
+
+/// 어댑터(claude-agent-acp)가 읽는 `<cwd>/.claude/settings.json` 의 permissions.defaultMode 를
+/// 컴포저 권한모드에 맞춰 머지 기록. 자격증명·기타 설정은 보존(머지). bypass/acceptEdits/plan/default.
+fn ensure_permission_settings(cwd: &str, permission_mode: Option<&str>) -> std::io::Result<()> {
+    let mode = match permission_mode.map(|s| s.trim()) {
+        Some("bypassPermissions") | Some("bypass") => "bypassPermissions",
+        Some("acceptEdits") => "acceptEdits",
+        Some("plan") => "plan",
+        _ => "default",
+    };
+    let dir = std::path::Path::new(cwd).join(".claude");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("settings.json");
+    let mut root: serde_json::Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    if !root.is_object() {
+        root = serde_json::json!({});
+    }
+    let obj = root.as_object_mut().unwrap();
+    let perms = obj
+        .entry("permissions")
+        .or_insert_with(|| serde_json::json!({}));
+    if !perms.is_object() {
+        *perms = serde_json::json!({});
+    }
+    perms
+        .as_object_mut()
+        .unwrap()
+        .insert("defaultMode".into(), serde_json::Value::String(mode.into()));
+    std::fs::write(&path, serde_json::to_string_pretty(&root)?)?;
+    Ok(())
 }
 
 /// Spawn an agent via the crate registry, returning its handle id. The crate's
