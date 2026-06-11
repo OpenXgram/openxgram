@@ -4552,6 +4552,14 @@ async fn gui_agent_templates_apply(
                 body.target_alias, role_short, head, cwd, body.group_name, body.messenger_enabled as i64, now,
             ],
         ).ok();
+        // 고용 = 로스터 노출 필수. 로스터는 agent_capabilities JOIN agent_profiles 라,
+        // profile 행이 없으면 고용한 에이전트가 명부에 안 보인다. source='user', 기본 project 분류로 upsert.
+        db.conn().execute(
+            "INSERT INTO agent_profiles (alias, ai_type, classification, execution_mode, source, activated, is_public, created_at, updated_at) \
+             VALUES (?1, 'claude', 'project', 'on_demand', 'user', 1, 0, ?2, ?2) \
+             ON CONFLICT(alias) DO UPDATE SET updated_at=?2",
+            rusqlite::params![body.target_alias, now],
+        ).ok();
     }
     Ok(Json(serde_json::json!({
         "ok": true,
