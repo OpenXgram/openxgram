@@ -207,10 +207,14 @@ fn remote_acp_command(machine: &str, extra_env: &[(String, String)]) -> Option<(
     }
     let inner = format!("export PATH=\"$PATH:/home/pasia/.npm-global/bin\"; {exports}exec {adapter}");
     let b64 = base64::engine::general_purpose::STANDARD.encode(inner.as_bytes());
+    // ⚠ `echo B64|base64 -d|bash` 는 마지막 bash 의 stdin 이 파이프(스크립트)라 어댑터가
+    // ssh stdin 을 못 받고 EOF 종료됨. 임시파일로 디코드 후 `exec bash file` → 어댑터가
+    // ssh stdin 상속(ACP JSON-RPC 채널). $$ = 원격 bash PID 로 파일 unique.
+    let run = format!("echo {b64}|base64 -d>/tmp/oxgacp.$$.sh;exec bash /tmp/oxgacp.$$.sh");
     let remote = if wsl {
-        format!("wsl -- bash -lc \"echo {b64} | base64 -d | bash\"")
+        format!("wsl -- bash -lc \"{run}\"")
     } else {
-        format!("bash -lc \"echo {b64} | base64 -d | bash\"")
+        format!("bash -lc \"{run}\"")
     };
     Some((
         "ssh".to_string(),
