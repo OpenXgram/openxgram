@@ -501,6 +501,7 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // 물리 머신 목록 (worker agent 제외) — settings "연결된 머신".
         .route("/v1/gui/machines", get(gui_machines_list))
         .route("/v1/gui/agent-machines", get(gui_agent_machines))
+        .route("/v1/gui/models", get(gui_models_list))
         .route("/v1/gui/vault/pending", get(gui_vault_pending_list))
         .route(
             "/v1/gui/vault/pending/{id}/approve",
@@ -9739,6 +9740,92 @@ async fn gui_fs_file_put(
 // ----------------------------------------------------------------------------
 // machines — 물리 머신만 (worker agent 제외). settings "연결된 머신".
 // ----------------------------------------------------------------------------
+
+/// `GET /v1/gui/models?q=<filter>` — 선택 가능한 모델 목록(OpenRouter 동적 조회, 1h 캐시).
+/// 하드코딩 아님 — 새 모델(claude-fable-5 등)·codex/gpt 자동 포함. 키: ~/.openxgram/openrouter.key.
+async fn gui_models_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static CACHE: Mutex<Option<(Instant, Vec<serde_json::Value>)>> = Mutex::new(None);
+    let filter = q.get("q").map(|s| s.to_lowercase()).unwrap_or_default();
+    let do_filter = |models: &[serde_json::Value]| -> Vec<serde_json::Value> {
+        if filter.is_empty() {
+            return models.to_vec();
+        }
+        models
+            .iter()
+            .filter(|m| {
+                m.get("id").and_then(|v| v.as_str()).unwrap_or("").to_lowercase().contains(&filter)
+                    || m.get("name").and_then(|v| v.as_str()).unwrap_or("").to_lowercase().contains(&filter)
+            })
+            .cloned()
+            .collect()
+    };
+    // 캐시 hit (1h)
+    if let Ok(g) = CACHE.lock() {
+        if let Some((t, v)) = g.as_ref() {
+            if t.elapsed() < Duration::from_secs(3600) {
+                return Ok(Json(serde_json::json!({ "models": do_filter(v) })));
+            }
+        }
+    }
+    let key_path = {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+        std::path::PathBuf::from(home).join(".openxgram").join("openrouter.key")
+    };
+    let key = std::fs::read_to_string(&key_path)
+        .map_err(|_| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorDto {
+                    error: "OpenRouter 키 없음(~/.openxgram/openrouter.key)".into(),
+                }),
+            )
+        })?
+        .trim()
+        .to_string();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto { error: format!("http: {e}") })))?;
+    let resp = client
+        .get("https://openrouter.ai/api/v1/models")
+        .bearer_auth(&key)
+        .send()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ErrorDto { error: format!("openrouter: {e}") })))?;
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ErrorDto { error: format!("openrouter json: {e}") })))?;
+    let models: Vec<serde_json::Value> = body["data"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| {
+                    let id = m.get("id").and_then(|v| v.as_str())?;
+                    let bare = id.rsplit('/').next().unwrap_or(id);
+                    let provider = id.split('/').next().unwrap_or("");
+                    Some(serde_json::json!({
+                        "id": bare,            // ANTHROPIC_MODEL 등에 쓰는 bare id
+                        "full": id,            // openrouter 전체 id
+                        "provider": provider,  // anthropic / openai 등
+                        "name": m.get("name").and_then(|v| v.as_str()).unwrap_or(bare),
+                    }))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Ok(mut g) = CACHE.lock() {
+        *g = Some((Instant::now(), models.clone()));
+    }
+    Ok(Json(serde_json::json!({ "models": do_filter(&models) })))
+}
 
 /// `GET /v1/gui/agent-machines` — 에이전트 생성 시 선택 가능한 머신 라벨.
 /// 로컬(서울) + machines.json 설정 머신. 하드코딩 제거 — config-driven.

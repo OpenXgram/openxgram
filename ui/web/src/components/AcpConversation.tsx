@@ -1,4 +1,4 @@
-import { createSignal, createEffect, createMemo, onCleanup, For, Show } from "solid-js";
+import { createSignal, createEffect, createMemo, createResource, onCleanup, For, Show } from "solid-js";
 import { acpFetch, acpStream, invoke } from "../api/client";
 
 // ai_type(에이전트 명부의 LLM 종류) → ACP 어댑터 이름 매핑.
@@ -176,13 +176,17 @@ export function AcpConversation(props: {
     { v: "acceptEdits", label: "Accept Edits" },
     { v: "bypassPermissions", label: "🛡 Bypass Permissions" },
   ];
-  const MODEL_OPTS = [
-    { v: "default", label: "Default (recommended)" },
-    { v: "haiku", label: "Haiku 4.5" },
-    { v: "sonnet", label: "Sonnet 4.6" },
-    { v: "opus", label: "Opus 4.8" },
-    { v: "__custom__", label: "✎ 직접 입력…" }, // 새 모델(claude-fable-5 등) — 하드코딩 불필요.
-  ];
+  const MODEL_OPTS = [{ v: "default", label: "Default (recommended)" }];
+  // 동적 모델 목록 — OpenRouter(/v1/gui/models). 하드코딩 아님: claude-fable-5·codex/gpt 등 자동.
+  const [orModels] = createResource<{ id: string; provider: string; name: string }[]>(async () => {
+    try {
+      const r = await invoke<{ models: { id: string; provider: string; name: string }[] }>("models_list");
+      return r?.models ?? [];
+    } catch {
+      return [];
+    }
+  });
+  const [modelFilter, setModelFilter] = createSignal("");
   const THINK_OPTS = [
     { v: "off", label: "Off (없음)" },
     { v: "low", label: "Low" },
@@ -967,10 +971,32 @@ export function AcpConversation(props: {
                     {labelOf(MODEL_OPTS, model())} <span class="car">⌃</span>
                   </span>
                   <Show when={openMenu() === "model"}>
-                    <div class="kk-chip-menu">
-                      <For each={MODEL_OPTS}>
-                        {(o) => (
-                          <div class={`kk-chip-opt${model() === o.v ? " on" : ""}`} onClick={() => selectChip("model", o.v)}>{o.label}</div>
+                    <div class="kk-chip-menu kk-at-menu">
+                      <input
+                        class="kk-at-filter"
+                        placeholder="모델 검색 (claude, gpt, codex…)"
+                        value={modelFilter()}
+                        onInput={(e) => setModelFilter(e.currentTarget.value)}
+                      />
+                      {/* Default(어댑터 기본) */}
+                      <div class={`kk-chip-opt${model() === "default" ? " on" : ""}`} onClick={() => selectChip("model", "default")}>
+                        Default (recommended)
+                      </div>
+                      <Show when={orModels.loading}>
+                        <div class="kk-chip-opt" style="opacity:.6">모델 불러오는 중…</div>
+                      </Show>
+                      <For
+                        each={(orModels() ?? [])
+                          .filter((m) => {
+                            const f = modelFilter().toLowerCase();
+                            return !f || m.id.toLowerCase().includes(f) || m.name.toLowerCase().includes(f) || m.provider.toLowerCase().includes(f);
+                          })
+                          .slice(0, 60)}
+                      >
+                        {(m) => (
+                          <div class={`kk-chip-opt${model() === m.id ? " on" : ""}`} onClick={() => selectChip("model", m.id)} title={m.name}>
+                            <b>{m.id}</b> <span style="opacity:.5; font-size:10.5px;">{m.provider}</span>
+                          </div>
                         )}
                       </For>
                     </div>
