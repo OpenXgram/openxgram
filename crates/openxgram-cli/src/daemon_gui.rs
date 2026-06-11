@@ -6579,33 +6579,59 @@ async fn heartbeat_wake(state: &GuiServerState) {
 
 fn runtime_config_default() -> serde_json::Value {
     serde_json::json!({
+        // 주입(Injection)
+        "inject_memory": true,
+        "memory_count": 8,
+        "memory_kinds": ["fact", "decision", "rule", "reference"],
+        "inject_wiki": false,
+        // 검색(Search)
+        "search_enabled": false,
+        "search_source": "last_message",
+        // 제한(Limits)
         "perm_default": "bypassPermissions",
         "model_default": "default",
         "thinking_default": "high",
-        "inject_memory": true,
-        "memory_count": 8,
-        "inject_wiki": false
+        "max_inject_chars": 6000,
+        // 필수(Mandatory gate) — 매 대화 첫 프롬프트에 반드시 거치는 지시.
+        "mandatory_note": ""
     })
 }
 
+// per-agent 하네스 — key='runtime_config:<alias>' (에이전트별) 또는 'runtime_config'(전역 기본값).
+// get(alias): 에이전트별 있으면 그것, 없으면 전역, 없으면 기본값.
 async fn gui_runtime_config_get(
     State(state): State<GuiServerState>,
     headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     use rusqlite::OptionalExtension;
+    let alias = q.get("alias").map(|s| s.trim()).filter(|s| !s.is_empty()).map(String::from);
+    let key = alias.as_deref().map(|a| format!("runtime_config:{a}")).unwrap_or_else(|| "runtime_config".to_string());
     let mut db = state.db.lock().await;
-    let stored: Option<String> = db.conn().query_row(
-        "SELECT value FROM identity_settings WHERE key='runtime_config'", [], |r| r.get(0),
+    let mut stored: Option<String> = db.conn().query_row(
+        "SELECT value FROM identity_settings WHERE key=?1", rusqlite::params![key], |r| r.get(0),
     ).optional().ok().flatten();
+    // 에이전트별 없으면 전역 기본값으로 폴백.
+    let mut inherited = false;
+    if stored.is_none() && alias.is_some() {
+        stored = db.conn().query_row(
+            "SELECT value FROM identity_settings WHERE key='runtime_config'", [], |r| r.get(0),
+        ).optional().ok().flatten();
+        inherited = stored.is_some();
+    }
     let config = stored
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .unwrap_or_else(runtime_config_default);
-    Ok(Json(serde_json::json!({ "config": config })))
+    Ok(Json(serde_json::json!({ "config": config, "alias": alias, "inherited": inherited })))
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct RuntimeConfigBody { config: serde_json::Value }
+struct RuntimeConfigBody {
+    config: serde_json::Value,
+    #[serde(default)]
+    alias: Option<String>,
+}
 
 async fn gui_runtime_config_set(
     State(state): State<GuiServerState>,
@@ -6615,13 +6641,15 @@ async fn gui_runtime_config_set(
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     let now = chrono::Utc::now().to_rfc3339();
     let s = body.config.to_string();
+    let key = body.alias.as_deref().map(str::trim).filter(|a| !a.is_empty())
+        .map(|a| format!("runtime_config:{a}")).unwrap_or_else(|| "runtime_config".to_string());
     let mut db = state.db.lock().await;
     db.conn().execute(
-        "INSERT INTO identity_settings(key,value,updated_at) VALUES('runtime_config',?1,?2) \
+        "INSERT INTO identity_settings(key,value,updated_at) VALUES(?1,?2,?3) \
          ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-        rusqlite::params![s, now],
+        rusqlite::params![key, s, now],
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("save: {e}")})))?;
-    Ok(Json(serde_json::json!({ "ok": true, "config": body.config })))
+    Ok(Json(serde_json::json!({ "ok": true, "config": body.config, "alias": body.alias })))
 }
 
 /// `GET /v1/gui/runtime/context?count=N` — 주입·관찰용 L2 메모리 + 위키 제목(토큰예산=count).
