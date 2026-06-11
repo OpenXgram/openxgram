@@ -74,6 +74,9 @@ function AppInner() {
   (() => {
     let baseline: string | null = null;
     const poll = async () => {
+      // 미인증(로그인 페이지)일 땐 폴링 skip — version 401 노이즈 + 토큰삭제 방지.
+      const tok = (() => { try { return localStorage.getItem("xgram_session_token") || localStorage.getItem("xgram_mcp_token"); } catch { return null; } })();
+      if (!tok) return;
       try {
         const v = await invoke<any>("version_info");
         const cur = v?.release as string | undefined;

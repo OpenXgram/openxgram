@@ -555,14 +555,11 @@ export async function invoke<T>(
 }
 
  if (res.status === 401) {
- // 세션 만료/위조(주로 daemon 재시작으로 토큰 무효) — Bearer 삭제 + 로그인 화면으로 자동 복귀.
- // 토큰이 없으면 App 은 LoginView 를 렌더하고 인증 호출을 안 하므로 reload 루프 없음.
+ // 세션 만료/위조(주로 daemon 재시작으로 토큰 무효) — Bearer 삭제만. App.tsx 가 LoginView 로 복귀.
+ // ⚠ reload 금지 — 로그인 페이지의 version 폴링 401 이 reload 를 무한 유발(무한 새로고침 루프).
  try {
  localStorage.removeItem(TOKEN_KEY);
  localStorage.removeItem("xgram_session_token");
- if (typeof location !== "undefined" && !new URLSearchParams(location.search).get("chat") && !new URLSearchParams(location.search).get("tmux")) {
- setTimeout(() => location.reload(), 50);
- }
 } catch {
  // ignored
 }
