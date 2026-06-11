@@ -252,6 +252,7 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
       label: a.alias, // convKey(영속화 키) — 안정적 alias 유지.
       displayName: agentName(a), // 헤더 표시용(대화명).
       classification: a.classification ?? null, // primary 면 권한 기본 bypass.
+      machine: a.machine ?? null, // 원격이면 데몬이 SSH 로 그 머신에서 ACP spawn.
     };
   });
 

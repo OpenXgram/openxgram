@@ -146,6 +146,9 @@ pub struct CreateSessionBody {
     /// Mapped to a `MAX_THINKING_TOKENS` env on the agent process.
     #[serde(default)]
     pub thinking: Option<String>,
+    /// cross-machine — 에이전트 머신(서울/잘만/...). 원격이면 ACP 어댑터를 SSH 로 spawn.
+    #[serde(default)]
+    pub machine: Option<String>,
 }
 
 /// Translate the composer chip selections into crate-level [`SpawnOpts`]
@@ -174,10 +177,53 @@ fn spawn_opts_from_body(body: &CreateSessionBody) -> openxgram_acp::SpawnOpts {
         Some("low") => extra_env.push(("MAX_THINKING_TOKENS".into(), "4000".into())),
         _ => {} // "off"/None
     }
+    // cross-machine — 머신이 원격이면 ACP 어댑터를 SSH 로 그 머신에서 spawn(command override).
+    let command_override = body
+        .machine
+        .as_deref()
+        .and_then(|m| remote_acp_command(m, &extra_env));
     openxgram_acp::SpawnOpts {
         permission_allow,
         extra_env,
+        command_override,
     }
+}
+
+// 원격 머신 ACP spawn 명령 — `ssh -T <host> 'wsl -- bash -lc "...claude-agent-acp"'`.
+// ssh 프로세스의 stdio 가 ACP JSON-RPC 채널이 된다(SSH-stdio). Windows→WSL 따옴표깨짐
+// 방지 위해 bash 명령을 base64 로 전달. env(모델/thinking)는 원격 bash 에 export.
+// None = 로컬(서울) → registry 기본 spawn.
+fn remote_acp_command(machine: &str, extra_env: &[(String, String)]) -> Option<(String, Vec<String>)> {
+    use base64::Engine;
+    let (host, wsl, adapter): (&str, bool, &str) = match machine.trim().to_lowercase().as_str() {
+        "잘만" | "zalman" => ("zalman", true, "/home/pasia/.npm-global/bin/claude-agent-acp"),
+        "맥미니" | "macmini" | "mac-mini" => ("macmini", false, "claude-agent-acp"),
+        _ => return None, // 서울/로컬/미지원
+    };
+    let sh_quote = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+    let mut exports = String::new();
+    for (k, v) in extra_env {
+        exports.push_str(&format!("export {}={}; ", k, sh_quote(v)));
+    }
+    let inner = format!("export PATH=\"$PATH:/home/pasia/.npm-global/bin\"; {exports}exec {adapter}");
+    let b64 = base64::engine::general_purpose::STANDARD.encode(inner.as_bytes());
+    let remote = if wsl {
+        format!("wsl -- bash -lc \"echo {b64} | base64 -d | bash\"")
+    } else {
+        format!("bash -lc \"echo {b64} | base64 -d | bash\"")
+    };
+    Some((
+        "ssh".to_string(),
+        vec![
+            "-T".into(),
+            "-o".into(),
+            "ConnectTimeout=12".into(),
+            "-o".into(),
+            "BatchMode=yes".into(),
+            host.to_string(),
+            remote,
+        ],
+    ))
 }
 
 /// `POST /v1/acp/sessions/{id}/prompt` body.

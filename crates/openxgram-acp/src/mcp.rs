@@ -38,6 +38,10 @@ pub struct SpawnOpts {
     pub permission_allow: bool,
     /// Extra env pairs appended to the agent process environment.
     pub extra_env: Vec<(String, String)>,
+    /// Cross-machine 원격 실행 — spawn 명령(command, args)을 registry spec 대신 override.
+    /// 예: `("ssh", ["-T", "zalman", "wsl -- bash -lc \"...claude-agent-acp\""])`.
+    /// 설정 시 env 는 원격 명령에 포함되므로 로컬 spec.env 는 건드리지 않는다.
+    pub command_override: Option<(String, Vec<String>)>,
 }
 
 /// Stateful ACP tool surface: owns the spawned-agent registry.
@@ -77,8 +81,14 @@ impl AcpTools {
     /// calls are approved instead of cancelled.
     pub async fn acp_spawn_with(&self, agent_name: &str, opts: SpawnOpts) -> Result<Value> {
         let mut spec = registry::lookup(agent_name)?;
-        for (k, v) in &opts.extra_env {
-            spec.env.push((k.clone(), v.clone()));
+        if let Some((cmd, args)) = opts.command_override {
+            // 원격 실행 — command/args override. env 는 원격 명령에 baked-in.
+            spec.command = cmd;
+            spec.args = args;
+        } else {
+            for (k, v) in &opts.extra_env {
+                spec.env.push((k.clone(), v.clone()));
+            }
         }
         let client = if opts.permission_allow {
             AcpClient::spawn_allow(spec).await?

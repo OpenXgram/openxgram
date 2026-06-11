@@ -580,6 +580,7 @@ pub mod server {
                 permission_mode: Some("bypassPermissions".to_string()),
                 model: None,
                 thinking: None,
+                machine: None,
             },
         )
         .await?;

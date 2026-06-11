@@ -28,6 +28,8 @@ export interface AcpPreset {
   displayName?: string | null;
   // 분류(primary/project/special). primary 면 권한 기본값 = bypassPermissions(전체 도구 권한).
   classification?: string | null;
+  // cross-machine — 에이전트 머신. 원격이면 데몬이 ACP 어댑터를 SSH 로 그 머신에서 spawn.
+  machine?: string | null;
 }
 
 // ACP 대화방 (Phase B-3) — 로컬 ACP 에이전트 subprocess 를 daemon `/v1/acp/*` 로
@@ -507,6 +509,7 @@ export function AcpConversation(props: {
         permission_mode: permMode(),
         model: model(),
         thinking: thinking(),
+        machine: props.preset?.machine ?? null, // 원격이면 데몬이 SSH 로 그 머신에서 spawn.
       };
       const r = await acpFetch<{ sessionId: string; agent: string; spawned: boolean }>(
         "POST",
