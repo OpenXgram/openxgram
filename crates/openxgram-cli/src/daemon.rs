@@ -1304,11 +1304,30 @@ fn seed_builtin_agents(data_dir: &std::path::Path) -> anyhow::Result<usize> {
         let execution_mode = meta.get("execution_mode").and_then(|v| v.as_str()).unwrap_or("on_demand");
         let display_name = meta.get("display_name").and_then(|v| v.as_str());
         let capabilities = meta.get("capabilities").map(|c| c.to_string()).unwrap_or_else(|| "[]".to_string());
+        // 지침 주입 — ACP session/new 은 instructions 필드가 없으므로, cwd 의 CLAUDE.md 를
+        // Claude Code 가 자동 로드하는 네이티브 경로를 쓴다. <data_dir>/agents/<alias>/CLAUDE.md
+        // 를 materialize 하고 project_path 를 그 디렉토리로 설정 → 활성화 후 ACP spawn 시
+        // 그 cwd 에서 지침이 자동 적용된다. 매 startup 덮어써서 동봉 지침과 동기화.
+        let agent_dir = data_dir.join("agents").join(alias);
+        if let Err(e) = std::fs::create_dir_all(&agent_dir) {
+            tracing::warn!(error = %e, alias = %alias, "built-in agent 디렉토리 생성 실패");
+        }
+        let claude_md = agent_dir.join("CLAUDE.md");
+        if let Err(e) = std::fs::write(&claude_md, instructions) {
+            tracing::warn!(error = %e, alias = %alias, "built-in agent CLAUDE.md 작성 실패");
+        }
+        let project_path = agent_dir.to_string_lossy().to_string();
         // agent_capabilities — messenger_enabled=0 (활성화 전엔 peer 통신 비활성), special_instructions=지침 본문.
         let c1 = db.conn().execute(
-            "INSERT OR IGNORE INTO agent_capabilities (alias, role, description, capabilities, messenger_enabled, special_instructions, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6)",
-            rusqlite::params![alias, role, description, capabilities, instructions, now],
+            "INSERT OR IGNORE INTO agent_capabilities (alias, role, description, capabilities, messenger_enabled, special_instructions, project_path, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7)",
+            rusqlite::params![alias, role, description, capabilities, instructions, project_path, now],
+        )?;
+        // 기존 행(이전 startup seed)에 project_path/special_instructions 가 비어있을 수 있으니 동기화.
+        db.conn().execute(
+            "UPDATE agent_capabilities SET project_path = ?2, special_instructions = ?3, updated_at = ?4 \
+             WHERE alias = ?1 AND (project_path IS NULL OR project_path = '')",
+            rusqlite::params![alias, project_path, instructions, now],
         )?;
         // agent_profiles — source='built_in', activated=0 (설치됨·미활성).
         let c2 = db.conn().execute(
