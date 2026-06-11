@@ -367,13 +367,11 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
                                   <Show when={tagLabel(a)}><span class="tag">{tagLabel(a)}</span></Show>
                                   <Show when={a.is_public}><span class="tag">공개</span></Show>
                                 </div>
-                                {/* 에이전트명(ID) · AI모델 · 역할 */}
+                                {/* 에이전트명(ID) — AI종류는 .nm 태그, 역할은 미리보기에 이미 표시되므로 중복 제거. */}
                                 <div class="kk-card-sub">
                                   <span class="kk-card-alias" title="에이전트명(ID)">@{a.alias}</span>
-                                  <span title="AI 모델">🤖 {a.ai_type || "claude"}</span>
-                                  <Show when={a.role}><span title="역할">🎭 {a.role}</span></Show>
                                 </div>
-                                {/* 최근/읽지 않은 메시지 미리보기 */}
+                                {/* 최근/읽지 않은 메시지 미리보기 (없으면 역할·설명) */}
                                 <div class="st">{preview(a)}</div>
                               </div>
                               <div class="rcol">
