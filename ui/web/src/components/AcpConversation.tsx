@@ -30,6 +30,10 @@ export interface AcpPreset {
   classification?: string | null;
   // cross-machine — 에이전트 머신. 원격이면 데몬이 ACP 어댑터를 SSH 로 그 머신에서 spawn.
   machine?: string | null;
+  // 에이전트별 영속 컴포저 설정(재부팅 유지). 없으면 기본값(bypassPermissions/default/high).
+  permMode?: string | null;
+  model?: string | null;
+  thinking?: string | null;
 }
 
 // ACP 대화방 (Phase B-3) — 로컬 ACP 에이전트 subprocess 를 daemon `/v1/acp/*` 로
@@ -153,12 +157,11 @@ export function AcpConversation(props: {
   const [draft, setDraft] = createSignal("");
 
   // ── 컴포저 칩: 권한 모드 / 모델 / thinking. 클릭 → 드롭다운 → ACP 세션 spawn 옵션에 반영. ──
-  // 프라이머리(총괄) 에이전트는 전체 도구 권한 → 권한 기본값 bypassPermissions.
-  const [permMode, setPermMode] = createSignal(
-    props.preset?.classification === "primary" ? "bypassPermissions" : "default",
-  );
-  const [model, setModel] = createSignal("default");
-  const [thinking, setThinking] = createSignal("high");
+  // 에이전트별 영속 설정(재부팅 유지)을 preset 에서 로드. 없으면 기본값.
+  // 권한 기본값 = bypassPermissions (마스터 지시) — 에이전트가 기본으로 bash 등 실제 작업 수행.
+  const [permMode, setPermMode] = createSignal(props.preset?.permMode || "bypassPermissions");
+  const [model, setModel] = createSignal(props.preset?.model || "default");
+  const [thinking, setThinking] = createSignal(props.preset?.thinking || "high");
   const [openMenu, setOpenMenu] = createSignal<"perm" | "model" | "think" | null>(null);
 
   // ── 컴포저 좌측 버튼: @ 파일참조 / 슬래시명령 / 📎 첨부. ──
@@ -323,6 +326,16 @@ export function AcpConversation(props: {
   let pendingContext: string | null = null;
   let stopStream: (() => void) | null = null;
 
+  // 에이전트별 컴포저 설정을 백엔드(agent_profiles)에 영속 — 새로고침·재부팅 후에도 유지.
+  // preset.label = alias. 다음 대화 열 때 acpPreset 이 이 값을 다시 로드한다.
+  function persistComposer() {
+    const alias = props.preset?.label;
+    if (!alias) return;
+    void invoke("agent_composer_set", {
+      alias, perm_mode: permMode(), model: model(), thinking: thinking(),
+    }).catch(() => {});
+  }
+
   // 칩 선택 → 신호 갱신 + 메뉴 닫기. 세션이 이미 있으면 새 옵션으로 재구동(내역 보존).
   function selectChip(kind: "perm" | "model" | "think", v: string) {
     if (kind === "perm") setPermMode(v);
@@ -334,6 +347,7 @@ export function AcpConversation(props: {
         setOpenMenu(null);
         if (!id || !id.trim()) return;
         setModel(id.trim());
+        persistComposer();
         if (sessionId() && lastSpawn) {
           pushBubble({ id: nextId++, kind: "note", text: `· 모델 변경(${id.trim()}) → 세션 재구동`, time: nowClock() });
           void spawn(lastSpawn.agent, { ...(lastSpawn.opts ?? {}), keepHistory: true });
@@ -343,6 +357,7 @@ export function AcpConversation(props: {
       setModel(v);
     } else setThinking(v);
     setOpenMenu(null);
+    persistComposer();
     if (sessionId() && lastSpawn) {
       const what = kind === "perm" ? "권한 모드" : kind === "model" ? "모델" : "thinking";
       pushBubble({ id: nextId++, kind: "note", text: `· ${what} 변경 → 세션 재구동`, time: nowClock() });

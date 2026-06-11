@@ -156,10 +156,9 @@ pub struct CreateSessionBody {
 /// no-ops, so an unselected composer keeps the default-deny, adapter-default
 /// behaviour.
 fn spawn_opts_from_body(body: &CreateSessionBody) -> openxgram_acp::SpawnOpts {
-    let permission_allow = matches!(
-        body.permission_mode.as_deref(),
-        Some("bypassPermissions") | Some("bypass") | Some("acceptEdits")
-    );
+    // 기본 posture = bypassPermissions (마스터 지시). 명시적 `plan` 만 default-deny(읽기전용 계획).
+    // None/default/bypassPermissions/acceptEdits → 툴콜 자동 허용 (에이전트가 기본으로 bash 등 실제 작업 수행).
+    let permission_allow = !matches!(body.permission_mode.as_deref(), Some("plan"));
     let mut extra_env: Vec<(String, String)> = Vec::new();
     match body.model.as_deref() {
         None | Some("") | Some("default") => {} // adapter default

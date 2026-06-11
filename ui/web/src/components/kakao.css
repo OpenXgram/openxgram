@@ -323,6 +323,8 @@
 .kk-statusline .kk-sl-usage{margin-left:auto; font-family:ui-monospace,Menlo,monospace; color:#6b7280;}
 /* tmux 라이브 — 새 창 풀윈도우 */
 .kk-tmux-full{position:fixed; inset:0; background:#0d1117; display:flex; flex-direction:column; overflow:hidden;}
+.kk-tmux-full.dragover{outline:2px dashed #2f81f7; outline-offset:-6px;}
+.kk-tmux-drop{position:absolute; inset:0; z-index:20; display:flex; align-items:center; justify-content:center; background:rgba(13,17,23,.78); color:#9ecbff; font-size:14px; pointer-events:none;}
 /* tmux 라이브 모달(레거시, 미사용 — 호환 유지) */
 .kk-tmux-modal{width:760px; max-width:94vw; height:560px; max-height:88vh; background:#0d1117; border:1px solid #2b303a; border-radius:14px; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 24px 70px rgba(0,0,0,.5);}
 .kk-tmux-head{display:flex; align-items:center; gap:10px; padding:11px 14px; border-bottom:1px solid #2b303a; background:#161b22;}

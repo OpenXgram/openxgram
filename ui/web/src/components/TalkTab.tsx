@@ -25,6 +25,9 @@ interface AgentRow {
   is_public?: boolean | null;
   machine?: string | null;
   display_name?: string | null;
+  perm_mode?: string | null;
+  model?: string | null;
+  thinking?: string | null;
   unread?: number | null;
 }
 
@@ -256,6 +259,9 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
       displayName: agentName(a), // 헤더 표시용(대화명).
       classification: a.classification ?? null, // primary 면 권한 기본 bypass.
       machine: a.machine ?? null, // 원격이면 데몬이 SSH 로 그 머신에서 ACP spawn.
+      permMode: a.perm_mode ?? null, // 에이전트별 영속 컴포저 설정(없으면 컴포저 기본값).
+      model: a.model ?? null,
+      thinking: a.thinking ?? null,
     };
   });
 

@@ -21,6 +21,7 @@ export function TmuxLive(props: { identifier: string; display: string; onClose: 
   const [note, setNote] = createSignal("");
   const [cmd, setCmd] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+  const [dragOver, setDragOver] = createSignal(false);
   let timer: ReturnType<typeof setInterval> | undefined;
   let preRef: HTMLPreElement | undefined;
 
@@ -52,6 +53,38 @@ export function TmuxLive(props: { identifier: string; display: string; onClose: 
     void send(c + "\n");
   }
 
+  // 파일 → base64 (data URL 의 콤마 뒤 부분).
+  function fileToB64(f: File): Promise<string> {
+    return new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => { const s = r.result as string; res(s.slice(s.indexOf(",") + 1)); };
+      r.onerror = () => rej(r.error);
+      r.readAsDataURL(f);
+    });
+  }
+  // 드래그드롭 — 파일을 서버 <data_dir>/drops/ 에 저장하고 절대경로를 입력창에 삽입.
+  // 같은 머신의 tmux 에이전트가 그 경로로 파일을 바로 읽는다.
+  async function onDrop(e: DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (!files.length) return;
+    setBusy(true);
+    try {
+      for (const f of files) {
+        const b64 = await fileToB64(f);
+        const r = await invoke<{ path?: string }>("session_dropfile", {
+          identifier: props.identifier, filename: f.name, content_b64: b64,
+        });
+        if (r?.path) setCmd((c) => (c ? c + " " : "") + r.path);
+      }
+    } catch (e2) {
+      setErr((e2 as Error)?.message ?? String(e2));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   onMount(() => {
     void refresh();
     timer = setInterval(() => void refresh(), 1500);
@@ -59,7 +92,15 @@ export function TmuxLive(props: { identifier: string; display: string; onClose: 
   onCleanup(() => { if (timer) clearInterval(timer); });
 
   return (
-    <div class="kk-tmux-full">
+    <div
+      class={`kk-tmux-full${dragOver() ? " dragover" : ""}`}
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+      onDragLeave={(e) => { e.preventDefault(); setDragOver(false); }}
+      onDrop={onDrop}
+    >
+      <Show when={dragOver()}>
+        <div class="kk-tmux-drop">📎 파일을 놓으면 서버에 저장하고 경로를 입력창에 넣어요</div>
+      </Show>
       <div class="kk-tmux-head">
         <span class="t">🖥 {props.display}</span>
         <span class="kk-tmux-note">{note()}</span>
@@ -78,7 +119,9 @@ export function TmuxLive(props: { identifier: string; display: string; onClose: 
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submitCmd(); } }}
         />
         <button class="kk-tmux-key" disabled={busy()} title="Ctrl-C" onClick={() => void send(CTRL_C)}>^C</button>
+        <button class="kk-tmux-key" disabled={busy()} title="Esc (메뉴 취소)" onClick={() => void send(ESC)}>Esc</button>
         <button class="kk-tmux-key" disabled={busy()} title="위 방향키" onClick={() => void send(ESC + "[A")}>↑</button>
+        <button class="kk-tmux-key" disabled={busy()} title="아래 방향키" onClick={() => void send(ESC + "[B")}>↓</button>
         <button class="kk-tmux-key" disabled={busy()} title="Enter" onClick={() => void send("\n")}>⏎</button>
         <button class="kk-tmux-send" disabled={busy()} onClick={() => submitCmd()}>전송</button>
       </div>

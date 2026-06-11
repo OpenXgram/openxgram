@@ -301,6 +301,7 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         //   세션을 가져와 머신의 개별 에이전트를 각각 peer 카드로 노출.
         .route("/v1/gui/public/sessions", get(gui_public_sessions))
         .route("/v1/gui/sessions/{identifier}/input", post(gui_session_input))
+        .route("/v1/gui/sessions/{identifier}/dropfile", post(gui_session_dropfile))
         .route("/v1/gui/public/sessions/{identifier}/input", post(gui_public_session_input))
         // UI-MEMORY-SPEC v1.1 §K7 / §1.2 — L0 raw API + 5층 stats
         .route("/v1/gui/memory/l0", post(gui_memory_l0_save).get(gui_memory_l0_list))
@@ -403,6 +404,7 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/agent-templates/refresh", post(gui_agent_templates_refresh))
         .route("/v1/gui/agent-templates/apply", post(gui_agent_templates_apply))
         .route("/v1/gui/agents/{alias}/activate", post(gui_agent_activate))
+        .route("/v1/gui/agent/{alias}/composer", post(gui_agent_composer_set))
         // Discord 봇이 가입한 guild 의 channel 목록 (세션 바인딩 시 사용자가 선택)
         .route("/v1/gui/notify/discord/channels", post(gui_notify_discord_channels))
         // Discord 봇 진단 — token + permission + guild + channel 한 번에
@@ -3182,6 +3184,44 @@ async fn gui_attachment_upload(
     })))
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct DropFileBody {
+    filename: String,
+    content_b64: String,
+}
+
+/// `POST /v1/gui/sessions/{identifier}/dropfile` — tmux 창에 드래그드롭한 파일을 서버
+/// `<data_dir>/drops/<안전한 파일명>` 에 저장하고 절대경로를 반환. 프론트가 이 경로를
+/// tmux 입력창에 삽입 → 같은 머신의 에이전트/명령이 그 파일을 바로 사용한다.
+async fn gui_session_dropfile(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(_identifier): Path<String>,
+    Json(body): Json<DropFileBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let raw = base64_decode(&body.content_b64)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorDto{error: format!("base64: {e}")})))?;
+    // path traversal 방지 — 파일명에서 디렉토리 성분 제거.
+    let safe = std::path::Path::new(&body.filename)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("dropped.bin")
+        .to_string();
+    let dir = state.data_dir.join("drops");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("mkdir: {e}")})))?;
+    let path = dir.join(&safe);
+    std::fs::write(&path, &raw)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("write: {e}")})))?;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "path": path.to_string_lossy(),
+        "size_bytes": raw.len(),
+    })))
+}
+
 /// `GET /v1/gui/attachments/{hash}` — S7 첨부 조회.
 async fn gui_attachment_get(
     State(state): State<GuiServerState>,
@@ -3898,7 +3938,7 @@ async fn gui_agents_list(
         "SELECT ac.alias, ac.role, ac.description, ac.capabilities, ac.tool_list, ac.project_path, \
                 ac.group_name, ac.messenger_enabled, ac.orchestration_role, ac.special_instructions, ac.updated_at, \
                 p.classification, p.execution_mode, p.ai_type, p.is_public, p.machine, p.display_name, \
-                p.source, p.activated, \
+                p.source, p.activated, p.perm_mode, p.model, p.thinking, \
                 (SELECT COUNT(*) FROM acp_messages am WHERE am.conv_key = ac.alias AND am.role='agent' \
                    AND am.created_at > COALESCE((SELECT last_read FROM acp_read WHERE conv_key = ac.alias), '')) AS unread \
          FROM agent_capabilities ac \
@@ -3927,7 +3967,10 @@ async fn gui_agents_list(
             "display_name": r.get::<_, Option<String>>(16)?,
             "source": r.get::<_, Option<String>>(17)?,
             "activated": r.get::<_, Option<i64>>(18)?.map(|v| v != 0),
-            "unread": r.get::<_, i64>(19)?,
+            "perm_mode": r.get::<_, Option<String>>(19)?,
+            "model": r.get::<_, Option<String>>(20)?,
+            "thinking": r.get::<_, Option<String>>(21)?,
+            "unread": r.get::<_, i64>(22)?,
         }))
     }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
         .filter_map(|r| r.ok()).collect();
@@ -4880,6 +4923,41 @@ async fn gui_agent_profile_set(
 struct AgentActivateBody {
     #[serde(default)]
     activate: Option<bool>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ComposerSettingsBody {
+    #[serde(default)]
+    perm_mode: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    thinking: Option<String>,
+}
+
+/// `POST /v1/gui/agent/{alias}/composer` — 에이전트별 컴포저 설정(권한/모델/effort) 영속.
+/// 제공된 필드만 COALESCE 로 덮어쓴다. agent_profiles 행이 없으면 생성 후 갱신.
+async fn gui_agent_composer_set(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+    Json(body): Json<ComposerSettingsBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO agent_profiles (alias, created_at, updated_at) VALUES (?1, ?2, ?2) \
+         ON CONFLICT(alias) DO NOTHING",
+        rusqlite::params![alias, now],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("ensure profile: {e}")})))?;
+    db.conn().execute(
+        "UPDATE agent_profiles SET perm_mode=COALESCE(?2, perm_mode), model=COALESCE(?3, model), \
+           thinking=COALESCE(?4, thinking), updated_at=?5 WHERE alias=?1",
+        rusqlite::params![alias, body.perm_mode, body.model, body.thinking, now],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("composer set: {e}")})))?;
+    Ok(Json(serde_json::json!({"ok": true, "alias": alias,
+        "perm_mode": body.perm_mode, "model": body.model, "thinking": body.thinking})))
 }
 
 /// `POST /v1/gui/agents/{alias}/activate` — built-in 특수에이전트(xgram-ops 등) 활성/비활성 토글.

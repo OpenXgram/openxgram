@@ -282,6 +282,12 @@ const MIGRATIONS: &[Migration] = &[
         name: "agent_source_activated",
         sql: include_str!("../migrations/0052_agent_source_activated.sql"),
     },
+    // 에이전트별 컴포저 설정 영속 — perm_mode/model/thinking.
+    Migration {
+        version: 53,
+        name: "agent_composer_settings",
+        sql: include_str!("../migrations/0053_agent_composer_settings.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {
