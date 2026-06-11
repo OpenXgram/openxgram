@@ -13,6 +13,7 @@ import "./agents-extra.css";
 
 interface AgentRow {
   alias: string;
+  display_name?: string | null;
   role?: string | null;
   description?: string | null;
   group_name?: string | null;
@@ -24,6 +25,10 @@ interface AgentRow {
   is_public?: boolean | null;
   machine?: string | null;
 }
+
+// 표시 이름 — TalkTab 과 동일 규칙(대화명 있으면 그것, 없으면 alias).
+const agentName = (a: { display_name?: string | null; alias: string }) =>
+  (a.display_name && a.display_name.trim()) || a.alias;
 
 interface Profile {
   alias: string;
@@ -218,9 +223,13 @@ export function AgentsTab(props: { onGotoChat?: (alias: string) => void; onGotoM
                       </div>
                       <div class="kk-meta">
                         <div class="kk-nm">
-                          {a.alias}
+                          {agentName(a)}
                           <Show when={a.ai_type}><span class="tag">{a.ai_type}</span></Show>
                           <Show when={a.is_public}><span class="tag">공개</span></Show>
+                        </div>
+                        {/* 에이전트명(ID) — TalkTab 카드와 동일 표시. */}
+                        <div class="kk-card-sub">
+                          <span class="kk-card-alias" title="에이전트명(ID)">@{a.alias}</span>
                         </div>
                         <div class="kk-st">{a.role || a.description || "—"}</div>
                       </div>
