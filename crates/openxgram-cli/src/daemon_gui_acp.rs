@@ -182,7 +182,7 @@ fn spawn_opts_from_body(body: &CreateSessionBody) -> openxgram_acp::SpawnOpts {
     let command_override = body
         .machine
         .as_deref()
-        .and_then(|m| remote_acp_command(m, &extra_env));
+        .and_then(|m| remote_acp_command(m, &body.cwd, body.permission_mode.as_deref(), &extra_env));
     openxgram_acp::SpawnOpts {
         permission_allow,
         extra_env,
@@ -216,7 +216,7 @@ fn expand_home(cwd: &str, machine: Option<&str>) -> String {
 // ssh 프로세스의 stdio 가 ACP JSON-RPC 채널이 된다(SSH-stdio). Windows→WSL 따옴표깨짐
 // 방지 위해 bash 명령을 base64 로 전달. env(모델/thinking)는 원격 bash 에 export.
 // None = 로컬(서울) → registry 기본 spawn.
-fn remote_acp_command(machine: &str, extra_env: &[(String, String)]) -> Option<(String, Vec<String>)> {
+fn remote_acp_command(machine: &str, cwd: &str, permission_mode: Option<&str>, extra_env: &[(String, String)]) -> Option<(String, Vec<String>)> {
     use base64::Engine;
     // config-driven — ~/.openxgram/machines.json 에서 ssh_host/wsl 조회(하드코딩 제거).
     let cfg = crate::daemon_gui::machine_lookup(machine)?;
@@ -229,9 +229,21 @@ fn remote_acp_command(machine: &str, extra_env: &[(String, String)]) -> Option<(
     for (k, v) in extra_env {
         exports.push_str(&format!("export {}={}; ", k, sh_quote(v)));
     }
+    // 원격에서도 권한모드 적용 — 어댑터가 읽는 settings.local.json(override, 비파괴) 기록 +
+    // IS_SANDBOX=1(root 머신에서도 bypassPermissions 허용; ALLOW_BYPASS = !IS_ROOT || IS_SANDBOX).
+    let mode = match permission_mode.map(|s| s.trim()) {
+        Some("bypassPermissions") | Some("bypass") => "bypassPermissions",
+        Some("acceptEdits") => "acceptEdits",
+        Some("plan") => "plan",
+        _ => "default",
+    };
+    let cwd_sh = if cwd.starts_with('~') { cwd.replacen('~', "$HOME", 1) } else { cwd.to_string() };
+    let pre = format!(
+        "export IS_SANDBOX=1; mkdir -p \"{cwd_sh}/.claude\" 2>/dev/null; printf '%s' '{{\"permissions\":{{\"defaultMode\":\"{mode}\"}}}}' > \"{cwd_sh}/.claude/settings.local.json\" 2>/dev/null; "
+    );
     // PATH 에 npm global bin 동적 추가(npm prefix -g + 흔한 위치). /home/pasia 하드코딩 제거.
     let inner = format!(
-        "export PATH=\"$PATH:$(npm prefix -g 2>/dev/null)/bin:$HOME/.npm-global/bin:$HOME/.local/bin\"; {exports}exec {adapter}"
+        "export PATH=\"$PATH:$(npm prefix -g 2>/dev/null)/bin:$HOME/.npm-global/bin:$HOME/.local/bin\"; {exports}{pre}exec {adapter}"
     );
     let b64 = base64::engine::general_purpose::STANDARD.encode(inner.as_bytes());
     // ⚠ `echo B64|base64 -d|bash` 는 마지막 bash 의 stdin 이 파이프(스크립트)라 어댑터가
