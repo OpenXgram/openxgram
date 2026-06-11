@@ -628,10 +628,17 @@ export function AcpConversation(props: {
       memInjected = true;
       try {
         const rc = await invoke<any>("runtime_context", { count: String(cfg.memory_count ?? 8) });
-        const mems = (rc?.memories ?? []).map((m: any) => `[${m.kind}] ${m.content}`).join("\n");
+        const kinds: string[] = cfg.memory_kinds ?? ["fact", "decision", "rule", "reference"];
+        const sel = (rc?.memories ?? []).filter((m: any) => kinds.includes(m.kind));
+        const mems = sel.map((m: any) => `[${m.kind}] ${m.content}`).join("\n");
         if (mems) memPreamble += `[OpenXgram 기억 — 이 에이전트가 참고할 사실/결정/규칙]\n${mems}\n\n`;
         if (cfg.inject_wiki && rc?.wiki?.length) memPreamble += `[OpenXgram 위키] ${rc.wiki.map((w: any) => w.title).join(", ")}\n\n`;
-        if (memPreamble) pushBubble({ id: nextId++, kind: "note", text: `🧠 런타임: 메모리 ${rc?.memory_count ?? 0}개 주입`, time: nowClock() });
+        // 필수 규칙(게이트) — 전송 전 반드시 맨 앞에 주입.
+        if (cfg.mandatory_note?.trim()) memPreamble = `[필수 규칙 — 반드시 준수]\n${cfg.mandatory_note.trim()}\n\n${memPreamble}`;
+        // 주입 총량 상한(토큰 절감).
+        const cap = cfg.max_inject_chars ?? 6000;
+        if (cap > 0 && memPreamble.length > cap) memPreamble = memPreamble.slice(0, cap) + "\n…(주입 상한)\n\n";
+        if (memPreamble) pushBubble({ id: nextId++, kind: "note", text: `🧠 런타임: 기억 ${sel.length}개${cfg.mandatory_note?.trim() ? " + 필수규칙" : ""} 주입`, time: nowClock() });
       } catch { /* 주입 실패는 무시 */ }
     }
     // true resume: 복원/재구동 후 첫 프롬프트엔 이전 맥락을 앞에 붙여 전송(에이전트가 이어감).
