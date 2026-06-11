@@ -402,6 +402,7 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/agent-templates", get(gui_agent_templates_list))
         .route("/v1/gui/agent-templates/refresh", post(gui_agent_templates_refresh))
         .route("/v1/gui/agent-templates/apply", post(gui_agent_templates_apply))
+        .route("/v1/gui/agents/{alias}/activate", post(gui_agent_activate))
         // Discord 봇이 가입한 guild 의 channel 목록 (세션 바인딩 시 사용자가 선택)
         .route("/v1/gui/notify/discord/channels", post(gui_notify_discord_channels))
         // Discord 봇 진단 — token + permission + guild + channel 한 번에
@@ -3897,6 +3898,7 @@ async fn gui_agents_list(
         "SELECT ac.alias, ac.role, ac.description, ac.capabilities, ac.tool_list, ac.project_path, \
                 ac.group_name, ac.messenger_enabled, ac.orchestration_role, ac.special_instructions, ac.updated_at, \
                 p.classification, p.execution_mode, p.ai_type, p.is_public, p.machine, p.display_name, \
+                p.source, p.activated, \
                 (SELECT COUNT(*) FROM acp_messages am WHERE am.conv_key = ac.alias AND am.role='agent' \
                    AND am.created_at > COALESCE((SELECT last_read FROM acp_read WHERE conv_key = ac.alias), '')) AS unread \
          FROM agent_capabilities ac \
@@ -3923,7 +3925,9 @@ async fn gui_agents_list(
             "is_public": r.get::<_, Option<i64>>(14)?.map(|v| v != 0),
             "machine": r.get::<_, Option<String>>(15)?,
             "display_name": r.get::<_, Option<String>>(16)?,
-            "unread": r.get::<_, i64>(17)?,
+            "source": r.get::<_, Option<String>>(17)?,
+            "activated": r.get::<_, Option<i64>>(18)?.map(|v| v != 0),
+            "unread": r.get::<_, i64>(19)?,
         }))
     }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
         .filter_map(|r| r.ok()).collect();
@@ -4862,6 +4866,40 @@ async fn gui_agent_profile_set(
         "ai_type": ai_type, "classification": classification, "execution_mode": execution_mode,
         "machine": machine, "worktree": worktree, "is_public": is_public,
     })))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AgentActivateBody {
+    #[serde(default)]
+    activate: Option<bool>,
+}
+
+/// `POST /v1/gui/agents/{alias}/activate` — built-in 특수에이전트(xgram-ops 등) 활성/비활성 토글.
+/// activated 플래그 + messenger_enabled 를 함께 켠다(활성화해야 명부 노출·peer 통신 가능).
+/// body `{activate: bool}` 생략 시 true(활성화).
+async fn gui_agent_activate(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+    Json(body): Json<AgentActivateBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let on = body.activate.unwrap_or(true);
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
+    let n = db.conn().execute(
+        "UPDATE agent_profiles SET activated = ?2, updated_at = ?3 WHERE alias = ?1",
+        rusqlite::params![alias, on as i64, now],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("activate: {e}")})))?;
+    if n == 0 {
+        return Err((StatusCode::NOT_FOUND, Json(ErrorDto{error: format!("agent not found: {alias}")})));
+    }
+    // 활성화 시 메신저 노출(peer 통신 가능), 비활성화 시 숨김.
+    db.conn().execute(
+        "UPDATE agent_capabilities SET messenger_enabled = ?2, updated_at = ?3 WHERE alias = ?1",
+        rusqlite::params![alias, on as i64, now],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("activate caps: {e}")})))?;
+    Ok(Json(serde_json::json!({ "ok": true, "alias": alias, "activated": on })))
 }
 
 /// alias → 프로젝트 cwd 해석. hint 우선, 없으면 tmux session 의 `pane_current_path`.

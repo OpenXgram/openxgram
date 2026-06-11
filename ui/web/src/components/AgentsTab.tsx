@@ -24,6 +24,8 @@ interface AgentRow {
   ai_type?: string | null;
   is_public?: boolean | null;
   machine?: string | null;
+  source?: string | null;       // 'user' | 'built_in'
+  activated?: boolean | null;   // built_in 동봉 에이전트의 활성화 여부
 }
 
 // 표시 이름 — TalkTab 과 동일 규칙(대화명 있으면 그것, 없으면 alias).
@@ -197,6 +199,12 @@ export function AgentsTab(props: { onGotoChat?: (alias: string) => void; onGotoM
     await refetchAgents();
   }
 
+  // built-in 동봉 에이전트(xgram-ops 등) 활성/비활성 토글 → 활성화해야 명부 노출·peer 통신.
+  async function activate(alias: string, on = true) {
+    await invoke("agent_activate", { alias, activate: on });
+    await refetchAgents();
+  }
+
   return (
     <div class="kk-agents">
       <div class="kk-roster">
@@ -226,6 +234,18 @@ export function AgentsTab(props: { onGotoChat?: (alias: string) => void; onGotoM
                           {agentName(a)}
                           <Show when={a.ai_type}><span class="tag">{a.ai_type}</span></Show>
                           <Show when={a.is_public}><span class="tag">공개</span></Show>
+                          {/* built-in 동봉 에이전트: 미활성이면 활성화 버튼, 활성이면 배지. */}
+                          <Show when={a.source === "built_in" && !a.activated}>
+                            <button
+                              class="tag"
+                              style="cursor:pointer; background:#2f6a3a; color:#fff; border:none; font-weight:700;"
+                              title="이 동봉 에이전트를 활성화"
+                              onClick={(e) => { e.stopPropagation(); activate(a.alias); }}
+                            >활성화</button>
+                          </Show>
+                          <Show when={a.source === "built_in" && a.activated}>
+                            <span class="tag" style="background:#2f6a3a33; color:#7fc99a;">활성</span>
+                          </Show>
                         </div>
                         {/* 에이전트명(ID) — TalkTab 카드와 동일 표시. */}
                         <div class="kk-card-sub">

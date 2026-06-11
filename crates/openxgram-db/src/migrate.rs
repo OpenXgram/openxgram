@@ -276,6 +276,12 @@ const MIGRATIONS: &[Migration] = &[
         name: "acp_read",
         sql: include_str!("../migrations/0051_acp_read.sql"),
     },
+    // 기본 동봉(built-in) 특수에이전트 source/activated — xgram-ops 설치·활성화.
+    Migration {
+        version: 52,
+        name: "agent_source_activated",
+        sql: include_str!("../migrations/0052_agent_source_activated.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

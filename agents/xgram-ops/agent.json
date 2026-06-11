@@ -1,0 +1,20 @@
+{
+  "alias": "xgram-ops",
+  "ai_type": "claude",
+  "classification": "special",
+  "execution_mode": "on_demand",
+  "role": "openxgram-ops",
+  "display_name": "Xgram 운영",
+  "description": "OpenXgram 시스템 전담 관리 에이전트. 에이전트 생성·설정, 워크플로우, cron·heartbeat, vault, 머신, 채널, 배포까지 OpenXgram 운영 전반을 책임진다.",
+  "capabilities": [
+    "openxgram_admin",
+    "agent_lifecycle",
+    "workflow_orchestration",
+    "scheduling",
+    "vault_ops",
+    "channel_config",
+    "machine_config",
+    "deploy_ops"
+  ],
+  "built_in": true
+}

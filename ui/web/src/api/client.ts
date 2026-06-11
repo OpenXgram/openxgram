@@ -116,6 +116,7 @@ const ROUTES: Record<string, Route> = {
  // Phase 2-D — 에이전트 프로필 (classification/execution_mode/ai_type/worktree/public + folder/group/role)
  agent_profile_get: { method: "GET", path: "/agent/{alias}/profile"},
  agent_profile_set: { method: "POST", path: "/agent/{alias}/profile", body: true},
+ agent_activate: { method: "POST", path: "/agents/{alias}/activate", body: true},
  // rc.245 — 결정적 세션 매핑 사용자 override (PATCH; body.session_identifier = string|null)
  peer_set_session: { method: "PATCH", path: "/peers/{alias}/session", body: true},
 

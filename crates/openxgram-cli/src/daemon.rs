@@ -180,6 +180,14 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
         Err(e) => tracing::warn!(error = %e, "rc.201 auto-seed 실패 (계속)"),
     }
 
+    // 기본 동봉(built-in) 특수에이전트 seed — xgram-ops(OpenXgram 운영 전담).
+    // 설치됨·미활성(activated=0)으로 등록 → 마스터가 GUI 활성화 버튼으로 동작. idempotent.
+    match seed_builtin_agents(&opts.data_dir) {
+        Ok(n) if n > 0 => println!("  ✓ built-in 에이전트 seed: {n}개 (xgram-ops 등, 미활성 — GUI에서 활성화)"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "built-in 에이전트 seed 실패 (계속)"),
+    }
+
     // rc.268 — auto-seed 주기 tick: rc.201 auto-seed 는 startup 1회뿐이라, daemon 시작 이후
     // 새로 만든 tmux LLM 세션이 재시작 전까지 안 뜨던 본질 결함을 fix. 30초마다 재실행하여
     // 새 LLM tmux 세션을 재시작 없이 자동 등록 (auto_seed_local_tmux_agents 재사용 — INSERT OR IGNORE 라 idempotent).
@@ -1258,6 +1266,61 @@ fn auto_seed_local_tmux_agents(data_dir: &std::path::Path) -> anyhow::Result<usi
         );
     }
     tracing::info!(seeded = seeded, total_sessions = local_sessions.len(), "rc.201 auto-seed 완료");
+    Ok(seeded)
+}
+
+/// 기본 동봉(built-in) 특수에이전트를 seed. xgram-ops 등 OpenXgram 운영 에이전트를
+/// agent_capabilities + agent_profiles 양 테이블에 INSERT OR IGNORE (idempotent —
+/// 재시작·활성화 상태 보존). source='built_in', activated=0 으로 설치 → GUI 활성화 버튼이 1로.
+/// 패키지 정본은 repo `agents/<name>/agent.json` + `instructions.md` — 컴파일 시 동봉.
+fn seed_builtin_agents(data_dir: &std::path::Path) -> anyhow::Result<usize> {
+    // (agent.json, instructions.md) 쌍. 신규 built-in 추가 시 여기에 한 줄.
+    const BUILTINS: &[(&str, &str)] = &[(
+        include_str!("../../../agents/xgram-ops/agent.json"),
+        include_str!("../../../agents/xgram-ops/instructions.md"),
+    )];
+    let mut db = openxgram_db::Db::open(openxgram_db::DbConfig {
+        path: openxgram_core::paths::db_path(data_dir),
+        ..Default::default()
+    })?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut seeded = 0usize;
+    for (meta_json, instructions) in BUILTINS {
+        let meta: serde_json::Value = match serde_json::from_str(meta_json) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(error = %e, "built-in agent.json 파싱 실패 — skip");
+                continue;
+            }
+        };
+        let alias = meta.get("alias").and_then(|v| v.as_str()).unwrap_or("");
+        if alias.is_empty() {
+            continue;
+        }
+        let role = meta.get("role").and_then(|v| v.as_str()).unwrap_or("agent");
+        let description = meta.get("description").and_then(|v| v.as_str()).unwrap_or("");
+        let ai_type = meta.get("ai_type").and_then(|v| v.as_str()).unwrap_or("claude");
+        let classification = meta.get("classification").and_then(|v| v.as_str()).unwrap_or("special");
+        let execution_mode = meta.get("execution_mode").and_then(|v| v.as_str()).unwrap_or("on_demand");
+        let display_name = meta.get("display_name").and_then(|v| v.as_str());
+        let capabilities = meta.get("capabilities").map(|c| c.to_string()).unwrap_or_else(|| "[]".to_string());
+        // agent_capabilities — messenger_enabled=0 (활성화 전엔 peer 통신 비활성), special_instructions=지침 본문.
+        let c1 = db.conn().execute(
+            "INSERT OR IGNORE INTO agent_capabilities (alias, role, description, capabilities, messenger_enabled, special_instructions, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6)",
+            rusqlite::params![alias, role, description, capabilities, instructions, now],
+        )?;
+        // agent_profiles — source='built_in', activated=0 (설치됨·미활성).
+        let c2 = db.conn().execute(
+            "INSERT OR IGNORE INTO agent_profiles (alias, ai_type, classification, execution_mode, display_name, source, activated, is_public, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, 'built_in', 0, 0, ?6, ?6)",
+            rusqlite::params![alias, ai_type, classification, execution_mode, display_name, now],
+        )?;
+        if c1 > 0 || c2 > 0 {
+            seeded += 1;
+            tracing::info!(alias = %alias, "built-in 에이전트 seed 완료 (미활성)");
+        }
+    }
     Ok(seeded)
 }
 
