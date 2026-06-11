@@ -132,6 +132,80 @@ pub fn spawn_all_with_data_dir(db: Arc<Mutex<Db>>, data_dir: PathBuf) {
             tokio::time::sleep(Duration::from_secs(300)).await;
         }
     });
+
+    // 워크플로우 cron 스케줄러 — enabled + cron_expr 워크플로우를 발화시점 지나면 자동 run.
+    // 엔진은 수동 run(gui_workflow_run)과 동일(crate::workflow_engine::run_workflow). 기존 인프라 배선만 추가.
+    let db_wf = db.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(45)).await; // startup race 방지
+        loop {
+            if let Err(e) = workflow_cron_tick(&db_wf).await {
+                tracing::warn!("workflow_cron tick: {e}");
+            }
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }
+    });
+}
+
+/// 워크플로우 cron 스케줄러 tick — enabled + cron_expr 워크플로우 중 발화 시점이 지난 것을 run.
+/// 기존 엔진(workflow_engine::run_workflow) + scheduled::compute_next_due_kst 재사용(재구현 X).
+async fn workflow_cron_tick(
+    db: &std::sync::Arc<tokio::sync::Mutex<openxgram_db::Db>>,
+) -> anyhow::Result<()> {
+    use openxgram_orchestration::{compute_next_due_kst, kst_now_epoch};
+    // 1) 발화 대상 수집 (락 짧게).
+    let to_fire: Vec<(String, String)> = {
+        let mut g = db.lock().await;
+        let now = kst_now_epoch();
+        let base = now - 70; // 1 tick(60s) + margin
+        let mut stmt = g.conn().prepare(
+            "SELECT id, cron_expr, yaml_body FROM workflows \
+             WHERE enabled=1 AND cron_expr IS NOT NULL AND cron_expr != ''",
+        )?;
+        let rows: Vec<(String, String, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .filter_map(|x| x.ok())
+            .collect();
+        drop(stmt);
+        let mut out = Vec::new();
+        for (id, cron_expr, yaml_body) in rows {
+            // base 이후 다음 발화 시점이 now 이하 = 최근 70초 내 발화 예정이었음.
+            let due = matches!(compute_next_due_kst(&cron_expr, base), Ok(Some(next)) if next <= now);
+            if !due {
+                continue;
+            }
+            // 중복 발화 방지 — 최근 70초 내 run 이 이미 있으면 skip (tick 윈도우 겹침 대비).
+            let recent: i64 = g
+                .conn()
+                .query_row(
+                    "SELECT COUNT(*) FROM workflow_runs WHERE workflow_id=?1 \
+                     AND started_at > datetime('now','-70 seconds')",
+                    rusqlite::params![id],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            if recent == 0 {
+                out.push((id, yaml_body));
+            }
+        }
+        out
+    };
+    // 2) 발화 — gui_workflow_run 과 동일 패턴.
+    for (id, yaml_body) in to_fire {
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let mut g = db.lock().await;
+        if let Err(e) = g.conn().execute(
+            "INSERT INTO workflow_runs (id, workflow_id, started_at, status, trigger_source) \
+             VALUES (?1, ?2, datetime('now'), 'running', 'cron')",
+            rusqlite::params![run_id, id],
+        ) {
+            tracing::warn!("workflow_cron insert run: {e}");
+            continue;
+        }
+        let result = crate::workflow_engine::run_workflow(&mut *g, &id, &run_id, &yaml_body).await;
+        tracing::info!(workflow = %id, run = %run_id, status = %result.status, "cron 워크플로우 발화");
+    }
+    Ok(())
 }
 
 /// rc.179 — Tailscale 자동 peer discovery.
