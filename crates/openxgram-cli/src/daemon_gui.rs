@@ -443,6 +443,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // UI-MESSENGER-SPEC v1.4 §20 — 오케스트레이션 워크플로 (W-1 ~ W-10)
         .route("/v1/gui/workflows", get(gui_workflows_list).post(gui_workflow_upsert))
         .route("/v1/gui/workflows/plan", post(gui_workflow_plan))
+        // OpenXgram 런타임(하네스) — 제어/설정/메모리주입 레이어.
+        .route("/v1/gui/runtime/config", get(gui_runtime_config_get).post(gui_runtime_config_set))
+        .route("/v1/gui/runtime/context", get(gui_runtime_context))
         .route("/v1/gui/workflows/{id}", get(gui_workflow_get).post(gui_workflow_delete))
         .route("/v1/gui/workflows/{id}/run", post(gui_workflow_run))
         .route("/v1/gui/workflows/{id}/runs", get(gui_workflow_runs))
@@ -6487,6 +6490,86 @@ async fn gui_workflow_delete(
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
     }
     Ok(Json(serde_json::json!({"deleted": id})))
+}
+
+// ── OpenXgram 런타임(하네스) — 컴포저↔어댑터 사이 제어/설정/메모리주입 레이어 ──
+// config 는 identity_settings(key='runtime_config') 에 JSON 저장. context 는 주입·관찰용
+// L2 메모리 + 위키 제목을 반환(토큰예산 = count 제한). 슬래시/권한/주입을 이 설정으로 통합.
+
+fn runtime_config_default() -> serde_json::Value {
+    serde_json::json!({
+        "perm_default": "bypassPermissions",
+        "model_default": "default",
+        "thinking_default": "high",
+        "inject_memory": true,
+        "memory_count": 8,
+        "inject_wiki": false
+    })
+}
+
+async fn gui_runtime_config_get(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use rusqlite::OptionalExtension;
+    let mut db = state.db.lock().await;
+    let stored: Option<String> = db.conn().query_row(
+        "SELECT value FROM identity_settings WHERE key='runtime_config'", [], |r| r.get(0),
+    ).optional().ok().flatten();
+    let config = stored
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .unwrap_or_else(runtime_config_default);
+    Ok(Json(serde_json::json!({ "config": config })))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RuntimeConfigBody { config: serde_json::Value }
+
+async fn gui_runtime_config_set(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<RuntimeConfigBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let s = body.config.to_string();
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO identity_settings(key,value,updated_at) VALUES('runtime_config',?1,?2) \
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        rusqlite::params![s, now],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("save: {e}")})))?;
+    Ok(Json(serde_json::json!({ "ok": true, "config": body.config })))
+}
+
+/// `GET /v1/gui/runtime/context?count=N` — 주입·관찰용 L2 메모리 + 위키 제목(토큰예산=count).
+async fn gui_runtime_context(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let count: i64 = q.get("count").and_then(|s| s.parse().ok()).unwrap_or(8).clamp(0, 50);
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare("SELECT kind, content FROM memories ORDER BY rowid DESC LIMIT ?1")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("mem: {e}")})))?;
+    let mems: Vec<serde_json::Value> = stmt.query_map(rusqlite::params![count], |r| Ok(serde_json::json!({
+        "kind": r.get::<_, String>(0)?, "content": r.get::<_, String>(1)?,
+    }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("memq: {e}")})))?
+        .filter_map(|x| x.ok()).collect();
+    drop(stmt);
+    let mut stmt2 = db.conn().prepare("SELECT id, title FROM wiki_pages ORDER BY rowid DESC LIMIT 12")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("wiki: {e}")})))?;
+    let wiki: Vec<serde_json::Value> = stmt2.query_map([], |r| Ok(serde_json::json!({
+        "id": r.get::<_, String>(0)?, "title": r.get::<_, String>(1)?,
+    }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("wikiq: {e}")})))?
+        .filter_map(|x| x.ok()).collect();
+    drop(stmt2);
+    Ok(Json(serde_json::json!({
+        "memories": mems, "wiki": wiki,
+        "memory_count": mems.len(), "wiki_count": wiki.len(),
+    })))
 }
 
 #[derive(Debug, serde::Deserialize)]

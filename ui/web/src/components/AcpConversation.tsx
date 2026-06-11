@@ -322,6 +322,9 @@ export function AcpConversation(props: {
   const [streaming, setStreaming] = createSignal(false);
   // 응답 중(busy)에 입력한 후속 메시지 대기열 — 현재 턴 종료 시 순서대로 자동 전송.
   const [queue, setQueue] = createSignal<string[]>([]);
+  // 런타임(하네스) 설정 — 메모리 주입 등. 백엔드 identity_settings.
+  const [rtCfg] = createResource(() => invoke<any>("runtime_config_get").then((r) => r?.config).catch(() => null));
+  let memInjected = false; // 세션당 1회 OpenXgram 메모리 주입(첫 프롬프트).
 
   let nextId = 1;
   // 마지막 spawn 인자 — 칩 변경 시 같은 에이전트로 새 옵션 재구동(대화 보존)에 사용.
@@ -570,6 +573,7 @@ export function AcpConversation(props: {
       setSessionId(r.sessionId);
       setActiveAgent(props.preset?.displayName || opts?.label || agent);
       if (!opts?.keepHistory) {
+        memInjected = false; // 새 세션 → 메모리 재주입 허용.
         setBubbles([]);
         setUsedTok(0);
         setCtxSize(0);
@@ -616,9 +620,23 @@ export function AcpConversation(props: {
     void recordMsg("me", text); // 사용자 메시지 영속화(실제 입력만).
     setDraft("");
     curAgentBubbleId = null;
+    // 런타임 메모리 주입(하네스) — inject_memory 면 세션 첫 프롬프트에 OpenXgram L2 메모리를
+    // 앞에 붙인다(토큰예산=memory_count). 차별화: 에이전트가 OpenXgram 기억을 자기 맥락으로 씀.
+    let memPreamble = "";
+    const cfg = rtCfg();
+    if (cfg?.inject_memory && !memInjected) {
+      memInjected = true;
+      try {
+        const rc = await invoke<any>("runtime_context", { count: String(cfg.memory_count ?? 8) });
+        const mems = (rc?.memories ?? []).map((m: any) => `[${m.kind}] ${m.content}`).join("\n");
+        if (mems) memPreamble += `[OpenXgram 기억 — 이 에이전트가 참고할 사실/결정/규칙]\n${mems}\n\n`;
+        if (cfg.inject_wiki && rc?.wiki?.length) memPreamble += `[OpenXgram 위키] ${rc.wiki.map((w: any) => w.title).join(", ")}\n\n`;
+        if (memPreamble) pushBubble({ id: nextId++, kind: "note", text: `🧠 런타임: 메모리 ${rc?.memory_count ?? 0}개 주입`, time: nowClock() });
+      } catch { /* 주입 실패는 무시 */ }
+    }
     // true resume: 복원/재구동 후 첫 프롬프트엔 이전 맥락을 앞에 붙여 전송(에이전트가 이어감).
     // UI 버블·DB 기록엔 사용자 실제 입력(text)만, 전송 텍스트(sendText)에만 맥락 포함.
-    const sendText = pendingContext ? `${pendingContext}현재 요청: ${text}` : text;
+    const sendText = memPreamble + (pendingContext ? `${pendingContext}현재 요청: ${text}` : text);
     if (pendingContext) {
       pushBubble({ id: nextId++, kind: "note", text: "↻ 이전 맥락을 에이전트에 전달하여 이어감", time: nowClock() });
       pendingContext = null;

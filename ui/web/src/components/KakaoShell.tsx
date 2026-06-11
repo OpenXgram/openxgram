@@ -6,16 +6,18 @@ import { ConfigTab } from "./ConfigTab";
 import { AgentsTab } from "./AgentsTab";
 import { FlowTab } from "./FlowTab";
 import { MarketTab } from "./MarketTab";
+import { RuntimeTab } from "./RuntimeTab";
 
 // Phase 1 — 카카오톡 셸. 정본 디자인: _mockups/kakao-mockup.html
 // 하단 6탭. 본문은 기존 실제 컴포넌트를 그대로 끼움(대화·위키·에이전트·설정).
 // 흐름은 Phase 4에서 네이티브 패널로 교체 (현재 안내 자리). 마켓은 Phase 6 네이티브(MarketTab).
-type KkTab = "agents" | "chat" | "flow" | "wiki" | "market" | "settings";
+type KkTab = "agents" | "chat" | "flow" | "runtime" | "wiki" | "market" | "settings";
 
 const TABS: { id: KkTab; ic: string; label: string }[] = [
   { id: "agents", ic: "🙂", label: "에이전트" },
   { id: "chat", ic: "💬", label: "대화" },
   { id: "flow", ic: "🔀", label: "워크플로우" },
+  { id: "runtime", ic: "🧠", label: "런타임" },
   { id: "wiki", ic: "📚", label: "위키" },
   { id: "market", ic: "🌐", label: "마켓" },
   { id: "settings", ic: "⚙️", label: "설정" },
@@ -48,6 +50,9 @@ export function KakaoShell(props: { onLogout?: () => void }) {
           </Show>
           <Show when={tab() === "settings"}>
             <ConfigTab />
+          </Show>
+          <Show when={tab() === "runtime"}>
+            <div class="kk-embed"><RuntimeTab /></div>
           </Show>
           <Show when={tab() === "flow"}>
             <FlowTab />
