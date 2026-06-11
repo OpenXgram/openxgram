@@ -322,8 +322,10 @@ export function AcpConversation(props: {
   const [streaming, setStreaming] = createSignal(false);
   // 응답 중(busy)에 입력한 후속 메시지 대기열 — 현재 턴 종료 시 순서대로 자동 전송.
   const [queue, setQueue] = createSignal<string[]>([]);
-  // 런타임(하네스) 설정 — 메모리 주입 등. 백엔드 identity_settings.
-  const [rtCfg] = createResource(() => invoke<any>("runtime_config_get").then((r) => r?.config).catch(() => null));
+  // 런타임(하네스) 설정 — 이 에이전트별(alias) 설정, 없으면 전역 기본값(백엔드 폴백).
+  const [rtCfg] = createResource(() =>
+    invoke<any>("runtime_config_get", props.preset?.label ? { alias: props.preset.label } : {})
+      .then((r) => r?.config).catch(() => null));
   let memInjected = false; // 세션당 1회 OpenXgram 메모리 주입(첫 프롬프트).
 
   let nextId = 1;

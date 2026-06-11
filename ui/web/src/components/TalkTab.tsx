@@ -235,9 +235,10 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
     };
     const onl = (a: AgentRow) => (isOnline(peerMap().get(a.alias.toLowerCase())?.last_seen) ? 1 : 0);
     const ur = (a: AgentRow) => a.unread ?? 0;
+    void onl; void ur; // (정렬 단순화로 미사용 — 온라인 점·안읽음 배지는 렌더에서 직접 사용)
     for (const k of Object.keys(by)) {
-      // 안읽음 있는 카드 최상단 → 안읽음 수 → 온라인 → 최근시각.
-      by[k].sort((x, y) => ur(y) - ur(x) || onl(y) - onl(x) || ts(y) - ts(x));
+      // 최신순(마지막 메시지 최근 먼저) — 단순·안정. 안읽음은 배지로만 표시(정렬 안 흔듦).
+      by[k].sort((x, y) => ts(y) - ts(x));
     }
     return by;
   });
@@ -313,15 +314,9 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
     setAcpMode(false);
     setSelected(alias);
     setMobileChat(true);
-    // 대화 열람 = 읽음 처리 → 배지 제거. convKey = alias.
-    void (async () => {
-      try {
-        await invoke("acp_conv_read", { key: alias });
-        await refetchAgents();
-      } catch {
-        /* 읽음 처리 실패는 무시 */
-      }
-    })();
+    // 대화 열람 = 읽음 처리(백엔드 기록만). refetchAgents 호출 금지 — 로스터 전체 재렌더 +
+    // 안읽음 클리어 재정렬로 선택 에이전트가 스크롤에서 사라지던 버그. 배지는 다음 자연 갱신에 반영.
+    void invoke("acp_conv_read", { key: alias }).catch(() => {});
   }
 
   // ⚡ 에이전트 미리 정하지 않고 ACP 어댑터 picker 진입(기존 경로 유지).
