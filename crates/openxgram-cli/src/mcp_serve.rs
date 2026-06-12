@@ -145,13 +145,34 @@ impl OpenxgramDispatcher {
             Ok(u) if !u.trim().is_empty() => mp_builder.base_url(u),
             _ => mp_builder,
         };
-        // 마켓 (c)갈래 — 내부 ledger 결제 게이트웨이 (NoopGateway 가짜 영수증 대체).
-        // funded on-chain wallet/RPC 부재 → sub_wallets 실잔액 검증·차감 기반. 같은
-        // db.sqlite 에 별도 연결(WAL + busy_timeout 으로 동시 접근 안전).
-        let ledger_gateway = std::sync::Arc::new(
-            crate::ledger_gateway::LedgerPaymentGateway::open(db_path(data_dir))
-                .context("ledger payment gateway 생성 실패")?,
-        );
+        // 마켓 (c)갈래 — 결제 게이트웨이를 **설정 기반**으로 선택 (가짜 성공 금지).
+        //   - 온체인: `XGRAM_CHAIN_RPC`(체인 RPC URL) env **그리고** vault 마스터 키 비밀번호
+        //     (`XGRAM_KEYSTORE_PASSWORD`, 위 `vault_password`) 가 둘 다 있을 때만.
+        //     `OnchainPaymentGateway` 가 submit_intent 로 실제 USDC transfer 제출 — 자금/RPC
+        //     부재 시 RPC reject → 실제 에러 반환(silent fallback 없음).
+        //   - 그 외(기본): 기존 `LedgerPaymentGateway`(내부 원장). env 미설정이 기본이므로
+        //     기존 동작 무변경, 온체인은 opt-in.
+        // funded on-chain wallet/RPC 부재 → 내부 ledger 는 sub_wallets 실잔액 검증·차감 기반.
+        // 같은 db.sqlite 에 별도 연결(WAL + busy_timeout 으로 동시 접근 안전).
+        let chain_rpc = std::env::var("XGRAM_CHAIN_RPC")
+            .ok()
+            .filter(|u| !u.trim().is_empty());
+        let payment_gateway: std::sync::Arc<dyn openxgram_marketplace::PaymentGateway> =
+            match (chain_rpc, vault_password.as_ref()) {
+                (Some(rpc), Some(pw)) => std::sync::Arc::new(
+                    crate::onchain_gateway::OnchainPaymentGateway::open(
+                        data_dir.to_path_buf(),
+                        db_path(data_dir),
+                        rpc,
+                        pw.clone(),
+                    )
+                    .context("온체인 payment gateway 생성 실패")?,
+                ),
+                _ => std::sync::Arc::new(
+                    crate::ledger_gateway::LedgerPaymentGateway::open(db_path(data_dir))
+                        .context("ledger payment gateway 생성 실패")?,
+                ),
+            };
         // 마켓 (d)갈래 — free-tier 게이트 (무료 할당량). 결제 전에 무료 잔여를 먼저 소비 시도.
         // 무료 잔여 있으면 과금 없이 통과, 소진이면 (c)갈래 ledger 결제로. 별도 DB 연결.
         let free_quota_gate = std::sync::Arc::new(
@@ -164,7 +185,7 @@ impl OpenxgramDispatcher {
                     .build()
                     .context("marketplace client 생성 실패")?,
                 openxgram_marketplace::SpendPolicy::conservative(),
-                ledger_gateway,
+                payment_gateway,
             )
             .with_free_quota(free_quota_gate),
         );
@@ -742,6 +763,19 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         "maxPriceUsdcMicro": {"type": "integer", "description": "최대 지불 의향(microUSDC). 생략 시 서비스 정가."}
                     },
                     "required": ["agentId", "serviceId", "input"]
+                }),
+            },
+            // 검색→연결 직결 — 마켓 에이전트를 로컬 peer 디렉토리에 등록(친구추가, idempotent).
+            // 마켓 디렉토리 응답엔 서명용 pubkey/eth_address 가 없으므로(Agent 구조체에 없음)
+            // 실시간 서명 메시징은 안 됨 — 그 사실을 정직히 반환(messaging_ready=false) +
+            // 상호작용은 purchase_service 안내. 가짜 성공 금지.
+            ToolSpec {
+                name: "marketplace_connect".into(),
+                description: "마켓 검색 결과의 에이전트를 로컬 peer 디렉토리에 연결(등록). idempotent — 이미 있으면 재사용. 디렉토리에 서명키가 없으면 실시간 메시징 대신 purchase_service 로 사용 안내. agentId.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": { "agentId": {"type": "string"} },
+                    "required": ["agentId"]
                 }),
             },
         ]);
@@ -2607,6 +2641,82 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 })
                 .map_err(internal)?;
                 serde_json::to_value(r).map_err(internal)
+            }
+            // 검색→연결 직결: 마켓 에이전트를 로컬 peer 디렉토리에 idempotent 등록.
+            //   1) get_agent 로 디렉토리에서 실제 에이전트 정보 조회(미배포/미존재면 실제 HTTP 에러).
+            //   2) PeerStore 에 등록 — alias 충돌 시 재사용(idempotent). 디렉토리엔 서명용
+            //      pubkey/eth_address 가 없으므로(Agent 구조체에 필드 없음), 실시간 서명 메시징은
+            //      불가. 따라서 public_key_hex 는 `mkt:<agent_id>` 결정적 placeholder(UNIQUE 충족),
+            //      note 에 agent_id + 사용법(purchase_service) 기록.
+            //   3) 실제로 무엇이 됐는지 정직히 반환(messaging_ready=false). 가짜 성공 금지.
+            "marketplace_connect" => {
+                use openxgram_peer::{PeerRole, PeerStore};
+                let agent_id = args
+                    .get("agentId")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'agentId'"))?
+                    .to_string();
+
+                // 1) 디렉토리 조회 — 미배포/미존재면 실제 에러(가짜 성공 없음).
+                let tools = self.marketplace_tools.clone();
+                let handle = tokio::runtime::Handle::current();
+                let agent_id_q = agent_id.clone();
+                let agent = tokio::task::block_in_place(|| {
+                    handle.block_on(async move { tools.get_agent(&agent_id_q).await })
+                })
+                .map_err(internal)?;
+
+                // 2) peer 등록 (idempotent). alias 우선순위: 표시명 → 충돌/빈값이면 agent_id.
+                //    placeholder pubkey 로 UNIQUE 제약 충족. address 에 agent_id 기록.
+                let placeholder_pubkey = format!("mkt:{}", agent.id.as_str());
+                let note = format!(
+                    "marketplace agent_id={} ({}). 디렉토리에 서명키 없음 — 실시간 메시징 대신 purchase_service 로 사용.",
+                    agent.id.as_str(),
+                    agent.name
+                );
+                let mut store = PeerStore::new(&mut self.db);
+
+                // idempotent: 동일 placeholder pubkey(=같은 마켓 에이전트)면 기존 peer 재사용.
+                let existing = store
+                    .get_by_public_key(&placeholder_pubkey)
+                    .map_err(internal)?;
+                let (peer_alias, reused) = if let Some(p) = existing {
+                    (p.alias, true)
+                } else {
+                    // alias 충돌 회피: 표시명이 비었거나 이미 점유면 agent_id 사용.
+                    let preferred = if agent.name.trim().is_empty() {
+                        agent.id.as_str().to_string()
+                    } else {
+                        agent.name.clone()
+                    };
+                    let alias = match store.get_by_alias(&preferred).map_err(internal)? {
+                        Some(_) => agent.id.as_str().to_string(),
+                        None => preferred,
+                    };
+                    store
+                        .add(
+                            &alias,
+                            &placeholder_pubkey,
+                            agent.id.as_str(),
+                            PeerRole::Secondary,
+                            Some(&note),
+                        )
+                        .map_err(internal)?;
+                    (alias, false)
+                };
+
+                serde_json::to_value(json!({
+                    "connected": true,
+                    "reused": reused,
+                    "peer_alias": peer_alias,
+                    "agent_id": agent.id.as_str(),
+                    "agent_name": agent.name,
+                    // 디렉토리에 서명키가 없어 실시간 서명 메시징은 불가 — 정직히 알림.
+                    "messaging_ready": false,
+                    "how_to_use": "이 마켓 에이전트와 상호작용은 purchase_service(agentId, serviceId, input) 로 서비스를 구매(job 발주)하세요. peer_send 직접 메시징은 디렉토리에 서명키가 없어 지원되지 않습니다.",
+                    "note": note
+                }))
+                .map_err(internal)
             }
 
             other => Err(JsonRpcError {

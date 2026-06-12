@@ -33,6 +33,7 @@ pub mod import_app;
 pub mod init;
 pub mod invite;
 pub mod ledger_gateway;
+pub mod onchain_gateway;
 pub mod link;
 pub mod mcp_install;
 pub mod mcp_serve;
