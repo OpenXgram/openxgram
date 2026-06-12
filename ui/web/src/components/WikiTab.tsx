@@ -108,6 +108,20 @@ export function WikiTab() {
     },
   );
   const openById = (pid: string) => { const p = (pages() ?? []).find((x) => x.id === pid); if (p) void openPage(p); };
+  // CoT 자기구축 — 소스 텍스트를 에이전트가 위키 페이지로 정리·연결.
+  const [ingesting, setIngesting] = createSignal(false);
+  async function ingest() {
+    const src = window.prompt("위키로 정리할 소스 텍스트를 붙여넣으세요 (개념·문서·노트):");
+    if (!src || !src.trim()) return;
+    setIngesting(true);
+    try {
+      const r = await invoke<{ count: number; ingested: { title: string; links: number }[] }>("wiki_ingest", { source: src });
+      window.alert(`✅ ${r.count}개 페이지 생성/갱신:\n${(r.ingested || []).map((p) => `· ${p.title} (링크 ${p.links})`).join("\n")}`);
+      await refetchPages();
+    } catch (e) {
+      window.alert(`생성 실패: ${(e as Error).message}`);
+    } finally { setIngesting(false); }
+  }
   const [bodyLoading, setBodyLoading] = createSignal(false);
   const [bodyError, setBodyError] = createSignal<string | null>(null);
   const [editing, setEditing] = createSignal(false);
@@ -232,6 +246,10 @@ export function WikiTab() {
         <div class="bh">
           <h2>📚 LLM 위키</h2>
           <span class="sub">Karpathy 방식 · 기록과 기억 + 자기개선</span>
+          <span style="flex:1;" />
+          <button class="wbtn" type="button" disabled={ingesting()} onClick={ingest} title="소스 텍스트를 에이전트가 위키 페이지로 정리·연결">
+            {ingesting() ? "🤖 생성 중…(수십초)" : "🤖 소스로 자동생성"}
+          </button>
         </div>
         <Show when={open()} fallback={
         <div class="bb">
