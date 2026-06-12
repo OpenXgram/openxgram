@@ -60,6 +60,11 @@ pub struct DetectedSession {
     /// portal 의존 제거 — OpenXgram 데몬이 자기 머신에서 직접 집계 (per-daemon self-contained).
     #[serde(default)]
     pub worktrees: Vec<Worktree>,
+    /// rc.281 — 이 tmux 세션 active pane 의 작업 폴더(`#{pane_current_path}`).
+    /// TalkTab 정보 패널이 "현재 대화의 cwd 에서 실행 중인 tmux 세션" 을 cwd 매칭으로 찾는 소스.
+    /// 로컬 tmux 만 채움(cross-machine 은 None). 캡처 실패 시 None.
+    #[serde(default)]
+    pub cwd: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -223,6 +228,17 @@ fn detect_tmux() -> Vec<DetectedSession> {
             .get(&alias.to_lowercase())
             .map(|p| git_worktrees(p))
             .unwrap_or_default();
+        // rc.281 — 세션 active pane 의 작업 폴더(cwd). TalkTab 정보 패널 cwd 매칭 소스.
+        //   `tmux display-message -p -t <name>:0 #{pane_current_path}` — 실패/공백이면 None.
+        let cwd = Command::new("tmux")
+            .args(["display-message", "-p", "-t", &format!("{name}:0"), "#{pane_current_path}"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| {
+                let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                if s.is_empty() { None } else { Some(s) }
+            });
         // session 자체
         sessions.push(DetectedSession {
             kind: SessionKind::Tmux,
@@ -239,21 +255,27 @@ fn detect_tmux() -> Vec<DetectedSession> {
             last_active_at: None,
             agent_id: agent_id.clone(),
             worktrees: worktrees.clone(),
+            cwd: cwd.clone(),
         });
         // tmux windows 도 별개 entry 로 enumerate (starian-portal 같이 windows 가 = 사용자가 보는 터미널)
         if windows > 1 {
             let win_out = Command::new("tmux")
-                .args(["list-windows", "-t", &name, "-F", "#{window_index}|#{window_name}|#{window_active}"])
+                .args(["list-windows", "-t", &name, "-F", "#{window_index}|#{window_name}|#{window_active}|#{pane_current_path}"])
                 .output();
             if let Ok(wo) = win_out {
                 if wo.status.success() {
                     let ws = String::from_utf8_lossy(&wo.stdout);
                     for wl in ws.lines() {
-                        let wp: Vec<&str> = wl.splitn(3, '|').collect();
+                        let wp: Vec<&str> = wl.splitn(4, '|').collect();
                         if wp.len() < 3 { continue; }
                         let idx = wp[0];
                         let wname = wp[1];
                         let active = wp[2] != "0";
+                        // rc.281 — window active pane 의 작업 폴더(cwd). 없으면 세션 cwd 폴백.
+                        let win_cwd = wp.get(3)
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .or_else(|| cwd.clone());
                         sessions.push(DetectedSession {
                             kind: SessionKind::Tmux,
                             identifier: format!("tmux:{name}:{idx}"),
@@ -266,6 +288,7 @@ fn detect_tmux() -> Vec<DetectedSession> {
                             // rc.234 — window 는 세션과 같은 에이전트. worktree 는 세션 entry 에만(중복 git 호출 방지).
                             agent_id: agent_id.clone(),
                             worktrees: Vec::new(),
+                            cwd: win_cwd,
                         });
                     }
                 }
@@ -431,6 +454,7 @@ fn detect_claude_projects() -> Vec<DetectedSession> {
             last_active_at,
             agent_id: None,
             worktrees: Vec::new(),
+            cwd: None, // claude_project — tmux pane 아님(현재 비활성). cwd 매칭 비대상.
         });
     }
     } // for projects_dir in dirs
@@ -530,6 +554,7 @@ fn detect_processes() -> Vec<DetectedSession> {
             last_active_at: Some(format!("etime {etime}")),
             agent_id: None,
             worktrees: Vec::new(),
+            cwd: None, // proc — tmux pane 아님. cwd 매칭 비대상.
         });
     }
     sessions

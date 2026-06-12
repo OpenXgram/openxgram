@@ -54,6 +54,8 @@ interface DetectedSession {
   agent_id: string | null;
   // rc.228 — 세션에 nested 된 git worktree (path/branch). 패널 워크트리 섹션 소스.
   worktrees?: { path: string; branch?: string | null }[];
+  // rc.281 — 이 tmux 세션 active pane 의 작업 폴더(`#{pane_current_path}`). cwd 매칭 소스.
+  cwd?: string | null;
 }
 interface SessionsDto {
   machine: { hostname: string; alias: string; tailscale_ip: string | null };
@@ -271,14 +273,23 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
   // selected 변경 시 정보 패널 닫음(다른 에이전트로 이동하면 상태 초기화).
   createEffect(() => { selected(); setInfoOpen(false); });
 
-  // 선택 에이전트의 tmux 세션 — sessions 라우트에서 agent_id 또는 display/identifier 가 alias 와 매칭되는 것.
-  //   tmux kind 만(목업 "실행 중 tmux"). 매칭 데이터 없으면 빈 배열 → 패널은 빈 상태 힌트 렌더.
+  // 선택 에이전트의 tmux 세션 — rc.281: 현재 대화의 **cwd(작업 폴더)** 매칭 우선 + alias 매칭 보조.
+  //   대화(AcpConversation)는 선택 에이전트의 project_path 를 cwd 로 구동(line 259). 그 cwd 에서
+  //   실행 중인 tmux 세션을 정보 패널에 보여줘야 한다(반복 지적 문제). 이전엔 alias 만 비교해
+  //   세션명≠alias 면 안 보였음. 이제 세션 cwd(`#{pane_current_path}`) == 대화 cwd 면 표시.
+  //   tmux kind 만. 매칭 없으면 빈 배열 → 패널 빈 상태 힌트.
+  const normPath = (p: string) => p.replace(/\/+$/, "");
   const selSessions = createMemo<DetectedSession[]>(() => {
     const alias = (selected() ?? "").toLowerCase();
     if (!alias) return [];
+    const convoCwd = normPath((selAgent()?.project_path ?? "").trim());
     const all = sessions()?.sessions ?? [];
     return all.filter((s) => {
       if (s.kind !== "tmux") return false;
+      // 1) cwd 매칭 — 세션 pane cwd == 현재 대화 폴더(정본 기준).
+      const sCwd = s.cwd ? normPath(s.cwd.trim()) : "";
+      if (convoCwd && sCwd && sCwd === convoCwd) return true;
+      // 2) alias 매칭(보조) — cwd 미보유(구버전·원격) 또는 세션명=alias 인 경우 폴백.
       const aid = (s.agent_id ?? "").toLowerCase();
       const disp = (s.display ?? "").toLowerCase();
       const ident = (s.identifier ?? "").toLowerCase();

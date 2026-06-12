@@ -1408,6 +1408,11 @@ async fn gui_sessions(
                             let windows = item.get("windows").and_then(|v| v.as_u64()).map(|n| n as u32);
                             let last_active = item.get("last_active_at").and_then(|v| v.as_str()).map(String::from);
                             let created = item.get("created_at").and_then(|v| v.as_str()).map(String::from);
+                            // rc.281 — 원격 데몬이 보고한 tmux pane cwd. 신버전 원격만 채움(구버전=None).
+                            //   cross-machine cwd 매칭에 사용(양쪽 신버전 시 동작).
+                            let remote_cwd = item.get("cwd").and_then(|v| v.as_str())
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty());
                             let kind = match kind_str {
                                 "tmux" => crate::daemon_gui_sessions::SessionKind::Tmux,
                                 "claude_project" => crate::daemon_gui_sessions::SessionKind::ClaudeProject,
@@ -1430,6 +1435,7 @@ async fn gui_sessions(
                                 agent_id: None,
                                 // rc.234 — cross-machine peer 세션은 보고측 머신에서 worktree 종합(미전달). 빈 Vec.
                                 worktrees: Vec::new(),
+                                cwd: remote_cwd,
                             });
                         }
                 }
@@ -8882,10 +8888,47 @@ async fn acp_session_prompt(
     Json(body): Json<crate::daemon_gui_acp::PromptBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    crate::daemon_gui_acp::prompt(&state.acp, &id, body)
+    let result = crate::daemon_gui_acp::prompt(&state.acp, &id, body)
         .await
-        .map(Json)
-        .map_err(acp_err)
+        .map_err(acp_err)?;
+
+    // ── 서버측 권위 기록 ──────────────────────────────────────────────────
+    // 핵심 버그 fix: 턴 결과를 데몬이 직접 `acp_messages` 에 기록한다. 종전에는
+    // UI(AcpConversation.tsx) 만 turn-end 에 agent 응답을 conv_add 로 기록했기에,
+    // 사용자가 턴 중/후 대화창을 나가면 기록이 누락되어 돌아왔을 때 "아무것도 안
+    // 한 idle" 상태로 보였다. 이제 데몬이 권위 소스 — UI 이탈과 무관하게 영속화된다.
+    //
+    // 기록 조건: 세션에 label(conv_key=대화 신원)이 있고(=picker 진입 아님),
+    // 추출한 agent 텍스트가 비어있지 않을 때만. 빈/취소 턴은 가짜 빈 메시지 방지로 스킵.
+    if let Some(conv_key) = state.acp.session_label(&id).await {
+        let mut agent_text = String::new();
+        if let Some(updates) = result.get("updates").and_then(|u| u.as_array()) {
+            for u in updates {
+                if u.get("sessionUpdate").and_then(|s| s.as_str()) == Some("agent_message_chunk") {
+                    if let Some(t) = u
+                        .get("content")
+                        .and_then(|c| c.get("text"))
+                        .and_then(|t| t.as_str())
+                    {
+                        agent_text.push_str(t);
+                    }
+                }
+            }
+        }
+        if !agent_text.trim().is_empty() {
+            let now = chrono::Utc::now().to_rfc3339();
+            let mut db = state.db.lock().await;
+            if let Err(e) = db.conn().execute(
+                "INSERT INTO acp_messages (conv_key, role, text, created_at) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![conv_key, "agent", agent_text.trim(), now],
+            ) {
+                // 절대 규칙 1(fallback 금지) — 조용히 넘기지 않고 명시 로그.
+                tracing::error!(target: "acp.daemon", conv_key = %conv_key, "acp_messages agent 기록 실패: {e}");
+            }
+        }
+    }
+
+    Ok(Json(result))
 }
 
 /// `POST /v1/acp/sessions/{id}/cancel` — session/cancel.

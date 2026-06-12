@@ -120,6 +120,17 @@ impl AcpHttpState {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         format!("acp-{n}")
     }
+
+    /// 세션의 대화 신원(`label` = conv_key). 데몬이 턴 결과를 권위있게
+    /// `acp_messages` 에 기록할 때 사용한다(UI 가 turn 중/후 이탈해도 영속화 보장).
+    /// `None` 이면 picker 진입 등 비영속 세션 — 기록하지 않는다.
+    pub async fn session_label(&self, session_id: &str) -> Option<String> {
+        let sessions = self.sessions.lock().await;
+        sessions
+            .get(session_id)
+            .and_then(|s| s.label.clone())
+            .filter(|l| !l.is_empty())
+    }
 }
 
 // ── Request/response bodies ────────────────────────────────────────────────

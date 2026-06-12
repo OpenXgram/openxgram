@@ -549,6 +549,105 @@ export function AcpConversation(props: {
     return `[이전 대화 맥락 — 데몬 재시작/새로고침 후 이어서 진행. 아래는 우리의 지난 대화다.]\n${body}\n[위 맥락을 기억하고 아래 현재 요청에 답하라]\n`;
   }
 
+  // ── "이어가기" 번들 export/import — 한 세션 대화를 다른 세션/에이전트로 이전 ──
+  // 번들 포맷: 클라이언트 조립(신규 백엔드 라우트 불필요). acp_conv_list(영속 메시지)를
+  // 그대로 직렬화 → 받는 쪽이 acp_conv_add 로 대상 conv_key 에 주입 + loadHistory 로
+  // pendingContext(첫 프롬프트 맥락)까지 복원. text-package-v1 와 유사하나 GUI 대화 전용.
+  const BUNDLE_FORMAT = "oxg-conv-bundle-v1";
+
+  // 현재 대화를 번들 JSON 으로 export → 클립보드 복사(실패 시 파일 다운로드 폴백).
+  async function exportConversation() {
+    try {
+      const rows = await invoke<{ role: string; text: string }[]>("acp_conv_list", { key: convKey() });
+      const msgs = Array.isArray(rows) ? rows : [];
+      if (msgs.length === 0) {
+        pushBubble({ id: nextId++, kind: "note", text: "⚠ 내보낼 대화 내용이 없습니다.", time: nowClock() });
+        return;
+      }
+      const bundle = {
+        format: BUNDLE_FORMAT,
+        conv_key: convKey(),
+        agent: props.preset?.displayName || props.preset?.label || activeAgent() || convKey(),
+        exported_at: new Date().toISOString(),
+        messages: msgs.map((r) => ({ role: r.role, text: r.text })),
+      };
+      const json = JSON.stringify(bundle, null, 2);
+      let copied = false;
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(json);
+          copied = true;
+        }
+      } catch {
+        /* 클립보드 불가(비보안 컨텍스트 등) → 파일 다운로드 폴백 */
+      }
+      if (!copied) {
+        const blob = new Blob([json], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `oxg-conv-${convKey()}-${Date.now()}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }
+      pushBubble({
+        id: nextId++,
+        kind: "note",
+        text: copied
+          ? `📤 이어가기 번들 복사됨(${msgs.length}개 메시지) — 다른 세션의 "📥 이어가기 가져오기"에 붙여넣으세요.`
+          : `📤 이어가기 번들 다운로드됨(${msgs.length}개 메시지).`,
+        time: nowClock(),
+      });
+    } catch (e) {
+      pushBubble({ id: nextId++, kind: "note", text: `⚠ 내보내기 실패: ${(e as Error)?.message ?? e}`, time: nowClock() });
+    }
+  }
+
+  // 번들 JSON 문자열 → 현재 conv_key 에 메시지 주입 + history 복원(맥락 이어가기).
+  // 대상 대화에서 호출(picker/대화방 공용). 반환: 주입된 메시지 수.
+  async function importConversationFromText(raw: string): Promise<number> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error("번들 JSON 파싱 실패 — 올바른 내보내기 텍스트인지 확인하세요.");
+    }
+    const b = parsed as { format?: string; messages?: { role?: string; text?: string }[] };
+    if (b?.format !== BUNDLE_FORMAT || !Array.isArray(b.messages)) {
+      throw new Error("이어가기 번들 형식이 아닙니다.");
+    }
+    let n = 0;
+    for (const m of b.messages) {
+      const role = m?.role === "agent" ? "agent" : m?.role === "note" ? "note" : "me";
+      const text = typeof m?.text === "string" ? m.text : "";
+      if (!text.trim()) continue;
+      await invoke("acp_conv_add", { key: convKey(), role, text }).catch(() => {});
+      n++;
+    }
+    return n;
+  }
+
+  // picker/대화방에서 "📥 이어가기 가져오기" 클릭 → 붙여넣기 입력 → import → history 복원.
+  async function promptImport() {
+    const raw = window.prompt("이어가기 번들 JSON 을 붙여넣으세요 (다른 세션에서 '📤 이어가기'로 복사한 내용):");
+    if (!raw || !raw.trim()) return;
+    try {
+      const n = await importConversationFromText(raw.trim());
+      // 주입된 메시지를 화면에 복원 + pendingContext 설정(다음 프롬프트에 맥락 전달).
+      await loadHistory();
+      pushBubble({
+        id: nextId++,
+        kind: "note",
+        text: `📥 이어가기 가져옴(${n}개 메시지) — 이어서 대화하세요. 다음 입력 시 이전 맥락이 에이전트에 전달됩니다.`,
+        time: nowClock(),
+      });
+    } catch (e) {
+      window.alert(`가져오기 실패: ${(e as Error)?.message ?? e}`);
+    }
+  }
+
   // 에이전트 선택 → 세션 생성 + SSE 구독.
   // cwd 생략 시 DEFAULT_ACP_CWD, execMode 생략 시 on_demand. label 은 헤더 표시명(생략 시 adapter).
   async function spawn(agent: string, opts?: SpawnArgs) {
@@ -623,7 +722,6 @@ export function AcpConversation(props: {
     if (!id || !text || busy()) return;
     setBusy(true);
     setSpawnErr(null);
-    const uid = nextId; // 이번 turn 의 user 버블 id — 이후 생성된 agent 버블 식별용.
     pushBubble({ id: nextId++, kind: "me", text, time: nowClock() });
     void recordMsg("me", text); // 사용자 메시지 영속화(실제 입력만).
     setDraft("");
@@ -686,16 +784,16 @@ export function AcpConversation(props: {
     } finally {
       setBusy(false);
     }
-    // turn 종료 후 에이전트 응답 텍스트 영속화(이번 turn 에 생성된 agent 버블 합산).
-    const aText = bubbles()
-      .filter((b) => b.kind === "agent" && b.id > uid)
-      .map((b) => (b.kind === "agent" ? b.segs.filter((s) => s.kind === "text").map((s) => s.text).join("") : ""))
-      .join("\n")
-      .trim();
-    // 방금 받은 응답을 먼저 영속화(완료 대기)한 뒤 읽음 처리해야 last_read ≥ 그 메시지 created_at 이 보장된다.
-    // 둘을 동시에 fire-and-forget 하면 읽음(last_read) 이 먼저 커밋되어, 라이브로 본 응답이
-    // created_at > last_read 로 남아 "새 내용 없는데 안읽음 1" 위양성 배지가 뜬다(레이스 제거).
-    if (aText) await recordMsg("agent", aText);
+    // ⚠ agent 응답 영속화는 이제 데몬이 권위있게 담당한다(daemon_gui.rs acp_session_prompt).
+    // 종전엔 UI 가 turn-end 에 recordMsg("agent", ...) 로 기록했으나, 사용자가 턴 중/후
+    // 대화창을 나가면 이 코드가 실행되지 않아 기록이 누락 → 돌아오면 "idle" 로 보이는
+    // 핵심 버그였다. 데몬이 prompt 턴 종료 시 acp_messages 에 INSERT 하므로 UI 이탈과
+    // 무관하게 영속화된다. 이중 기록 방지를 위해 UI 측 agent recordMsg 는 제거.
+    // loadHistory(DB) 가 진실 원천 — 라이브 버블은 SSE/updates 의 낙관적 표시일 뿐.
+    //
+    // 데몬은 prompt HTTP 응답을 반환하기 전에 기록을 마치므로, 아래 acp_conv_read 시점엔
+    // 이미 agent row 가 존재(created_at ≤ 턴 완료시각) → last_read ≥ created_at 보장,
+    // "안읽음 1" 위양성 배지 없음.
     // 대화 중이므로 방금 받은 응답은 읽음 처리(안읽음 배지 누적 방지).
     void invoke("acp_conv_read", { key: convKey() }).catch(() => {});
     // 대기열에 후속 메시지가 있으면 턴 종료 후 순서대로 자동 전송.
@@ -839,6 +937,11 @@ export function AcpConversation(props: {
             <div class="ava c-claude">⚡</div>
             <div class="nm">ACP 에이전트</div>
             <div class="meta-r">
+              <span
+                class="kk-acp-pop"
+                title="다른 세션에서 내보낸 대화 번들을 가져오기"
+                onClick={() => void promptImport()}
+              >📥 이어가기 가져오기</span>
               <span class="pill">로컬 subprocess</span>
             </div>
           </div>
@@ -901,6 +1004,16 @@ export function AcpConversation(props: {
               <span class="pill"><span class="pdot" />스트리밍</span>
             </Show>
             <span class="pill">⚡ ACP</span>
+            <span
+              class="kk-acp-pop"
+              title="이 대화를 번들로 내보내 다른 세션에서 이어가기"
+              onClick={() => void exportConversation()}
+            >📤 이어가기</span>
+            <span
+              class="kk-acp-pop"
+              title="다른 세션에서 내보낸 대화 번들을 이 대화로 가져오기"
+              onClick={() => void promptImport()}
+            >📥 가져오기</span>
             <Show when={props.popoutAlias}>
               <span class="kk-acp-pop" title="새 창으로 열기" onClick={() => openPopout(props.popoutAlias!)}>⤢ 새 창</span>
             </Show>

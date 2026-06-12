@@ -29,3 +29,8 @@ linker = "aarch64-linux-gnu-gcc"
 
 [target.x86_64-pc-windows-gnu]
 linker = "x86_64-w64-mingw32-gcc"
+
+# 네이티브 빌드 링크 가속 — lld(LLVM 링커)로 64MB 바이너리 링크를 수분→수초로.
+# `sudo apt install lld` 필요. 미설치 시 cargo 가 명시 실패(silent fallback 금지).
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
