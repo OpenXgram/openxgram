@@ -322,6 +322,14 @@ const ROUTES: Record<string, Route> = {
 },
  free_tier_status: { method: "GET", path: "/payment/free-tier/status"},
 
+ // 마켓 — 온체인 결제 지갑 (keystore master 주소 + Base 체인 ETH/USDC 잔액 실조회).
+ // 가짜 값 금지: RPC 실패 시 balance=null + error. onchain_enabled=XGRAM_CHAIN_RPC 설정 여부.
+ payment_wallet: {
+ method: "GET",
+ path: "/payment/wallet",
+ emptyAs: { address: null, chain: "base", rpc_url: null, eth_balance: null, usdc_balance: null, onchain_enabled: false, error: null },
+},
+
  // Notify
  notify_status: { method: "GET", path: "/notify/status"},
  notify_discord_validate: {

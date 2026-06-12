@@ -133,6 +133,53 @@ async function fetchFreeTier(): Promise<FreeTierStatus | null> {
   }
 }
 
+// 온체인 결제 지갑 — keystore master 주소 + Base 체인 ETH/USDC 실잔액 (가짜 값 없음).
+interface PaymentWallet {
+  address: string | null;
+  chain: string;
+  rpc_url: string | null;
+  eth_balance: string | null; // wei (string)
+  usdc_balance: string | null; // micro (6 decimals, string)
+  onchain_enabled: boolean;
+  error: string | null;
+}
+async function fetchPaymentWallet(): Promise<PaymentWallet | null> {
+  try {
+    return await invoke<PaymentWallet>("payment_wallet");
+  } catch {
+    // 데몬 미연결/미지원 — 날조하지 않고 null (UI '준비 중' 표기)
+    return null;
+  }
+}
+// wei(18 decimals) string → 사람이 읽는 ETH. null/실패는 그대로 null 표기.
+function fmtEth(wei: string | null): string {
+  if (wei == null) return "—";
+  try {
+    const v = BigInt(wei);
+    const whole = v / 1_000_000_000_000_000_000n;
+    const frac = (v % 1_000_000_000_000_000_000n).toString().padStart(18, "0").slice(0, 6);
+    return `${whole.toString()}.${frac}`;
+  } catch {
+    return "—";
+  }
+}
+// USDC micro(6 decimals) string → 사람이 읽는 USDC.
+function fmtUsdcStr(micro: string | null): string {
+  if (micro == null) return "—";
+  try {
+    const v = BigInt(micro);
+    const whole = v / 1_000_000n;
+    const frac = (v % 1_000_000n).toString().padStart(6, "0").slice(0, 2);
+    return `${whole.toString()}.${frac}`;
+  } catch {
+    return "—";
+  }
+}
+function shortAddr(a: string | null): string {
+  if (!a) return "주소 없음";
+  return a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a;
+}
+
 // 총 잔액 = 서브 지갑 balance 합 + 마스터 free.
 function totalBalanceMicro(w: WalletsDto | null | undefined): number {
   if (!w) return 0;
@@ -167,6 +214,21 @@ export function MarketTab() {
   // 마켓 (c)갈래 — 지갑(잔액) + 거래원장 실데이터 resource.
   const [wallets, { refetch: refetchWallets }] = createResource(fetchWallets);
   const [ledger, { refetch: refetchLedger }] = createResource(fetchLedger);
+
+  // 온체인 결제 지갑 — keystore master 주소 + Base 체인 ETH/USDC 실잔액.
+  const [payWallet, { refetch: refetchPayWallet }] = createResource(fetchPaymentWallet);
+  const [copied, setCopied] = createSignal(false);
+  const onCopyAddr = async () => {
+    const a = payWallet()?.address;
+    if (!a) return;
+    try {
+      await navigator.clipboard.writeText(a);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* 클립보드 미지원 — 조용히 무시 (주소는 화면에 이미 노출됨) */
+    }
+  };
 
   // 마켓 (d)갈래 — free-tier 무료 할당량(전역 기본) 상태 + 설정.
   const [freeTier, { refetch: refetchFreeTier }] = createResource(fetchFreeTier);
@@ -352,7 +414,93 @@ export function MarketTab() {
             </button>
           </div>
           <div class="bb">
-            {/* 잔액·누적 구매 — 실제 wallets_list + wallet_ledger 배선 */}
+            {/* 💳 결제 지갑 & 온체인 잔액 — keystore master 주소 + Base 체인 실조회 (가짜 값 없음) */}
+            <div class="wsec" style="display:flex;align-items:center;gap:8px;">
+              💳 결제 지갑 &amp; 온체인 잔액
+              <button
+                type="button"
+                class="budbtn"
+                style="margin-left:auto;font-size:11px;padding:4px 10px;"
+                onClick={() => void refetchPayWallet()}
+                title="온체인 잔액 새로고침"
+              >
+                ⟳ 새로고침
+              </button>
+            </div>
+            <Show
+              when={payWallet() != null}
+              fallback={
+                <div style="font-size:12px;color:#9aa1ad;margin-bottom:10px;">
+                  지갑 정보 준비 중 (데몬 미연결)
+                </div>
+              }
+            >
+              <div
+                style="border:1px solid var(--kk-line);border-radius:10px;padding:10px 12px;margin-bottom:12px;background:#fafbfc;"
+              >
+                {/* 주소 + 복사 */}
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                  <span style="font-size:11px;color:#6b7280;">결제 지갑</span>
+                  <code
+                    style="font-size:12px;font-family:monospace;color:#111;"
+                    title={payWallet()?.address ?? ""}
+                  >
+                    {shortAddr(payWallet()?.address ?? null)}
+                  </code>
+                  <Show when={payWallet()?.address}>
+                    <button
+                      type="button"
+                      class="budbtn"
+                      style="font-size:10.5px;padding:3px 8px;"
+                      onClick={() => void onCopyAddr()}
+                    >
+                      {copied() ? "✓ 복사됨" : "복사"}
+                    </button>
+                  </Show>
+                  <span
+                    style={`font-size:10.5px;padding:2px 8px;border-radius:999px;margin-left:auto;${
+                      payWallet()?.onchain_enabled
+                        ? "background:#e6f4ea;color:#1f7a3d;"
+                        : "background:#f1f1f3;color:#7a7f88;"
+                    }`}
+                    title="XGRAM_CHAIN_RPC 설정 여부"
+                  >
+                    {payWallet()?.onchain_enabled ? "● 온체인 활성" : "○ 내부 원장 모드"}
+                  </span>
+                </div>
+                <div style="font-size:10.5px;color:#9aa1ad;margin-top:4px;">
+                  체인 {payWallet()?.chain ?? "base"}
+                  {payWallet()?.rpc_url ? ` · ${payWallet()?.rpc_url}` : ""}
+                </div>
+                {/* 온체인 잔액 — RPC 실패 시 '조회 실패' (가짜 0 금지) */}
+                <div style="display:flex;gap:20px;margin-top:10px;">
+                  <div>
+                    <div style="font-size:16px;font-weight:600;color:#111;">
+                      {payWallet()?.eth_balance != null
+                        ? `${fmtEth(payWallet()?.eth_balance ?? null)} ETH`
+                        : "조회 실패"}
+                    </div>
+                    <div class="cap">온체인 ETH (가스)</div>
+                  </div>
+                  <div>
+                    <div style="font-size:16px;font-weight:600;color:#1f7a3d;">
+                      {payWallet()?.usdc_balance != null
+                        ? `$${fmtUsdcStr(payWallet()?.usdc_balance ?? null)} USDC`
+                        : "조회 실패"}
+                    </div>
+                    <div class="cap">온체인 USDC (결제)</div>
+                  </div>
+                </div>
+                <Show when={payWallet()?.error}>
+                  <div style="font-size:11px;color:#d64545;margin-top:8px;">
+                    온체인 조회 오류: {payWallet()?.error}
+                  </div>
+                </Show>
+              </div>
+            </Show>
+
+            {/* 잔액·누적 구매 — 실제 wallets_list + wallet_ledger 배선 (내부 원장 예산) */}
+            <div class="wsec">내부 예산 (원장) — 잔액 / 누적 구매</div>
             <div class="budtop">
               <div>
                 <Show

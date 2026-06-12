@@ -546,6 +546,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
             get(gui_free_tier_get_config).put(gui_free_tier_set_config),
         )
         .route("/v1/gui/payment/free-tier/status", get(gui_free_tier_status))
+        // 마켓 — 온체인 결제 지갑 (keystore master 주소 + Base 체인 ETH/USDC 실잔액).
+        .route("/v1/gui/payment/wallet", get(gui_payment_wallet))
         .route("/v1/gui/notify/status", get(gui_notify_status))
         // Discord 마법사 — token 검증 → 봇이 가입한 guild 목록 → 저장+테스트.
         .route(
@@ -7895,6 +7897,181 @@ async fn gui_free_tier_status(
     crate::free_tier::status(&mut db, &agent_id)
         .map(Json)
         .map_err(|e| internal(&format!("free-tier status: {e}")))
+}
+
+// ── 마켓 — 온체인 결제 지갑 (주소 + ETH/USDC 실잔액) ──────────────────────────
+
+/// `GET /v1/gui/payment/wallet` 응답.
+///
+/// - `address`: keystore `master.json` 의 **공개 주소만** (개인키는 절대 노출 안 함).
+///   master.json 은 평문 `address` 필드를 가지므로 비밀번호 없이 읽는다(복호화 없음).
+/// - `chain`/`rpc_url`: `XGRAM_CHAIN_RPC` 가 설정돼 있으면 그 RPC, 아니면 Base mainnet 기본.
+/// - `eth_balance`/`usdc_balance`: 데몬이 RPC 로 **실제 조회**(eth_getBalance + ERC20 balanceOf).
+///   조회 실패 시 `null` + `error` (가짜 0 금지).
+/// - `onchain_enabled`: `XGRAM_CHAIN_RPC` env 설정 여부(미설정이면 내부 원장 모드).
+#[derive(Debug, Serialize)]
+struct PaymentWalletDto {
+    address: Option<String>,
+    chain: String,
+    rpc_url: String,
+    /// ETH wei → 문자열(소수점 18자리 보존 위해 string). RPC 실패 시 None.
+    eth_balance: Option<String>,
+    /// USDC micro(6 decimals) → 문자열. RPC 실패 시 None.
+    usdc_balance: Option<String>,
+    onchain_enabled: bool,
+    error: Option<String>,
+}
+
+/// keystore master.json 의 평문 `address` 필드만 읽는다(복호화·비밀번호 불필요).
+fn read_master_address(data_dir: &std::path::Path) -> Result<String, String> {
+    use openxgram_core::paths::keystore_dir;
+    let path = keystore_dir(data_dir).join(openxgram_core::paths::MASTER_KEYFILE);
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|e| format!("master.json 읽기 실패 ({}): {e}", path.display()))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| format!("master.json 파싱 실패: {e}"))?;
+    json.get("address")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "master.json 에 address 필드 없음".to_string())
+}
+
+/// raw JSON-RPC 호출(개인키 불필요·읽기 전용). 결과 `result` 필드 hex 문자열 반환.
+async fn rpc_call(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<String, String> {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params,
+    });
+    let resp = client
+        .post(rpc_url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("RPC 요청 실패: {e}"))?;
+    let v: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("RPC 응답 파싱 실패: {e}"))?;
+    if let Some(err) = v.get("error") {
+        return Err(format!("RPC error: {err}"));
+    }
+    v.get("result")
+        .and_then(|r| r.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "RPC 응답에 result 없음".to_string())
+}
+
+/// hex(0x..) → u128 decimal 문자열. 큰 값(ETH wei)도 u128 범위 안.
+fn hex_to_decimal(hex: &str) -> Result<String, String> {
+    let h = hex.trim_start_matches("0x");
+    if h.is_empty() {
+        return Ok("0".to_string());
+    }
+    u128::from_str_radix(h, 16)
+        .map(|n| n.to_string())
+        .map_err(|e| format!("hex 파싱 실패 ({hex}): {e}"))
+}
+
+/// `GET /v1/gui/payment/wallet` — keystore master 주소 + Base 체인 ETH/USDC 실잔액.
+async fn gui_payment_wallet(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<PaymentWalletDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+
+    // 1) 체인/RPC 결정 — XGRAM_CHAIN_RPC 설정 여부가 온체인 활성 여부.
+    let rpc_override = std::env::var("XGRAM_CHAIN_RPC").ok().filter(|s| !s.trim().is_empty());
+    let onchain_enabled = rpc_override.is_some();
+    // 체인 = XGRAM_CHAIN(기본 base). chain.rs 레지스트리에서 USDC 컨트랙트·라벨을 가져온다.
+    // (이전엔 BASE 하드코딩이라 ethereum-sepolia 등에서 USDC 잔액을 Base 컨트랙트로 조회해 0 표시 버그.)
+    let chain_name = std::env::var("XGRAM_CHAIN").unwrap_or_else(|_| "base".to_string());
+    let chain_cfg = openxgram_payment::chain::lookup(&chain_name)
+        .unwrap_or(openxgram_payment::chain::BASE);
+    let rpc_url = rpc_override
+        .clone()
+        .unwrap_or_else(|| chain_cfg.default_rpc.to_string());
+
+    // 2) keystore master 주소(공개 주소만). 실패 시 address=None + error.
+    let (address, mut error): (Option<String>, Option<String>) =
+        match read_master_address(state.data_dir.as_ref()) {
+            Ok(a) => (Some(a), None),
+            Err(e) => (None, Some(e)),
+        };
+
+    // 3) 온체인 잔액 실조회 (주소가 있을 때만). RPC 실패 시 balance=null + error 누적(가짜 0 금지).
+    let mut eth_balance: Option<String> = None;
+    let mut usdc_balance: Option<String> = None;
+    if let Some(addr) = address.as_ref() {
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(8))
+            .build()
+        {
+            Ok(c) => Some(c),
+            Err(e) => {
+                error = Some(merge_err(error, format!("HTTP 클라이언트 생성 실패: {e}")));
+                None
+            }
+        };
+        if let Some(client) = client {
+            // ETH (native) — eth_getBalance(addr, "latest")
+            match rpc_call(
+                &client,
+                &rpc_url,
+                "eth_getBalance",
+                serde_json::json!([addr, "latest"]),
+            )
+            .await
+            .and_then(|h| hex_to_decimal(&h))
+            {
+                Ok(v) => eth_balance = Some(v),
+                Err(e) => error = Some(merge_err(error, format!("ETH 잔액 조회 실패: {e}"))),
+            }
+
+            // USDC (ERC20 balanceOf(addr)) — eth_call. selector 0x70a08231 + padded addr.
+            let addr_hex = addr.trim_start_matches("0x");
+            let data = format!("0x70a08231{:0>64}", addr_hex);
+            match rpc_call(
+                &client,
+                &rpc_url,
+                "eth_call",
+                serde_json::json!([
+                    { "to": chain_cfg.usdc_contract, "data": data },
+                    "latest"
+                ]),
+            )
+            .await
+            .and_then(|h| hex_to_decimal(&h))
+            {
+                Ok(v) => usdc_balance = Some(v),
+                Err(e) => error = Some(merge_err(error, format!("USDC 잔액 조회 실패: {e}"))),
+            }
+        }
+    }
+
+    Ok(Json(PaymentWalletDto {
+        address,
+        chain: chain_cfg.name.to_string(),
+        rpc_url,
+        eth_balance,
+        usdc_balance,
+        onchain_enabled,
+        error,
+    }))
+}
+
+/// 에러 메시지 누적(silent fallback 금지 — 여러 단계 실패를 모두 표면화).
+fn merge_err(existing: Option<String>, new: String) -> String {
+    match existing {
+        Some(e) => format!("{e}; {new}"),
+        None => new,
+    }
 }
 
 /// `GET /v1/gui/notify/status` — notify.toml 의 어댑터 설정 여부.

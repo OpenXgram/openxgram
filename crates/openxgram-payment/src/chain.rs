@@ -41,7 +41,15 @@ pub const ETHEREUM: ChainConfig = ChainConfig {
     default_rpc: "https://eth.llamarpc.com",
 };
 
-pub const ALL: &[ChainConfig] = &[BASE, BASE_SEPOLIA, POLYGON, ETHEREUM];
+/// Ethereum Sepolia 테스트넷 — pk910 PoW faucet(ETH) + Circle faucet(USDC) 무료 충전 경로.
+pub const ETHEREUM_SEPOLIA: ChainConfig = ChainConfig {
+    name: "ethereum-sepolia",
+    chain_id: 11155111,
+    usdc_contract: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+    default_rpc: "https://ethereum-sepolia-rpc.publicnode.com",
+};
+
+pub const ALL: &[ChainConfig] = &[BASE, BASE_SEPOLIA, POLYGON, ETHEREUM, ETHEREUM_SEPOLIA];
 
 pub fn lookup(name: &str) -> Option<ChainConfig> {
     ALL.iter().copied().find(|c| c.name == name)

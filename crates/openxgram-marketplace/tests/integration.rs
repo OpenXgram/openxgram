@@ -256,3 +256,135 @@ async fn empty_agent_id_rejected_at_get_agent() {
     let res = tools.get_agent("").await;
     assert!(res.is_err());
 }
+
+// ─────────── 마켓 (d)갈래 — free-tier 게이트 통합 테스트 ───────────
+
+use openxgram_marketplace::FreeQuotaGate;
+use std::sync::atomic::{AtomicI64, Ordering};
+
+/// in-memory free-tier 게이트 (per-day 카운터를 단순 atomic 으로 모사).
+struct InMemFreeQuota {
+    free_per_day: i64,
+    used: AtomicI64,
+}
+#[async_trait::async_trait]
+impl FreeQuotaGate for InMemFreeQuota {
+    async fn try_consume_free(&self, _agent: &AgentId) -> Result<bool, String> {
+        loop {
+            let cur = self.used.load(Ordering::SeqCst);
+            if cur >= self.free_per_day {
+                return Ok(false);
+            }
+            if self
+                .used
+                .compare_exchange(cur, cur + 1, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                return Ok(true);
+            }
+        }
+    }
+    async fn quota_status(&self, _agent: &AgentId) -> Result<(i64, i64), String> {
+        Ok((self.free_per_day, self.used.load(Ordering::SeqCst)))
+    }
+}
+
+/// 무료 잔여 → 과금 없이 통과(receipt 없음), 소진 → 결제(receipt 있음), 둘다 불가 → 에러.
+#[tokio::test]
+async fn free_tier_then_charge_then_error() {
+    let mut server = mockito::Server::new_async().await;
+    // create_job 은 무료/유료 모두 호출됨 (2회 성공).
+    let _m_post = server
+        .mock("POST", "/api/jobs")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"job:ft","agent_id":"agent:f","service_id":"svc:s",
+                "status":"queued","created_at":"2026-06-12T00:00:00Z","updated_at":"2026-06-12T00:00:00Z"}"#,
+        )
+        .expect_at_least(2)
+        .create_async()
+        .await;
+
+    // 무료 1회/일. 화이트리스트 등록 → 소진 후엔 유료 자동결제.
+    let mut policy = SpendPolicy::default();
+    policy.allow(&AgentId("agent:f".into()));
+    let client = MarketplaceClient::builder()
+        .base_url(server.url())
+        .build()
+        .unwrap();
+    let gw = std::sync::Arc::new(NoopPaymentGateway::new());
+    let gate = std::sync::Arc::new(InMemFreeQuota {
+        free_per_day: 1,
+        used: AtomicI64::new(0),
+    });
+    let tools = MarketplaceTools::new(client, policy, gw.clone()).with_free_quota(gate);
+
+    let mk = || NewJobRequest {
+        agent_id: AgentId("agent:f".into()),
+        service_id: ServiceId("svc:s".into()),
+        input: serde_json::Value::Null,
+        max_price_usdc_micro: Some(100_000),
+    };
+
+    // 1회차 — 무료 통과 (과금 없음, receipt 없음).
+    let r1 = tools.purchase(mk()).await.unwrap();
+    match &r1.decision {
+        PurchaseDecision::FreeTierGranted {
+            free_per_day,
+            used_today,
+            remaining,
+        } => {
+            assert_eq!(*free_per_day, 1);
+            assert_eq!(*used_today, 1);
+            assert_eq!(*remaining, 0);
+        }
+        other => panic!("expected FreeTierGranted, got {other:?}"),
+    }
+    assert!(r1.receipt.is_none(), "무료는 영수증 없음");
+    assert!(r1.job.is_some());
+    assert_eq!(gw.count(), 0, "무료는 결제 0건");
+
+    // 2회차 — 무료 소진 → 유료 자동결제 (receipt 있음).
+    let r2 = tools.purchase(mk()).await.unwrap();
+    match &r2.decision {
+        PurchaseDecision::AutoApproved => {}
+        other => panic!("expected AutoApproved (charged), got {other:?}"),
+    }
+    assert!(r2.receipt.is_some(), "유료는 영수증 있음");
+    assert_eq!(gw.count(), 1, "유료 결제 1건");
+}
+
+/// 무료 소진 + 유료 불가(미화이트리스트) → NeedsConfirmation (job/결제 모두 X).
+#[tokio::test]
+async fn free_exhausted_and_not_whitelisted_needs_confirmation() {
+    let server = mockito::Server::new_async().await;
+    // 무료 0 + whitelist 비어있음.
+    let policy = SpendPolicy::default();
+    let client = MarketplaceClient::builder()
+        .base_url(server.url())
+        .build()
+        .unwrap();
+    let gw = std::sync::Arc::new(NoopPaymentGateway::new());
+    let gate = std::sync::Arc::new(InMemFreeQuota {
+        free_per_day: 0,
+        used: AtomicI64::new(0),
+    });
+    let tools = MarketplaceTools::new(client, policy, gw.clone()).with_free_quota(gate);
+
+    let result = tools
+        .purchase(NewJobRequest {
+            agent_id: AgentId("agent:stranger".into()),
+            service_id: ServiceId("svc:x".into()),
+            input: serde_json::Value::Null,
+            max_price_usdc_micro: Some(100_000),
+        })
+        .await
+        .unwrap();
+    match &result.decision {
+        PurchaseDecision::NeedsConfirmation { reason } => assert!(reason.contains("whitelist")),
+        other => panic!("expected NeedsConfirmation, got {other:?}"),
+    }
+    assert_eq!(gw.count(), 0);
+    assert!(result.job.is_none());
+}

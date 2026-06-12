@@ -187,7 +187,10 @@ impl OpenxgramDispatcher {
                 openxgram_marketplace::SpendPolicy::conservative(),
                 payment_gateway,
             )
-            .with_free_quota(free_quota_gate),
+            .with_free_quota(free_quota_gate)
+            // 결제 체인 — env `XGRAM_CHAIN`(기본 "base"). 테스트넷은 "ethereum-sepolia"/"base-sepolia".
+            // chain.rs 레지스트리에서 chain_id·USDC 컨트랙트 매핑.
+            .with_chain(std::env::var("XGRAM_CHAIN").unwrap_or_else(|_| "base".to_string())),
         );
         Ok(Self {
             db,
