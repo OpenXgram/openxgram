@@ -65,6 +65,24 @@
 .kk-body{flex:1; min-height:0; display:flex; flex-direction:column;}
 .kk-embed{flex:1; min-height:0; overflow:auto;}  /* 기존 컴포넌트 끼우는 자리 */
 
+/* 하단 네비 위치 — 카톡 패턴(정본 _mockups: .tabs 가 .side(roster) 안에 위치, .chat(대화)엔 네비 없음).
+   ① 모바일 대화방(전체화면) 열리면 네비 숨김  ② 데스크탑 두-pane 은 네비를 roster(좌 330px) 하단만 차지. */
+.kk-main{position:relative;}
+@media (min-width:901px){
+  /* 대화·에이전트 탭: 좌측 330px roster 하단에 네비 고정 → 우측 대화/프로필 영역엔 네비 없음. */
+  .kk-tab-chat .kk-tabs, .kk-tab-agents .kk-tabs{
+    position:absolute; left:0; bottom:0; width:330px; z-index:6;
+    border-right:1px solid var(--kk-line);
+  }
+  /* 마지막 카드가 고정 네비 뒤로 가려지지 않게 명부 리스트 하단 여백. */
+  .kk-tab-chat .kk-talk-roster .list{padding-bottom:56px;}
+  .kk-tab-agents .kk-agents .kk-roster{padding-bottom:56px;}
+}
+@media (max-width:900px){
+  /* 모바일: 대화방 열리면 하단 네비 숨김 — 에이전트 카드 목록(명부)에서만 네비 노출. */
+  .kk.kk-room-open .kk-tabs{display:none;}
+}
+
 /* 반응형 (카카오톡 모바일 패턴) */
 @media (max-width:900px){
   /* .kk 는 모바일에서도 position:fixed 풀스크린 유지 (뒤의 다크 App 크롬 누수 방지).

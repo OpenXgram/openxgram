@@ -130,7 +130,7 @@ function fmtPreviewTime(iso: string): string {
   }
 }
 
-export function TalkTab(props: { onJumpToSettings?: () => void }) {
+export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (open: boolean) => void }) {
   const [agents, { refetch: refetchAgents }] = createResource<AgentRow[]>(() => invoke("agents_list"));
   const [addOpen, setAddOpen] = createSignal(false);
   // 상세 패널 "세션 재시작" 트리거 — 증가시키면 AcpConversation 이 세션을 닫고 재구동.
@@ -188,6 +188,8 @@ export function TalkTab(props: { onJumpToSettings?: () => void }) {
 
   const [selected, setSelected] = createSignal<string | null>(null);
   const [mobileChat, setMobileChat] = createSignal(false);
+  // 대화방(전체화면) 열림 여부를 셸로 통지 → 카톡처럼 대화방에선 하단 네비 숨김(에이전트 카드 목록에서만 노출).
+  createEffect(() => props.onRoomChange?.(mobileChat()));
   // ACP picker 모드 — 어댑터를 직접 고르는 진입(에이전트 미선택). preset 경로와 별개.
   const [acpMode, setAcpMode] = createSignal(false);
   // 정보 사이드 패널(폴더·tmux·워크트리·워크플로우) 열림. tmux/worktree pill 클릭 → 토글, ✕ → 닫힘.

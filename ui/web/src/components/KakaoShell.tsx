@@ -30,9 +30,11 @@ const SETTINGS_SUB: { id: SettingsSub; ic: string; label: string }[] = [
 export function KakaoShell(props: { onLogout?: () => void }) {
   const [tab, setTab] = createSignal<KkTab>("chat");
   const [sub, setSub] = createSignal<SettingsSub>("general");
+  // 대화방(전체화면) 열림 — 카톡처럼 대화방에선 하단 네비를 숨긴다(루트에 kk-room-open 클래스).
+  const [roomOpen, setRoomOpen] = createSignal(false);
 
   return (
-    <div class="kk">
+    <div class="kk" classList={{ [`kk-tab-${tab()}`]: true, "kk-room-open": roomOpen() && tab() === "chat" }}>
       <div class="kk-appbar">
         <span class="brand">OpenXgram</span>
         <span class="ver">v{__APP_VERSION__}</span>
@@ -46,7 +48,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
       <div class="kk-main">
         <div class="kk-body">
           <Show when={tab() === "chat"}>
-            <div class="kk-embed"><TalkTab onJumpToSettings={() => setTab("settings")} /></div>
+            <div class="kk-embed"><TalkTab onJumpToSettings={() => setTab("settings")} onRoomChange={setRoomOpen} /></div>
           </Show>
           <Show when={tab() === "agents"}>
             <div class="kk-embed"><AgentsTab onGotoChat={() => setTab("chat")} /></div>

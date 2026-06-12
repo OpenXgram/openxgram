@@ -581,6 +581,7 @@ pub mod server {
                 model: None,
                 thinking: None,
                 machine: None,
+                label: None,
             },
         )
         .await?;

@@ -566,8 +566,11 @@ export function AcpConversation(props: {
         model: model(),
         thinking: thinking(),
         machine: props.preset?.machine ?? null, // 원격이면 데몬이 SSH 로 그 머신에서 spawn.
+        // 대화 신원(에이전트 alias) — 서버 세션 재사용(find-or-create) 키. 전환 후 복귀 시 같은 세션 재연결.
+        // picker 진입(preset 없음)이면 null → 재사용 안 함(서로 다른 picker 세션 병합 방지).
+        label: props.preset?.label ?? null,
       };
-      const r = await acpFetch<{ sessionId: string; agent: string; spawned: boolean }>(
+      const r = await acpFetch<{ sessionId: string; agent: string; spawned: boolean; reused?: boolean }>(
         "POST",
         "/sessions",
         body,
@@ -579,10 +582,13 @@ export function AcpConversation(props: {
         setBubbles([]);
         setUsedTok(0);
         setCtxSize(0);
+        // reused=true 면 서버에 이미 살아있던 세션에 재연결한 것 — 전환 전 작업이 계속 돌고 있음.
         pushBubble({
           id: nextId++,
           kind: "note",
-          text: `⚡ ACP 세션 시작 — ${agent}${r.spawned ? " (구동됨)" : " (첫 프롬프트 시 구동)"}`,
+          text: r.reused
+            ? `🔗 기존 세션 재연결 — ${agent} (백그라운드 작업 계속 진행 중)`
+            : `⚡ ACP 세션 시작 — ${agent}${r.spawned ? " (구동됨)" : " (첫 프롬프트 시 구동)"}`,
           time: nowClock(),
         });
       }
@@ -675,7 +681,10 @@ export function AcpConversation(props: {
       .map((b) => (b.kind === "agent" ? b.segs.filter((s) => s.kind === "text").map((s) => s.text).join("") : ""))
       .join("\n")
       .trim();
-    if (aText) void recordMsg("agent", aText);
+    // 방금 받은 응답을 먼저 영속화(완료 대기)한 뒤 읽음 처리해야 last_read ≥ 그 메시지 created_at 이 보장된다.
+    // 둘을 동시에 fire-and-forget 하면 읽음(last_read) 이 먼저 커밋되어, 라이브로 본 응답이
+    // created_at > last_read 로 남아 "새 내용 없는데 안읽음 1" 위양성 배지가 뜬다(레이스 제거).
+    if (aText) await recordMsg("agent", aText);
     // 대화 중이므로 방금 받은 응답은 읽음 처리(안읽음 배지 누적 방지).
     void invoke("acp_conv_read", { key: convKey() }).catch(() => {});
     // 대기열에 후속 메시지가 있으면 턴 종료 후 순서대로 자동 전송.
@@ -724,9 +733,10 @@ export function AcpConversation(props: {
   }
 
   onCleanup(() => {
+    // 에이전트 전환(컴포넌트 unmount) 시 UI 스트림만 detach — 세션은 서버에서 계속 실행한다.
+    // (이전엔 여기서 DELETE 로 세션을 죽여서, 일 시켜놓고 다른 대화로 이동하면 작업이 멈췄음.
+    //  명시적 '세션 닫기'(closeSession) 만 DELETE. 돌아오면 create_session 이 같은 세션 재연결.)
     stopStream?.();
-    const id = sessionId();
-    if (id) void acpFetch("DELETE", `/sessions/${encodeURIComponent(id)}`).catch(() => {});
   });
 
   // 상세 패널 "세션 재시작" 트리거 — 값이 증가하면 닫고 재구동(대화창 복귀).

@@ -69,6 +69,9 @@ impl ExecutionMode {
 struct AcpHttpSession {
     agent: String,
     cwd: String,
+    /// 대화 신원(에이전트 alias) — 세션 재사용(find-or-create) 키. UI 전환 후 복귀 시
+    /// 같은 label 의 세션을 찾아 재연결한다. `None` 이면 picker 진입(재사용 안 함).
+    label: Option<String>,
     /// Retained for the heartbeat queue (Phase 4) + introspection. The spawn-
     /// timing branch reads `mode` at create/prompt time; the stored copy is not
     /// re-read in B-2, hence the allow.
@@ -128,6 +131,10 @@ pub struct CreateSessionBody {
     pub agent: String,
     /// Working directory for `session/new`.
     pub cwd: String,
+    /// 대화 신원(에이전트 alias). 세션 지속(find-or-create) 키 — 같은 label 이면 기존 세션 재연결.
+    /// 어댑터+cwd 가 아닌 신원으로 키잉해야 cwd 공유 에이전트 간 세션 병합을 막는다.
+    #[serde(default)]
+    pub label: Option<String>,
     /// Optional MCP servers passed to the agent (forwarded verbatim).
     #[serde(default)]
     pub mcp_servers: Vec<Value>,
@@ -341,6 +348,26 @@ pub async fn create_session(
         }
     }
 
+    // 세션 지속 — 같은 에이전트(label=대화 신원)의 살아있는 세션이 있으면 재사용(find-or-create).
+    // UI 가 다른 대화로 전환했다 돌아와도 같은 sessionId 로 재연결되어, 시켜둔 작업이 안 멈춘다.
+    // 키는 반드시 에이전트 신원(label) — adapter+cwd 만으로 키잉하면 cwd 를 공유하는(빈 cwd 다수)
+    // 서로 다른 에이전트가 한 세션으로 병합되는 사고가 난다. label 미지정(picker 진입)이면 재사용 안 함.
+    if let Some(lbl) = body.label.as_deref().filter(|s| !s.is_empty()) {
+        let sessions = state.sessions.lock().await;
+        for (sid, s) in sessions.iter() {
+            if s.label.as_deref() == Some(lbl) {
+                return Ok(json!({
+                    "sessionId": sid,
+                    "agent": s.agent,
+                    "cwd": s.cwd,
+                    "executionMode": s.execution_mode,
+                    "spawned": s.handle_id.is_some(),
+                    "reused": true,
+                }));
+            }
+        }
+    }
+
     let (updates_tx, _rx) = broadcast::channel::<Value>(256);
     let session_id = state.new_session_id();
     let spawn_opts = spawn_opts_from_body(&body);
@@ -354,6 +381,7 @@ pub async fn create_session(
     let sess = AcpHttpSession {
         agent: body.agent.clone(),
         cwd: cwd.clone(),
+        label: body.label.clone(),
         execution_mode: mode,
         handle_id,
         spawn_opts,

@@ -368,6 +368,7 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/wiki/pages", get(gui_wiki_list).post(gui_wiki_upsert))
         .route("/v1/gui/wiki/pages/{id}", get(gui_wiki_get))
         .route("/v1/gui/wiki/pages/{id}/backlinks", get(gui_wiki_backlinks))
+        .route("/v1/gui/wiki/ingest", post(gui_wiki_ingest))
         // UI-MEMORY-SPEC v1.1 깊은 endpoint
         .route("/v1/gui/wiki/pages/{id}/delete", post(gui_wiki_delete))       // M-12 휴지통
         .route("/v1/gui/wiki/pages/{id}/lock", post(gui_wiki_lock))           // M-7
@@ -3572,6 +3573,105 @@ async fn gui_wiki_backlinks(
     Ok(Json(serde_json::json!({ "outgoing": outgoing, "backlinks": backlinks })))
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct WikiIngestBody {
+    source: String,
+    #[serde(default)]
+    orchestrator: Option<String>,
+}
+
+/// `POST /v1/gui/wiki/ingest` — CoT 자기구축: 소스를 에이전트(ACP)가 분석해 위키 페이지로
+/// 생성/갱신([[wikilink]] 연결 포함). Karpathy LLM-wiki 패턴의 self-building 핵심(Phase 2).
+async fn gui_wiki_ingest(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<WikiIngestBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use rusqlite::OptionalExtension;
+    if body.source.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorDto{error: "source 필수".into()})));
+    }
+    let planner = body.orchestrator.clone().unwrap_or_else(|| "xgram-ops".to_string());
+    let (ai_type, cwd, titles) = {
+        let mut db = state.db.lock().await;
+        let row = db.conn().query_row(
+            "SELECT COALESCE(p.ai_type,'claude'), COALESCE(ac.project_path,'') \
+             FROM agent_capabilities ac JOIN agent_profiles p ON p.alias=ac.alias WHERE ac.alias=?1",
+            rusqlite::params![planner],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        ).optional().ok().flatten();
+        let (ai_type, cwd) = match row {
+            Some((a, c)) if !c.trim().is_empty() => (a, c),
+            _ => return Err((StatusCode::UNPROCESSABLE_ENTITY, Json(ErrorDto{error: format!("ingest 플래너 '{planner}' 없음/cwd 없음 — xgram-ops 활성화 필요")}))),
+        };
+        let mut stmt = db.conn().prepare("SELECT title FROM wiki_pages ORDER BY updated_at DESC LIMIT 60")
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("titles:{e}")})))?;
+        let ts: Vec<String> = stmt.query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("titlesq:{e}")})))?
+            .filter_map(|x| x.ok()).collect();
+        (ai_type, cwd, ts.join(", "))
+    };
+    let adapter = match ai_type.as_str() { "codex" => "codex-acp", "gemini" => "gemini", _ => "claude-agent-acp" };
+    let prompt = format!(
+        "너는 OpenXgram 위키 편집자다. 아래 소스를 위키 페이지로 정리해라.\n\
+         기존 페이지 제목(관련되면 [[제목]]으로 연결): {titles}\n\
+         반드시 JSON 한 개만 출력(설명·코드펜스 금지):\n\
+         {{\"pages\":[{{\"id\":\"<type>/<영문slug>\",\"title\":\"<제목>\",\"page_type\":\"concept|entity|comparison|other\",\"content\":\"<마크다운 본문, 관련 개념은 [[제목]] 으로 연결>\"}}]}}\n\
+         핵심 개념/엔티티별로 페이지를 나누고 서로 [[wikilink]] 로 연결해라. 소스: {source}",
+        titles = titles, source = body.source.trim(),
+    );
+    let create = crate::daemon_gui_acp::create_session(&state.acp, crate::daemon_gui_acp::CreateSessionBody {
+        agent: adapter.to_string(), cwd, mcp_servers: Vec::new(),
+        execution_mode: Some("always".to_string()), permission_mode: Some("bypassPermissions".to_string()),
+        model: None, thinking: None, machine: None, label: None,
+    }).await.map_err(|(c, m)| (c, Json(ErrorDto{error: m})))?;
+    let sid = create.get("sessionId").and_then(|s| s.as_str()).unwrap_or("").to_string();
+    let res = crate::daemon_gui_acp::prompt(&state.acp, &sid, crate::daemon_gui_acp::PromptBody{ text: prompt }).await;
+    let _ = crate::daemon_gui_acp::close(&state.acp, &sid).await;
+    let acp_result = res.map_err(|(c, m)| (c, Json(ErrorDto{error: m})))?;
+    let mut text = String::new();
+    if let Some(updates) = acp_result.get("updates").and_then(|u| u.as_array()) {
+        for u in updates {
+            if u.get("sessionUpdate").and_then(|s| s.as_str()) == Some("agent_message_chunk") {
+                if let Some(t) = u.get("content").and_then(|c| c.get("text")).and_then(|t| t.as_str()) { text.push_str(t); }
+            }
+        }
+    }
+    let plan = extract_first_json(&text);
+    let pages = plan.get("pages").and_then(|p| p.as_array()).cloned().unwrap_or_default();
+    use sha2::{Digest, Sha256};
+    let now = chrono::Utc::now().timestamp();
+    let now_s = chrono::Utc::now().to_rfc3339();
+    let mut ingested: Vec<serde_json::Value> = Vec::new();
+    {
+        let mut db = state.db.lock().await;
+        for pg in &pages {
+            let id = pg.get("id").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let title = pg.get("title").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let ptype = pg.get("page_type").and_then(|v| v.as_str()).unwrap_or("concept").to_string();
+            let content = pg.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if id.is_empty() || title.is_empty() { continue; }
+            let hash = format!("{:x}", Sha256::digest(content.as_bytes()));
+            let file_path = format!("wiki/{}/{}.md", ptype, id);
+            let _ = db.conn().execute(
+                "INSERT INTO wiki_pages (id, file_path, page_type, title, content_hash, embedding_hash, created_at, updated_at) \
+                 VALUES (?1,?2,?3,?4,?5,?5,?6,?6) ON CONFLICT(id) DO UPDATE SET title=?4, content_hash=?5, updated_at=?6",
+                rusqlite::params![id, file_path, ptype, title, hash, now]);
+            let _ = db.conn().execute("INSERT INTO global_search (kind, ref_id, title, body) VALUES ('wiki', ?1, ?2, ?3)", rusqlite::params![id, title, content]);
+            let links = extract_wikilinks(&content);
+            let _ = db.conn().execute("DELETE FROM wiki_links WHERE from_id=?1", rusqlite::params![id]);
+            for t in &links {
+                let to_id: Option<String> = db.conn().query_row("SELECT id FROM wiki_pages WHERE title=?1 LIMIT 1", rusqlite::params![t], |r| r.get(0)).optional().ok().flatten();
+                let _ = db.conn().execute("INSERT OR REPLACE INTO wiki_links (from_id,to_title,to_id,created_at) VALUES (?1,?2,?3,?4)", rusqlite::params![id, t, to_id, now_s]);
+            }
+            let _ = db.conn().execute("UPDATE wiki_links SET to_id=?1 WHERE to_title=?2 AND (to_id IS NULL OR to_id='')", rusqlite::params![id, title]);
+            ingested.push(serde_json::json!({"id": id, "title": title, "page_type": ptype, "links": links.len()}));
+        }
+    }
+    Ok(Json(serde_json::json!({ "ok": true, "ingested": ingested, "count": ingested.len() })))
+}
+
 /// `GET /v1/gui/wiki/pages/{id}` — 위키 페이지 단일 조회.
 async fn gui_wiki_get(
     State(state): State<GuiServerState>,
@@ -6625,7 +6725,7 @@ async fn heartbeat_wake(state: &GuiServerState) {
         let create = match crate::daemon_gui_acp::create_session(&state.acp, crate::daemon_gui_acp::CreateSessionBody {
             agent: adapter.to_string(), cwd, mcp_servers: Vec::new(),
             execution_mode: Some("always".to_string()), permission_mode: Some("bypassPermissions".to_string()),
-            model: None, thinking: None, machine: None,
+            model: None, thinking: None, machine: None, label: None,
         }).await { Ok(v) => v, Err(_) => continue };
         let sid = create.get("sessionId").and_then(|s| s.as_str()).unwrap_or("").to_string();
         if sid.is_empty() { continue; }
@@ -6818,7 +6918,7 @@ async fn gui_workflow_plan(
             agent: adapter.to_string(), cwd, mcp_servers: Vec::new(),
             execution_mode: Some("always".to_string()),
             permission_mode: Some("bypassPermissions".to_string()),
-            model: None, thinking: None, machine: None,
+            model: None, thinking: None, machine: None, label: None,
         },
     ).await.map_err(|(c, m)| (c, Json(ErrorDto{error: m})))?;
     let sid = create.get("sessionId").and_then(|s| s.as_str()).unwrap_or("").to_string();
