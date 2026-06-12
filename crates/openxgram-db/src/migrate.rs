@@ -288,6 +288,12 @@ const MIGRATIONS: &[Migration] = &[
         name: "agent_composer_settings",
         sql: include_str!("../migrations/0053_agent_composer_settings.sql"),
     },
+    // LLM 위키 Phase 1 — 페이지 간 [[wikilink]] 연결/backlink.
+    Migration {
+        version: 54,
+        name: "wiki_links",
+        sql: include_str!("../migrations/0054_wiki_links.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

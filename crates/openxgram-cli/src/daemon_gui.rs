@@ -367,6 +367,7 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // UI-MEMORY-SPEC v1.1 — 위키 CRUD + 검색 + 패턴/실수 보드
         .route("/v1/gui/wiki/pages", get(gui_wiki_list).post(gui_wiki_upsert))
         .route("/v1/gui/wiki/pages/{id}", get(gui_wiki_get))
+        .route("/v1/gui/wiki/pages/{id}/backlinks", get(gui_wiki_backlinks))
         // UI-MEMORY-SPEC v1.1 깊은 endpoint
         .route("/v1/gui/wiki/pages/{id}/delete", post(gui_wiki_delete))       // M-12 휴지통
         .route("/v1/gui/wiki/pages/{id}/lock", post(gui_wiki_lock))           // M-7
@@ -3505,7 +3506,70 @@ async fn gui_wiki_upsert(
         "INSERT INTO global_search (kind, ref_id, title, body) VALUES ('wiki', ?1, ?2, ?3)",
         rusqlite::params![body.id, body.title, body.content],
     );
-    Ok(Json(serde_json::json!({"id": body.id, "content_hash": hash, "updated_at": now})))
+    // LLM 위키 — 본문 [[wikilink]] 파싱 → wiki_links 갱신(이 페이지 기존 링크 삭제 후 재삽입).
+    let now_s = chrono::Utc::now().to_rfc3339();
+    let links = extract_wikilinks(&body.content);
+    let _ = db.conn().execute("DELETE FROM wiki_links WHERE from_id=?1", rusqlite::params![body.id]);
+    for t in &links {
+        let to_id: Option<String> = db.conn().query_row(
+            "SELECT id FROM wiki_pages WHERE title=?1 LIMIT 1", rusqlite::params![t], |r| r.get(0),
+        ).optional().ok().flatten();
+        let _ = db.conn().execute(
+            "INSERT OR REPLACE INTO wiki_links (from_id,to_title,to_id,created_at) VALUES (?1,?2,?3,?4)",
+            rusqlite::params![body.id, t, to_id, now_s]);
+    }
+    // 이 페이지(제목)를 가리키던 미해석 링크들 해석(빨간링크 → 연결).
+    let _ = db.conn().execute(
+        "UPDATE wiki_links SET to_id=?1 WHERE to_title=?2 AND (to_id IS NULL OR to_id='')",
+        rusqlite::params![body.id, body.title]);
+    Ok(Json(serde_json::json!({"id": body.id, "content_hash": hash, "updated_at": now, "links": links.len()})))
+}
+
+/// 본문에서 `[[제목]]` / `[[제목|별칭]]` wikilink 제목들을 추출(중복 제거).
+fn extract_wikilinks(s: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut rest = s;
+    while let Some(i) = rest.find("[[") {
+        let after = &rest[i + 2..];
+        if let Some(j) = after.find("]]") {
+            let raw = after[..j].trim();
+            let title = raw.split('|').next().unwrap_or(raw).trim().to_string();
+            if !title.is_empty() && !out.contains(&title) { out.push(title); }
+            rest = &after[j + 2..];
+        } else { break; }
+    }
+    out
+}
+
+/// `GET /v1/gui/wiki/pages/{id}/backlinks` — 이 페이지의 나가는 링크 + 들어오는 백링크.
+async fn gui_wiki_backlinks(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use rusqlite::OptionalExtension;
+    let mut db = state.db.lock().await;
+    let title: String = db.conn().query_row(
+        "SELECT title FROM wiki_pages WHERE id=?1", rusqlite::params![id], |r| r.get(0),
+    ).optional().ok().flatten().unwrap_or_default();
+    let mut stmt = db.conn().prepare("SELECT to_title, to_id FROM wiki_links WHERE from_id=?1 ORDER BY to_title")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("out:{e}")})))?;
+    let outgoing: Vec<serde_json::Value> = stmt.query_map(rusqlite::params![id], |r| Ok(serde_json::json!({
+        "title": r.get::<_, String>(0)?, "id": r.get::<_, Option<String>>(1)?,
+    }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("outq:{e}")})))?
+        .filter_map(|x| x.ok()).collect();
+    drop(stmt);
+    let mut stmt2 = db.conn().prepare(
+        "SELECT DISTINCT wl.from_id, wp.title FROM wiki_links wl JOIN wiki_pages wp ON wp.id=wl.from_id \
+         WHERE wl.to_id=?1 OR wl.to_title=?2 ORDER BY wp.title")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("back:{e}")})))?;
+    let backlinks: Vec<serde_json::Value> = stmt2.query_map(rusqlite::params![id, title], |r| Ok(serde_json::json!({
+        "id": r.get::<_, String>(0)?, "title": r.get::<_, String>(1)?,
+    }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("backq:{e}")})))?
+        .filter_map(|x| x.ok()).collect();
+    drop(stmt2);
+    Ok(Json(serde_json::json!({ "outgoing": outgoing, "backlinks": backlinks })))
 }
 
 /// `GET /v1/gui/wiki/pages/{id}` — 위키 페이지 단일 조회.
