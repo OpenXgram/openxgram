@@ -154,6 +154,8 @@ const ROUTES: Record<string, Route> = {
  wallets_list: { method: "GET", path: "/wallets"},
  wallet_create: { method: "POST", path: "/wallets", body: true},
  wallet_topup: { method: "POST", path: "/wallets/topup", body: true},
+ // 마켓 (c)갈래 — 지갑 거래 원장 (충전/구매/수익 내역 + 집계). agentId/limit 옵션.
+ wallet_ledger: { method: "GET", path: "/wallets/ledger", emptyAs: { entries: [], total_topup_micro: 0, total_purchase_micro: 0, total_earned_micro: 0 } },
  // Messenger v1.3 L3·V1 / M-5·N1·N3·V4 — Role 정책 + 화이트리스트
  role_policies: { method: "GET", path: "/role-policies"},
  role_policy_set: { method: "POST", path: "/role-policies", body: true},

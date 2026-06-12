@@ -344,6 +344,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // UI-MESSENGER-SPEC v1.3 §2.4 + M-3 + L4 — 마스터+서브 지갑 (HD 영구 점유).
         .route("/v1/gui/wallets", get(gui_wallets_list).post(gui_wallet_create))
         .route("/v1/gui/wallets/topup", post(gui_wallet_topup))
+        // 마켓 (c)갈래 — 지갑 거래 원장 (충전/구매/수익 내역 + 집계).
+        .route("/v1/gui/wallets/ledger", get(gui_wallet_ledger))
         // UI-MESSENGER-SPEC v1.3 L3 + V1 — 역할별 auto_respond 마스터 정책.
         .route("/v1/gui/role-policies", get(gui_role_policies).post(gui_role_policies_set))
         // UI-MESSENGER-SPEC v1.3 §3.6 M-5 + N1 + N3 + V4 — 화이트리스트 패턴 + 우선순위.
@@ -7563,6 +7565,30 @@ async fn gui_wallet_topup(
             Json(ErrorDto { error: format!("wallet topup: {e}") }),
         )
     })
+}
+
+/// `GET /v1/gui/wallets/ledger?agentId=&limit=` — 지갑 거래 원장 + 집계 (마켓 (c)갈래).
+/// agentId 생략 시 전체. 충전/구매/수익 내역과 누적 합계를 실데이터로 반환.
+async fn gui_wallet_ledger(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Json<crate::daemon_gui_wallets::LedgerDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let agent_id = q.get("agentId").map(|s| s.as_str()).filter(|s| !s.is_empty());
+    let limit = q
+        .get("limit")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(50);
+    let mut db = state.db.lock().await;
+    crate::daemon_gui_wallets::list_ledger(&mut db, agent_id, limit)
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorDto { error: format!("wallet ledger: {e}") }),
+            )
+        })
 }
 
 /// `GET /v1/gui/machine` — 이 머신의 4-tuple machine part (UI-MESSENGER-SPEC L2).

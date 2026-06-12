@@ -145,12 +145,19 @@ impl OpenxgramDispatcher {
             Ok(u) if !u.trim().is_empty() => mp_builder.base_url(u),
             _ => mp_builder,
         };
+        // 마켓 (c)갈래 — 내부 ledger 결제 게이트웨이 (NoopGateway 가짜 영수증 대체).
+        // funded on-chain wallet/RPC 부재 → sub_wallets 실잔액 검증·차감 기반. 같은
+        // db.sqlite 에 별도 연결(WAL + busy_timeout 으로 동시 접근 안전).
+        let ledger_gateway = std::sync::Arc::new(
+            crate::ledger_gateway::LedgerPaymentGateway::open(db_path(data_dir))
+                .context("ledger payment gateway 생성 실패")?,
+        );
         let marketplace_tools = std::sync::Arc::new(openxgram_marketplace::MarketplaceTools::new(
             mp_builder
                 .build()
                 .context("marketplace client 생성 실패")?,
             openxgram_marketplace::SpendPolicy::conservative(),
-            std::sync::Arc::new(openxgram_marketplace::NoopPaymentGateway::new()),
+            ledger_gateway,
         ));
         Ok(Self {
             db,
@@ -709,6 +716,23 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     "type": "object",
                     "properties": { "jobId": {"type": "string"} },
                     "required": ["jobId"]
+                }),
+            },
+            // 마켓 (c)갈래 — 실결제 게이트웨이(내부 ledger) 배선 완료 후 노출.
+            // 가짜 영수증 아님: sub_wallets 실잔액 검증·차감 후 job 생성. 잔액 부족/한도 초과 시
+            // 실제 에러 또는 NeedsConfirmation 반환.
+            ToolSpec {
+                name: "purchase_service".into(),
+                description: "마켓 에이전트 서비스 구매(job 발주) — 내부 지갑 원장에서 실제 잔액 차감. agentId, serviceId, input(객체), maxPriceUsdcMicro(옵션). 잔액 부족 시 결제 실패(에러).".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "agentId": {"type": "string"},
+                        "serviceId": {"type": "string"},
+                        "input": {"type": "object", "description": "서비스 schema 에 맞는 입력"},
+                        "maxPriceUsdcMicro": {"type": "integer", "description": "최대 지불 의향(microUSDC). 생략 시 서비스 정가."}
+                    },
+                    "required": ["agentId", "serviceId", "input"]
                 }),
             },
         ]);
@@ -2539,6 +2563,38 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 let handle = tokio::runtime::Handle::current();
                 let r = tokio::task::block_in_place(|| {
                     handle.block_on(async move { tools.get_job_status(&job_id).await })
+                })
+                .map_err(internal)?;
+                serde_json::to_value(r).map_err(internal)
+            }
+            // 마켓 (c)갈래 — 실결제(내부 ledger) + job 발주. block_in_place bridge (search 동일).
+            // gateway 가 sub_wallets 잔액 검증·차감 → 부족하면 실제 에러(가짜 성공 없음).
+            "purchase_service" => {
+                let agent_id = args
+                    .get("agentId")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'agentId'"))?
+                    .to_string();
+                let service_id = args
+                    .get("serviceId")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'serviceId'"))?
+                    .to_string();
+                let input = args
+                    .get("input")
+                    .cloned()
+                    .ok_or_else(|| invalid("missing 'input'"))?;
+                let max_price = args.get("maxPriceUsdcMicro").and_then(|v| v.as_i64());
+                let req = openxgram_marketplace::NewJobRequest {
+                    agent_id: openxgram_marketplace::AgentId(agent_id),
+                    service_id: openxgram_marketplace::ServiceId(service_id),
+                    input,
+                    max_price_usdc_micro: max_price,
+                };
+                let tools = self.marketplace_tools.clone();
+                let handle = tokio::runtime::Handle::current();
+                let r = tokio::task::block_in_place(|| {
+                    handle.block_on(async move { tools.purchase(req).await })
                 })
                 .map_err(internal)?;
                 serde_json::to_value(r).map_err(internal)

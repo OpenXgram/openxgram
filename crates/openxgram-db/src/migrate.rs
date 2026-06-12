@@ -294,6 +294,12 @@ const MIGRATIONS: &[Migration] = &[
         name: "wiki_links",
         sql: include_str!("../migrations/0054_wiki_links.sql"),
     },
+    // 마켓 (c)갈래 — 지갑 거래 원장 (topup/purchase/earn 감사 추적).
+    Migration {
+        version: 55,
+        name: "wallet_ledger",
+        sql: include_str!("../migrations/0055_wallet_ledger.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

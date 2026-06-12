@@ -8,13 +8,48 @@ import "./market.css";
 //   #budgetOvl  (L856-905) — 충전/잔액/에이전트별 예산/충전·사용 내역
 //   #earningsOvl(L937-965) — 공개 에이전트 수익 + 외부 사용 이력
 //   #extWorkOvl (L924-934) — 외부 요청 → 에이전트 작업 결과 상세
-// 데이터 정직 원칙:
-//   - 마켓/지갑/수익 백엔드 라우트 없음 (api/client.ts 확인: payment_* 만 존재).
-//   - 일일 한도(限度)만 실제 payment_get_daily_limit / payment_set_daily_limit 로 배선.
-//   - 잔액·시세·수익·리스팅 등 라이브 금액은 날조하지 않고 "준비 중(Phase 6 — 백엔드 미연결)"
-//     placeholder 로 표기. 레이아웃은 정본 그대로 유지.
+// 데이터 정직 원칙 (마켓 (c)갈래 배선 완료):
+//   - 잔액·충전·거래내역·수익은 실제 백엔드(wallets_list / wallet_ledger / wallet_topup)로 배선.
+//     잔액 = sub_wallets balance 합, 거래내역·수익 = wallet_ledger(내부 원장) 실데이터.
+//   - 구매(차감)는 MCP purchase_service(내부 ledger gateway)가 sub_wallets 잔액을 실제 차감.
+//   - 일일 한도(payment_*_daily_limit) 도 실제 배선 유지.
+//   - 마켓 리스팅(공개 에이전트 카드)은 디렉토리(OpenAgentX) 미배포 시 정본 레이아웃 예시로 유지.
 
 type SubView = "market" | "wallet" | "earnings" | "extwork";
+
+interface LedgerEntry {
+  id: string;
+  agent_id: string;
+  kind: string; // 'topup' | 'purchase' | 'earn'
+  amount_micro: number;
+  chain?: string | null;
+  counterparty?: string | null;
+  memo?: string | null;
+  created_at: string;
+}
+interface LedgerDto {
+  entries: LedgerEntry[];
+  total_topup_micro: number;
+  total_purchase_micro: number;
+  total_earned_micro: number;
+}
+interface SubWallet {
+  agent_id: string;
+  derived_address: string;
+  balance_micro: number;
+  spent_micro: number;
+  earned_micro: number;
+  status: string;
+}
+interface MasterWallet {
+  address?: string | null;
+  free_micro: number;
+}
+interface WalletsDto {
+  master: MasterWallet;
+  sub_wallets: SubWallet[];
+  next_hd_index: number;
+}
 
 // 카테고리 칩 — 정본 #marketOvl L826-829
 const CATEGORIES = ["전체", "요약", "번역", "이미지", "리서치", "코딩", "SNS"] as const;
@@ -63,16 +98,87 @@ async function fetchLimit(): Promise<number | null> {
   }
 }
 
+// 마켓 (c)갈래 — 지갑(잔액) 실데이터. 백엔드 미연결 시 null (UI '준비 중').
+async function fetchWallets(): Promise<WalletsDto | null> {
+  try {
+    return await invoke<WalletsDto>("wallets_list");
+  } catch {
+    return null;
+  }
+}
+
+// 마켓 (c)갈래 — 거래 원장 + 집계 실데이터.
+async function fetchLedger(): Promise<LedgerDto | null> {
+  try {
+    return await invoke<LedgerDto>("wallet_ledger", { limit: 50 });
+  } catch {
+    return null;
+  }
+}
+
+// 총 잔액 = 서브 지갑 balance 합 + 마스터 free.
+function totalBalanceMicro(w: WalletsDto | null | undefined): number {
+  if (!w) return 0;
+  const sub = (w.sub_wallets ?? []).reduce((a, s) => a + (s.balance_micro || 0), 0);
+  return sub + (w.master?.free_micro || 0);
+}
+
+const KIND_LABEL: Record<string, string> = { topup: "충전", purchase: "구매", earn: "수익" };
+function relTime(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return iso;
+  const diff = Date.now() - t;
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "방금";
+  if (m < 60) return `${m}분 전`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}시간 전`;
+  return `${Math.floor(h / 24)}일 전`;
+}
+
 export function MarketTab() {
   const [view, setView] = createSignal<SubView>("market");
   const [cat, setCat] = createSignal<string>("전체");
   const [ext, setExt] = createSignal<{ work: ExtWork; meta: string } | null>(null);
 
-  // 일일 한도 — 유일하게 실제 백엔드 배선되는 값
+  // 일일 한도 — 실제 백엔드 배선
   const [limit, { refetch }] = createResource(fetchLimit);
   const [draft, setDraft] = createSignal<string>("");
   const [saving, setSaving] = createSignal(false);
   const [saveErr, setSaveErr] = createSignal<string | null>(null);
+
+  // 마켓 (c)갈래 — 지갑(잔액) + 거래원장 실데이터 resource.
+  const [wallets, { refetch: refetchWallets }] = createResource(fetchWallets);
+  const [ledger, { refetch: refetchLedger }] = createResource(fetchLedger);
+
+  // 충전(topup) — 마스터 → 첫 서브 지갑 즉시 이체. 실제 잔액 변화.
+  const [topupAmt, setTopupAmt] = createSignal<string>("");
+  const [topupBusy, setTopupBusy] = createSignal(false);
+  const [topupErr, setTopupErr] = createSignal<string | null>(null);
+
+  const firstAgentId = () => wallets()?.sub_wallets?.[0]?.agent_id ?? null;
+
+  const onTopup = async () => {
+    const usd = Number(topupAmt());
+    if (!Number.isFinite(usd) || usd <= 0) return;
+    const aid = firstAgentId();
+    if (!aid) {
+      setTopupErr("서브 지갑이 없습니다 — 지갑 생성 후 충전하세요.");
+      return;
+    }
+    setTopupBusy(true);
+    setTopupErr(null);
+    try {
+      await invoke("wallet_topup", { agent_id: aid, amount_micro: Math.floor(usd * 1_000_000) });
+      setTopupAmt("");
+      void refetchWallets();
+      void refetchLedger();
+    } catch (e) {
+      setTopupErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTopupBusy(false);
+    }
+  };
 
   const onSaveLimit = async () => {
     const num = Number(draft());
@@ -206,22 +312,52 @@ export function MarketTab() {
             </button>
           </div>
           <div class="bb">
-            {/* 잔액·이번 달 사용 — 백엔드 없음(준비 중). 한도만 실제 payment API. */}
+            {/* 잔액·누적 구매 — 실제 wallets_list + wallet_ledger 배선 */}
             <div class="budtop">
               <div>
-                <div class="big">준비 중</div>
-                <div class="cap">잔액 · 백엔드 미연결 (Phase 6)</div>
+                <Show
+                  when={wallets() != null}
+                  fallback={<div class="big" style="color:#9aa1ad;">준비 중</div>}
+                >
+                  <div class="big">${fmtUsdc(totalBalanceMicro(wallets()))}</div>
+                </Show>
+                <div class="cap">잔액 (서브 지갑 합 + 마스터 free)</div>
               </div>
               <div>
-                <div class="big" style="font-size:17px;color:#c9760e;">준비 중</div>
-                <div class="cap">이번 달 사용</div>
+                <Show
+                  when={ledger() != null}
+                  fallback={<div class="big" style="font-size:17px;color:#9aa1ad;">준비 중</div>}
+                >
+                  <div class="big" style="font-size:17px;color:#c9760e;">
+                    ${fmtUsdc(ledger()?.total_purchase_micro ?? 0)}
+                  </div>
+                </Show>
+                <div class="cap">누적 구매 (차감)</div>
               </div>
-              <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
-                <button type="button" class="budbtn" disabled title="준비 중 (Phase 6 — 백엔드 미연결)">
-                  충전
+              <div style="margin-left:auto;display:flex;gap:6px;align-items:center;">
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={topupAmt()}
+                  placeholder="충전액 (USDC)"
+                  onInput={(e) => setTopupAmt(e.currentTarget.value)}
+                  style="width:110px;border:1px solid var(--kk-line);border-radius:8px;padding:7px 9px;font-size:12px;"
+                />
+                <button
+                  type="button"
+                  class="budbtn"
+                  disabled={!topupAmt() || topupBusy() || !firstAgentId()}
+                  title={firstAgentId() ? "마스터 → 서브 지갑 충전" : "서브 지갑 없음 — 먼저 지갑 생성"}
+                  onClick={() => void onTopup()}
+                >
+                  {topupBusy() ? "충전 중…" : "충전"}
                 </button>
               </div>
             </div>
+            <Show when={topupErr()}>
+              <div style="font-size:11.5px;color:#d64545;margin:2px 0 8px;">충전 실패: {topupErr()}</div>
+            </Show>
 
             {/* 일일 한도 — 실제 payment_get/set_daily_limit 배선 */}
             <div class="wsec">일일 한도 — 실제 연결 (payment API)</div>
@@ -274,12 +410,47 @@ export function MarketTab() {
               <b> 준비 중 (Phase 6)</b>. 현재는 데몬 일일 한도(payment API)만 적용됩니다.
             </div>
 
-            {/* 충전·사용 내역 — 백엔드 없음 */}
+            {/* 충전·사용 내역 — 실제 wallet_ledger 배선 */}
             <div class="wsec" style="margin-top:20px;">충전 · 사용 내역</div>
-            <div class="mk-note">
-              충전/사용 거래내역은 <b>준비 중 (Phase 6 — 백엔드 미연결)</b>. 결제 데몬 연결 후 이 자리에
-              실제 내역이 표시됩니다.
-            </div>
+            <Show
+              when={ledger() != null}
+              fallback={
+                <div class="mk-note">
+                  거래내역 백엔드 미연결 — daemon 연결 후 표시됩니다.
+                </div>
+              }
+            >
+              <Show
+                when={(ledger()?.entries.length ?? 0) > 0}
+                fallback={
+                  <div class="mk-note">
+                    아직 거래내역이 없습니다. 위에서 충전하거나 마켓에서 구매하면 여기에 기록됩니다.
+                  </div>
+                }
+              >
+                <For each={ledger()?.entries ?? []}>
+                  {(e) => (
+                    <div class="txn">
+                      <div class={`ti ${e.amount_micro >= 0 ? "in" : "out"}`}>
+                        {e.amount_micro >= 0 ? "↓" : "↑"}
+                      </div>
+                      <div>
+                        <div class="tn">
+                          {KIND_LABEL[e.kind] ?? e.kind}
+                          {e.memo ? ` · ${e.memo}` : ""}
+                        </div>
+                        <div class="ts">
+                          <span class="tu">{e.agent_id}</span> · {relTime(e.created_at)}
+                        </div>
+                      </div>
+                      <div class={`ta ${e.amount_micro >= 0 ? "plus" : ""}`}>
+                        {e.amount_micro >= 0 ? "+" : "-"}${fmtUsdc(Math.abs(e.amount_micro))}
+                      </div>
+                    </div>
+                  )}
+                </For>
+              </Show>
+            </Show>
           </div>
         </div>
       </Show>
@@ -300,23 +471,66 @@ export function MarketTab() {
           <div class="bb">
             <div class="budtop">
               <div>
-                <div class="big" style="color:#1f9d4d;">준비 중</div>
-                <div class="cap">이번 달 수익 · 백엔드 미연결</div>
+                <Show
+                  when={ledger() != null}
+                  fallback={<div class="big" style="color:#9aa1ad;">준비 중</div>}
+                >
+                  <div class="big" style="color:#1f9d4d;">
+                    ${fmtUsdc(ledger()?.total_earned_micro ?? 0)}
+                  </div>
+                </Show>
+                <div class="cap">누적 수익 (내부 원장)</div>
               </div>
               <div>
-                <div class="big" style="font-size:17px;">준비 중</div>
-                <div class="cap">누적 수익</div>
+                <Show
+                  when={wallets() != null}
+                  fallback={<div class="big" style="font-size:17px;color:#9aa1ad;">준비 중</div>}
+                >
+                  <div class="big" style="font-size:17px;">
+                    ${fmtUsdc((wallets()?.sub_wallets ?? []).reduce((a, s) => a + (s.earned_micro || 0), 0))}
+                  </div>
+                </Show>
+                <div class="cap">지갑 적립 합</div>
               </div>
               <div style="margin-left:auto;">
-                <button type="button" class="budbtn" disabled title="준비 중 (Phase 6 — 백엔드 미연결)">
+                <button
+                  type="button"
+                  class="budbtn"
+                  disabled
+                  title="정산(온체인 USDC 출금)은 funded wallet/RPC 배선 후 — 현재는 내부 원장 적립만"
+                >
                   정산하기 (USDC)
                 </button>
               </div>
             </div>
 
             <div class="mk-note">
-              수익·정산 백엔드는 <b>준비 중 (Phase 6 — 백엔드 미연결)</b>. 아래 항목은 정본 레이아웃
-              예시이며 라이브 수익이 아닙니다.
+              수익은 내부 지갑 원장(<b>wallet_ledger</b>)의 실데이터입니다. 외부 USDC 출금(정산)은
+              funded wallet + chain RPC 배선 후 활성화됩니다 (현재는 내부 원장 적립까지).
+            </div>
+
+            {/* 실제 수익(earn) 원장 내역 */}
+            <Show when={(ledger()?.entries.filter((e) => e.kind === "earn").length ?? 0) > 0}>
+              <div class="wsec" style="margin-top:14px;">수익 적립 내역 (실데이터)</div>
+              <For each={ledger()?.entries.filter((e) => e.kind === "earn") ?? []}>
+                {(e) => (
+                  <div class="txn">
+                    <div class="ti in">↓</div>
+                    <div>
+                      <div class="tn">{e.memo ?? "외부 사용 수익"}</div>
+                      <div class="ts">
+                        <span class="tu">{e.counterparty ?? e.agent_id}</span> · {relTime(e.created_at)}
+                      </div>
+                    </div>
+                    <div class="ta plus">+${fmtUsdc(Math.abs(e.amount_micro))}</div>
+                  </div>
+                )}
+              </For>
+            </Show>
+
+            <div class="mk-note" style="margin-top:10px;">
+              아래는 정본 레이아웃 예시(공개 에이전트 카드·외부 사용 데모)입니다. 위 수치·적립 내역만
+              라이브 데이터입니다.
             </div>
 
             <div class="wsec">공개한 에이전트 · 2</div>
