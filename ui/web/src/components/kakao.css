@@ -478,7 +478,7 @@
 .kk-wiki > .board, .kk-set > .board, .kk-flow > .board{flex:1; min-height:0; display:flex; flex-direction:column; background:#fff; overflow:hidden;}
 .kk-wiki .bh, .kk-set .bh, .kk-flow .bh{padding:15px 20px; display:flex; align-items:center; gap:11px; border-bottom:1px solid var(--kk-line); flex:none; flex-wrap:wrap;}
 .kk-wiki .bh h2, .kk-set .bh h2, .kk-flow .bh h2{margin:0; font-size:17px; font-weight:800; color:var(--kk-ink);}
-.kk-wiki .bh .sub, .kk-set .bh .sub, .kk-flow .bh .sub{font-size:12px; color:#aab0bd;}
+.kk-wiki .bh .sub, .kk-set .bh .sub, .kk-flow .bh .sub{font-size:12px; color:#6b7280;}
 .kk-wiki .bh .ver, .kk-set .bh .ver{margin-left:auto; font-size:11px; color:#b6bcc6; font-family:ui-monospace,Menlo,monospace;}
 .kk-wiki .bb, .kk-set .bb, .kk-flow .bb{padding:18px 20px; overflow-y:auto; flex:1; min-height:0;}
 
