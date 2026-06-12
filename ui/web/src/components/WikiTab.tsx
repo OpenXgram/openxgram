@@ -99,6 +99,15 @@ export function WikiTab() {
   // open: 현재 열린 페이지 (null 이면 목록). loading/error 는 본문 fetch.
   const [open, setOpen] = createSignal<WikiPage | null>(null);
   const [bodyDto, setBodyDto] = createSignal<WikiBody | null>(null);
+  // LLM 위키 — 이 페이지의 나가는 링크 + backlinks(들어오는 링크).
+  const [wlinks] = createResource(
+    () => open()?.id,
+    async (id) => {
+      try { return await invoke<{ outgoing: { title: string; id: string | null }[]; backlinks: { id: string; title: string }[] }>("wiki_backlinks", { id }); }
+      catch { return { outgoing: [], backlinks: [] }; }
+    },
+  );
+  const openById = (pid: string) => { const p = (pages() ?? []).find((x) => x.id === pid); if (p) void openPage(p); };
   const [bodyLoading, setBodyLoading] = createSignal(false);
   const [bodyError, setBodyError] = createSignal<string | null>(null);
   const [editing, setEditing] = createSignal(false);
@@ -354,6 +363,23 @@ export function WikiTab() {
                     fallback={<div class="kk-wiki-empty">본문이 비어 있습니다. ‘편집’으로 내용을 추가하세요.</div>}
                   >
                     <pre class="wbody">{bodyDto()?.body}</pre>
+                  </Show>
+                  {/* LLM 위키 — 링크/backlinks 패널 */}
+                  <Show when={((wlinks()?.outgoing?.length || 0) + (wlinks()?.backlinks?.length || 0)) > 0}>
+                    <div style="margin-top:14px; border-top:1px solid var(--border); padding-top:10px;">
+                      <Show when={(wlinks()?.outgoing?.length || 0) > 0}>
+                        <div style="font-size:12.5px; color:var(--text-3); margin-bottom:4px;">🔗 이 페이지가 가리키는 곳</div>
+                        <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;">
+                          <For each={wlinks()!.outgoing}>{(l) => <span onClick={() => l.id && openById(l.id)} style={`cursor:${l.id ? "pointer" : "default"}; padding:3px 8px; border-radius:6px; font-size:12px; background:var(--bg-soft); border:1px solid var(--border); color:${l.id ? "var(--accent)" : "var(--text-3)"};`}>[[{l.title}]]{!l.id && " (미생성)"}</span>}</For>
+                        </div>
+                      </Show>
+                      <Show when={(wlinks()?.backlinks?.length || 0) > 0}>
+                        <div style="font-size:12.5px; color:var(--text-3); margin-bottom:4px;">↩ 이 페이지를 가리키는 곳 (backlinks)</div>
+                        <div style="display:flex; flex-wrap:wrap; gap:6px;">
+                          <For each={wlinks()!.backlinks}>{(b) => <span onClick={() => openById(b.id)} style="cursor:pointer; padding:3px 8px; border-radius:6px; font-size:12px; background:var(--bg-soft); border:1px solid var(--border); color:var(--accent);">{b.title}</span>}</For>
+                        </div>
+                      </Show>
+                    </div>
                   </Show>
                 </Show>
 

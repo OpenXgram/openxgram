@@ -173,6 +173,7 @@ const ROUTES: Record<string, Route> = {
  whitelist_pattern_add: { method: "POST", path: "/whitelist-patterns", body: true},
  // UI-MEMORY-SPEC v1.1 — 위키 CRUD
  wiki_pages_list: { method: "GET", path: "/wiki/pages"},
+ wiki_backlinks: { method: "GET", path: "/wiki/pages/{id}/backlinks"},
  wiki_page_get: { method: "GET", path: "/wiki/pages/{id}"},
  wiki_page_upsert: { method: "POST", path: "/wiki/pages", body: true},
  // Memory deep
