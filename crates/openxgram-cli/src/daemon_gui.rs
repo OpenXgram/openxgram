@@ -540,6 +540,12 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
             "/v1/gui/payment/daily-limit",
             get(gui_payment_get_limit).put(gui_payment_set_limit),
         )
+        // 마켓 (d)갈래 — free-tier 무료 할당량 config(전역 기본 + override) + 상태(잔여/사용량).
+        .route(
+            "/v1/gui/payment/free-tier",
+            get(gui_free_tier_get_config).put(gui_free_tier_set_config),
+        )
+        .route("/v1/gui/payment/free-tier/status", get(gui_free_tier_status))
         .route("/v1/gui/notify/status", get(gui_notify_status))
         // Discord 마법사 — token 검증 → 봇이 가입한 guild 목록 → 저장+테스트.
         .route(
@@ -7825,6 +7831,70 @@ async fn gui_payment_set_limit(
         .set(PAYMENT_LIMIT_AGENT, PAYMENT_LIMIT_CHAIN, body.micro_usdc)
         .map_err(|e| internal(&format!("daily limit set: {e}")))?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ── 마켓 (d)갈래 — free-tier 무료 할당량 ───────────────────────────────────
+
+/// `PUT /v1/gui/payment/free-tier` 입력 — 전역 기본 또는 에이전트별 override 설정.
+#[derive(Debug, Deserialize)]
+struct FreeTierConfigBody {
+    /// 대상 agent_id. 생략 또는 "*" 이면 전역 기본.
+    #[serde(default)]
+    agent_id: Option<String>,
+    /// 1일 무료 호출 횟수 (0=무료 없음).
+    free_per_day: i64,
+}
+
+/// `GET /v1/gui/payment/free-tier` — 무료 할당량 설정 (전역 기본 + override 목록).
+async fn gui_free_tier_get_config(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<crate::free_tier::FreeTierConfigDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    crate::free_tier::get_config(&mut db)
+        .map(Json)
+        .map_err(|e| internal(&format!("free-tier config get: {e}")))
+}
+
+/// `PUT /v1/gui/payment/free-tier` — 무료 할당량 설정 (전역 기본 또는 override).
+async fn gui_free_tier_set_config(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<FreeTierConfigBody>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    if body.free_per_day < 0 {
+        return Err(bad_request("free_per_day 는 0 이상"));
+    }
+    let agent_id = body
+        .agent_id
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(crate::free_tier::GLOBAL_AGENT);
+    let mut db = state.db.lock().await;
+    crate::free_tier::set_config(&mut db, agent_id, body.free_per_day)
+        .map_err(|e| internal(&format!("free-tier config set: {e}")))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `GET /v1/gui/payment/free-tier/status?agentId=` — 무료 잔여/사용량 상태.
+async fn gui_free_tier_status(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Result<Json<crate::free_tier::FreeTierStatusDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let agent_id = q
+        .get("agentId")
+        .map(|s| s.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(crate::free_tier::GLOBAL_AGENT)
+        .to_string();
+    let mut db = state.db.lock().await;
+    crate::free_tier::status(&mut db, &agent_id)
+        .map(Json)
+        .map_err(|e| internal(&format!("free-tier status: {e}")))
 }
 
 /// `GET /v1/gui/notify/status` — notify.toml 의 어댑터 설정 여부.

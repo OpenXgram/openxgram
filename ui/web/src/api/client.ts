@@ -309,6 +309,19 @@ const ROUTES: Record<string, Route> = {
  body: true,
 },
 
+ // 마켓 (d)갈래 — free-tier 무료 할당량 (config + 상태)
+ free_tier_config_get: {
+ method: "GET",
+ path: "/payment/free-tier",
+ emptyAs: { global_free_per_day: 0, overrides: [] },
+},
+ free_tier_config_set: {
+ method: "PUT",
+ path: "/payment/free-tier",
+ body: true,
+},
+ free_tier_status: { method: "GET", path: "/payment/free-tier/status"},
+
  // Notify
  notify_status: { method: "GET", path: "/notify/status"},
  notify_discord_validate: {

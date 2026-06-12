@@ -152,13 +152,22 @@ impl OpenxgramDispatcher {
             crate::ledger_gateway::LedgerPaymentGateway::open(db_path(data_dir))
                 .context("ledger payment gateway 생성 실패")?,
         );
-        let marketplace_tools = std::sync::Arc::new(openxgram_marketplace::MarketplaceTools::new(
-            mp_builder
-                .build()
-                .context("marketplace client 생성 실패")?,
-            openxgram_marketplace::SpendPolicy::conservative(),
-            ledger_gateway,
-        ));
+        // 마켓 (d)갈래 — free-tier 게이트 (무료 할당량). 결제 전에 무료 잔여를 먼저 소비 시도.
+        // 무료 잔여 있으면 과금 없이 통과, 소진이면 (c)갈래 ledger 결제로. 별도 DB 연결.
+        let free_quota_gate = std::sync::Arc::new(
+            crate::free_tier::LedgerFreeQuotaGate::open(db_path(data_dir))
+                .context("free-tier quota gate 생성 실패")?,
+        );
+        let marketplace_tools = std::sync::Arc::new(
+            openxgram_marketplace::MarketplaceTools::new(
+                mp_builder
+                    .build()
+                    .context("marketplace client 생성 실패")?,
+                openxgram_marketplace::SpendPolicy::conservative(),
+                ledger_gateway,
+            )
+            .with_free_quota(free_quota_gate),
+        );
         Ok(Self {
             db,
             data_dir: data_dir.to_path_buf(),

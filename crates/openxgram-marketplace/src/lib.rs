@@ -34,7 +34,8 @@ pub use agent::{Agent, AgentId, Job, JobId, JobStatus, NewJobRequest, Service, S
 pub use client::{MarketplaceClient, MarketplaceClientError};
 pub use mcp::{MarketplaceTools, PurchaseDecision, PurchaseResult, SearchResult};
 pub use policy::{
-    NoopPaymentGateway, PaymentGateway, PaymentReceipt, SpendPolicy, SpendPolicyDecision,
+    FreeQuotaGate, NoopPaymentGateway, PaymentGateway, PaymentReceipt, SpendPolicy,
+    SpendPolicyDecision,
 };
 
 use thiserror::Error;

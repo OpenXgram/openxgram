@@ -19,7 +19,9 @@ use tracing::{debug, info, warn};
 
 use crate::agent::{Agent, AgentId, Job, JobId, NewJobRequest, Service, ServiceId};
 use crate::client::MarketplaceClient;
-use crate::policy::{PaymentGateway, PaymentReceipt, SpendPolicy, SpendPolicyDecision};
+use crate::policy::{
+    FreeQuotaGate, PaymentGateway, PaymentReceipt, SpendPolicy, SpendPolicyDecision,
+};
 use crate::MarketplaceError;
 
 /// 4 MCP 도구 묶음.
@@ -30,6 +32,9 @@ pub struct MarketplaceTools {
     client: MarketplaceClient,
     policy: SpendPolicy,
     gateway: Arc<dyn PaymentGateway>,
+    /// 마켓 (d)갈래 — free-tier 무료 할당량 게이트 (선택). `None` 이면 무료 없음(항상 유료).
+    /// 주입 시 결제((c)갈래) 전에 무료 잔여를 먼저 소비 시도.
+    free_quota: Option<Arc<dyn FreeQuotaGate>>,
     /// 결제 체인 (기본 "base").
     chain: String,
 }
@@ -45,6 +50,7 @@ impl MarketplaceTools {
             client,
             policy,
             gateway,
+            free_quota: None,
             chain: "base".into(),
         }
     }
@@ -52,6 +58,13 @@ impl MarketplaceTools {
     /// 체인 override (예: "base-sepolia" 테스트).
     pub fn with_chain(mut self, chain: impl Into<String>) -> Self {
         self.chain = chain.into();
+        self
+    }
+
+    /// 마켓 (d)갈래 — free-tier 무료 할당량 게이트 주입 (builder).
+    /// 주입하면 결제 전에 무료 잔여를 먼저 소비 시도.
+    pub fn with_free_quota(mut self, gate: Arc<dyn FreeQuotaGate>) -> Self {
+        self.free_quota = Some(gate);
         self
     }
 
@@ -109,6 +122,40 @@ impl MarketplaceTools {
             Some(m) => m,
             None => self.resolve_service_price(&request).await?,
         };
+
+        // 1.5 마켓 (d)갈래 — free-tier 게이트. 무료 잔여가 있으면 과금/정책 없이 통과.
+        // 게이트가 원자적으로 used+1 한 뒤 true 를 반환 → job 만 생성(결제 X).
+        if let Some(gate) = &self.free_quota {
+            let granted = gate
+                .try_consume_free(&request.agent_id)
+                .await
+                .map_err(MarketplaceError::Payment)?;
+            if granted {
+                let job = self.client.create_job(&request, None).await?;
+                let (free_per_day, used_today) = gate
+                    .quota_status(&request.agent_id)
+                    .await
+                    .unwrap_or((0, 0));
+                let remaining = (free_per_day - used_today).max(0);
+                info!(
+                    target = "openxgram_marketplace",
+                    job_id = %job.id,
+                    agent_id = %request.agent_id,
+                    remaining,
+                    "purchase free-tier granted (no charge)"
+                );
+                return Ok(PurchaseResult {
+                    decision: PurchaseDecision::FreeTierGranted {
+                        free_per_day,
+                        used_today,
+                        remaining,
+                    },
+                    amount_usdc_micro: amount_micro,
+                    receipt: None,
+                    job: Some(job),
+                });
+            }
+        }
 
         // 2. 정책 평가
         let spent_hour = self
@@ -237,6 +284,15 @@ pub struct SearchResult {
 pub enum PurchaseDecision {
     /// 자동 결제 + job 생성됨.
     AutoApproved,
+    /// 마켓 (d)갈래 — 무료 할당량으로 통과 (과금 없음). job 생성됨, receipt 없음.
+    FreeTierGranted {
+        /// 1일 무료 호출 한도.
+        free_per_day: i64,
+        /// 오늘 사용량 (이번 호출 포함).
+        used_today: i64,
+        /// 오늘 남은 무료 횟수.
+        remaining: i64,
+    },
     /// 사용자 승인 필요 (한도 초과 / 미화이트리스트). 결제 X, job 생성 X.
     NeedsConfirmation {
         /// 사유.
@@ -261,6 +317,35 @@ pub struct PurchaseResult {
 mod tests {
     use super::*;
     use crate::policy::NoopPaymentGateway;
+    use std::sync::atomic::{AtomicI64, Ordering};
+
+    /// 테스트용 in-memory free-tier 게이트.
+    struct FakeFreeQuota {
+        free_per_day: i64,
+        used: AtomicI64,
+    }
+    #[async_trait::async_trait]
+    impl FreeQuotaGate for FakeFreeQuota {
+        async fn try_consume_free(&self, _agent: &AgentId) -> Result<bool, String> {
+            // 원자적 잔여 확인 + 소비.
+            loop {
+                let cur = self.used.load(Ordering::SeqCst);
+                if cur >= self.free_per_day {
+                    return Ok(false);
+                }
+                if self
+                    .used
+                    .compare_exchange(cur, cur + 1, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    return Ok(true);
+                }
+            }
+        }
+        async fn quota_status(&self, _agent: &AgentId) -> Result<(i64, i64), String> {
+            Ok((self.free_per_day, self.used.load(Ordering::SeqCst)))
+        }
+    }
 
     #[test]
     fn purchase_decision_serde() {

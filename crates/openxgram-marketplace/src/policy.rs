@@ -190,6 +190,29 @@ pub trait PaymentGateway: Send + Sync {
     }
 }
 
+/// 마켓 (d)갈래 — free-tier 무료 할당량 게이트 추상화.
+///
+/// 구매(purchase) 가 실결제((c)갈래)로 가기 **전에** 호출. 무료 잔여가 있으면
+/// 과금 없이 통과시키고 사용량을 1 증가시킨다(원자적). 구현체는 DB 백엔드
+/// (openxgram-cli `free_tier` 모듈) 또는 테스트용 in-memory.
+///
+/// dependency-inversion: marketplace crate 는 trait 만 노출, 실제 카운터/설정은
+/// 주입된 구현체(DB)에서 처리 (DB 하드코딩 금지 — 동적 구성).
+#[async_trait]
+pub trait FreeQuotaGate: Send + Sync {
+    /// 무료 할당량을 1회 소비 시도 (원자적: 잔여 확인 + used+1).
+    ///
+    /// 반환:
+    ///   - `Ok(true)`  : 무료 잔여 있었음 → 소비 완료. 과금 없이 통과해야 함.
+    ///   - `Ok(false)` : 무료 잔여 없음(또는 무료 미설정) → 유료 결제 경로로.
+    ///   - `Err(_)`    : 카운터/설정 조회 실패 (조용히 넘기지 않음).
+    async fn try_consume_free(&self, agent: &AgentId) -> Result<bool, String>;
+
+    /// 현 상태 조회 (소비 없이) — UI 표시용. (free_per_day, used_today).
+    /// 무료 미설정이면 `(0, used)`.
+    async fn quota_status(&self, agent: &AgentId) -> Result<(i64, i64), String>;
+}
+
 /// 테스트용 게이트웨이 — 결제 시도를 메모리에 기록.
 pub struct NoopPaymentGateway {
     receipts: Mutex<Vec<PaymentReceipt>>,

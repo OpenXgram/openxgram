@@ -24,6 +24,7 @@ pub mod doctor;
 pub mod dump;
 pub mod eas;
 pub mod find;
+pub mod free_tier;
 pub mod gui;
 pub mod hitl;
 pub mod identity;

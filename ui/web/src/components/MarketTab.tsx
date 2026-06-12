@@ -116,6 +116,23 @@ async function fetchLedger(): Promise<LedgerDto | null> {
   }
 }
 
+// 마켓 (d)갈래 — free-tier 무료 할당량 상태 (전역 기본 기준 잔여/사용량).
+interface FreeTierStatus {
+  agent_id: string;
+  free_per_day: number;
+  used_today: number;
+  remaining: number;
+  has_override: boolean;
+}
+async function fetchFreeTier(): Promise<FreeTierStatus | null> {
+  try {
+    // agentId 생략 → 전역 기본("*") 기준 잔여/사용량.
+    return await invoke<FreeTierStatus>("free_tier_status");
+  } catch {
+    return null;
+  }
+}
+
 // 총 잔액 = 서브 지갑 balance 합 + 마스터 free.
 function totalBalanceMicro(w: WalletsDto | null | undefined): number {
   if (!w) return 0;
@@ -150,6 +167,29 @@ export function MarketTab() {
   // 마켓 (c)갈래 — 지갑(잔액) + 거래원장 실데이터 resource.
   const [wallets, { refetch: refetchWallets }] = createResource(fetchWallets);
   const [ledger, { refetch: refetchLedger }] = createResource(fetchLedger);
+
+  // 마켓 (d)갈래 — free-tier 무료 할당량(전역 기본) 상태 + 설정.
+  const [freeTier, { refetch: refetchFreeTier }] = createResource(fetchFreeTier);
+  const [ftDraft, setFtDraft] = createSignal<string>("");
+  const [ftSaving, setFtSaving] = createSignal(false);
+  const [ftErr, setFtErr] = createSignal<string | null>(null);
+
+  const onSaveFreeTier = async () => {
+    const n = Number(ftDraft());
+    if (!Number.isFinite(n) || n < 0) return;
+    setFtSaving(true);
+    setFtErr(null);
+    try {
+      // agent_id 생략 → 전역 기본("*") 설정.
+      await invoke("free_tier_config_set", { free_per_day: Math.floor(n) });
+      setFtDraft("");
+      void refetchFreeTier();
+    } catch (e) {
+      setFtErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setFtSaving(false);
+    }
+  };
 
   // 충전(topup) — 마스터 → 첫 서브 지갑 즉시 이체. 실제 잔액 변화.
   const [topupAmt, setTopupAmt] = createSignal<string>("");
@@ -358,6 +398,59 @@ export function MarketTab() {
             <Show when={topupErr()}>
               <div style="font-size:11.5px;color:#d64545;margin:2px 0 8px;">충전 실패: {topupErr()}</div>
             </Show>
+
+            {/* 마켓 (d)갈래 — free-tier 무료 할당량 (실제 free_tier_status/config 배선) */}
+            <div class="wsec">무료 할당량 — 실제 연결 (free-tier API)</div>
+            <div class="budrow">
+              <div class="ava c-primary">🎁</div>
+              <div>
+                <div class="bn">무료 잔여 (오늘)</div>
+                <div class="cap" style="font-size:11px;color:#9aa1ad;">
+                  전역 기본 · 무료 소진 시 지갑 차감
+                </div>
+              </div>
+              <div class="budamt">
+                <Show
+                  when={!freeTier.loading}
+                  fallback={<div class="u">불러오는 중…</div>}
+                >
+                  <Show
+                    when={freeTier()}
+                    fallback={<div class="u" style="color:#9aa1ad;">준비 중</div>}
+                  >
+                    <div class="u">
+                      {freeTier()!.remaining} / {freeTier()!.free_per_day}
+                    </div>
+                    <div class="l">회 · 사용 {freeTier()!.used_today}</div>
+                  </Show>
+                </Show>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;margin:10px 0 4px;align-items:center;">
+              <input
+                type="number"
+                step="1"
+                min="0"
+                value={ftDraft()}
+                placeholder="무료 횟수/일 (전역 기본)"
+                onInput={(e) => setFtDraft(e.currentTarget.value)}
+                style="flex:1;border:1px solid var(--kk-line);border-radius:8px;padding:8px 10px;font-size:12.5px;"
+              />
+              <button
+                type="button"
+                class="budbtn alt"
+                disabled={ftDraft() === "" || ftSaving()}
+                onClick={() => void onSaveFreeTier()}
+              >
+                {ftSaving() ? "저장 중…" : "무료 한도 변경"}
+              </button>
+            </div>
+            <Show when={ftErr()}>
+              <div style="font-size:11.5px;color:#d64545;margin-bottom:8px;">무료 한도 변경 실패: {ftErr()}</div>
+            </Show>
+            <div style="font-size:11px;color:#9aa1ad;margin:2px 0 14px;">
+              무료 잔여가 있으면 구매가 과금 없이 통과되고, 소진되면 지갑에서 차감됩니다.
+            </div>
 
             {/* 일일 한도 — 실제 payment_get/set_daily_limit 배선 */}
             <div class="wsec">일일 한도 — 실제 연결 (payment API)</div>

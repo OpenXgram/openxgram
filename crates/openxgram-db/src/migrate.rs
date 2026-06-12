@@ -300,6 +300,12 @@ const MIGRATIONS: &[Migration] = &[
         name: "wallet_ledger",
         sql: include_str!("../migrations/0055_wallet_ledger.sql"),
     },
+    // 마켓 (d)갈래 — free-tier 요금제 게이팅 (무료 할당량 config + per-agent per-day 사용량).
+    Migration {
+        version: 56,
+        name: "free_tier",
+        sql: include_str!("../migrations/0056_free_tier.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {
