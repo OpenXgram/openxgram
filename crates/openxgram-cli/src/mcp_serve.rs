@@ -119,6 +119,10 @@ pub struct OpenxgramDispatcher {
     /// 에이전트의 A2A endpoint 를 호출 (AgentCard discover + tasks/send|get|cancel).
     /// stateless (매 호출 새 client). callee 측 AgentCard 호스팅은 후속. Phase 3.
     a2a_tools: openxgram_a2a::A2aTools,
+    /// Marketplace 상거래 tool 표면 — OpenAgentX 디렉토리 검색·에이전트 조회·서비스 구매(job).
+    /// 원격 HTTP(reqwest, base_url=OpenAgentX). MarketplaceTools 는 Clone 미구현이라 Arc 로
+    /// 감싸 sync dispatch 간 공유. 마켓 (a)갈래 배선. 구매(purchase)는 실결제((c)) 후 노출.
+    marketplace_tools: std::sync::Arc<openxgram_marketplace::MarketplaceTools>,
 }
 
 impl OpenxgramDispatcher {
@@ -134,6 +138,20 @@ impl OpenxgramDispatcher {
         .context("DB open 실패")?;
         db.migrate().context("DB migrate 실패")?;
         let vault_password = openxgram_core::env::require_password().ok();
+        // Marketplace client — base_url 은 XGRAM_MARKETPLACE_URL env, 미설정 시 기본(openagentx.org).
+        // 디렉토리 미배포면 search/get 호출이 실제 HTTP 에러 반환(가짜 성공 없음).
+        let mp_builder = openxgram_marketplace::MarketplaceClient::builder();
+        let mp_builder = match std::env::var("XGRAM_MARKETPLACE_URL") {
+            Ok(u) if !u.trim().is_empty() => mp_builder.base_url(u),
+            _ => mp_builder,
+        };
+        let marketplace_tools = std::sync::Arc::new(openxgram_marketplace::MarketplaceTools::new(
+            mp_builder
+                .build()
+                .context("marketplace client 생성 실패")?,
+            openxgram_marketplace::SpendPolicy::conservative(),
+            std::sync::Arc::new(openxgram_marketplace::NoopPaymentGateway::new()),
+        ));
         Ok(Self {
             db,
             data_dir: data_dir.to_path_buf(),
@@ -141,6 +159,7 @@ impl OpenxgramDispatcher {
             current_agent: None,
             acp_tools: openxgram_acp::AcpTools::new(),
             a2a_tools: openxgram_a2a::A2aTools::new(),
+            marketplace_tools,
         })
     }
 
@@ -657,6 +676,39 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         "taskId": {"type": "string"}
                     },
                     "required": ["agentUrl", "taskId"]
+                }),
+            },
+        ]);
+
+        // Marketplace (a2a 상거래) tools — OpenAgentX 디렉토리 검색·조회. 항상 노출.
+        // base_url=XGRAM_MARKETPLACE_URL|openagentx.org. 디렉토리 미배포면 실제 HTTP 에러(가짜 성공 없음).
+        // 구매(purchase_service)는 실결제 게이트웨이((c)갈래) 배선 후 노출 — NoopGateway 가짜 영수증 금지.
+        tools.extend([
+            ToolSpec {
+                name: "marketplace_search".into(),
+                description: "OpenAgentX 마켓에서 타 사용자 공개 에이전트 검색. query=검색어, limit=최대개수(옵션).".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": { "query": {"type": "string"}, "limit": {"type": "integer"} },
+                    "required": ["query"]
+                }),
+            },
+            ToolSpec {
+                name: "marketplace_get_agent".into(),
+                description: "마켓 에이전트 상세 조회 — 서비스·가격·평판. agentId.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": { "agentId": {"type": "string"} },
+                    "required": ["agentId"]
+                }),
+            },
+            ToolSpec {
+                name: "get_job_status".into(),
+                description: "마켓 구매(job) 상태/결과 조회. jobId.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": { "jobId": {"type": "string"} },
+                    "required": ["jobId"]
                 }),
             },
         ]);
@@ -2444,6 +2496,52 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 })
                 .map_err(internal)?;
                 serde_json::to_value(task).map_err(internal)
+            }
+
+            // Marketplace 상거래 — block_in_place bridge (a2a 동일). marketplace_tools 는 Arc 공유.
+            // 핸들러 반환(SearchResult/Agent/Job) → serde_json::to_value. 디렉토리 미배포면 HTTP 에러 그대로.
+            "marketplace_search" => {
+                let query = args
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'query'"))?
+                    .to_string();
+                let limit = args.get("limit").and_then(|v| v.as_u64()).map(|n| n as u32);
+                let tools = self.marketplace_tools.clone();
+                let handle = tokio::runtime::Handle::current();
+                let r = tokio::task::block_in_place(|| {
+                    handle.block_on(async move { tools.search(&query, limit).await })
+                })
+                .map_err(internal)?;
+                serde_json::to_value(r).map_err(internal)
+            }
+            "marketplace_get_agent" => {
+                let agent_id = args
+                    .get("agentId")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'agentId'"))?
+                    .to_string();
+                let tools = self.marketplace_tools.clone();
+                let handle = tokio::runtime::Handle::current();
+                let r = tokio::task::block_in_place(|| {
+                    handle.block_on(async move { tools.get_agent(&agent_id).await })
+                })
+                .map_err(internal)?;
+                serde_json::to_value(r).map_err(internal)
+            }
+            "get_job_status" => {
+                let job_id = args
+                    .get("jobId")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'jobId'"))?
+                    .to_string();
+                let tools = self.marketplace_tools.clone();
+                let handle = tokio::runtime::Handle::current();
+                let r = tokio::task::block_in_place(|| {
+                    handle.block_on(async move { tools.get_job_status(&job_id).await })
+                })
+                .map_err(internal)?;
+                serde_json::to_value(r).map_err(internal)
             }
 
             other => Err(JsonRpcError {

@@ -33,6 +33,7 @@ openxgram-did = { path = "../openxgram-did" }
 openxgram-mcp = { path = "../openxgram-mcp" }
 openxgram-acp = { path = "../openxgram-acp" }
 openxgram-a2a = { path = "../openxgram-a2a" }
+openxgram-marketplace = { path = "../openxgram-marketplace" }
 openxgram-memory = { path = "../openxgram-memory" }
 openxgram-nostr = { path = "../openxgram-nostr" }
 openxgram-orchestration = { path = "../openxgram-orchestration" }
