@@ -306,6 +306,12 @@ const MIGRATIONS: &[Migration] = &[
         name: "free_tier",
         sql: include_str!("../migrations/0056_free_tier.sql"),
     },
+    // 런타임 하네스 — 큐레이션된 주입 항목(규칙·원칙) 리스트 + 기본 시드 2개.
+    Migration {
+        version: 57,
+        name: "injection_rules",
+        sql: include_str!("../migrations/0057_injection_rules.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

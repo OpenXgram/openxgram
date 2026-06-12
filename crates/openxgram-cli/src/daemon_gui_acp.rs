@@ -96,6 +96,9 @@ pub struct AcpHttpState {
     sessions: Arc<Mutex<HashMap<String, AcpHttpSession>>>,
     /// Monotonic source for HTTP session ids.
     next_session: Arc<std::sync::atomic::AtomicU64>,
+    /// 증분 영속용 DB 핸들 — 진행 중 툴 호출을 스트리밍 중 `acp_messages` 에 즉시 기록한다
+    /// (나갔다 와도 실시간 단계 복원). `new()` 기본 None, `with_db()` 로 주입. None 이면 증분 skip.
+    db: Option<Arc<Mutex<openxgram_db::Db>>>,
 }
 
 impl Default for AcpHttpState {
@@ -111,7 +114,14 @@ impl AcpHttpState {
             tools: AcpTools::new(),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             next_session: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            db: None,
         }
+    }
+
+    /// 증분 영속용 DB 핸들 주입(GuiServerState 구성 시 1회). 진행 중 툴 호출 실시간 기록 활성화.
+    pub fn with_db(mut self, db: Arc<Mutex<openxgram_db::Db>>) -> Self {
+        self.db = Some(db);
+        self
     }
 
     fn new_session_id(&self) -> String {
@@ -185,8 +195,18 @@ fn spawn_opts_from_body(body: &CreateSessionBody) -> openxgram_acp::SpawnOpts {
         }
         Some("sonnet") => extra_env.push(("ANTHROPIC_MODEL".into(), "claude-sonnet-4-6".into())),
         Some("opus") => extra_env.push(("ANTHROPIC_MODEL".into(), "claude-opus-4-8".into())),
-        // 프리셋 외 = 사용자 직접 입력한 모델 id(claude-fable-5 등) → 그대로 사용(하드코딩 불필요).
-        Some(other) => extra_env.push(("ANTHROPIC_MODEL".into(), other.to_string())),
+        // 프리셋 외 = 드롭다운(OpenRouter 목록)/직접 입력한 모델 id(claude-fable-5 등).
+        // OpenRouter 표기는 버전에 점을 쓰지만(claude-opus-4.8), Claude Code 구독은 하이픈
+        // id(claude-opus-4-8)만 받는다 → claude-* 모델은 점→하이픈 정규화 후 주입.
+        // (점 형식 그대로면 "selected model may not exist" 에러. 비-claude id 는 손대지 않음.)
+        Some(other) => {
+            let norm = if other.starts_with("claude") {
+                other.replace('.', "-")
+            } else {
+                other.to_string()
+            };
+            extra_env.push(("ANTHROPIC_MODEL".into(), norm));
+        }
     }
     // thinking effort 5단계 → MAX_THINKING_TOKENS. off/None → 확장 사고 비활성(env 미설정).
     match body.thinking.as_deref() {
@@ -477,7 +497,7 @@ pub async fn prompt(
 ) -> Result<Value, AcpHttpError> {
     // Resolve (and lazily spawn) the handle + cwd under the lock, then release
     // the lock before the (potentially long) prompt turn.
-    let (handle_id, cwd, tx) = {
+    let (handle_id, cwd, tx, conv_key) = {
         let mut sessions = state.sessions.lock().await;
         let sess = sessions
             .get_mut(session_id)
@@ -493,7 +513,8 @@ pub async fn prompt(
                 "session has no handle after spawn".to_string(),
             )
         })?;
-        (hid, sess.cwd.clone(), sess.updates_tx.clone())
+        // label = conv_key(대화 신원). 증분 툴 기록 대상 키. picker 진입(label 없음)이면 None → 증분 skip.
+        (hid, sess.cwd.clone(), sess.updates_tx.clone(), sess.label.clone())
     };
 
     // Live relay: each `session/update` is forwarded onto the per-session
@@ -502,10 +523,16 @@ pub async fn prompt(
     // sender to the broadcast via a forwarding task.
     let (update_tx, mut update_rx) = mpsc::unbounded_channel::<Value>();
     let relay_tx = tx.clone();
+    let rec_db = state.db.clone(); // 증분 영속용 DB(Option). None 이면 기록 skip.
+    let rec_key = conv_key.clone(); // conv_key(label). None(picker)이면 skip.
     let relay = tokio::spawn(async move {
         // Ends when the turn finishes: the streaming prompt drops `update_tx`,
         // `recv()` returns `None`, the loop exits, the task completes.
         while let Some(u) = update_rx.recv().await {
+            // 증분 영속 — 진행 중 툴 호출을 즉시 acp_messages 에 기록(나갔다 와도 실시간 단계 복원).
+            if let (Some(db), Some(key)) = (rec_db.as_ref(), rec_key.as_ref()) {
+                record_stream_tool(db, key, &u).await;
+            }
             // Ignore send errors: no SSE subscriber is a normal state.
             let _ = relay_tx.send(u);
         }
@@ -528,6 +555,46 @@ pub async fn prompt(
     // HTTP body for non-SSE callers — the GUI applies them only as a fallback
     // when its stream is down, so there is no double-render.
     Ok(result)
+}
+
+/// 진행 중 턴의 `tool_call`/`tool_call_update` 를 `acp_messages` 에 증분 기록한다.
+/// - tool_call → INSERT(role='tool', text=`{"tid","title","status"}`).
+/// - tool_call_update → tid 매칭으로 status in-place 갱신(json_set).
+/// 최종 답변·계획은 턴 끝(daemon_gui.rs)에서 기록. 영속 실패는 조용히 무시(턴 흐름 안 막음).
+async fn record_stream_tool(db: &Arc<Mutex<openxgram_db::Db>>, conv_key: &str, u: &Value) {
+    match u.get("sessionUpdate").and_then(|s| s.as_str()) {
+        Some("tool_call") => {
+            let tid = u.get("toolCallId").and_then(|v| v.as_str()).unwrap_or("");
+            let title = u
+                .get("title")
+                .and_then(|v| v.as_str())
+                .or_else(|| u.get("kind").and_then(|v| v.as_str()))
+                .unwrap_or("tool");
+            let status = u.get("status").and_then(|v| v.as_str()).unwrap_or("pending");
+            let text = serde_json::json!({ "tid": tid, "title": title, "status": status }).to_string();
+            let now = chrono::Utc::now().to_rfc3339();
+            let mut g = db.lock().await;
+            let _ = g.conn().execute(
+                "INSERT INTO acp_messages (conv_key, role, text, created_at) VALUES (?1, 'tool', ?2, ?3)",
+                rusqlite::params![conv_key, text, now],
+            );
+        }
+        Some("tool_call_update") => {
+            let tid = u.get("toolCallId").and_then(|v| v.as_str()).unwrap_or("");
+            if tid.is_empty() {
+                return;
+            }
+            if let Some(st) = u.get("status").and_then(|v| v.as_str()) {
+                let mut g = db.lock().await;
+                let _ = g.conn().execute(
+                    "UPDATE acp_messages SET text = json_set(text, '$.status', ?1) \
+                     WHERE conv_key = ?2 AND role = 'tool' AND json_extract(text, '$.tid') = ?3",
+                    rusqlite::params![st, conv_key, tid],
+                );
+            }
+        }
+        _ => {}
+    }
 }
 
 /// `POST /v1/acp/sessions/{id}/cancel` — `session/cancel` for the session's
@@ -586,6 +653,19 @@ pub async fn subscribe(
         .get(session_id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("unknown session: {session_id}")))?;
     Ok(sess.updates_tx.subscribe())
+}
+
+/// 턴이 끝나 agent 응답이 `acp_messages` 에 영속된 직후 호출. 세션 broadcast 채널에
+/// `conv_persisted` 마커를 쏜다 → SSE 로 연결된 모든 클라이언트가 권위 소스(DB)에서
+/// 재동기화(loadHistory)하게 한다. 핵심: 사용자가 턴 도중/직후 다른 창에 갔다 와도
+/// (loadHistory 가 1회성이라 놓치던) 완료 답변이 화면에 반드시 뜬다. 구독자 없으면 no-op.
+pub async fn notify_conv_persisted(state: &AcpHttpState, session_id: &str) {
+    let sessions = state.sessions.lock().await;
+    if let Some(sess) = sessions.get(session_id) {
+        let _ = sess
+            .updates_tx
+            .send(serde_json::json!({ "sessionUpdate": "conv_persisted" }));
+    }
 }
 
 /// Graceful close of **all** spawned agents — call on daemon shutdown / session

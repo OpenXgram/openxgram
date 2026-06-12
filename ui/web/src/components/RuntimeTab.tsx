@@ -6,6 +6,8 @@ import { invoke } from "@/api/client";
 
 type Mem = { id: string; kind: string; content: string };
 type Wiki = { id: string; title: string };
+// 큐레이션된 주입 항목(규칙·원칙). scope='*'=전역, 또는 에이전트 alias.
+type Injection = { id: string; scope: string; name: string; content: string; enabled: boolean; sort_order: number };
 
 type RuntimeConfig = {
   inject_memory: boolean; memory_count: number; memory_kinds: string[]; memory_pins: string[];
@@ -53,6 +55,46 @@ export function RuntimeTab() {
     try { return await invoke<{ memories: Mem[]; wiki: Wiki[]; wiki_count: number }>("runtime_context", { count: "50" }); }
     catch { return { memories: [], wiki: [], wiki_count: 0 }; }
   });
+
+  // 🟩 큐레이션된 주입 항목 — 대상(전역/에이전트)별 리스트. 전역 항목은 alias 대상일 때도 함께 보임(읽기).
+  const [injections, setInjections] = createSignal<Injection[]>([]);
+  const [injBusy, setInjBusy] = createSignal(false);
+  async function loadInjections(t: string) {
+    try {
+      const r = await invoke<{ injections: Injection[] }>("runtime_injections_list", t ? { scope: t } : { scope: "*" });
+      setInjections(r?.injections ?? []);
+    } catch { setInjections([]); }
+  }
+  createResource(target, (t) => loadInjections(t));
+  // 항목 로컬 수정(저장 전). content/name/enabled 편집.
+  function setInj(id: string, patch: Partial<Injection>) {
+    setInjections(injections().map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  }
+  function addInjection() {
+    const scope = target() || "*";
+    const tmpId = `new_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    setInjections([...injections(), { id: tmpId, scope, name: "", content: "", enabled: true, sort_order: injections().length }]);
+  }
+  async function saveInjection(it: Injection) {
+    setInjBusy(true);
+    try {
+      const isNew = it.id.startsWith("new_");
+      const r = await invoke<{ injection: Injection }>("runtime_injection_upsert", {
+        ...(isNew ? {} : { id: it.id }),
+        scope: it.scope || (target() || "*"),
+        name: it.name, content: it.content, enabled: it.enabled, sort_order: it.sort_order,
+      });
+      // 신규는 서버 id 로 교체.
+      if (isNew && r?.injection?.id) setInj(it.id, { id: r.injection.id });
+      setSaved("주입 항목 저장됨");
+    } catch (e) { setSaved(`주입 저장 실패: ${(e as Error).message}`); } finally { setInjBusy(false); }
+  }
+  async function deleteInjection(it: Injection) {
+    if (it.id.startsWith("new_")) { setInjections(injections().filter((x) => x.id !== it.id)); return; }
+    setInjBusy(true);
+    try { await invoke("runtime_injection_delete", { id: it.id }); setInjections(injections().filter((x) => x.id !== it.id)); }
+    catch (e) { setSaved(`삭제 실패: ${(e as Error).message}`); } finally { setInjBusy(false); }
+  }
 
   function set<K extends keyof RuntimeConfig>(k: K, v: RuntimeConfig[K]) { setCfg({ ...cfg(), [k]: v }); setSaved(null); }
   function tk(k: string) { const c = cfg().memory_kinds; set("memory_kinds", c.includes(k) ? c.filter((x) => x !== k) : [...c, k]); }
@@ -149,7 +191,35 @@ export function RuntimeTab() {
               <input type="checkbox" checked={cfg().search_enabled} onChange={(e) => set("search_enabled", e.currentTarget.checked)} /> 관련성 검색해 주입 (프롬프트와 유사한 기억 자동 추가)
             </label>
 
-            <div style="margin-top:12px;"><div style="color:var(--kk-ink); font-size:13px; font-weight:600; margin-bottom:4px;">❗ 사전 주입 필수 규칙 (전송 전 반드시 — 게이트)</div>
+            {/* 큐레이션된 주입 규칙 리스트 — 이름+내용+사용여부+삭제. 주 메커니즘. */}
+            <div style="margin-top:14px;">
+              <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                <span style="color:var(--kk-ink); font-size:13px; font-weight:600;">📌 주입 규칙 (선택·추가·편집 — {target() ? `'${target()}' + 전역` : "전역"})</span>
+                <span style={hint}>체크한 항목만 프롬프트 앞에 주입. 전역(🌐)은 모든 에이전트에 적용.</span>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:8px;">
+                <For each={injections()}>{(it) => {
+                  const editable = !target() || it.scope === (target() || "*"); // 전역 대상이면 전역만 편집. 에이전트 대상이면 전역 항목은 읽기.
+                  return (
+                    <div style={`border:1px solid var(--kk-line); border-radius:8px; padding:10px; ${it.scope === "*" ? "background:#f7faf7;" : "background:#f7f8fa;"}`}>
+                      <div style="display:flex; gap:8px; align-items:center;">
+                        <input type="checkbox" checked={it.enabled} disabled={!editable} onChange={(e) => { setInj(it.id, { enabled: e.currentTarget.checked }); }} title="이 항목을 주입에 사용" />
+                        <input placeholder="규칙 이름 (예: 통신 원칙)" value={it.name} disabled={!editable} onInput={(e) => setInj(it.id, { name: e.currentTarget.value })} style={`${ctl} flex:1;`} />
+                        <span style={`font-size:11px; padding:2px 7px; border-radius:10px; ${it.scope === "*" ? "background:#dff0df; color:#2f6f2f;" : "background:#e7ecf5; color:#41567f;"}`}>{it.scope === "*" ? "🌐 전역" : it.scope}</span>
+                        <Show when={editable}><span style="cursor:pointer; font-size:15px;" title="삭제" onClick={() => deleteInjection(it)}>🗑</span></Show>
+                      </div>
+                      <textarea rows="2" placeholder="주입할 규칙/원칙/중요 정보 내용" value={it.content} disabled={!editable} onInput={(e) => setInj(it.id, { content: e.currentTarget.value })} style={`${ctl} width:100%; resize:vertical; margin-top:6px;`} />
+                      <Show when={editable}>
+                        <div style="margin-top:6px;"><button class="qbtn" disabled={injBusy()} onClick={() => saveInjection(it)} style="font-size:12px; padding:4px 12px;">💾 저장</button></div>
+                      </Show>
+                    </div>
+                  );
+                }}</For>
+              </div>
+              <button class="qbtn" onClick={addInjection} style="margin-top:8px; font-size:12.5px;">➕ 항목 추가</button>
+            </div>
+
+            <div style="margin-top:14px;"><div style="color:var(--kk-ink); font-size:13px; font-weight:600; margin-bottom:4px;">❗ 사전 주입 필수 규칙 (호환 — 단일 게이트)</div>
               <textarea rows="2" placeholder="예: 코드 수정 전 영향범위 보고. DB 변경은 승인 후." value={cfg().mandatory_note} onInput={(e) => set("mandatory_note", e.currentTarget.value)} style={`${ctl} width:100%; resize:vertical;`} /></div>
             <div style={row}><span style={lbl}>주입 상한</span><input type="number" min="0" step="1000" value={cfg().max_inject_chars} onInput={(e) => set("max_inject_chars", parseInt(e.currentTarget.value) || 0)} style={`${ctl} width:100px;`} /><span style={hint}>글자 (토큰 절감)</span></div>
           </div>

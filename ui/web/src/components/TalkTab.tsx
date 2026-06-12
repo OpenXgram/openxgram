@@ -133,7 +133,7 @@ function fmtPreviewTime(iso: string): string {
 }
 
 export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (open: boolean) => void }) {
-  const [agents, { refetch: refetchAgents }] = createResource<AgentRow[]>(() => invoke("agents_list"));
+  const [agents, { refetch: refetchAgents, mutate: mutateAgents }] = createResource<AgentRow[]>(() => invoke("agents_list"));
   const [addOpen, setAddOpen] = createSignal(false);
   // 상세 패널 "세션 재시작" 트리거 — 증가시키면 AcpConversation 이 세션을 닫고 재구동.
   const [restartTick, setRestartTick] = createSignal(0);
@@ -327,9 +327,11 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
     setAcpMode(false);
     setSelected(alias);
     setMobileChat(true);
-    // 대화 열람 = 읽음 처리(백엔드 기록만). refetchAgents 호출 금지 — 로스터 전체 재렌더 +
-    // 안읽음 클리어 재정렬로 선택 에이전트가 스크롤에서 사라지던 버그. 배지는 다음 자연 갱신에 반영.
+    // 대화 열람 = 읽음 처리(백엔드 기록). 전체 refetchAgents 는 금지 — 로스터 재렌더 +
+    // 재정렬로 선택 에이전트가 스크롤에서 사라지는 버그. 대신 로컬 mutate 로 해당 에이전트
+    // unread=0 만 즉시 반영 → 배지가 클릭 즉시 사라진다(폴링 없어 '다음 갱신'이 안 와서 1로 멈추던 버그 fix).
     void invoke("acp_conv_read", { key: alias }).catch(() => {});
+    mutateAgents((prev) => (prev ?? []).map((a) => (a.alias === alias ? { ...a, unread: 0 } : a)));
   }
 
   // ⚡ 에이전트 미리 정하지 않고 ACP 어댑터 picker 진입(기존 경로 유지).

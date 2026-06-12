@@ -179,7 +179,15 @@ export function AcpConversation(props: {
     { v: "acceptEdits", label: "Accept Edits" },
     { v: "bypassPermissions", label: "🛡 Bypass Permissions" },
   ];
-  const MODEL_OPTS = [{ v: "default", label: "Default (recommended)" }];
+  // 백엔드(daemon_gui_acp.rs)가 칩값→유효 모델 id 로 매핑: opus→claude-opus-4-8,
+  // sonnet→claude-sonnet-4-6, haiku→claude-haiku-4-5. 직접 타이핑(잘못된 "claude-opus-4.8")
+  // 대신 드롭다운에서 고르게 한다. default=어댑터 기본.
+  const MODEL_OPTS = [
+    { v: "default", label: "Default (recommended)" },
+    { v: "opus", label: "Opus 4.8" },
+    { v: "sonnet", label: "Sonnet 4.6" },
+    { v: "haiku", label: "Haiku 4.5" },
+  ];
   // 동적 모델 목록 — OpenRouter(/v1/gui/models). 하드코딩 아님: claude-fable-5·codex/gpt 등 자동.
   const [orModels] = createResource<{ id: string; provider: string; name: string }[]>(async () => {
     try {
@@ -314,12 +322,18 @@ export function AcpConversation(props: {
   function insertSlash(name: string) {
     const cmd = `/${name} `;
     const d = draft();
-    setDraft(d && !d.endsWith(" ") ? `${d} ${cmd}` : `${d}${cmd}`);
+    // 입력이 "/부분명령" 형태(셀렉터를 타이핑으로 띄운 경우)면 그 부분을 완성 명령으로 치환,
+    // 아니면 끝에 추가(버튼으로 연 경우).
+    if (/^\/\S*$/.test(d)) setDraft(cmd);
+    else setDraft(d && !d.endsWith(" ") ? `${d} ${cmd}` : `${d}${cmd}`);
     setLeftMenu(null);
     setSlashFilter("");
   }
   const [busy, setBusy] = createSignal(false); // 세션 생성/프롬프트 진행 중
   const [streaming, setStreaming] = createSignal(false);
+  // 재연결한 SSE 로 진행 중 턴의 청크가 들어오면 true → '입력중' 표시. 다른 창 갔다 와서
+  // busy 가 false(새 마운트)여도 서버 턴이 살아있으면 이걸로 입력중을 보여준다. conv_persisted 에 해제.
+  const [recvActive, setRecvActive] = createSignal(false);
   // 응답 중(busy)에 입력한 후속 메시지 대기열 — 현재 턴 종료 시 순서대로 자동 전송.
   const [queue, setQueue] = createSignal<string[]>([]);
   // 런타임(하네스) 설정 — 이 에이전트별(alias) 설정, 없으면 전역 기본값(백엔드 폴백).
@@ -419,6 +433,32 @@ export function AcpConversation(props: {
     loadAgents();
   }
 
+  // 답변 하단 ⧉복사 — 클립보드에 평문 복사. 실패(권한/비보안 컨텍스트)는 조용히 무시.
+  function copyText(t: string) {
+    if (!t) return;
+    void navigator.clipboard?.writeText(t).catch(() => {});
+  }
+
+  // 연속된 과정 버블(tool/plan = 툴 호출·계획)을 "▸ 단계 N" 아코디언 그룹으로 묶는다(기본 접힘).
+  // me/agent/note 는 그대로. 최종 답변은 평문, 과정은 접혀서 클릭 시 펼침.
+  // ▸단계 아코디언 펼침 상태 — group id 별 Set. 시그널로 제어해 재렌더(SSE 스트림·conv_persisted
+  // 재동기화 등)로 <details> DOM 이 재생성돼도 펼침이 유지된다(클릭하면 바로 닫히던 버그 fix).
+  const [expandedSteps, setExpandedSteps] = createSignal<Set<number>>(new Set());
+  type StepsGroup = { kind: "steps"; id: number; items: Bubble[] };
+  const displayItems = createMemo<(Bubble | StepsGroup)[]>(() => {
+    const out: (Bubble | StepsGroup)[] = [];
+    let group: Bubble[] = [];
+    const flush = () => {
+      if (group.length) { out.push({ kind: "steps", id: group[0].id, items: group }); group = []; }
+    };
+    for (const b of bubbles()) {
+      if (b.kind === "tool" || b.kind === "plan") group.push(b);
+      else { flush(); out.push(b); }
+    }
+    flush();
+    return out;
+  });
+
   function pushBubble(b: Bubble) {
     setBubbles((prev) => [...prev, b]);
     scrollDown();
@@ -430,6 +470,15 @@ export function AcpConversation(props: {
     const o = u as Record<string, unknown>;
     const tag = o.sessionUpdate as string | undefined;
     if (!tag) return;
+    // 데몬이 턴 결과를 acp_messages 에 영속한 직후 보내는 마커. 권위 소스(DB)에서
+    // 재동기화 → 다른 창 갔다 와도(loadHistory 1회성으로 놓쳤던) 완료 답변이 복원된다.
+    if (tag === "conv_persisted") {
+      setRecvActive(false); // 턴 완료(영속) → 입력중 해제
+      void loadHistory(true);
+      return;
+    }
+    // 진행 중 턴의 활동(메시지/사고/툴) 수신 = 입력중. 재연결한 SSE 로 와도 표시된다.
+    if (tag === "agent_message_chunk" || tag === "agent_thought_chunk" || tag === "tool_call") setRecvActive(true);
     if (tag === "agent_message_chunk" || tag === "agent_thought_chunk") {
       const text = blocksToText([o.content]);
       if (!text) return;
@@ -515,19 +564,44 @@ export function AcpConversation(props: {
       /* 영속화 실패는 대화 흐름을 막지 않음 */
     }
   }
-  async function loadHistory(): Promise<boolean> {
+  // resync=true: conv_persisted 알림에 의한 재동기화(턴 완료 후 DB 최신화). 이때는
+  // "복원됨" note·pendingContext 주입을 건너뛴다(라이브 세션이라 맥락 재주입 불필요·중복 note 방지).
+  async function loadHistory(resync = false): Promise<boolean> {
     try {
-      const rows = await invoke<{ role: string; text: string }[]>("acp_conv_list", { key: convKey() });
+      const rows = await invoke<{ role: string; text: string; created_at?: string }[]>("acp_conv_list", { key: convKey() });
       if (!Array.isArray(rows) || rows.length === 0) return false;
+      // created_at(RFC3339) → "M/D HH:MM". 복원된 메시지에 실제 보낸 시각 표시(언제 보냈는지 확인 가능).
+      const fmtTs = (ca?: string): string => {
+        if (!ca) return "";
+        const d = new Date(ca);
+        if (Number.isNaN(d.getTime())) return "";
+        const now = new Date();
+        const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+        return d.toDateString() === now.toDateString() ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+      };
       const restored: Bubble[] = rows.map((r) => {
-        if (r.role === "agent") return { id: nextId++, kind: "agent", segs: segmentText(r.text), time: "" };
-        if (r.role === "note") return { id: nextId++, kind: "note", text: r.text, time: "" };
-        return { id: nextId++, kind: "me", text: r.text, time: "" };
+        const t = fmtTs(r.created_at);
+        if (r.role === "agent") return { id: nextId++, kind: "agent", segs: segmentText(r.text), time: t };
+        if (r.role === "note") return { id: nextId++, kind: "note", text: r.text, time: t };
+        // 과정 복원 — 데몬이 영속한 툴 호출(JSON {title,status})·계획(JSON entries) → ▸단계 아코디언.
+        if (r.role === "tool") {
+          let title = "tool";
+          let status = "";
+          try { const m = JSON.parse(r.text); title = m.title ?? title; status = m.status ?? status; } catch { /* 형식 어긋나면 기본값 */ }
+          return { id: nextId++, kind: "tool", toolId: "", title, status, time: t };
+        }
+        if (r.role === "plan") {
+          let entries: { content: string; status: string }[] = [];
+          try { const p = JSON.parse(r.text); if (Array.isArray(p)) entries = p; } catch { /* */ }
+          return { id: nextId++, kind: "plan", entries, time: t };
+        }
+        return { id: nextId++, kind: "me", text: r.text, time: t };
       });
-      restored.push({ id: nextId++, kind: "note", text: "↑ 이전 대화 복원됨 — 이어서 대화하세요.", time: nowClock() });
+      if (!resync) restored.push({ id: nextId++, kind: "note", text: "↑ 이전 대화 복원됨 — 이어서 대화하세요.", time: nowClock() });
       setBubbles(restored);
       // true resume: 새 어댑터 프로세스에 이전 맥락을 첫 프롬프트로 주입 → 에이전트가 실제로 이어감.
-      pendingContext = buildContextPreamble();
+      // resync(라이브 재동기화)면 맥락 재주입 불필요 — 건너뛴다.
+      if (!resync) pendingContext = buildContextPreamble();
       scrollDown();
       return true;
     } catch {
@@ -730,6 +804,21 @@ export function AcpConversation(props: {
     // 앞에 붙인다(토큰예산=memory_count). 차별화: 에이전트가 OpenXgram 기억을 자기 맥락으로 씀.
     let memPreamble = "";
     const cfg = rtCfg();
+    // 큐레이션된 주입 규칙(enabled, 해당 에이전트 scope + 전역) — 세션 첫 프롬프트에 맨 앞 주입.
+    // inject_memory 와 무관하게 적용(규칙은 항상 우선). mandatory_note 와 중복 없게 별도 블록.
+    let rulesPreamble = "";
+    if (!memInjected) {
+      try {
+        const scopeArg = props.preset?.label ? { scope: props.preset.label } : { scope: "*" };
+        const ir = await invoke<{ injections: any[] }>("runtime_injections_list", scopeArg);
+        const rules: any[] = (ir?.injections ?? []).filter((r: any) => r.enabled && (r.content ?? "").trim());
+        if (rules.length) {
+          const body = rules.map((r: any) => `- ${r.name ? `${r.name}: ` : ""}${(r.content ?? "").trim()}`).join("\n");
+          rulesPreamble = `[OpenXgram 주입 규칙 — 반드시 준수]\n${body}\n\n`;
+          pushBubble({ id: nextId++, kind: "note", text: `📌 런타임: 주입 규칙 ${rules.length}개 주입`, time: nowClock() });
+        }
+      } catch { /* 주입 규칙 실패는 무시 */ }
+    }
     if (cfg?.inject_memory && !memInjected) {
       memInjected = true;
       try {
@@ -750,14 +839,17 @@ export function AcpConversation(props: {
           const w = rc.wiki.filter((x: any) => wikiPins.includes(x.id));
           if (w.length) memPreamble += `[OpenXgram 위키] ${w.map((x: any) => x.title).join(", ")}\n\n`;
         }
-        // 필수 규칙(게이트) — 전송 전 반드시 맨 앞에 주입.
+        // 필수 규칙(게이트, 호환) — 전송 전 반드시 맨 앞에 주입.
         if (cfg.mandatory_note?.trim()) memPreamble = `[필수 규칙 — 반드시 준수]\n${cfg.mandatory_note.trim()}\n\n${memPreamble}`;
-        // 주입 총량 상한(토큰 절감).
-        const cap = cfg.max_inject_chars ?? 6000;
-        if (cap > 0 && memPreamble.length > cap) memPreamble = memPreamble.slice(0, cap) + "\n…(주입 상한)\n\n";
         if (memPreamble) pushBubble({ id: nextId++, kind: "note", text: `🧠 런타임: 기억 ${sel.length}개${cfg.mandatory_note?.trim() ? " + 필수규칙" : ""} 주입`, time: nowClock() });
       } catch { /* 주입 실패는 무시 */ }
     }
+    // 주입 규칙(큐레이션)은 항상 최우선 — 메모리/필수규칙 앞에 prepend.
+    if (rulesPreamble) memPreamble = rulesPreamble + memPreamble;
+    if (!memInjected) memInjected = true;
+    // 주입 총량 상한(토큰 절감).
+    const cap = cfg?.max_inject_chars ?? 6000;
+    if (cap > 0 && memPreamble.length > cap) memPreamble = memPreamble.slice(0, cap) + "\n…(주입 상한)\n\n";
     // true resume: 복원/재구동 후 첫 프롬프트엔 이전 맥락을 앞에 붙여 전송(에이전트가 이어감).
     // UI 버블·DB 기록엔 사용자 실제 입력(text)만, 전송 텍스트(sendText)에만 맥락 포함.
     const sendText = memPreamble + (pendingContext ? `${pendingContext}현재 요청: ${text}` : text);
@@ -783,6 +875,7 @@ export function AcpConversation(props: {
       pushBubble({ id: nextId++, kind: "note", text: `⚠ 구동 실패: ${(e as Error)?.message ?? e}`, time: nowClock() });
     } finally {
       setBusy(false);
+      setRecvActive(false); // 내 턴 종료(에러 포함) → 입력중 해제(conv_persisted 못 오는 에러 턴 대비).
     }
     // ⚠ agent 응답 영속화는 이제 데몬이 권위있게 담당한다(daemon_gui.rs acp_session_prompt).
     // 종전엔 UI 가 turn-end 에 recordMsg("agent", ...) 로 기록했으나, 사용자가 턴 중/후
@@ -1022,9 +1115,49 @@ export function AcpConversation(props: {
         </div>
 
         <div class="msgs" ref={msgsRef}>
-          <For each={bubbles()}>
+          <For each={displayItems()}>
             {(b) =>
-              b.kind === "me" ? (
+              b.kind === "steps" ? (
+                <details
+                  class="kk-acp-steps"
+                  style="margin:3px 0;"
+                  open={expandedSteps().has(b.id)}
+                  onToggle={(e) => {
+                    const isOpen = e.currentTarget.open;
+                    setExpandedSteps((prev) => {
+                      const n = new Set(prev);
+                      if (isOpen) n.add(b.id);
+                      else n.delete(b.id);
+                      return n;
+                    });
+                  }}
+                >
+                  <summary style="cursor:pointer;color:#8b95a1;font-size:12px;user-select:none;">▸ 단계 (툴·계획 {b.items.length})</summary>
+                  <div style="border-left:2px solid #2a2f3a;margin:3px 0 3px 5px;padding-left:8px;">
+                    <For each={b.items}>
+                      {(it) =>
+                        it.kind === "tool" ? (
+                          <div class={`toolcall${it.status === "failed" ? " fail" : ""}`} style="font-size:12px;margin:3px 0;">
+                            <span class={it.status === "failed" ? "no" : "ok"}>{it.status === "failed" ? "✗" : "✓"}</span>{" "}
+                            <span class="cmd">{it.title}</span> <span class="kk-acp-tstat">{it.status}</span>
+                          </div>
+                        ) : it.kind === "plan" ? (
+                          <div class="kk-acp-plan">
+                            <div class="kk-acp-plan-h">계획</div>
+                            <For each={it.entries}>
+                              {(e) => (
+                                <div class={`kk-acp-plan-item st-${e.status}`}>
+                                  <span class="kk-acp-plan-dot" /> {e.content}
+                                </div>
+                              )}
+                            </For>
+                          </div>
+                        ) : null
+                      }
+                    </For>
+                  </div>
+                </details>
+              ) : b.kind === "me" ? (
                 <div class="me">
                   <div class="mr"><div class="tm">{b.time}</div></div>
                   <div class="b">{b.text}</div>
@@ -1057,18 +1190,28 @@ export function AcpConversation(props: {
                   </div>
                 </div>
               ) : (
-                <div class="agent">
+                <div class="agent kk-acp-answer">
                   <div class="head">
                     <div class="av c-claude">⚡</div>
                     <div class="nm">{props.preset?.displayName || activeAgent()}</div>
-                    <div class="tm">{b.time}</div>
                   </div>
-                  <div class="body">
+                  {/* 답변은 말풍선 X — 평문 전체폭(배경·테두리 없음). 사용자 메시지만 말풍선. */}
+                  <div class="body" style="background:none;border:none;box-shadow:none;padding:2px 0;max-width:100%;">
                     <For each={b.segs}>
                       {(seg) =>
                         seg.kind === "code" ? <pre class="code">{seg.text}</pre> : <p>{seg.text}</p>
                       }
                     </For>
+                  </div>
+                  {/* 카카오톡식 하단 푸터 — 복사 버튼 + 받은 시각. */}
+                  <div class="kk-acp-foot" style="display:flex;align-items:center;gap:6px;margin-top:3px;font-size:11px;color:#8b95a1;">
+                    <button
+                      class="kk-acp-copy"
+                      title="이 답변 복사"
+                      style="border:none;background:transparent;cursor:pointer;color:#8b95a1;font-size:12px;padding:0 2px;"
+                      onClick={() => copyText(b.segs.filter((s) => s.kind === "text").map((s) => s.text).join(""))}
+                    >⧉ 복사</button>
+                    <span class="tm">{b.time}</span>
                   </div>
                 </div>
               )
@@ -1077,11 +1220,12 @@ export function AcpConversation(props: {
           <Show when={bubbles().length === 0}>
             <div class="kk-talk-empty">세션 준비됨. 아래에서 첫 프롬프트를 보내세요.</div>
           </Show>
-          {/* 응답 대기 표시 — 메시지 보낸 뒤 에이전트 응답이 오기 전까지 '응답 중' 인디케이터. */}
-          <Show when={busy() && bubbles().length > 0}>
+          {/* 입력중 표시 — 내가 보낸 턴(busy) + 다른 창서 진행 중인 턴을 reconnect SSE 로 감지(recvActive).
+              streaming 은 세션 살아있는 내내 true 라 안 씀(유휴에도 떠버림). */}
+          <Show when={busy() || recvActive()}>
             <div class="agent kk-acp-typing">
               <div class="head"><span class="nm">⚡ 에이전트</span></div>
-              <div class="body"><span class="kk-typing"><i /><i /><i /></span> 응답 중…</div>
+              <div class="body"><span class="kk-typing"><i /><i /><i /></span> 입력중…</div>
             </div>
           </Show>
         </div>
@@ -1122,7 +1266,19 @@ export function AcpConversation(props: {
               rows="2"
               placeholder={busy() ? "후속 메시지 대기열에 추가… (현재 턴 끝나면 전송)" : "프롬프트 입력···  ⚡ ACP 에이전트로 전송"}
               value={draft()}
-              onInput={(e) => setDraft(e.currentTarget.value)}
+              onInput={(e) => {
+                const v = e.currentTarget.value;
+                setDraft(v);
+                // "/" 입력(공백 전 = 명령 타이핑 중)이면 슬래시 셀렉터 자동 표시 + 타이핑으로 필터.
+                const m = v.match(/^\/(\S*)$/);
+                if (m) {
+                  setLeftMenu("slash");
+                  setSlashFilter(m[1]);
+                } else if (leftMenu() === "slash") {
+                  setLeftMenu(null);
+                  setSlashFilter("");
+                }
+              }}
               onKeyDown={onKey}
             />
             <div class="bar">
@@ -1212,18 +1368,24 @@ export function AcpConversation(props: {
                         value={modelFilter()}
                         onInput={(e) => setModelFilter(e.currentTarget.value)}
                       />
-                      {/* Default(어댑터 기본) */}
+                      {/* Default(어댑터 기본) — 맨 위. */}
                       <div class={`kk-chip-opt${model() === "default" ? " on" : ""}`} onClick={() => selectChip("model", "default")}>
                         Default (recommended)
                       </div>
                       <Show when={orModels.loading}>
                         <div class="kk-chip-opt" style="opacity:.6">모델 불러오는 중…</div>
                       </Show>
+                      {/* 모델 목록 — Claude(Anthropic, fable-5 등) → OpenAI(gpt) → 알파벳 순. */}
                       <For
                         each={(orModels() ?? [])
                           .filter((m) => {
                             const f = modelFilter().toLowerCase();
                             return !f || m.id.toLowerCase().includes(f) || m.name.toLowerCase().includes(f) || m.provider.toLowerCase().includes(f);
+                          })
+                          .sort((a, b) => {
+                            const rank = (p: string) => { const x = p.toLowerCase(); return (x.includes("anthropic") || x.includes("claude")) ? 0 : (x.includes("openai") || x.includes("gpt")) ? 1 : 2; };
+                            const d = rank(a.provider) - rank(b.provider);
+                            return d !== 0 ? d : `${a.provider}${a.id}`.localeCompare(`${b.provider}${b.id}`);
                           })
                           .slice(0, 60)}
                       >

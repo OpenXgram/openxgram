@@ -123,6 +123,10 @@ const ROUTES: Record<string, Route> = {
  runtime_config_get: { method: "GET", path: "/runtime/config"},
  runtime_config_set: { method: "POST", path: "/runtime/config", body: true},
  runtime_context: { method: "GET", path: "/runtime/context"},
+ // 큐레이션된 주입 항목(규칙·원칙) CRUD — 전역(scope=*)+에이전트별.
+ runtime_injections_list: { method: "GET", path: "/runtime/injections"},
+ runtime_injection_upsert: { method: "POST", path: "/runtime/injections", body: true},
+ runtime_injection_delete: { method: "DELETE", path: "/runtime/injections/{id}"},
  // rc.245 — 결정적 세션 매핑 사용자 override (PATCH; body.session_identifier = string|null)
  peer_set_session: { method: "PATCH", path: "/peers/{alias}/session", body: true},
 

@@ -264,10 +264,12 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
     .context("daemon-gui DB open 실패")?;
     db.migrate().context("daemon-gui DB migrate 실패")?;
 
+    let db_shared = Arc::new(Mutex::new(db));
     let state = GuiServerState {
         data_dir: Arc::new(data_dir),
-        db: Arc::new(Mutex::new(db)),
-        acp: crate::daemon_gui_acp::AcpHttpState::new(),
+        db: db_shared.clone(),
+        // 증분 영속 — ACP 레이어가 진행 중 툴 호출을 실시간으로 acp_messages 에 기록하도록 동일 DB 공유.
+        acp: crate::daemon_gui_acp::AcpHttpState::new().with_db(db_shared.clone()),
         a2a: crate::daemon_gui_a2a::A2aHttpState::new(),
         served_a2a: crate::daemon_gui_a2a::ServedA2aState::new(),
     };
@@ -464,6 +466,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // OpenXgram 런타임(하네스) — 제어/설정/메모리주입 레이어.
         .route("/v1/gui/runtime/config", get(gui_runtime_config_get).post(gui_runtime_config_set))
         .route("/v1/gui/runtime/context", get(gui_runtime_context))
+        // 큐레이션된 주입 항목(규칙·원칙) CRUD — 전역(scope=*)+에이전트별.
+        .route("/v1/gui/runtime/injections", get(gui_runtime_injections_list).post(gui_runtime_injection_upsert))
+        .route("/v1/gui/runtime/injections/{id}", axum::routing::delete(gui_runtime_injection_delete))
         .route("/v1/gui/workflows/{id}", get(gui_workflow_get).post(gui_workflow_delete))
         .route("/v1/gui/workflows/{id}/run", post(gui_workflow_run))
         .route("/v1/gui/workflows/{id}/runs", get(gui_workflow_runs))
@@ -6861,6 +6866,112 @@ async fn gui_runtime_context(
     })))
 }
 
+// ── 주입 항목(injection_rules) CRUD — 큐레이션된 규칙·원칙 리스트 ──
+// scope='*' = 전역, 또는 에이전트 alias. 주입 시 전역+해당 alias 항목을 enabled 만 모음.
+
+/// `GET /v1/gui/runtime/injections?scope=<*|alias>`
+/// scope 미지정 또는 '*' → 전역만. alias 지정 → 전역 + 해당 alias 항목 모두 반환.
+async fn gui_runtime_injections_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let scope = q.get("scope").map(|s| s.trim()).filter(|s| !s.is_empty()).unwrap_or("*");
+    let mut db = state.db.lock().await;
+    // 전역('*')은 항상 포함. alias 지정 시 그 alias 항목도 포함.
+    let (sql, want_alias) = if scope == "*" {
+        ("SELECT id, scope, name, content, enabled, sort_order, updated_at FROM injection_rules \
+          WHERE scope='*' ORDER BY sort_order ASC, rowid ASC".to_string(), false)
+    } else {
+        ("SELECT id, scope, name, content, enabled, sort_order, updated_at FROM injection_rules \
+          WHERE scope='*' OR scope=?1 ORDER BY (scope='*') DESC, sort_order ASC, rowid ASC".to_string(), true)
+    };
+    let mut stmt = db.conn().prepare(&sql)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("inj: {e}")})))?;
+    let map_row = |r: &rusqlite::Row| Ok(serde_json::json!({
+        "id": r.get::<_, String>(0)?,
+        "scope": r.get::<_, String>(1)?,
+        "name": r.get::<_, String>(2)?,
+        "content": r.get::<_, String>(3)?,
+        "enabled": r.get::<_, i64>(4)? != 0,
+        "sort_order": r.get::<_, i64>(5)?,
+        "updated_at": r.get::<_, Option<String>>(6)?,
+    }));
+    let rows: Vec<serde_json::Value> = if want_alias {
+        stmt.query_map(rusqlite::params![scope], map_row)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("injq: {e}")})))?
+            .filter_map(|x| x.ok()).collect()
+    } else {
+        stmt.query_map([], map_row)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("injq: {e}")})))?
+            .filter_map(|x| x.ok()).collect()
+    };
+    Ok(Json(serde_json::json!({ "injections": rows })))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct InjectionUpsertBody {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default = "default_scope")]
+    scope: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    content: String,
+    #[serde(default = "default_true")]
+    enabled: bool,
+    #[serde(default)]
+    sort_order: i64,
+}
+fn default_scope() -> String { "*".to_string() }
+fn default_true() -> bool { true }
+
+/// `POST /v1/gui/runtime/injections` — id 있으면 update, 없으면 create.
+async fn gui_runtime_injection_upsert(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<InjectionUpsertBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let scope = { let s = body.scope.trim(); if s.is_empty() { "*".to_string() } else { s.to_string() } };
+    let id = body.id.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from)
+        .unwrap_or_else(|| format!("inj_{}", uuid::Uuid::new_v4().simple()));
+    let enabled_i = if body.enabled { 1i64 } else { 0i64 };
+    let mut db = state.db.lock().await;
+    db.conn().execute(
+        "INSERT INTO injection_rules(id, scope, name, content, enabled, sort_order, updated_at) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7) \
+         ON CONFLICT(id) DO UPDATE SET scope=excluded.scope, name=excluded.name, \
+           content=excluded.content, enabled=excluded.enabled, sort_order=excluded.sort_order, \
+           updated_at=excluded.updated_at",
+        rusqlite::params![id, scope, body.name, body.content, enabled_i, body.sort_order, now],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("inj save: {e}")})))?;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "injection": {
+            "id": id, "scope": scope, "name": body.name, "content": body.content,
+            "enabled": body.enabled, "sort_order": body.sort_order, "updated_at": now,
+        }
+    })))
+}
+
+/// `DELETE /v1/gui/runtime/injections/{id}`
+async fn gui_runtime_injection_delete(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let affected = db.conn().execute(
+        "DELETE FROM injection_rules WHERE id=?1", rusqlite::params![id],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("inj del: {e}")})))?;
+    Ok(Json(serde_json::json!({ "ok": true, "deleted": affected })))
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct WorkflowPlanBody {
     goal: String,
@@ -8902,29 +9013,77 @@ async fn acp_session_prompt(
     // 추출한 agent 텍스트가 비어있지 않을 때만. 빈/취소 턴은 가짜 빈 메시지 방지로 스킵.
     if let Some(conv_key) = state.acp.session_label(&id).await {
         let mut agent_text = String::new();
+        // 과정(툴 호출·계획)도 순서대로 수집 → DB 영속. 나갔다 와도 ▸단계 아코디언에 복원된다.
+        let mut tools: Vec<(String, serde_json::Value)> = Vec::new(); // (toolCallId, {title,status})
+        let mut plan_json: Option<String> = None;
         if let Some(updates) = result.get("updates").and_then(|u| u.as_array()) {
             for u in updates {
-                if u.get("sessionUpdate").and_then(|s| s.as_str()) == Some("agent_message_chunk") {
-                    if let Some(t) = u
-                        .get("content")
-                        .and_then(|c| c.get("text"))
-                        .and_then(|t| t.as_str())
-                    {
-                        agent_text.push_str(t);
+                match u.get("sessionUpdate").and_then(|s| s.as_str()) {
+                    Some("agent_message_chunk") => {
+                        if let Some(t) = u
+                            .get("content")
+                            .and_then(|c| c.get("text"))
+                            .and_then(|t| t.as_str())
+                        {
+                            agent_text.push_str(t);
+                        }
                     }
+                    Some("tool_call") => {
+                        let tid = u.get("toolCallId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let title = u
+                            .get("title")
+                            .and_then(|v| v.as_str())
+                            .or_else(|| u.get("kind").and_then(|v| v.as_str()))
+                            .unwrap_or("tool")
+                            .to_string();
+                        let status = u.get("status").and_then(|v| v.as_str()).unwrap_or("pending").to_string();
+                        tools.push((tid, serde_json::json!({ "title": title, "status": status })));
+                    }
+                    Some("tool_call_update") => {
+                        let tid = u.get("toolCallId").and_then(|v| v.as_str()).unwrap_or("");
+                        if let Some(st) = u.get("status").and_then(|v| v.as_str()) {
+                            for entry in tools.iter_mut() {
+                                if entry.0 == tid {
+                                    entry.1["status"] = serde_json::json!(st);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Some("plan") => {
+                        if let Some(entries) = u.get("entries") {
+                            plan_json = Some(entries.to_string());
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
-        if !agent_text.trim().is_empty() {
+        let has_answer = !agent_text.trim().is_empty();
+        if has_answer || !tools.is_empty() || plan_json.is_some() {
             let now = chrono::Utc::now().to_rfc3339();
             let mut db = state.db.lock().await;
-            if let Err(e) = db.conn().execute(
-                "INSERT INTO acp_messages (conv_key, role, text, created_at) VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![conv_key, "agent", agent_text.trim(), now],
-            ) {
-                // 절대 규칙 1(fallback 금지) — 조용히 넘기지 않고 명시 로그.
-                tracing::error!(target: "acp.daemon", conv_key = %conv_key, "acp_messages agent 기록 실패: {e}");
+            // 툴 호출은 이제 스트리밍 중 증분 기록(daemon_gui_acp::record_stream_tool)되므로 여기선
+            // 재기록하지 않는다(이중 기록 방지). 계획·최종 답변만 턴 끝에 기록 → id 순서=화면 순서(▸단계 후 답변).
+            if let Some(pj) = &plan_json {
+                let _ = db.conn().execute(
+                    "INSERT INTO acp_messages (conv_key, role, text, created_at) VALUES (?1, 'plan', ?2, ?3)",
+                    rusqlite::params![conv_key, pj, now],
+                );
             }
+            if has_answer {
+                if let Err(e) = db.conn().execute(
+                    "INSERT INTO acp_messages (conv_key, role, text, created_at) VALUES (?1, 'agent', ?2, ?3)",
+                    rusqlite::params![conv_key, agent_text.trim(), now],
+                ) {
+                    // 절대 규칙 1(fallback 금지) — 조용히 넘기지 않고 명시 로그.
+                    tracing::error!(target: "acp.daemon", conv_key = %conv_key, "acp_messages agent 기록 실패: {e}");
+                }
+            }
+            drop(db);
+            // 영속 직후 SSE 로 'conv_persisted' 알림 → 떠 있는 클라이언트가 DB 재동기화(loadHistory).
+            // 사용자가 턴 도중/직후 다른 창에 갔다 와도 (loadHistory 1회성으로 놓치던) 완료 답변·과정이 뜬다.
+            crate::daemon_gui_acp::notify_conv_persisted(&state.acp, &id).await;
         }
     }
 
