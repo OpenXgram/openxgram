@@ -6825,10 +6825,10 @@ async fn gui_runtime_context(
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     let count: i64 = q.get("count").and_then(|s| s.parse().ok()).unwrap_or(8).clamp(0, 50);
     let mut db = state.db.lock().await;
-    let mut stmt = db.conn().prepare("SELECT kind, content FROM memories ORDER BY rowid DESC LIMIT ?1")
+    let mut stmt = db.conn().prepare("SELECT id, kind, content FROM memories ORDER BY rowid DESC LIMIT ?1")
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("mem: {e}")})))?;
     let mems: Vec<serde_json::Value> = stmt.query_map(rusqlite::params![count], |r| Ok(serde_json::json!({
-        "kind": r.get::<_, String>(0)?, "content": r.get::<_, String>(1)?,
+        "id": r.get::<_, String>(0)?, "kind": r.get::<_, String>(1)?, "content": r.get::<_, String>(2)?,
     }))).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("memq: {e}")})))?
         .filter_map(|x| x.ok()).collect();
     drop(stmt);

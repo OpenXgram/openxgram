@@ -635,12 +635,23 @@ export function AcpConversation(props: {
     if (cfg?.inject_memory && !memInjected) {
       memInjected = true;
       try {
-        const rc = await invoke<any>("runtime_context", { count: String(cfg.memory_count ?? 8) });
+        // 핀(개별 선택)이 있으면 후보 풀을 넉넉히 가져와 핀만 주입, 없으면 종류 필터 후 최근 N개.
+        const pins: string[] = cfg.memory_pins ?? [];
+        const wikiPins: string[] = cfg.wiki_pins ?? [];
+        const fetchN = pins.length ? 50 : (cfg.memory_count ?? 8);
+        const rc = await invoke<any>("runtime_context", { count: String(fetchN) });
         const kinds: string[] = cfg.memory_kinds ?? ["fact", "decision", "rule", "reference"];
-        const sel = (rc?.memories ?? []).filter((m: any) => kinds.includes(m.kind));
+        const all: any[] = rc?.memories ?? [];
+        const sel = pins.length
+          ? all.filter((m: any) => pins.includes(m.id))
+          : all.filter((m: any) => kinds.includes(m.kind)).slice(0, cfg.memory_count ?? 8);
         const mems = sel.map((m: any) => `[${m.kind}] ${m.content}`).join("\n");
         if (mems) memPreamble += `[OpenXgram 기억 — 이 에이전트가 참고할 사실/결정/규칙]\n${mems}\n\n`;
-        if (cfg.inject_wiki && rc?.wiki?.length) memPreamble += `[OpenXgram 위키] ${rc.wiki.map((w: any) => w.title).join(", ")}\n\n`;
+        // 위키 — 선택(핀)된 것만 주입.
+        if (cfg.inject_wiki && wikiPins.length && rc?.wiki?.length) {
+          const w = rc.wiki.filter((x: any) => wikiPins.includes(x.id));
+          if (w.length) memPreamble += `[OpenXgram 위키] ${w.map((x: any) => x.title).join(", ")}\n\n`;
+        }
         // 필수 규칙(게이트) — 전송 전 반드시 맨 앞에 주입.
         if (cfg.mandatory_note?.trim()) memPreamble = `[필수 규칙 — 반드시 준수]\n${cfg.mandatory_note.trim()}\n\n${memPreamble}`;
         // 주입 총량 상한(토큰 절감).
