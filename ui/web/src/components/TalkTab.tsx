@@ -4,6 +4,12 @@ import { AcpConversation, aiTypeToAdapter, type AcpPreset } from "./AcpConversat
 import { AddAgentModal } from "./AddAgentModal";
 import { AddFriendModal, loadExternalFriends, type ExternalFriend } from "./AddFriendModal";
 import { ProviderLogo, providerKey } from "./ProviderLogo";
+import {
+  computeUnregisteredSessions,
+  normPath,
+  type DetectedSession,
+  type SessionsDto,
+} from "./agentSessions";
 
 // 대화 탭 — 카카오톡 정본 목업(_mockups/kakao-mockup.html) 충실 이식.
 // 좌: 분류 그룹화 명부(👑 프라이머리 / 📌 상단 고정 / 📁 프로젝트 / ⚙️ 특수) + llm-type 아바타색
@@ -54,26 +60,7 @@ interface TailnetDeviceDto {
   guiUrl?: string | null;
 }
 
-// sessions 라우트(SessionsDto) — Messenger.tsx 와 동일 contract. 이 에이전트의 tmux 세션·워크트리 소스.
-interface DetectedSession {
-  kind: "tmux" | "claude_project" | "xgram_session";
-  identifier: string;
-  display: string;
-  status: "active" | "attached" | "detached" | "stale";
-  windows: number | null;
-  attached: boolean | null;
-  created_at: string | null;
-  last_active_at: string | null;
-  agent_id: string | null;
-  // rc.228 — 세션에 nested 된 git worktree (path/branch). 패널 워크트리 섹션 소스.
-  worktrees?: { path: string; branch?: string | null }[];
-  // rc.281 — 이 tmux 세션 active pane 의 작업 폴더(`#{pane_current_path}`). cwd 매칭 소스.
-  cwd?: string | null;
-}
-interface SessionsDto {
-  machine: { hostname: string; alias: string; tailscale_ip: string | null };
-  sessions: DetectedSession[];
-}
+// DetectedSession / SessionsDto 는 ./agentSessions 에서 import(AgentsTab 와 공유 단일 출처).
 
 // workflows_list 라우트(FlowTab 과 동일 contract). orchestrator 로 이 에이전트 참여 여부 판정.
 interface WorkflowDto {
@@ -411,41 +398,13 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
     return s;
   });
 
-  // 의미있는 작업 tmux 만: aoe_* 세션이거나, cwd 가 실제 프로젝트 폴더(HOME 하위·루트/시스템 아님).
-  function isMeaningfulSession(s: DetectedSession): boolean {
-    if (s.kind !== "tmux") return false;
-    const ident = (s.identifier ?? "").trim();
-    const disp = (s.display ?? "").trim();
-    const cwd = (s.cwd ?? "").trim();
-    // 데몬 자기 세션·시스템 류 제외(이름 기준).
-    const nameNoise = /^(null|default|\d+|server|main|0|bash|sh)$/i;
-    if (!ident || nameNoise.test(ident)) return false;
-    // aoe_* 는 항상 작업 에이전트 세션으로 간주.
-    if (/^aoe[_-]/i.test(ident) || /^aoe[_-]/i.test(disp)) return true;
-    // 그 외엔 cwd 가 실제 프로젝트 폴더여야(루트·HOME 직속·/tmp 등 제외).
-    if (!cwd) return false;
-    const c = normPath(cwd);
-    if (c === "/" || c === "" || c === "/home/llm" || c === "/root" || c.startsWith("/tmp")) return false;
-    if (!c.startsWith("/home/") && !c.startsWith("/opt/") && !c.startsWith("/srv/")) return false;
-    return true;
-  }
-
-  const unregisteredSessions = createMemo<DetectedSession[]>(() => {
-    const regs = registeredCwds();
-    const out: DetectedSession[] = [];
-    const seen = new Set<string>();
-    for (const s of sessions()?.sessions ?? []) {
-      if (!isMeaningfulSession(s)) continue;
-      const cwd = s.cwd ? normPath(s.cwd.trim()) : "";
-      // 이미 등록된 에이전트 폴더면 제외(그 폴더·하위면 등록된 것으로 본다).
-      if (cwd && [...regs].some((r) => cwd === r || cwd.startsWith(r + "/"))) continue;
-      const key = s.identifier;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(s);
-    }
-    return out;
-  });
+  // isMeaningfulSession 은 ./agentSessions 에서 import(공유). 아래는 그 위에서 미등록 세션 도출.
+  const unregisteredSessions = createMemo<DetectedSession[]>(() =>
+    computeUnregisteredSessions(
+      sessions()?.sessions ?? [],
+      (agents() ?? []).map((a) => a.project_path ?? "").filter(Boolean),
+    ),
+  );
 
   // AddAgentModal prefill(미등록 tmux "추가" 클릭 시 cwd 채워 열기). null 이면 일반 추가.
   const [addPrefillFolder, setAddPrefillFolder] = createSignal<string | null>(null);
@@ -502,8 +461,7 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
   //   대화(AcpConversation)는 선택 에이전트의 project_path 를 cwd 로 구동(line 259). 그 cwd 에서
   //   실행 중인 tmux 세션을 정보 패널에 보여줘야 한다(반복 지적 문제). 이전엔 alias 만 비교해
   //   세션명≠alias 면 안 보였음. 이제 세션 cwd(`#{pane_current_path}`) == 대화 cwd 면 표시.
-  //   tmux kind 만. 매칭 없으면 빈 배열 → 패널 빈 상태 힌트.
-  const normPath = (p: string) => p.replace(/\/+$/, "");
+  //   tmux kind 만. 매칭 없으면 빈 배열 → 패널 빈 상태 힌트. (normPath 는 ./agentSessions import.)
   const selSessions = createMemo<DetectedSession[]>(() => {
     const alias = (selected() ?? "").toLowerCase();
     if (!alias) return [];

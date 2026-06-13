@@ -1,6 +1,8 @@
 import { createSignal, createResource, createMemo, onCleanup, For, Show } from "solid-js";
 import { invoke } from "../api/client";
 import { ProviderLogo, providerKey } from "./ProviderLogo";
+import { AddAgentModal } from "./AddAgentModal";
+import { computeUnregisteredSessions, type SessionsDto, type DetectedSession } from "./agentSessions";
 import "./agents-extra.css";
 
 // Phase 2 (B+C+D) — 에이전트 탭. 정본 디자인: _mockups/kakao-mockup.html.
@@ -147,6 +149,10 @@ export function AgentsTab(props: { onGotoChat?: (alias: string) => void; onGotoM
   const [agents, { refetch: refetchAgents }] = createResource<AgentRow[]>(() => invoke("agents_list"));
   const [selected, setSelected] = createSignal<string | null>(null);
   const [showAdd, setShowAdd] = createSignal(false);
+  // 미등록 tmux "추가" 진입 시 그 세션 cwd 를 폴더로 prefill(=project_path). null 이면 일반 추가.
+  const [addPrefillFolder, setAddPrefillFolder] = createSignal<string | null>(null);
+  // sessions 라우트(이 머신 tmux+워크트리) — "추가되지 않은 에이전트" 도출 소스. TalkTab 과 동일 contract.
+  const [sessions] = createResource<SessionsDto>(() => invoke("sessions"));
   // 정본 목업 보조 오버레이 — 각각 프로필 진입점에서 열림.
   const [showChannel, setShowChannel] = createSignal(false);
   const [showTerm, setShowTerm] = createSignal(false);
@@ -175,6 +181,24 @@ export function AgentsTab(props: { onGotoChat?: (alias: string) => void; onGotoM
     }
     return by;
   });
+
+  // ➕ "추가되지 않은 에이전트" — 감지된 tmux 중 어느 에이전트 폴더와도 안 맞는 것(미등록).
+  //   TalkTab 과 동일 로직(./agentSessions 공유). 클릭 → AddAgentModal 을 cwd prefill 로 열어 등록.
+  const unregistered = createMemo<DetectedSession[]>(() =>
+    computeUnregisteredSessions(
+      sessions()?.sessions ?? [],
+      (agents() ?? []).map((a) => a.project_path ?? "").filter(Boolean),
+    ),
+  );
+
+  // 폴더 끝 세그먼트만 짧게(전체 경로는 title). TalkTab baseName 동일.
+  const baseName = (p: string) => p.replace(/\/+$/, "").split("/").pop() || p;
+
+  // 미등록 세션 "추가" — 그 세션 cwd 를 prefill 로 추가 모달 열기.
+  function addFromSession(s: DetectedSession) {
+    setAddPrefillFolder(s.cwd ? s.cwd.trim() : null);
+    setShowAdd(true);
+  }
 
   async function setExecMode(mode: string) {
     const a = selected();
@@ -211,7 +235,7 @@ export function AgentsTab(props: { onGotoChat?: (alias: string) => void; onGotoM
       <div class="kk-roster">
         <div class="rtop">
           <h2>에이전트</h2>
-          <button class="kk-add" onClick={() => setShowAdd(true)}>+ 추가</button>
+          <button class="kk-add" onClick={() => { setAddPrefillFolder(null); setShowAdd(true); }}>➕ 에이전트 추가</button>
         </div>
         <Show when={!agents.loading} fallback={<div class="empty">불러오는 중…</div>}>
           <For each={CLASS_GROUPS}>
@@ -260,8 +284,39 @@ export function AgentsTab(props: { onGotoChat?: (alias: string) => void; onGotoM
               </Show>
             )}
           </For>
+          {/* ➕ 추가되지 않은 에이전트 — 감지된 tmux 중 미등록. 클릭 → cwd prefill 로 추가(등록). */}
+          <Show when={unregistered().length > 0}>
+            <div class="kk-gt">
+              ➕ 추가되지 않은 에이전트 <span class="sub">({unregistered().length})</span>
+            </div>
+            <For each={unregistered()}>
+              {(s) => (
+                <div class="kk-row" title="클릭 → 대화명(alias) 부여해 등록" onClick={() => addFromSession(s)}>
+                  <div class="kk-ava c-group">＋<span class="dot" /></div>
+                  <div class="kk-meta">
+                    <div class="kk-nm">
+                      <span title={s.cwd ?? ""}>{s.cwd ? baseName(s.cwd) : "폴더 미상"}</span>
+                      <span class="tag">tmux</span>
+                    </div>
+                    <div class="kk-card-sub">
+                      <span class="kk-card-alias" title="tmux 세션 식별자">{s.identifier}</span>
+                    </div>
+                    <div class="kk-st" style="display:flex; align-items:center; gap:6px;">
+                      <span>{s.display || s.identifier}</span>
+                      <button
+                        class="tag"
+                        style="cursor:pointer; background:#2f6a3a; color:#fff; border:none; font-weight:700;"
+                        title="이 세션을 에이전트로 추가"
+                        onClick={(e) => { e.stopPropagation(); addFromSession(s); }}
+                      >＋ 추가</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </For>
+          </Show>
           <Show when={(agents() ?? []).length === 0}>
-            <div class="empty">등록된 에이전트가 없습니다.<br />우측 상단 <b>+ 추가</b>로 등록하세요.</div>
+            <div class="empty">등록된 에이전트가 없습니다.<br />우측 상단 <b>➕ 에이전트 추가</b>로 등록하세요.</div>
           </Show>
         </Show>
       </div>
@@ -290,9 +345,11 @@ export function AgentsTab(props: { onGotoChat?: (alias: string) => void; onGotoM
 
       <Show when={showAdd()}>
         <AddAgentModal
-          onClose={() => setShowAdd(false)}
+          prefillFolder={addPrefillFolder()}
+          onClose={() => { setShowAdd(false); setAddPrefillFolder(null); }}
           onCreated={async (alias) => {
             setShowAdd(false);
+            setAddPrefillFolder(null);
             await refetchAgents();
             setSelected(alias);
           }}
@@ -888,172 +945,5 @@ function FileTree(props: {
         </div>
       </Show>
     </Show>
-  );
-}
-
-// 에이전트 추가 — 단일 페이지 폼. 정본: _mockups/kakao-mockup.html #ovl .modal (lines 598-632).
-// 모든 필드를 한 화면에서 입력. 8단계 위저드가 수집하던 필드(머신·폴더·AI종류·이름·역할·분류·
-// 그룹·실행모드·워크트리·공개)를 동일 submit 페이로드(agent_profile_set)로 매핑한다.
-const ADD_MACHINES = ["서울", "잘만", "맥미니", "sm-s936n"];
-const ADD_AI_TYPES = ["claude", "codex", "gemini", "ollama", "hermes"];
-// 목업 분류 select (라벨 → classification 키). 실행모드 기본값 분기에 쓰인다.
-const ADD_CLASSES = [
-  { key: "project", label: "📁 프로젝트 에이전트" },
-  { key: "special", label: "⚙️ 특수 기능 에이전트" },
-  { key: "primary", label: "⭐ 통합관리(프라이머리)" },
-];
-const ADD_GROUPS = ["없음", "배포팀", "+ 새 그룹"];
-
-function AddAgentModal(props: { onClose: () => void; onCreated: (alias: string) => void }) {
-  const [busy, setBusy] = createSignal(false);
-  const [err, setErr] = createSignal("");
-  const [showPicker, setShowPicker] = createSignal(false);
-  // 폴더 브라우저 루트 — 홈의 projects 부터 드릴다운. 데몬이 ~ 확장 처리.
-  const pickerRoot = "~/projects";
-  const [d, setD] = createSignal({
-    machine: ADD_MACHINES[0], folder: "~/projects/starian-set", ai_type: "claude",
-    name: "", role: "", classification: "project", group: "없음",
-    exec: "always", worktree: true, is_public: false,
-  });
-  const set = (k: string, v: unknown) => setD({ ...d(), [k]: v });
-
-  // 실행 모드: 분류가 프로젝트일 때만 선택 가능. 특수=깨움(하트비트), 프라이머리=상시 고정.
-  const execLocked = () => d().classification !== "project";
-  const effectiveExec = () =>
-    d().classification === "primary" ? "always" :
-    d().classification === "special" ? "heartbeat" : d().exec;
-
-  async function submit() {
-    const v = d();
-    if (!v.name.trim()) { setErr("이름(alias)은 필수입니다."); return; }
-    setBusy(true); setErr("");
-    const execution_mode = effectiveExec();
-    try {
-      await invoke("agent_profile_set", {
-        alias: v.name.trim(), ai_type: v.ai_type, classification: v.classification,
-        execution_mode, machine: v.machine || null,
-        worktree: v.worktree ? "사용" : null,
-        is_public: v.is_public, role: v.role || null,
-        group: v.group && v.group !== "없음" ? v.group : null,
-        folder: v.folder || null,
-      });
-      props.onCreated(v.name.trim());
-    } catch (e) {
-      setErr(`등록 실패: ${(e as Error).message}`);
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div class="ax-add" onClick={(e) => { if (e.target === e.currentTarget) props.onClose(); }}>
-      <div class="modal">
-        <h2>에이전트 추가</h2>
-        <p class="sub">만들면 바로 대화방이 생깁니다.</p>
-
-        <div class="mrow">
-          <div class="fld">
-            <label>1 · 머신</label>
-            <select class="ctl" value={d().machine} onChange={(e) => set("machine", e.currentTarget.value)}>
-              <For each={ADD_MACHINES}>{(m) => <option value={m}>{m}</option>}</For>
-            </select>
-          </div>
-          <div class="fld">
-            <label>3 · AI 종류</label>
-            <select class="ctl" value={d().ai_type} onChange={(e) => set("ai_type", e.currentTarget.value)}>
-              <For each={ADD_AI_TYPES}>{(a) => <option value={a}>{a}</option>}</For>
-            </select>
-          </div>
-        </div>
-
-        <div class="fld">
-          <label>2 · 프로젝트 폴더</label>
-          <div class="ax-folderrow">
-            <input class="ctl" value={d().folder} placeholder="~/projects/starian-set"
-              onInput={(e) => set("folder", e.currentTarget.value)} />
-            <button
-              type="button"
-              class="ax-browse"
-              onClick={() => setShowPicker((v) => !v)}
-            >
-              {showPicker() ? "닫기" : "📁 찾아보기"}
-            </button>
-          </div>
-          <Show when={showPicker()}>
-            <div class="ax-pickerbox">
-              <div class="ax-pickerhint">폴더를 클릭해 선택하세요 (펼치려면 펼침 아이콘 클릭).</div>
-              <FileTree
-                rootPath={pickerRoot}
-                depth={2}
-                picked={() => d().folder}
-                onPick={(node) => { if (node.is_dir) set("folder", node.path); }}
-              />
-            </div>
-          </Show>
-        </div>
-
-        <div class="mrow">
-          <div class="fld">
-            <label>4 · 이름</label>
-            <input class="ctl" value={d().name} placeholder="akashic"
-              onInput={(e) => set("name", e.currentTarget.value)} />
-          </div>
-          <div class="fld">
-            <label>6 · 분류</label>
-            <select class="ctl" value={d().classification} onChange={(e) => set("classification", e.currentTarget.value)}>
-              <For each={ADD_CLASSES}>{(c) => <option value={c.key}>{c.label}</option>}</For>
-            </select>
-          </div>
-        </div>
-
-        <div class="mrow">
-          <div class="fld">
-            <label>5 · 역할 <span class="opt">(선택)</span></label>
-            <input class="ctl" value={d().role} placeholder="작업 정리 · SNS 포스팅"
-              onInput={(e) => set("role", e.currentTarget.value)} />
-          </div>
-          <div class="fld">
-            <label>그룹 <span class="opt">(선택)</span></label>
-            <select class="ctl" value={d().group} onChange={(e) => set("group", e.currentTarget.value)}>
-              <For each={ADD_GROUPS}>{(g) => <option value={g}>{g}</option>}</For>
-            </select>
-          </div>
-        </div>
-
-        <div class="fld">
-          <label>실행 모드 <span class="opt">(분류 따라 기본값 — 프로젝트만 선택)</span></label>
-          <div class={`seg${execLocked() ? " lock" : ""}`}>
-            <div class={`s${effectiveExec() === "always" ? " on" : ""}`}
-              onClick={() => { if (!execLocked()) set("exec", "always"); }}>⚡ 상시 켜둠</div>
-            <div class={`s${effectiveExec() === "heartbeat" ? " on" : ""}`}
-              onClick={() => { if (!execLocked()) set("exec", "heartbeat"); }}>😴 필요할 때 깨움 (하트비트)</div>
-          </div>
-        </div>
-
-        <div class="mrow">
-          <div class="fld">
-            <label>7 · 워크트리</label>
-            <div class="seg">
-              <div class={`s${d().worktree ? " on" : ""}`} onClick={() => set("worktree", true)}>사용</div>
-              <div class={`s${!d().worktree ? " on" : ""}`} onClick={() => set("worktree", false)}>안 함</div>
-            </div>
-          </div>
-          <div class="fld">
-            <label>8 · 공개 (OpenAgentX)</label>
-            <div class="seg">
-              <div class={`s${!d().is_public ? " on" : ""}`} onClick={() => set("is_public", false)}>비공개</div>
-              <div class={`s${d().is_public ? " on" : ""}`} onClick={() => set("is_public", true)}>공개 →</div>
-            </div>
-          </div>
-        </div>
-
-        <Show when={err()}><div class="add-err">{err()}</div></Show>
-
-        <div class="modal-foot">
-          <button class="btn-q" onClick={props.onClose} disabled={busy()}>⛶ QR·링크</button>
-          <button class="btn-go" onClick={submit} disabled={busy()}>{busy() ? "만드는 중…" : "만들기"}</button>
-        </div>
-        <div class="hint">머신·tailscale·토큰은 이 안에서만 — 만든 뒤엔 에이전트 목록에 ‘이름’만 보입니다.</div>
-      </div>
-    </div>
   );
 }

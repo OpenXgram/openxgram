@@ -17,7 +17,95 @@ import {
 // - Chain (메시지 체인 YAML)
 // - Payment (일일 결제 한도 + MFA)
 // - Locale (한국어/English 토글)
-type Section = "daemon" | "schedule" | "chain" | "payment" | "locale";
+type Section = "daemon" | "security" | "schedule" | "chain" | "payment" | "locale";
+
+// 비밀번호 변경 (keystore/vault rekey) — daemon /v1/gui/change-password 호출.
+function SecuritySection() {
+ const [oldPw, setOldPw] = createSignal("");
+ const [newPw, setNewPw] = createSignal("");
+ const [confirmPw, setConfirmPw] = createSignal("");
+ const [msg, setMsg] = createSignal<string>("");
+ const [busy, setBusy] = createSignal(false);
+
+ const submit = async () => {
+ setMsg("");
+ if (newPw().length < 8) {
+ setMsg("⚠️ 새 비밀번호는 8자 이상이어야 합니다.");
+ return;
+ }
+ if (newPw() !== confirmPw()) {
+ setMsg("⚠️ 새 비밀번호와 확인이 일치하지 않습니다.");
+ return;
+ }
+ if (newPw() === oldPw()) {
+ setMsg("⚠️ 새 비밀번호가 현재 비밀번호와 동일합니다.");
+ return;
+ }
+ setBusy(true);
+ try {
+ await invoke("change_password", {
+ old_password: oldPw(),
+ new_password: newPw(),
+ });
+ setMsg("✅ 비밀번호가 변경되었습니다 — 새 비밀번호로 다시 로그인하세요.");
+ setOldPw("");
+ setNewPw("");
+ setConfirmPw("");
+ } catch (e) {
+ setMsg(`❌ 변경 실패: ${(e as Error).message}`);
+ } finally {
+ setBusy(false);
+ }
+ };
+
+ return (
+ <div class="card">
+ <h3>🔑 비밀번호 변경</h3>
+ <p class="hint">
+ keystore 식별 서명키 + 모든 vault 자격증명을 새 비밀번호로 재암호화합니다.
+ 변경 전 자동 백업되며, daemon/mcp 재시작 시 새 비밀번호가 적용됩니다.
+ </p>
+ <div class="form-row">
+ <label>현재 비밀번호</label>
+ <input
+ type="password"
+ value={oldPw()}
+ onInput={(e) => setOldPw(e.currentTarget.value)}
+ autocomplete="current-password"
+ style={{ width: "100%"}}
+ />
+ </div>
+ <div class="form-row">
+ <label>새 비밀번호 (8자 이상)</label>
+ <input
+ type="password"
+ value={newPw()}
+ onInput={(e) => setNewPw(e.currentTarget.value)}
+ autocomplete="new-password"
+ style={{ width: "100%"}}
+ />
+ </div>
+ <div class="form-row">
+ <label>새 비밀번호 확인</label>
+ <input
+ type="password"
+ value={confirmPw()}
+ onInput={(e) => setConfirmPw(e.currentTarget.value)}
+ autocomplete="new-password"
+ style={{ width: "100%"}}
+ />
+ </div>
+ <div class="form-row" style={{ gap: "8px"}}>
+ <button type="button" onClick={submit} disabled={busy()}>
+ {busy() ? "변경 중…" : "변경"}
+ </button>
+ </div>
+ <Show when={msg()}>
+ <p class="hint" style={{ "white-space": "pre-wrap"}}>{msg()}</p>
+ </Show>
+ </div>
+);
+}
 
 function DaemonSection() {
  const { t} = useI18n();
@@ -110,6 +198,7 @@ export function SettingsTab() {
 
  const sections: { id: Section; label: string}[] = [
  { id: "daemon", label: t("settings.section.daemon")},
+ { id: "security", label: "🔑 비밀번호"},
  { id: "schedule", label: t("settings.section.schedule")},
  { id: "chain", label: t("settings.section.chain")},
  { id: "payment", label: t("settings.section.payment")},
@@ -131,6 +220,9 @@ export function SettingsTab() {
  </nav>
  <Show when={section() === "daemon"}>
  <DaemonSection />
+ </Show>
+ <Show when={section() === "security"}>
+ <SecuritySection />
  </Show>
  <Show when={section() === "schedule"}>
  <ScheduleView />

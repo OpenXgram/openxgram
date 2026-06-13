@@ -51,6 +51,7 @@ pub mod orchestration_adapter;
 pub mod otel;
 pub mod pair_desktop;
 pub mod pair_host;
+pub mod rekey;
 pub mod pattern_cmd;
 pub mod patterns;
 pub mod payment;

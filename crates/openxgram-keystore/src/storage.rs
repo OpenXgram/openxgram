@@ -241,6 +241,90 @@ impl FsKeystore {
 
         Ok(plaintext)
     }
+
+    /// 단일 keyfile 을 old → new 비번으로 재암호화.
+    ///
+    /// EncryptedKeyFile JSON 레벨에서 동작 — name/address/derivation_path/created_at
+    /// 메타데이터를 보존하고 `crypto` 필드만 새 salt+nonce 로 교체한다.
+    /// (AgentAddress 변환을 우회하여 주소 round-trip 손실 위험 제거.)
+    /// 비밀키 바이트는 사용 직후 zeroize.
+    fn reencrypt_keyfile(&self, name: &str, old: &str, new: &str) -> Result<(), KeystoreError> {
+        // 1) old 비번으로 복호화 (비번 검증 겸용).
+        let mut secret = self.load_and_decrypt(name, old)?;
+
+        // 2) 기존 keyfile 메타데이터 로드.
+        let path = self.key_path(name);
+        let json = std::fs::read_to_string(&path)?;
+        let mut keyfile: EncryptedKeyFile = serde_json::from_str(&json)?;
+
+        // 3) new 비번으로 fresh salt+nonce 재암호화 — encrypt_and_save 와 동일 절차.
+        let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
+        let mut enc_key = Self::derive_encryption_key(new, &salt)?;
+        let cipher = ChaCha20Poly1305::new((&enc_key).into());
+        let nonce_bytes: [u8; 12] = {
+            use chacha20poly1305::aead::rand_core::RngCore;
+            let mut b = [0u8; 12];
+            AeadOsRng.fill_bytes(&mut b);
+            b
+        };
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let ciphertext = cipher
+            .encrypt(nonce, secret.as_ref())
+            .map_err(|e| KeystoreError::Crypto(format!("encrypt error: {e}")));
+
+        // 비밀키는 더 이상 필요 없음 — 즉시 zeroize.
+        enc_key.zeroize();
+        secret.zeroize();
+
+        let ciphertext = ciphertext?;
+
+        // 인증 태그는 ciphertext 마지막 16바이트 (AEAD).
+        let tag_start = ciphertext.len().saturating_sub(16);
+        let mac = hex::encode(&ciphertext[tag_start..]);
+        let ciphertext_hex = hex::encode(&ciphertext[..tag_start]);
+
+        // 4) crypto 필드만 교체 — 메타데이터(name/address/derivation_path/created_at) 보존.
+        keyfile.crypto = CryptoParams {
+            cipher: "chacha20-poly1305".to_string(),
+            ciphertext: ciphertext_hex,
+            nonce: hex::encode(nonce_bytes),
+            kdf: "argon2id".to_string(),
+            kdf_params: KdfParams {
+                m_cost: 65536,
+                t_cost: 3,
+                p_cost: 1,
+                output_len: 32,
+            },
+            salt: salt.to_string(),
+            mac,
+        };
+
+        // 5) 0600 권한으로 write-back.
+        let out = serde_json::to_string_pretty(&keyfile)?;
+        std::fs::write(&path, out)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
+    }
+
+    /// keystore 의 모든 keyfile 을 old → new 비번으로 재암호화한다 (rekey).
+    ///
+    /// 봉투(envelope/DEK) 구조가 없어 각 keyfile 이 비번에서 직접 파생되므로
+    /// 모든 항목을 순회하며 개별 재암호화한다. 재암호화한 keyfile 수를 반환.
+    /// 어느 한 항목이라도 실패하면 즉시 raise (fallback 금지).
+    pub fn reencrypt_all(&self, old: &str, new: &str) -> Result<usize, KeystoreError> {
+        let entries = self.list()?;
+        let mut count = 0usize;
+        for entry in entries {
+            self.reencrypt_keyfile(&entry.name, old, new)?;
+            count += 1;
+        }
+        Ok(count)
+    }
 }
 
 impl Keystore for FsKeystore {

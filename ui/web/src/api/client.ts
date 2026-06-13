@@ -87,6 +87,8 @@ const ROUTES: Record<string, Route> = {
  status: { method: "GET", path: "/status"},
  is_initialized: { method: "GET", path: "/initialized"},
  health: { method: "GET", path: "/health"},
+ // 비밀번호 변경 (keystore/vault rekey)
+ change_password: { method: "POST", path: "/change-password", body: true},
 
  // Peers
  peers_list: { method: "GET", path: "/peers", emptyAs: []},

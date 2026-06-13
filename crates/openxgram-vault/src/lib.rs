@@ -268,6 +268,22 @@ impl<'a> VaultStore<'a> {
         Ok(())
     }
 
+    /// 모든 vault 항목을 old → new 비번으로 재암호화한다 (rekey).
+    ///
+    /// 디스크 암호화가 봉투(DEK) 없이 비번에서 직접 파생되므로 각 항목을
+    /// old 로 복호화 → new 로 재암호화한다. 태그는 보존. 재암호화한 항목 수를 반환.
+    /// 어느 한 항목이라도 실패하면 즉시 raise (fallback 금지 — 부분 상태로 진행 안 함).
+    pub fn reencrypt_all(&mut self, old: &str, new: &str) -> Result<usize> {
+        let entries = self.list()?;
+        let mut count = 0usize;
+        for entry in entries {
+            let plaintext = self.get(&entry.key, old)?;
+            self.set(&entry.key, &plaintext, new, &entry.tags)?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
     fn get_entry(&mut self, key: &str) -> Result<Option<VaultEntry>> {
         let result = self.db.conn().query_row(
             "SELECT id, key, tags, created_at, last_accessed

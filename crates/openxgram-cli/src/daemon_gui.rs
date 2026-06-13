@@ -293,6 +293,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/health", get(gui_health))
         .route("/v1/gui/status", get(gui_status))
         .route("/v1/gui/initialized", get(gui_initialized))
+        // 비밀번호 변경 (keystore/vault rekey) — require_auth + 현재 비번 검증.
+        .route("/v1/gui/change-password", post(gui_change_password))
         .route("/v1/gui/peers", get(gui_peers).post(gui_peer_add))
         // rc.245 — 결정적 세션 매핑 사용자 override: peer 의 터미널 세션 식별자 set/clear.
         .route("/v1/gui/peers/{alias}/session", patch(gui_peer_set_session))
@@ -759,6 +761,77 @@ async fn gui_status(
         },
     };
     Ok(Json(dto))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChangePasswordReq {
+    pub old_password: String,
+    pub new_password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OkDto {
+    pub ok: bool,
+}
+
+/// 비밀번호 변경 — keystore + vault rekey.
+///
+/// 1) require_auth (세션/mcp 토큰)
+/// 2) 현재 비번 검증 (auth::verify_password) — 불일치 시 403
+/// 3) 새 비번 길이 >=8 — 미만 시 400
+/// 4) rekey::run_rekey (백업 → 재암호화 → daemon.env 갱신 → 검증)
+/// 5) 현재 프로세스 env 도 새 비번으로 갱신 (재시작 전까지 일관성)
+async fn gui_change_password(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<ChangePasswordReq>,
+) -> Result<Json<OkDto>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+
+    if !crate::auth::verify_password(&body.old_password) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorDto {
+                error: "현재 비밀번호 불일치".into(),
+            }),
+        ));
+    }
+    if body.new_password.trim().len() < 8 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorDto {
+                error: "새 비밀번호는 8자 이상이어야 합니다".into(),
+            }),
+        ));
+    }
+
+    let data_dir = state.data_dir.as_ref().clone();
+    let old = body.old_password.clone();
+    let new = body.new_password.trim().to_string();
+    // rekey 는 blocking (Argon2 + 파일 IO) — blocking 스레드로 격리.
+    tokio::task::spawn_blocking(move || crate::rekey::run_rekey(&data_dir, &old, &new))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorDto {
+                    error: format!("rekey task join: {e}"),
+                }),
+            )
+        })?
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorDto {
+                    error: format!("비밀번호 변경 실패: {e}"),
+                }),
+            )
+        })?;
+
+    // run_rekey 가 daemon.env 는 이미 갱신함 — 현재 프로세스 env 도 동기화.
+    std::env::set_var("XGRAM_KEYSTORE_PASSWORD", body.new_password.trim());
+
+    Ok(Json(OkDto { ok: true }))
 }
 
 /// `GET /v1/gui/initialized` — manifest 존재 여부 (boolean).

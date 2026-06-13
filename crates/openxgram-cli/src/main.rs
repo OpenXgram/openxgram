@@ -25,6 +25,7 @@ use openxgram_cli::patterns::{self, PatternsAction};
 use openxgram_cli::payment::{self, PaymentAction};
 use openxgram_cli::peer::{self, PeerAction};
 use openxgram_cli::peer_send;
+use openxgram_cli::rekey;
 use openxgram_cli::reset::{self, ResetOpts};
 use openxgram_cli::session::{self, SessionAction};
 use openxgram_cli::status::{self, StatusOpts};
@@ -144,6 +145,19 @@ enum Commands {
         /// 실제 변경 없이 작업 미리보기
         #[arg(long)]
         dry_run: bool,
+    },
+
+    /// keystore + vault 비밀번호 변경 (rekey). OLD 는 XGRAM_KEYSTORE_PASSWORD env.
+    ///
+    /// 보안 핵심: 식별 서명키 + 모든 vault 자격증명을 old → new 로 재암호화.
+    /// 재암호화 전 자동 백업 (rekey-backup-<ts>/). daemon/mcp 재시작 시 새 비번 적용.
+    Rekey {
+        /// 새 비밀번호 (>=8자)
+        #[arg(long)]
+        new: String,
+        /// 데이터 디렉토리 (기본: ~/.openxgram)
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
     },
 
     /// 키페어 관리
@@ -2283,6 +2297,19 @@ async fn main() -> anyhow::Result<()> {
                 dry_run,
             };
             uninstall::run_uninstall(&opts)?;
+        }
+
+        Commands::Rekey { new, data_dir } => {
+            let dir = resolve_data_dir(data_dir)?;
+            let old = openxgram_core::env::require_password()
+                .map_err(|_| anyhow::anyhow!(
+                    "OLD 비밀번호가 XGRAM_KEYSTORE_PASSWORD env 에 없습니다 — 설정 후 재실행"
+                ))?;
+            if new.trim().len() < 8 {
+                anyhow::bail!("새 비밀번호는 8자 이상이어야 합니다");
+            }
+            rekey::run_rekey(&dir, &old, new.trim())?;
+            println!("✓ 비밀번호 변경 완료 — daemon/mcp 재시작 시 새 비번 적용");
         }
 
         Commands::Keypair { data_dir, action } => {
