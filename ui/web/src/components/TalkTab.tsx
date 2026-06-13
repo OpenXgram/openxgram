@@ -6,6 +6,7 @@ import { AddFriendModal, loadExternalFriends, type ExternalFriend } from "./AddF
 import { ProviderLogo, providerKey } from "./ProviderLogo";
 import {
   computeUnregisteredSessions,
+  isTooBroadPath,
   normPath,
   type DetectedSession,
   type SessionsDto,
@@ -477,7 +478,9 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
       const sCwd = s.cwd ? normPath(s.cwd.trim()) : "";
       if (convoCwd && sCwd) {
         if (sCwd === convoCwd) return true; // 정확히 같은 폴더 → 항상 내 것.
-        if (sCwd.startsWith(convoCwd + "/")) {
+        // convoCwd 가 홈루트급(/home/llm 등)이면 descendant 흡수 금지 — star 가 홈 아래
+        // orphan tmux 를 전부 빨아들이던 문제 방지(미등록 섹션과 동일 원리). exact 만 허용.
+        if (sCwd.startsWith(convoCwd + "/") && !isTooBroadPath(convoCwd)) {
           // 이 세션 cwd 의 더 가까운(긴) 조상 폴더를 가진 다른 등록 에이전트가 있으면 그쪽 것.
           let closest = convoCwd;
           for (const r of regs) {

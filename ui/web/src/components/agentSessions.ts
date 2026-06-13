@@ -50,7 +50,7 @@ export function isMeaningfulSession(s: DetectedSession): boolean {
 // 홈 루트급(너무 넓은) 경로 — 이런 게 등록 경로면 그 아래 모든 tmux 가 "등록됨"으로
 //   흡수돼 미등록 섹션이 영영 비어버린다(prefix-ownership leak). 매칭 set 에서 제외.
 //   예: `/`, `/home/<user>`, `/Users/<user>`, `/root`, `/home`.
-function isTooBroadPath(p: string): boolean {
+export function isTooBroadPath(p: string): boolean {
   const c = normPath(p);
   if (c === "" || c === "/" || c === "/root" || c === "/home") return true;
   return /^\/home\/[^/]+$/.test(c) || /^\/Users\/[^/]+$/.test(c);

@@ -4720,7 +4720,12 @@ async fn gui_agents_register(
     //       tailnet/LAN reachable peer 에서만 동작. (머신 친구 = tailnet peer 라는 가정.)
     if classification == "friend" {
         if let Some(friend_host) = body.machine.as_deref().filter(|s| !s.is_empty()) {
-            if let Some(friend_base) = friend_gui_base_url(friend_host) {
+            // rc.318 — 단일 URL 대신 ORDERED 후보 base URL 목록을 derive 하여 순차 시도.
+            // (설치별 GUI 포트 + localhost-bound + Funnel + 0.0.0.0-bound 토폴로지 모두 커버.)
+            let candidates = friend_announce_base_urls(friend_host);
+            if candidates.is_empty() {
+                tracing::warn!(host = %friend_host, "friend announce skip: 후보 GUI base URL 없음 (도달 불가 주소)");
+            } else {
                 // THIS 머신을 기술하는 announce payload.
                 let me_machine = std::env::var("XGRAM_MACHINE_ALIAS")
                     .ok()
@@ -4737,11 +4742,12 @@ async fn gui_agents_register(
                     eth_address: me_eth,
                     ai_type: Some("claude".to_string()),
                 };
-                // detached: 로컬 응답을 막지 않는다. 실패는 warn.
+                let friend_host = friend_host.to_string();
+                // detached: 로컬 응답을 막지 않는다. 후보를 순차 시도, 첫 2xx 성공 시 STOP.
+                // 모든 후보 실패 시 warn (silent-degrade 금지).
                 tokio::spawn(async move {
-                    let url = format!("{}/v1/gui/friends/announce", friend_base.trim_end_matches('/'));
                     let client = match reqwest::Client::builder()
-                        .timeout(std::time::Duration::from_secs(4))
+                        .timeout(std::time::Duration::from_secs(5))
                         .build()
                     {
                         Ok(c) => c,
@@ -4750,20 +4756,31 @@ async fn gui_agents_register(
                             return;
                         }
                     };
-                    match client.post(&url).json(&payload).send().await {
-                        Ok(resp) if resp.status().is_success() => {
-                            tracing::info!(machine = %me_machine, target = %url, "friend announce 송신 성공 (mutual)");
-                        }
-                        Ok(resp) => {
-                            tracing::warn!(target = %url, status = %resp.status(), "friend announce: 원격 데몬 비정상 응답");
-                        }
-                        Err(e) => {
-                            tracing::warn!(target = %url, error = %e, "friend announce: 송신 실패 (원격 도달 불가 추정 — 한쪽만 등록됨)");
+                    let mut last_err: Option<String> = None;
+                    for base in &candidates {
+                        let url = format!("{}/v1/gui/friends/announce", base.trim_end_matches('/'));
+                        match client.post(&url).json(&payload).send().await {
+                            Ok(resp) if resp.status().is_success() => {
+                                tracing::info!(machine = %me_machine, target = %url, "friend announce 송신 성공 (mutual)");
+                                return;
+                            }
+                            Ok(resp) => {
+                                last_err = Some(format!("{url} → status {}", resp.status()));
+                                tracing::debug!(target = %url, status = %resp.status(), "friend announce: 후보 비정상 응답, 다음 후보 시도");
+                            }
+                            Err(e) => {
+                                last_err = Some(format!("{url} → {e}"));
+                                tracing::debug!(target = %url, error = %e, "friend announce: 후보 송신 실패, 다음 후보 시도");
+                            }
                         }
                     }
+                    tracing::warn!(
+                        host = %friend_host,
+                        candidates = ?candidates,
+                        last_error = ?last_err,
+                        "friend announce: 모든 후보 실패 — 한쪽만 등록됨 (silent-degrade 아님)"
+                    );
                 });
-            } else {
-                tracing::warn!(host = %friend_host, "friend announce skip: GUI base URL derive 실패 (도달 불가 주소)");
             }
         }
     }
@@ -4847,26 +4864,129 @@ fn upsert_agent_profile(
     )
 }
 
-/// 친구 머신의 reachable GUI base URL 을 derive. `machine` 필드는 보통 bare host/IP
-/// (Tailscale IP `100.x.x.x` 또는 host) — scheme/포트가 없으면 `http://<host>:GUI_PORT` 로 보강.
-/// 이미 `http(s)://` 면 그대로 사용. 도달 불가(localhost/빈값) 면 None.
-fn friend_gui_base_url(machine: &str) -> Option<String> {
+/// `tailscale status --json` 을 파싱하여 `host`(Tailscale IP 또는 호스트 라벨)에 해당하는
+/// 장치의 전체 MagicDNS 도메인(`DNSName`, trailing `.` 제거)을 찾는다.
+/// 매칭 규칙: 장치의 `TailscaleIPs` 가 `host` 를 포함하거나,
+///           `HostName`/`DNSName` 의 첫 라벨이 `host` 와 일치(대소문자 무시).
+/// `gui_tailnet_devices` 의 파싱 패턴(`Self` + `Peer.*`, `TailscaleIPs[0]`, `DNSName`)을 재사용.
+/// tailscale 미설치/실패/미발견 시 None — 호출측이 IP:port 폴백으로 degrade.
+fn tailscale_dnsname_for_host(host: &str) -> Option<String> {
+    let host = host.trim();
+    if host.is_empty() {
+        return None;
+    }
+    let host_lc = host.to_ascii_lowercase();
+
+    let root = std::process::Command::new("tailscale")
+        .arg("status")
+        .arg("--json")
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout).ok()
+            } else {
+                None
+            }
+        })
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())?;
+
+    // 한 노드가 `host` 에 매칭하면 그 DNSName(trailing `.` 제거)을 반환.
+    fn match_node(node: &serde_json::Value, host_lc: &str) -> Option<String> {
+        // 1) TailscaleIPs 에 host 포함?
+        let ip_match = node
+            .get("TailscaleIPs")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .any(|ip| ip.eq_ignore_ascii_case(host_lc))
+            })
+            .unwrap_or(false);
+        // 2) HostName 첫 라벨 == host?
+        let hostname_match = node
+            .get("HostName")
+            .and_then(|v| v.as_str())
+            .map(|s| s.split('.').next().unwrap_or(s).eq_ignore_ascii_case(host_lc))
+            .unwrap_or(false);
+        // 3) DNSName 첫 라벨 == host?
+        let dnsname_first = node
+            .get("DNSName")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim_end_matches('.').to_string());
+        let dnsname_label_match = dnsname_first
+            .as_deref()
+            .map(|s| s.split('.').next().unwrap_or(s).eq_ignore_ascii_case(host_lc))
+            .unwrap_or(false);
+
+        if ip_match || hostname_match || dnsname_label_match {
+            dnsname_first.filter(|s| !s.is_empty())
+        } else {
+            None
+        }
+    }
+
+    // Self 우선, 그다음 Peer.*.
+    if let Some(self_node) = root.get("Self") {
+        if let Some(dns) = match_node(self_node, &host_lc) {
+            return Some(dns);
+        }
+    }
+    if let Some(peers) = root.get("Peer").and_then(|v| v.as_object()) {
+        for node in peers.values() {
+            if let Some(dns) = match_node(node, &host_lc) {
+                return Some(dns);
+            }
+        }
+    }
+    None
+}
+
+/// 친구 머신의 reachable GUI announce base URL 후보 목록을 ORDERED(가장 도달 가능성 높은 것 먼저)
+/// 로 derive. 단일 URL 가정이 다양한 설치 토폴로지(설치별 GUI 포트, localhost-bound + Funnel,
+/// 0.0.0.0-bound)에서 깨지므로 후보를 만들어 호출측이 순차로 시도하게 한다.
+///
+/// - `machine` 이 이미 scheme(`http(s)://`) 보유 → 그대로 단일 후보 (path/port 보존).
+/// - `machine` 이 `host:port` 형태 → `http://<machine>` 단일 후보.
+/// - bare host/IP →
+///     a. Funnel/MagicDNS 우선: `tailscale status --json` 에서 host→DNSName 매핑 발견 시
+///        `https://<dnsName>` 를 첫 후보로 (nginx 가 /v1/gui/ → 127.0.0.1:GUI_PORT proxy).
+///     b. 직접 IP:port 폴백: 후보 GUI 포트 [47302, 17402] 각각 `http://<host>:<port>`.
+/// `is_unreachable_address` true 후보는 제외. 순서 보존하며 dedupe.
+fn friend_announce_base_urls(machine: &str) -> Vec<String> {
+    // 후보 GUI 포트 (설치별 상이). probe_gui_urls 와 동일 집합.
+    const CANDIDATE_PORTS: [u16; 2] = [47302, 17402];
+
     let raw = machine.trim();
     if raw.is_empty() {
-        return None;
+        return Vec::new();
     }
-    let candidate = if raw.starts_with("http://") || raw.starts_with("https://") {
-        raw.to_string()
+
+    let mut candidates: Vec<String> = Vec::new();
+
+    if raw.starts_with("http://") || raw.starts_with("https://") {
+        candidates.push(raw.to_string());
     } else if raw.contains(':') {
         // host:port 형태 — scheme 만 보강.
-        format!("http://{raw}")
+        candidates.push(format!("http://{raw}"));
     } else {
-        format!("http://{raw}:{}", openxgram_core::ports::GUI_PORT)
-    };
-    if openxgram_transport::tailscale::is_unreachable_address(&candidate) {
-        return None;
+        // a. Funnel/MagicDNS 우선.
+        if let Some(dns) = tailscale_dnsname_for_host(raw) {
+            candidates.push(format!("https://{dns}"));
+        }
+        // b. 직접 IP:port 폴백.
+        for port in CANDIDATE_PORTS {
+            candidates.push(format!("http://{raw}:{port}"));
+        }
     }
-    Some(candidate)
+
+    // 도달 불가 후보 제거 + 순서 보존 dedupe.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    candidates
+        .into_iter()
+        .filter(|c| !openxgram_transport::tailscale::is_unreachable_address(c))
+        .filter(|c| seen.insert(c.clone()))
+        .collect()
 }
 
 /// THIS 머신의 master eth address (announce 신원용). keystore 비번 없으면 None — 무해.
