@@ -134,6 +134,10 @@ export function AcpConversation(props: {
   popoutAlias?: string | null;
   // 상세 패널의 "세션 재시작/닫기" — accessor 반환값이 증가하면 세션을 닫고 재구동.
   restartTrigger?: () => number;
+  // 우측 정보 패널의 "📥 가져오기" — accessor 반환값이 증가하면 promptImport() 실행.
+  // (가져오기 버튼은 컴포저에서 빠지고 우측 패널로 이동했지만, 가져온 내용을 'me' 버블 +
+  //  acp_conv_add 로 현재 대화에 들이는 로직은 이 컴포넌트가 그대로 보유 — 트리거만 외부.)
+  importTrigger?: () => number;
   // status line 데이터 — 폴더/역할/공개여부/연결 워크플로우 수(모델·토큰은 내부 값 사용).
   status?: () => { folder?: string | null; role?: string | null; isPublic?: boolean; workflows?: number };
 }) {
@@ -464,6 +468,51 @@ export function AcpConversation(props: {
     scrollDown();
   }
 
+  // ── 아티팩트 미리보기 패널 ──
+  // 대화 중 등장한 파일·이미지 참조(첨부 `📎 name → /path`, 절대경로, 코드/텍스트/이미지 파일)를
+  // 모아 우측 슬라이드 패널에 미리보기. 이미지=썸네일(클릭 확대), 그 외=다운로드 + 경로 표시.
+  // 파일 바이트 서빙 라우트(daemon)가 없으므로 같은-머신 file:// 미리보기 + 경로 복사 위주.
+  const [artOpen, setArtOpen] = createSignal(false);
+  const [artZoom, setArtZoom] = createSignal<string | null>(null); // 확대 중인 이미지 src
+  type Artifact = { path: string; name: string; kind: "image" | "code" | "text" | "file"; src: string };
+  const IMG_RE = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i;
+  const CODE_RE = /\.(ts|tsx|js|jsx|rs|py|go|java|c|cpp|h|hpp|json|toml|yaml|yml|sh|sql|html|css|md|txt|csv|xml)$/i;
+  // 텍스트에서 파일 경로 후보 추출. `📎 name → /abs/path` 형태와 일반 절대/상대 경로 모두.
+  function extractPaths(text: string): string[] {
+    const out: string[] = [];
+    // 첨부 형식: "📎 filename → /abs/path"
+    const attRe = /📎[^→\n]*→\s*(\S+)/g;
+    let m: RegExpExecArray | null;
+    while ((m = attRe.exec(text)) !== null) out.push(m[1]);
+    // 일반 경로(절대 /…, ~/…, 또는 디렉토리 포함 상대경로) + 알려진 확장자.
+    const pathRe = /(?:^|[\s("'`])((?:\/|~\/|\.{1,2}\/)[^\s)"'`]+\.[A-Za-z0-9]{1,5})/g;
+    while ((m = pathRe.exec(text)) !== null) out.push(m[1]);
+    return out;
+  }
+  function bubbleText(b: Bubble): string {
+    if (b.kind === "me" || b.kind === "note") return b.text;
+    if (b.kind === "agent") return b.segs.map((s) => s.text).join("\n");
+    if (b.kind === "tool") return b.title;
+    return "";
+  }
+  const artifacts = createMemo<Artifact[]>(() => {
+    const seen = new Set<string>();
+    const out: Artifact[] = [];
+    for (const b of bubbles()) {
+      for (const raw of extractPaths(bubbleText(b))) {
+        const path = raw.replace(/[.,;:]+$/, "");
+        if (!path || seen.has(path)) continue;
+        seen.add(path);
+        const name = path.split("/").pop() || path;
+        const kind: Artifact["kind"] = IMG_RE.test(path) ? "image" : CODE_RE.test(path) ? "code" : "file";
+        // 같은-머신 미리보기: file:// 로 직접 참조(브라우저가 로컬 파일 접근 가능한 경우 썸네일).
+        const src = /^https?:\/\//.test(path) ? path : `file://${path.startsWith("~") ? path : path}`;
+        out.push({ path, name, kind, src });
+      }
+    }
+    return out;
+  });
+
   // session/update 한 건을 버블에 반영 (스트림 + prompt 응답 updates 공용).
   function applyUpdate(u: unknown) {
     if (!u || typeof u !== "object") return;
@@ -599,9 +648,9 @@ export function AcpConversation(props: {
       });
       if (!resync) restored.push({ id: nextId++, kind: "note", text: "↑ 이전 대화 복원됨 — 이어서 대화하세요.", time: nowClock() });
       setBubbles(restored);
-      // true resume: 새 어댑터 프로세스에 이전 맥락을 첫 프롬프트로 주입 → 에이전트가 실제로 이어감.
-      // resync(라이브 재동기화)면 맥락 재주입 불필요 — 건너뛴다.
-      if (!resync) pendingContext = buildContextPreamble();
+      // 맥락 재주입은 이제 데몬이 권위있게 담당한다(daemon_gui_acp prompt: 서브프로세스 새로 spawn 시
+      // DB 기록을 첫 프롬프트에 prepend). UI 의존 pendingContext 는 비활성 — 이중 주입·UI 마운트
+      // 타이밍에 의존하던 불안정 제거. (재시작·크래시·on_demand 재spawn 어떤 경우에도 데몬이 복원.)
       scrollDown();
       return true;
     } catch {
@@ -623,104 +672,8 @@ export function AcpConversation(props: {
     return `[이전 대화 맥락 — 데몬 재시작/새로고침 후 이어서 진행. 아래는 우리의 지난 대화다.]\n${body}\n[위 맥락을 기억하고 아래 현재 요청에 답하라]\n`;
   }
 
-  // ── "이어가기" 번들 export/import — 한 세션 대화를 다른 세션/에이전트로 이전 ──
-  // 번들 포맷: 클라이언트 조립(신규 백엔드 라우트 불필요). acp_conv_list(영속 메시지)를
-  // 그대로 직렬화 → 받는 쪽이 acp_conv_add 로 대상 conv_key 에 주입 + loadHistory 로
-  // pendingContext(첫 프롬프트 맥락)까지 복원. text-package-v1 와 유사하나 GUI 대화 전용.
-  const BUNDLE_FORMAT = "oxg-conv-bundle-v1";
-
-  // 현재 대화를 번들 JSON 으로 export → 클립보드 복사(실패 시 파일 다운로드 폴백).
-  async function exportConversation() {
-    try {
-      const rows = await invoke<{ role: string; text: string }[]>("acp_conv_list", { key: convKey() });
-      const msgs = Array.isArray(rows) ? rows : [];
-      if (msgs.length === 0) {
-        pushBubble({ id: nextId++, kind: "note", text: "⚠ 내보낼 대화 내용이 없습니다.", time: nowClock() });
-        return;
-      }
-      const bundle = {
-        format: BUNDLE_FORMAT,
-        conv_key: convKey(),
-        agent: props.preset?.displayName || props.preset?.label || activeAgent() || convKey(),
-        exported_at: new Date().toISOString(),
-        messages: msgs.map((r) => ({ role: r.role, text: r.text })),
-      };
-      const json = JSON.stringify(bundle, null, 2);
-      let copied = false;
-      try {
-        if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(json);
-          copied = true;
-        }
-      } catch {
-        /* 클립보드 불가(비보안 컨텍스트 등) → 파일 다운로드 폴백 */
-      }
-      if (!copied) {
-        const blob = new Blob([json], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `oxg-conv-${convKey()}-${Date.now()}.json`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      }
-      pushBubble({
-        id: nextId++,
-        kind: "note",
-        text: copied
-          ? `📤 이어가기 번들 복사됨(${msgs.length}개 메시지) — 다른 세션의 "📥 이어가기 가져오기"에 붙여넣으세요.`
-          : `📤 이어가기 번들 다운로드됨(${msgs.length}개 메시지).`,
-        time: nowClock(),
-      });
-    } catch (e) {
-      pushBubble({ id: nextId++, kind: "note", text: `⚠ 내보내기 실패: ${(e as Error)?.message ?? e}`, time: nowClock() });
-    }
-  }
-
-  // 번들 JSON 문자열 → 현재 conv_key 에 메시지 주입 + history 복원(맥락 이어가기).
-  // 대상 대화에서 호출(picker/대화방 공용). 반환: 주입된 메시지 수.
-  async function importConversationFromText(raw: string): Promise<number> {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      throw new Error("번들 JSON 파싱 실패 — 올바른 내보내기 텍스트인지 확인하세요.");
-    }
-    const b = parsed as { format?: string; messages?: { role?: string; text?: string }[] };
-    if (b?.format !== BUNDLE_FORMAT || !Array.isArray(b.messages)) {
-      throw new Error("이어가기 번들 형식이 아닙니다.");
-    }
-    let n = 0;
-    for (const m of b.messages) {
-      const role = m?.role === "agent" ? "agent" : m?.role === "note" ? "note" : "me";
-      const text = typeof m?.text === "string" ? m.text : "";
-      if (!text.trim()) continue;
-      await invoke("acp_conv_add", { key: convKey(), role, text }).catch(() => {});
-      n++;
-    }
-    return n;
-  }
-
-  // picker/대화방에서 "📥 이어가기 가져오기" 클릭 → 붙여넣기 입력 → import → history 복원.
-  async function promptImport() {
-    const raw = window.prompt("이어가기 번들 JSON 을 붙여넣으세요 (다른 세션에서 '📤 이어가기'로 복사한 내용):");
-    if (!raw || !raw.trim()) return;
-    try {
-      const n = await importConversationFromText(raw.trim());
-      // 주입된 메시지를 화면에 복원 + pendingContext 설정(다음 프롬프트에 맥락 전달).
-      await loadHistory();
-      pushBubble({
-        id: nextId++,
-        kind: "note",
-        text: `📥 이어가기 가져옴(${n}개 메시지) — 이어서 대화하세요. 다음 입력 시 이전 맥락이 에이전트에 전달됩니다.`,
-        time: nowClock(),
-      });
-    } catch (e) {
-      window.alert(`가져오기 실패: ${(e as Error)?.message ?? e}`);
-    }
-  }
+  // 옛 "이어가기" 클립보드 export/import(exportConversation/importConversationFromText/
+  // promptImport) 제거됨 — 대화 핸드오프는 ⇢ 위임 모달(submitDelegate)로 대체.
 
   // 에이전트 선택 → 세션 생성 + SSE 구독.
   // cwd 생략 시 DEFAULT_ACP_CWD, execMode 생략 시 on_demand. label 은 헤더 표시명(생략 시 adapter).
@@ -901,12 +854,19 @@ export function AcpConversation(props: {
   async function cancelTurn() {
     const id = sessionId();
     if (!id) return;
+    // soft cancel(best-effort) — 어댑터는 턴마다 새 session/new 라 session/cancel 이 진행 중 턴에
+    // 안 닿을 수 있다(그래서 '취소가 안 되던' 것). 따라서 확실히 멈추려면 세션을 강제 종료한다.
     try {
       await acpFetch("POST", `/sessions/${encodeURIComponent(id)}/cancel`);
-      pushBubble({ id: nextId++, kind: "note", text: "· 취소 요청 전송", time: nowClock() });
-    } catch (e) {
-      pushBubble({ id: nextId++, kind: "note", text: `⚠ 취소 실패: ${(e as Error)?.message ?? e}`, time: nowClock() });
+    } catch {
+      /* best-effort */
     }
+    pushBubble({ id: nextId++, kind: "note", text: "■ 중단 — 현재 턴을 멈추고 세션을 재구동합니다.", time: nowClock() });
+    setBusy(false);
+    setRecvActive(false);
+    // 확실한 중단: 세션 DELETE 로 서브프로세스를 죽여 진행 중 턴을 강제 종료 → 즉시 재구동.
+    // 맥락은 DB 기록에서 매 프롬프트 재주입되므로 손실 없음.
+    await closeSession();
   }
 
   // 세션 닫기 → DELETE + 스트림 중단. roster 로 복귀하지 않고 에이전트 선택 화면으로.
@@ -948,7 +908,200 @@ export function AcpConversation(props: {
     return v;
   });
 
+  // 우측 패널 "📥 가져오기" 트리거 — 값이 증가하면 promptImport() 실행(붙여넣기 → me 버블 + 영속).
+  createEffect<number>((prev) => {
+    const v = props.importTrigger?.() ?? 0;
+    if (prev !== undefined && v !== prev && v > 0) void promptImport();
+    return v;
+  });
+
+  // ── 위임 모달 (신원=에이전트 셀렉터 + endpoint 셀렉터) ──
+  // 주소 = alias(신원) + endpoint(전달 방식). a2a_send 가 endpoint 에 따라 라우팅한다.
+  // 엔드포인트는 a2a_agent_endpoints 로 대상 alias 마다 동적 조회 → 사용 가능한 것만 노출.
+  // existing_acp/tmux 가 여러 인스턴스면 2단 셀렉터(타입 → 인스턴스).
+  type AgentEndpoints = {
+    new_acp?: boolean;
+    existing_acp?: { id: string; label?: string }[];
+    tmux?: { name: string; cwd?: string }[];
+    worktree?: boolean;
+    external?: boolean;
+  };
+  const [delOpen, setDelOpen] = createSignal(false);
+  const [delTarget, setDelTarget] = createSignal("");
+  const [delEndpoint, setDelEndpoint] = createSignal("new_acp"); // 엔드포인트 타입
+  const [delInstance, setDelInstance] = createSignal(""); // 2단 셀렉터: existing_acp id 또는 tmux name
+  const [delEndpoints, setDelEndpoints] = createSignal<AgentEndpoints | null>(null); // 동적 조회 결과
+  const [delEpLoading, setDelEpLoading] = createSignal(false);
+  const [delBusy, setDelBusy] = createSignal(false);
+  const [delAgents] = createResource<{ alias: string; reachable?: boolean }[]>(async () => {
+    try {
+      const r = await invoke<{ agents: { alias: string; reachable?: boolean }[] }>("a2a_agents");
+      return r?.agents ?? [];
+    } catch {
+      return [];
+    }
+  });
+  // 명부(agents_list, GET /v1/gui/agents) — alias 별 로컬/친구 분류용(project_path·classification·machine).
+  // a2a_agents 는 이 필드를 주지 않으므로 로컬/친구 판정에 이 소스를 join 한다.
+  const [delRoster] = createResource<
+    { alias: string; project_path?: string | null; classification?: string | null; machine?: string | null }[]
+  >(async () => {
+    try {
+      const r = await invoke<
+        { alias: string; project_path?: string | null; classification?: string | null; machine?: string | null }[]
+      >("agents_list");
+      return Array.isArray(r) ? r : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // ── 로컬/친구 분류 (TalkTab.isLocalAgent 와 동일 기준) ──
+  // 1폴더=1에이전트=1 alias(신원). 표시는 alias 기준 — 폴더 그룹핑 없음.
+  // 로컬 = 이 머신(ACP): project_path 가 /home/llm 하위 OR machine 비었거나 현재 머신.
+  // 친구 = 다른 머신/외부: classification=friend OR project_path 가 다른 머신 경로 OR machine 원격값.
+  const LOCAL_HOME_PREFIX = "/home/llm";
+  const SELF_MACHINE_NAMES = ["server-seoul", "local", "서울", "seoul"];
+  function isLocalMachineField(machine?: string | null): boolean {
+    const m = (machine ?? "").trim().toLowerCase();
+    if (!m) return true; // 비었으면 로컬(기존 로컬 에이전트는 machine 미설정).
+    return SELF_MACHINE_NAMES.some((n) => m === n || m.includes(n) || n.includes(m));
+  }
+  function isLocalRosterAgent(r: { project_path?: string | null; classification?: string | null; machine?: string | null }): boolean {
+    if ((r.classification ?? "") === "friend") return false; // 명시 친구.
+    const p = (r.project_path ?? "").trim();
+    if (p && !(p === LOCAL_HOME_PREFIX || p.startsWith(LOCAL_HOME_PREFIX + "/")) && p.startsWith("/home/")) return false;
+    if (!isLocalMachineField(r.machine)) return false;
+    return true;
+  }
+  type DelAgent = { alias: string; reachable?: boolean; machine?: string | null };
+  // 대상 후보 = a2a_agents 의 alias(호출 가능한 신원). 로컬/친구는 roster 의 분류로 판정.
+  // roster 에 없는 alias 는 machine 미상 → 로컬로 간주(기존 로컬 에이전트 기본).
+  const delLocalFriend = createMemo<{ local: DelAgent[]; friends: DelAgent[] }>(() => {
+    const rosterMap = new Map<string, { project_path?: string | null; classification?: string | null; machine?: string | null }>();
+    for (const r of delRoster() ?? []) rosterMap.set(r.alias, r);
+    const local: DelAgent[] = [];
+    const friends: DelAgent[] = [];
+    for (const a of delAgents() ?? []) {
+      const r = rosterMap.get(a.alias);
+      const isLocal = r ? isLocalRosterAgent(r) : true;
+      const row: DelAgent = { alias: a.alias, reachable: a.reachable, machine: r?.machine ?? null };
+      (isLocal ? local : friends).push(row);
+    }
+    local.sort((a, b) => a.alias.localeCompare(b.alias));
+    friends.sort((a, b) => a.alias.localeCompare(b.alias));
+    return { local, friends };
+  });
+  // 선택된 대상이 친구인지 — 친구면 endpoint 는 A2A(external) 단순 흐름.
+  function isTargetFriend(alias: string): boolean {
+    return (delLocalFriend().friends ?? []).some((f) => f.alias === alias);
+  }
+  // 대상 alias 의 도달 엔드포인트 조회. 백엔드 라우트가 아직 없으면(빌드 전) graceful fallback.
+  async function loadEndpoints(alias: string) {
+    if (!alias) { setDelEndpoints(null); return; }
+    setDelEpLoading(true);
+    try {
+      const r = await invoke<AgentEndpoints>("a2a_agent_endpoints", { alias });
+      // 정상 응답 — new_acp/external 기본 true 보장(라우트 동작 시 항상 가능).
+      setDelEndpoints({
+        new_acp: r?.new_acp !== false,
+        existing_acp: Array.isArray(r?.existing_acp) ? r.existing_acp : [],
+        tmux: Array.isArray(r?.tmux) ? r.tmux : [],
+        worktree: !!r?.worktree,
+        external: r?.external !== false,
+      });
+    } catch {
+      // 라우트 미존재/실패 → 기본 2종만(절대 깨지지 않게).
+      setDelEndpoints({ new_acp: true, existing_acp: [], tmux: [], worktree: false, external: true });
+    } finally {
+      setDelEpLoading(false);
+    }
+  }
+  // 대상 에이전트 선택 → 엔드포인트 재조회 + 첫 사용가능 타입으로 리셋.
+  // 친구(다른 머신·외부)면 endpoint 는 A2A(external) 단순 흐름 — 그 친구/머신으로 라우팅.
+  // 로컬이면 endpoint 셀렉터(신규 ACP / 기존 ACP / TMUX / 워크트리) 동적 조회.
+  function onDelTargetChange(alias: string) {
+    setDelTarget(alias);
+    setDelInstance("");
+    if (isTargetFriend(alias)) {
+      setDelEndpoint("external");
+      // 친구는 A2A 단독 — 로컬 endpoint 조회 불필요. external 만 노출되도록 리셋.
+      setDelEndpoints({ new_acp: false, existing_acp: [], tmux: [], worktree: false, external: true });
+    } else {
+      setDelEndpoint("new_acp");
+      void loadEndpoints(alias);
+    }
+  }
+  // 현재 선택된 엔드포인트 타입에 인스턴스 리스트가 있으면 반환(2단 셀렉터 노출 판정).
+  function endpointInstances(): { value: string; label: string }[] {
+    const eps = delEndpoints();
+    if (!eps) return [];
+    if (delEndpoint() === "existing_acp") {
+      return (eps.existing_acp ?? []).map((s) => ({ value: s.id, label: s.label || s.id }));
+    }
+    if (delEndpoint() === "tmux") {
+      return (eps.tmux ?? []).map((t) => ({ value: t.name, label: t.cwd ? `${t.name} (${t.cwd})` : t.name }));
+    }
+    return [];
+  }
+  function openDelegate() {
+    if (!draft().trim()) {
+      window.alert("위임할 내용을 입력창에 먼저 입력하세요.");
+      return;
+    }
+    setDelTarget("");
+    setDelEndpoint("new_acp");
+    setDelInstance("");
+    setDelEndpoints(null);
+    setDelOpen(true);
+  }
+  async function submitDelegate() {
+    const tgt = delTarget().trim();
+    const text = draft().trim();
+    if (!tgt || !text) return;
+    const epType = delEndpoint();
+    const inst = delInstance().trim();
+    // 인스턴스 선택이 필요한 타입인데 미선택이면 막는다.
+    if ((epType === "existing_acp" || epType === "tmux") && !inst) {
+      window.alert("전달할 인스턴스를 선택하세요.");
+      return;
+    }
+    // a2a_send 의 endpoint 파라미터: "tmux:<name>", "existing_acp:<id>", 또는 단순 타입.
+    const endpoint =
+      epType === "tmux" ? `tmux:${inst}` :
+      epType === "existing_acp" ? `existing_acp:${inst}` :
+      epType; // new_acp | external | worktree
+    setDelBusy(true);
+    const from = convKey();
+    try {
+      const r = await invoke<{ result?: { text?: string } }>("a2a_send", {
+        target: tgt, task: text, from_agent: from, endpoint,
+      });
+      const ans = r?.result?.text?.trim() || "(응답 텍스트 없음)";
+      pushBubble({ id: nextId++, kind: "note", text: `⇢ ${tgt} [${endpoint}] 위임: "${text}"`, time: nowClock() });
+      pushBubble({ id: nextId++, kind: "note", text: `⇠ ${tgt} 응답:\n${ans}`, time: nowClock() });
+      setDraft("");
+      setDelOpen(false);
+    } catch (e) {
+      window.alert(`위임 실패: ${(e as Error)?.message ?? e}`);
+    } finally {
+      setDelBusy(false);
+    }
+  }
+
   // 전송 — 응답 중(busy)이면 대기열에 적재(턴 종료 시 자동 전송), 아니면 즉시 전송.
+  // 📥 가져오기(복원) — 다른 LLM/에이전트의 작업·대화를 붙여넣어 현재 대화에 맥락으로 들여온다.
+  // 'me' 로 기록 → 데몬이 다음 프롬프트에 히스토리로 주입(build_resume_preamble)하므로 에이전트가 이어감.
+  async function promptImport() {
+    const raw = window.prompt("다른 LLM/에이전트에서 가져올 작업·대화 내용을 붙여넣으세요:");
+    if (!raw || !raw.trim()) return;
+    const body = `[다른 LLM/에이전트에서 가져온 이전 작업 맥락 — 이어서 진행한다]\n${raw.trim()}`;
+    pushBubble({ id: nextId++, kind: "me", text: body, time: nowClock() });
+    await invoke("acp_conv_add", { key: convKey(), role: "me", text: body }).catch(() => {});
+    pushBubble({ id: nextId++, kind: "note", text: "📥 가져옴 — 이어서 대화하면 에이전트가 이 맥락을 받습니다.", time: nowClock() });
+    scrollDown();
+  }
+
   function submit() {
     const text = draft().trim();
     if (!text) return;
@@ -1030,11 +1183,7 @@ export function AcpConversation(props: {
             <div class="ava c-claude">⚡</div>
             <div class="nm">ACP 에이전트</div>
             <div class="meta-r">
-              <span
-                class="kk-acp-pop"
-                title="다른 세션에서 내보낸 대화 번들을 가져오기"
-                onClick={() => void promptImport()}
-              >📥 이어가기 가져오기</span>
+              {/* 옛 클립보드 📤이어가기/📥가져오기 제거 — 대화 핸드오프는 ⇢ 위임 모달로 대체됨. */}
               <span class="pill">로컬 subprocess</span>
             </div>
           </div>
@@ -1097,16 +1246,15 @@ export function AcpConversation(props: {
               <span class="pill"><span class="pdot" />스트리밍</span>
             </Show>
             <span class="pill">⚡ ACP</span>
-            <span
-              class="kk-acp-pop"
-              title="이 대화를 번들로 내보내 다른 세션에서 이어가기"
-              onClick={() => void exportConversation()}
-            >📤 이어가기</span>
-            <span
-              class="kk-acp-pop"
-              title="다른 세션에서 내보낸 대화 번들을 이 대화로 가져오기"
-              onClick={() => void promptImport()}
-            >📥 가져오기</span>
+            {/* 옛 클립보드 📤이어가기/📥가져오기 버튼 제거 — 대화 핸드오프는 ⇢ 위임 모달로 대체됨. */}
+            {/* 📎 아티팩트 패널 토글 — 대화 중 등장한 파일·이미지 미리보기. */}
+            <Show when={artifacts().length > 0}>
+              <span
+                class="kk-acp-pop"
+                title="대화 중 등장한 파일·이미지 미리보기"
+                onClick={() => setArtOpen((v) => !v)}
+              >📎 아티팩트 {artifacts().length}</span>
+            </Show>
             <Show when={props.popoutAlias}>
               <span class="kk-acp-pop" title="새 창으로 열기" onClick={() => openPopout(props.popoutAlias!)}>⤢ 새 창</span>
             </Show>
@@ -1114,7 +1262,7 @@ export function AcpConversation(props: {
           </div>
         </div>
 
-        <div class="msgs" ref={msgsRef}>
+        <div class="msgs" ref={msgsRef} style="position:relative;">
           <For each={displayItems()}>
             {(b) =>
               b.kind === "steps" ? (
@@ -1228,6 +1376,161 @@ export function AcpConversation(props: {
               <div class="body"><span class="kk-typing"><i /><i /><i /></span> 입력중…</div>
             </div>
           </Show>
+          {/* ⇢ 위임 모달 — 신원(에이전트) + 엔드포인트(전달 방식) 셀렉터. */}
+          <Show when={delOpen()}>
+            <div
+              style="position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:1000;display:flex;align-items:center;justify-content:center;"
+              onClick={() => setDelOpen(false)}
+            >
+              <div style="background:#fff;border-radius:12px;padding:18px;width:min(440px,92vw);color:#222;" onClick={(e) => e.stopPropagation()}>
+                <div style="font-weight:700;margin-bottom:12px;">⇢ 에이전트에게 위임</div>
+                <div style="font-size:12px;color:#8b95a1;margin-bottom:3px;">대상 에이전트 (대화명)</div>
+                {/* 에이전트를 alias(대화명) 기준으로 직접 나열 — 폴더 그룹핑 없음.
+                    🏠 로컬(이 머신·ACP) / 🖥 친구(다른 머신·외부) 2 구분 헤더로만 분리. */}
+                <select value={delTarget()} onInput={(e) => onDelTargetChange(e.currentTarget.value)} style="width:100%;padding:7px;border:1px solid #d5dae2;border-radius:8px;margin-bottom:11px;">
+                  <option value="">— 선택 —</option>
+                  <Show when={delLocalFriend().local.length > 0}>
+                    <optgroup label="🏠 로컬 에이전트 (이 머신)">
+                      <For each={delLocalFriend().local}>
+                        {(a) => <option value={a.alias}>{a.alias}{a.reachable === false ? " (미도달)" : ""}</option>}
+                      </For>
+                    </optgroup>
+                  </Show>
+                  <Show when={delLocalFriend().friends.length > 0}>
+                    <optgroup label="🖥 친구 (다른 머신·외부)">
+                      <For each={delLocalFriend().friends}>
+                        {(a) => <option value={a.alias} title={a.machine ?? ""}>{a.alias}{a.machine ? ` · 🖥 ${a.machine}` : ""}{a.reachable === false ? " (미도달)" : ""}</option>}
+                      </For>
+                    </optgroup>
+                  </Show>
+                </select>
+                {/* 친구(다른 머신·외부) — endpoint 는 A2A 고정. 풍부한 endpoint 셀렉터는 로컬 전용. */}
+                <Show
+                  when={!isTargetFriend(delTarget())}
+                  fallback={
+                    <Show when={delTarget()}>
+                      <div style="font-size:12px;color:#8b95a1;margin-bottom:3px;">전달 방식</div>
+                      <div style="font-size:13px;border:1px solid #d5dae2;border-radius:8px;padding:7px 9px;margin-bottom:11px;background:#f6f8fc;color:#3a4a6a;">
+                        🖥 친구 — A2A 로 전달 (그 친구/머신으로 라우팅)
+                      </div>
+                    </Show>
+                  }
+                >
+                <div style="font-size:12px;color:#8b95a1;margin-bottom:3px;">전달 방식 (엔드포인트)</div>
+                <Show when={delTarget() && delEpLoading()}>
+                  <div style="font-size:12px;color:#8b95a1;margin-bottom:11px;">엔드포인트 조회 중…</div>
+                </Show>
+                {/* 엔드포인트 셀렉터 — 로컬 대상의 도달 가능 항목만 동적 노출. */}
+                <select
+                  value={delEndpoint()}
+                  disabled={!delTarget()}
+                  onInput={(e) => { setDelEndpoint(e.currentTarget.value); setDelInstance(""); }}
+                  style="width:100%;padding:7px;border:1px solid #d5dae2;border-radius:8px;margin-bottom:11px;"
+                >
+                  <Show when={delEndpoints()?.new_acp !== false}>
+                    <option value="new_acp">신규 ACP 스레드</option>
+                  </Show>
+                  <Show when={(delEndpoints()?.existing_acp?.length ?? 0) > 0}>
+                    <option value="existing_acp">기존 ACP 세션 ({delEndpoints()!.existing_acp!.length})</option>
+                  </Show>
+                  <Show when={(delEndpoints()?.tmux?.length ?? 0) > 0}>
+                    <option value="tmux">TMUX 세션 ({delEndpoints()!.tmux!.length})</option>
+                  </Show>
+                  <Show when={delEndpoints()?.worktree}>
+                    <option value="worktree">신규 워크트리</option>
+                  </Show>
+                  <Show when={delEndpoints()?.external !== false}>
+                    <option value="external">외부 A2A</option>
+                  </Show>
+                </select>
+                {/* 기존 ACP 세션이 0개면 그 사유를 hint 로 명시 — 옵션이 안 보이는 게 버그가 아니라
+                    "그 대상 alias 로 라벨된 라이브 ACP 세션이 없어서"임을 사용자에게 알린다.
+                    (백엔드 a2a_list_agent_endpoints 는 label==alias 인 살아있는 세션만 existing_acp 로 반환.) */}
+                <Show when={delTarget() && !delEpLoading() && (delEndpoints()?.existing_acp?.length ?? 0) === 0}>
+                  <div style="font-size:11px;color:#b08;margin:-6px 0 11px;">
+                    ℹ 기존 ACP 세션 없음 — 이 에이전트로 라벨된 라이브 ACP 세션이 없습니다(신규 ACP/외부 A2A 로 보내세요).
+                  </div>
+                </Show>
+                {/* TMUX 세션 0개 hint — 백엔드 a2a_list_agent_endpoints 는 그 에이전트의 project_path
+                    (또는 그 하위 cwd)에서 도는 tmux 세션만 반환한다. 0개면 옵션이 안 보이는 게 버그가
+                    아니라 "이 프로젝트 폴더 아래 tmux 세션이 없어서"임을 명시. */}
+                <Show when={delTarget() && !delEpLoading() && delEndpoints()?.worktree && (delEndpoints()?.tmux?.length ?? 0) === 0}>
+                  <div style="font-size:11px;color:#b08;margin:-6px 0 11px;">
+                    ℹ 이 프로젝트 폴더에 tmux 세션 없음 — 대상의 project_path(또는 그 하위)에서 도는 tmux 세션이 없습니다.
+                  </div>
+                </Show>
+                {/* 2단 셀렉터 — existing_acp/tmux 인스턴스가 여럿일 때 어느 것으로 보낼지. */}
+                <Show when={endpointInstances().length > 0}>
+                  <div style="font-size:12px;color:#8b95a1;margin-bottom:3px;">인스턴스 선택</div>
+                  <select value={delInstance()} onInput={(e) => setDelInstance(e.currentTarget.value)} style="width:100%;padding:7px;border:1px solid #d5dae2;border-radius:8px;margin-bottom:11px;">
+                    <option value="">— 선택 —</option>
+                    <For each={endpointInstances()}>{(o) => <option value={o.value}>{o.label}</option>}</For>
+                  </select>
+                </Show>
+                </Show>
+                <div style="font-size:12px;color:#8b95a1;margin-bottom:3px;">내용</div>
+                <div style="font-size:13px;border:1px solid #eee;border-radius:8px;padding:8px;max-height:130px;overflow:auto;margin-bottom:14px;white-space:pre-wrap;">{draft()}</div>
+                <div style="display:flex;gap:8px;justify-content:flex-end;">
+                  <button onClick={() => setDelOpen(false)} style="padding:6px 14px;border:1px solid #d5dae2;background:#fff;border-radius:8px;cursor:pointer;">취소</button>
+                  <button disabled={!delTarget() || delBusy()} onClick={() => void submitDelegate()} style="padding:6px 14px;background:#238636;color:#fff;border:none;border-radius:8px;cursor:pointer;">{delBusy() ? "전송중…" : "보내기"}</button>
+                </div>
+              </div>
+            </div>
+          </Show>
+
+          {/* ── 아티팩트 미리보기 패널 (우측 슬라이드) ──
+              ⚠ position:fixed 필수 — 부모 .msgs 는 overflow-y:auto 스크롤 컨테이너라
+              position:absolute;top:0 면 패널이 "스크롤된 콘텐츠 최상단"(뷰포트 밖)으로 가서
+              📎 클릭해도 화면에 안 보였다(=무반응 버그). fixed 로 뷰포트에 고정한다. */}
+          <Show when={artOpen()}>
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style="position:fixed;top:0;right:0;bottom:0;width:min(320px,86vw);background:#15171c;border-left:1px solid #2a2f3a;z-index:1050;display:flex;flex-direction:column;box-shadow:-4px 0 14px rgba(0,0,0,.35);"
+            >
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #2a2f3a;">
+                <span style="font-weight:700;color:#e6e9ee;font-size:13px;">📎 아티팩트 ({artifacts().length})</span>
+                <span style="cursor:pointer;color:#9aa1ad;" onClick={() => setArtOpen(false)}>✕</span>
+              </div>
+              <div style="flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:10px;">
+                <Show when={artifacts().length === 0}>
+                  <div style="color:#8b95a1;font-size:12px;">대화에 파일·이미지가 없습니다.</div>
+                </Show>
+                <For each={artifacts()}>
+                  {(a) => (
+                    <div style="border:1px solid #2a2f3a;border-radius:8px;padding:8px;background:#1a1d24;">
+                      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+                        <span style="font-size:13px;">{a.kind === "image" ? "🖼" : a.kind === "code" ? "📄" : "📁"}</span>
+                        <span style="flex:1;color:#e6e9ee;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title={a.path}>{a.name}</span>
+                      </div>
+                      <Show when={a.kind === "image"}>
+                        <img
+                          src={a.src}
+                          alt={a.name}
+                          style="width:100%;max-height:140px;object-fit:contain;border-radius:6px;background:#0e0f13;cursor:zoom-in;"
+                          onClick={() => setArtZoom(a.src)}
+                          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                        />
+                      </Show>
+                      <div style="display:flex;gap:8px;margin-top:6px;font-size:11px;">
+                        <a href={a.src} download={a.name} target="_blank" rel="noopener" style="color:#58a6ff;text-decoration:none;">⬇ 다운로드</a>
+                        <span style="cursor:pointer;color:#9aa1ad;" onClick={() => copyText(a.path)}>⧉ 경로 복사</span>
+                      </div>
+                      <div style="color:#5c6470;font-size:10px;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title={a.path}>{a.path}</div>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </div>
+          </Show>
+          {/* 이미지 확대 오버레이 */}
+          <Show when={artZoom()}>
+            <div
+              style="position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:1100;display:flex;align-items:center;justify-content:center;cursor:zoom-out;"
+              onClick={() => setArtZoom(null)}
+            >
+              <img src={artZoom()!} style="max-width:92vw;max-height:92vh;object-fit:contain;" onError={() => setArtZoom(null)} />
+            </div>
+          </Show>
         </div>
 
         {/* ── 컴포저 (TalkTab 정본 Claude Code 다크 재사용) ── */}
@@ -1339,6 +1642,10 @@ export function AcpConversation(props: {
                 </span>
                 {/* 📎 파일 첨부 */}
                 <span class="ic-btn" onClick={attachFile} title="파일·문서 첨부">📎</span>
+                {/* ⇢ 다른 에이전트에게 위임 — 셀렉터 모달(대상 에이전트 + 전달 방식). */}
+                <span class="ic-btn" onClick={openDelegate} title="다른 에이전트에게 위임">⇢</span>
+                {/* 📥 가져오기는 컴포저에서 제거 — 우측 정보 패널(⌗ 상태)의 "가져오기/보내기" 섹션으로 이동.
+                    (자주 안 쓰는 기능 → 컴포저 단순화. 트리거는 importTrigger prop 로 외부에서.) */}
                 <span class="divv" />
                 {/* 권한 모드 — Bypass Permissions 면 에이전트가 도구를 실제 실행(default-deny 해제). */}
                 <span class="kk-chip-wrap">

@@ -2,6 +2,8 @@ import { createSignal, createResource, createMemo, createEffect, For, Show } fro
 import { invoke } from "../api/client";
 import { AcpConversation, aiTypeToAdapter, type AcpPreset } from "./AcpConversation";
 import { AddAgentModal } from "./AddAgentModal";
+import { AddFriendModal, loadExternalFriends, type ExternalFriend } from "./AddFriendModal";
+import { ProviderLogo, providerKey } from "./ProviderLogo";
 
 // 대화 탭 — 카카오톡 정본 목업(_mockups/kakao-mockup.html) 충실 이식.
 // 좌: 분류 그룹화 명부(👑 프라이머리 / 📌 상단 고정 / 📁 프로젝트 / ⚙️ 특수) + llm-type 아바타색
@@ -39,6 +41,17 @@ interface PeerDto {
   alias: string;
   last_seen?: string;
   machine?: string;
+}
+
+// tailnet 라우트(GET /v1/gui/tailnet/devices, client.ts tailnet_devices) → { devices: [...] }.
+// AddFriendModal 과 동일 contract + rc 확장 guiUrl(각 장치의 OpenXgram GUI base URL, 포트 설치별).
+// guiUrl 은 백엔드가 곧 추가(다른 에이전트 작업 중) — 없을 수 있으니 optional + 폴백 처리.
+interface TailnetDeviceDto {
+  name: string;
+  ip: string;
+  online?: boolean;
+  self?: boolean;
+  guiUrl?: string | null;
 }
 
 // sessions 라우트(SessionsDto) — Messenger.tsx 와 동일 contract. 이 에이전트의 tmux 세션·워크트리 소스.
@@ -97,6 +110,42 @@ const CLASS_GROUPS = [
   { key: "special", title: "⚙️ 특수·시스템 (깨움 선택)" },
 ];
 
+// ── 로컬/친구 분류 (마스터 확정 개념) ──────────────────────────────────────
+// 이 머신(server-seoul) = 로컬 에이전트만(파일트리·ACP 완전 작동).
+// 다른 머신/외부 = "친구" — A2A/peer 로 통신, 그쪽 primary 가 자기 에이전트 처리.
+//
+// 로컬 판정: project_path 가 `/home/llm/` 하위(이 머신 HOME) OR machine 이 비었거나 현재 머신.
+// 친구 판정: project_path 가 다른 경로(`/home/pasia/` 등) OR machine 이 원격 머신값.
+const LOCAL_HOME_PREFIX = "/home/llm";
+
+// machine 필드가 현재 머신을 가리키는가(또는 비었는가). 현재 머신 alias/hostname 후보 목록과 비교.
+function isLocalMachineField(machine: string | null | undefined, selfNames: string[]): boolean {
+  const m = (machine ?? "").trim().toLowerCase();
+  if (!m) return true; // 비었으면 로컬로 간주(기존 로컬 에이전트는 machine 미설정).
+  // "서울"/"seoul"/"local"/hostname/alias 등 현재 머신을 가리키면 로컬.
+  if (m === "local" || m === "서울" || m === "seoul") return true;
+  return selfNames.some((n) => n && (m === n || m.includes(n) || n.includes(m)));
+}
+
+// project_path 가 이 머신 HOME(/home/llm) 하위면 로컬 폴더.
+function isLocalPath(projectPath: string | null | undefined): boolean {
+  const p = (projectPath ?? "").trim();
+  if (!p) return false; // 경로 정보 없으면 path 단독으로 로컬 단정 안 함(machine 으로 판정).
+  return p === LOCAL_HOME_PREFIX || p.startsWith(LOCAL_HOME_PREFIX + "/");
+}
+
+// 로컬 에이전트 여부 — classification==="friend" 면 무조건 친구(명시 친구 등록).
+// 그 외엔: machine 이 원격값이면 친구, project_path 가 다른 머신 경로면 친구. 둘 다 아니면 로컬.
+function isLocalAgent(a: { machine?: string | null; project_path?: string | null; classification?: string | null }, selfNames: string[]): boolean {
+  if ((a.classification ?? "") === "friend") return false; // 명시 친구.
+  const p = (a.project_path ?? "").trim();
+  // project_path 가 명확히 다른 머신 경로(HOME 외 절대경로)면 친구.
+  if (p && !isLocalPath(p) && p.startsWith("/home/")) return false; // /home/pasia 등.
+  // machine 필드 기준 — 원격이면 친구.
+  if (!isLocalMachineField(a.machine, selfNames)) return false;
+  return true;
+}
+
 // Messenger.tsx connTier 와 동일: 1h 이내 online.
 function isOnline(lastSeen?: string): boolean {
   if (!lastSeen) return false;
@@ -135,8 +184,67 @@ function fmtPreviewTime(iso: string): string {
 export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (open: boolean) => void }) {
   const [agents, { refetch: refetchAgents, mutate: mutateAgents }] = createResource<AgentRow[]>(() => invoke("agents_list"));
   const [addOpen, setAddOpen] = createSignal(false);
+  // 👥 친구 추가 모달 — 종류(머신/외부 A2A) 선택. addOpen(에이전트 추가)와 별개.
+  const [friendOpen, setFriendOpen] = createSignal(false);
+  // 외부 A2A 친구(localStorage 영속) — 머신 친구는 agents_list 에 들어오지만 외부는 별도 소스.
+  const [extFriends, setExtFriends] = createSignal<ExternalFriend[]>(loadExternalFriends());
+  function reloadExtFriends() { setExtFriends(loadExternalFriends()); }
   // 상세 패널 "세션 재시작" 트리거 — 증가시키면 AcpConversation 이 세션을 닫고 재구동.
   const [restartTick, setRestartTick] = createSignal(0);
+  // 우측 패널 "📥 가져오기" 트리거 — 증가시키면 AcpConversation 이 promptImport()(붙여넣기→me 버블) 실행.
+  const [importTick, setImportTick] = createSignal(0);
+  // 우측 패널 가져오기/보내기 상태 표시(복사됨 토스트).
+  const [ioMsg, setIoMsg] = createSignal<string | null>(null);
+  function flashIo(m: string) { setIoMsg(m); setTimeout(() => setIoMsg(null), 2200); }
+
+  // 📋 다른 LLM 에게 줄 "가져오기 지침" — 그대로 복사해 외부 앱 LLM 에 주면, OpenXgram 가져오기에
+  // 붙여넣기 좋은 형식으로 작업/대화를 정리해 내놓는다. (실제 import 는 우측 📥 가져오기 버튼.)
+  const IMPORT_INSTRUCTIONS =
+    "아래 형식으로 지금까지의 작업/대화를 정리해 출력해줘. 그대로 복사해 OpenXgram 가져오기에 붙여넣겠다.\n\n" +
+    "## [목표]\n(이 작업의 최종 목표)\n\n" +
+    "## [진행상황]\n(지금까지 한 일·현재 상태)\n\n" +
+    "## [결정사항]\n(확정된 결정·선택)\n\n" +
+    "## [다음 단계]\n(앞으로 해야 할 일)\n\n" +
+    "## [관련 파일]\n(건드린/볼 파일 경로 목록)\n";
+
+  // 클립보드 복사(비보안 컨텍스트/권한 거부는 토스트로 사유 안내). navigator.clipboard 우선.
+  async function copyToClipboard(text: string, okMsg: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      flashIo(okMsg);
+    } catch {
+      flashIo("⚠ 복사 실패 — 클립보드 권한/보안 컨텍스트 확인");
+    }
+  }
+
+  // 📤 현재 대화를 마크다운 텍스트로 정리해 복사 — 외부 앱 LLM 에 붙여넣어 이어가기.
+  // 출처=acp_conv_list(권위 DB, 영속 대화). 각 메시지를 **사용자:**/**에이전트:** + 시각으로.
+  async function exportConversationText(alias: string, name: string) {
+    try {
+      const rows = await invoke<{ role: string; text: string; created_at?: string }[]>("acp_conv_list", { key: alias });
+      if (!Array.isArray(rows) || rows.length === 0) { flashIo("내보낼 대화가 없습니다."); return; }
+      const fmtTs = (ca?: string): string => {
+        if (!ca) return "";
+        const d = new Date(ca);
+        if (Number.isNaN(d.getTime())) return "";
+        const p = (n: number) => String(n).padStart(2, "0");
+        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+      };
+      const lines: string[] = [`# ${name} — OpenXgram 대화 내보내기`, ""];
+      for (const r of rows) {
+        const ts = fmtTs(r.created_at);
+        const body = (r.text ?? "").trim();
+        if (!body) continue;
+        if (r.role === "me") lines.push(`**사용자**${ts ? ` (${ts})` : ""}: ${body}`, "");
+        else if (r.role === "agent") lines.push(`**에이전트**${ts ? ` (${ts})` : ""}: ${body}`, "");
+        else if (r.role === "note") lines.push(`> ${body}`, "");
+        // tool/plan(JSON)은 과정이므로 내보내기 본문에선 생략(외부 앱 LLM 가독성 우선).
+      }
+      await copyToClipboard(lines.join("\n"), `📤 대화 ${rows.length}건 복사됨 — 외부 앱에 붙여넣으세요`);
+    } catch {
+      flashIo("⚠ 대화 불러오기 실패");
+    }
+  }
   // 상세(info) 패널 너비 — 좌측 핸들 드래그로 조절(데스크톱). CSS 변수 --info-w 로 적용.
   const [infoWidth, setInfoWidth] = createSignal(250);
   function startInfoResize(e: MouseEvent) {
@@ -187,6 +295,19 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
   // 정보 패널 소스 — sessions(이 머신 tmux+워크트리) · workflows(orchestrator 매칭). 동적 only.
   const [sessions] = createResource<SessionsDto | null>(() => invoke("sessions"), { initialValue: null });
   const [workflows] = createResource<WorkflowDto[]>(() => invoke("workflows_list"), { initialValue: [] });
+  // tailnet 장치 — 친구 머신명 칩 클릭 시 그 머신의 OpenXgram GUI(guiUrl)로 이동하기 위함.
+  //   라우트 미배포/tailscale 부재면 graceful([] 유지) → 칩 클릭은 IP 폴백으로 동작.
+  const [tailnetDevices] = createResource<TailnetDeviceDto[]>(
+    async () => {
+      try {
+        const r = await invoke<{ devices?: TailnetDeviceDto[] }>("tailnet_devices", {});
+        return Array.isArray(r?.devices) ? r.devices : [];
+      } catch {
+        return []; // graceful — 칩 클릭 폴백 경로가 처리.
+      }
+    },
+    { initialValue: [] },
+  );
 
   const [selected, setSelected] = createSignal<string | null>(null);
   const [mobileChat, setMobileChat] = createSignal(false);
@@ -225,10 +346,41 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
     return map;
   });
 
+  // 현재 머신 식별 — sessions().machine.alias/hostname. 로컬/친구 분류 기준.
+  // 기본값 "server-seoul"(이 머신) — sessions 미로드 시 폴백.
+  const selfMachineNames = createMemo<string[]>(() => {
+    const m = sessions()?.machine;
+    const names = ["server-seoul"];
+    if (m?.alias) names.push(m.alias.toLowerCase());
+    if (m?.hostname) names.push(m.hostname.toLowerCase());
+    return [...new Set(names.filter(Boolean).map((n) => n.toLowerCase()))];
+  });
+
+  // 로컬 에이전트만 — 분류 그룹(👑/📌/📁/⚙️)에 들어감.
+  const localAgents = createMemo<AgentRow[]>(() =>
+    (agents() ?? []).filter((a) => isLocalAgent(a, selfMachineNames())),
+  );
+  // 친구 에이전트 — 다른 머신/외부(machine 원격 OR project_path 가 다른 경로 OR classification=friend).
+  const friendAgents = createMemo<AgentRow[]>(() =>
+    (agents() ?? []).filter((a) => !isLocalAgent(a, selfMachineNames())),
+  );
+  // 외부 A2A 친구(localStorage) → AgentRow 형태로 어댑팅(친구 섹션에 머신 친구와 함께 표시).
+  const externalFriendRows = createMemo<AgentRow[]>(() =>
+    extFriends().map((f) => ({
+      alias: f.alias,
+      role: "외부 A2A",
+      description: f.url,
+      classification: "friend",
+      machine: f.url, // 표시·라우팅용 — 우측 패널이 a2a_send target 으로 쓸 값.
+      ai_type: null,
+    })),
+  );
+
   // 분류 그룹화 — AgentsTab 와 동일 분류 키. pinned 는 별도 소스가 없어 비활성(빈 그룹 자동 숨김).
+  // 로컬 에이전트만 그룹화(친구는 별도 "👥 친구" 섹션).
   const grouped = createMemo(() => {
     const by: Record<string, AgentRow[]> = { primary: [], pinned: [], project: [], special: [] };
-    for (const a of agents() ?? []) {
+    for (const a of localAgents()) {
       const cls = a.classification && by[a.classification] ? a.classification : "project";
       by[cls].push(a);
     }
@@ -247,7 +399,77 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
     return by;
   });
 
-  const selAgent = createMemo(() => (agents() ?? []).find((a) => a.alias === selected()) ?? null);
+  // ➕ "추가되지 않은 에이전트" — detect_tmux(sessions) 의 tmux 세션 중 어느 에이전트의
+  //   project_path(cwd) 와도 안 맞는 것 = 미등록. noise(데몬 자기 세션·null·시스템 세션) 제외.
+  //   각 항목 클릭 → AddAgentModal 을 cwd prefill 로 열어 대화명(alias) 부여 = 등록.
+  const registeredCwds = createMemo<Set<string>>(() => {
+    const s = new Set<string>();
+    for (const a of agents() ?? []) {
+      const p = (a.project_path ?? "").trim();
+      if (p) s.add(normPath(p));
+    }
+    return s;
+  });
+
+  // 의미있는 작업 tmux 만: aoe_* 세션이거나, cwd 가 실제 프로젝트 폴더(HOME 하위·루트/시스템 아님).
+  function isMeaningfulSession(s: DetectedSession): boolean {
+    if (s.kind !== "tmux") return false;
+    const ident = (s.identifier ?? "").trim();
+    const disp = (s.display ?? "").trim();
+    const cwd = (s.cwd ?? "").trim();
+    // 데몬 자기 세션·시스템 류 제외(이름 기준).
+    const nameNoise = /^(null|default|\d+|server|main|0|bash|sh)$/i;
+    if (!ident || nameNoise.test(ident)) return false;
+    // aoe_* 는 항상 작업 에이전트 세션으로 간주.
+    if (/^aoe[_-]/i.test(ident) || /^aoe[_-]/i.test(disp)) return true;
+    // 그 외엔 cwd 가 실제 프로젝트 폴더여야(루트·HOME 직속·/tmp 등 제외).
+    if (!cwd) return false;
+    const c = normPath(cwd);
+    if (c === "/" || c === "" || c === "/home/llm" || c === "/root" || c.startsWith("/tmp")) return false;
+    if (!c.startsWith("/home/") && !c.startsWith("/opt/") && !c.startsWith("/srv/")) return false;
+    return true;
+  }
+
+  const unregisteredSessions = createMemo<DetectedSession[]>(() => {
+    const regs = registeredCwds();
+    const out: DetectedSession[] = [];
+    const seen = new Set<string>();
+    for (const s of sessions()?.sessions ?? []) {
+      if (!isMeaningfulSession(s)) continue;
+      const cwd = s.cwd ? normPath(s.cwd.trim()) : "";
+      // 이미 등록된 에이전트 폴더면 제외(그 폴더·하위면 등록된 것으로 본다).
+      if (cwd && [...regs].some((r) => cwd === r || cwd.startsWith(r + "/"))) continue;
+      const key = s.identifier;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(s);
+    }
+    return out;
+  });
+
+  // AddAgentModal prefill(미등록 tmux "추가" 클릭 시 cwd 채워 열기). null 이면 일반 추가.
+  const [addPrefillFolder, setAddPrefillFolder] = createSignal<string | null>(null);
+  function addFromSession(s: DetectedSession) {
+    setAddPrefillFolder(s.cwd ? s.cwd.trim() : null);
+    setAddOpen(true);
+  }
+
+  // 선택 에이전트 — 로컬/친구 머신은 agents_list, 외부 A2A 친구는 externalFriendRows 에서 찾는다.
+  const selAgent = createMemo(() => {
+    const sel = selected();
+    if (!sel) return null;
+    return (agents() ?? []).find((a) => a.alias === sel)
+      ?? externalFriendRows().find((a) => a.alias === sel)
+      ?? null;
+  });
+
+  // 선택된 것이 친구(원격 머신 OR 외부 A2A)인가 — 우측 패널에서 로컬 ACP/파일트리 회피 판정.
+  const selIsFriend = createMemo<boolean>(() => {
+    const a = selAgent();
+    if (!a) return false;
+    if (extFriends().some((f) => f.alias === a.alias)) return true; // 외부 A2A.
+    return !isLocalAgent(a, selfMachineNames()); // 원격 머신.
+  });
 
   // 선택 에이전트 → ACP preset(어댑터/cwd/실행모드/라벨). 우측 대화방을 ACP 세션으로 구동.
   //   adapter   = ai_type 매핑(claude→claude-agent-acp, codex→codex-acp, gemini→gemini, 그 외 기본)
@@ -256,6 +478,9 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
   const acpPreset = createMemo<AcpPreset | null>(() => {
     const a = selAgent();
     if (!a) return null;
+    // 친구(원격·외부)는 로컬 ACP 세션을 구동하지 않는다 → 로컬 파일트리 404 회피.
+    //   대신 우측에 "원격 친구 — A2A로 통신" 안내(아래 friend 패널). 대화/위임은 A2A 로.
+    if (selIsFriend()) return null;
     return {
       adapter: aiTypeToAdapter(a.ai_type),
       cwd: a.project_path ?? null,
@@ -283,12 +508,28 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
     const alias = (selected() ?? "").toLowerCase();
     if (!alias) return [];
     const convoCwd = normPath((selAgent()?.project_path ?? "").trim());
+    const regs = registeredCwds();
     const all = sessions()?.sessions ?? [];
     return all.filter((s) => {
       if (s.kind !== "tmux") return false;
-      // 1) cwd 매칭 — 세션 pane cwd == 현재 대화 폴더(정본 기준).
+      // 1) cwd 매칭 — 세션 pane cwd == 현재 대화 폴더, 또는 그 폴더의 하위 폴더(descendant).
+      //    단, descendant 는 "가장 가까운(최장 prefix) 등록 에이전트"에게만 귀속한다.
+      //    상위 폴더 에이전트(예: Starian)가 하위 다른 에이전트의 tmux/worktree 를
+      //    전부 흡수하던 버그(prefix-ownership leak) 방지 — longest-prefix match.
       const sCwd = s.cwd ? normPath(s.cwd.trim()) : "";
-      if (convoCwd && sCwd && sCwd === convoCwd) return true;
+      if (convoCwd && sCwd) {
+        if (sCwd === convoCwd) return true; // 정확히 같은 폴더 → 항상 내 것.
+        if (sCwd.startsWith(convoCwd + "/")) {
+          // 이 세션 cwd 의 더 가까운(긴) 조상 폴더를 가진 다른 등록 에이전트가 있으면 그쪽 것.
+          let closest = convoCwd;
+          for (const r of regs) {
+            if (r === convoCwd) continue;
+            if ((sCwd === r || sCwd.startsWith(r + "/")) && r.length > closest.length) closest = r;
+          }
+          if (closest === convoCwd) return true; // 내가 가장 가까운 조상 → 내 것.
+          // else: 더 구체적인 에이전트 폴더 존재 → 여기선 제외(그 에이전트에 표시됨).
+        }
+      }
       // 2) alias 매칭(보조) — cwd 미보유(구버전·원격) 또는 세션명=alias 인 경우 폴백.
       const aid = (s.agent_id ?? "").toLowerCase();
       const disp = (s.display ?? "").toLowerCase();
@@ -338,6 +579,41 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
   function openAcp() {
     setAcpMode(true);
     setMobileChat(true);
+  }
+
+  // IP 형태 판별(IPv4) — guiUrl 폴백에서 "http://IP:포트/gui/" 로 직접 열 수 있는지.
+  const isIpLike = (s: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(s.trim());
+
+  // 🖥 친구 머신명 칩 클릭 — 그 친구 머신의 OpenXgram GUI 페이지를 새 탭으로 연다.
+  //   매칭: a.machine(IP 또는 이름)을 tailnetDevices 에서 ip/name 정확·포함 비교로 찾는다.
+  //   1) 매칭 device 에 guiUrl 있으면 그걸 연다(포트는 설치마다 다르므로 권위 소스).
+  //   2) 없으면 폴백 — machine 이 IP 형태면 기본 포트(47302)로 시도 + 토스트 안내,
+  //      아니면(이름만) 토스트로 안내만(절대 깨지지 않게). e.stopPropagation 으로 카드 선택과 분리.
+  function openFriendGui(e: MouseEvent, machine: string | null | undefined) {
+    e.stopPropagation();
+    const m = (machine ?? "").trim();
+    if (!m) return;
+    const ml = m.toLowerCase();
+    const devs = tailnetDevices() ?? [];
+    const dev =
+      devs.find((d) => (d.ip ?? "").trim() === m || (d.name ?? "").trim().toLowerCase() === ml) ??
+      devs.find((d) => {
+        const ip = (d.ip ?? "").trim();
+        const nm = (d.name ?? "").trim().toLowerCase();
+        return (ip && (ip.includes(m) || m.includes(ip))) || (nm && (nm.includes(ml) || ml.includes(nm)));
+      });
+    const guiUrl = (dev?.guiUrl ?? "").trim();
+    if (guiUrl) {
+      window.open(guiUrl, "_blank");
+      return;
+    }
+    // 폴백 — 포트 자동탐지 실패.
+    if (isIpLike(m)) {
+      window.open(`http://${m}:47302/gui/`, "_blank");
+      flashIo("포트 자동탐지 실패 — 기본 포트(47302)로 시도");
+    } else {
+      flashIo(`'${m}' GUI 주소를 찾지 못했습니다 — tailnet 장치 목록에 없음`);
+    }
   }
 
   // .st 미리보기: 마지막 메시지 본문, 없으면 역할/설명.
@@ -391,25 +667,30 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
                                 {g.key === "primary" ? "👑" : a.alias.slice(0, 1).toUpperCase()}
                                 <span class={`dot${online() ? " on" : ""}`} />
                               </div>
+                              {/* 컴팩트 2줄 카드:
+                                  1줄 = 대화명(=alias, 큰 글씨) · AI모델 칩 · 역할 배지 · (우측) 안읽음 배지
+                                  2줄 = 최신 입력내용 미리보기(말줄임) · (우측) 시각
+                                  대화명=alias 일관(신원). 위임·통신이 이 alias 로 됨. */}
                               <div class="meta">
-                                <div class="nm">
-                                  {agentName(a)}
-                                  <Show when={tagLabel(a)}><span class="tag">{tagLabel(a)}</span></Show>
+                                <div class="kk-card-l1">
+                                  <span class="nm" title={`@${a.alias}`}>{agentName(a)}</span>
+                                  <ProviderLogo provider={providerKey(a)} />
+                                  {/* 로컬 카드는 머신 태그 없음 — 로컬이 기본값이라 태그는 노이즈.
+                                      머신 태그(🖥)는 "다른 머신(친구)"라는 예외만 표시(친구 카드 전용). */}
+                                  <Show when={a.role && a.role.trim()}>
+                                    <span class="kk-card-role" title="역할">{a.role!.trim()}</span>
+                                  </Show>
                                   <Show when={a.is_public}><span class="tag">공개</span></Show>
+                                  <Show when={(a.unread ?? 0) > 0}>
+                                    <span class="kk-unread kk-card-unread">{(a.unread ?? 0) > 99 ? "99+" : a.unread}</span>
+                                  </Show>
                                 </div>
-                                {/* 에이전트명(ID) — AI종류는 .nm 태그, 역할은 미리보기에 이미 표시되므로 중복 제거. */}
-                                <div class="kk-card-sub">
-                                  <span class="kk-card-alias" title="에이전트명(ID)">@{a.alias}</span>
+                                <div class="kk-card-l2">
+                                  <span class="st">{preview(a)}</span>
+                                  <Show when={previewTime(a)}>
+                                    <span class="kk-card-time">{previewTime(a)}</span>
+                                  </Show>
                                 </div>
-                                {/* 최근/읽지 않은 메시지 미리보기 (없으면 역할·설명) */}
-                                <div class="st">{preview(a)}</div>
-                              </div>
-                              <div class="rcol">
-                                <div class="time">{previewTime(a)}</div>
-                                {/* 안읽음 카운트 배지 — 에이전트가 보낸 미확인 메시지 수. */}
-                                <Show when={(a.unread ?? 0) > 0}>
-                                  <span class="kk-unread">{(a.unread ?? 0) > 99 ? "99+" : a.unread}</span>
-                                </Show>
                               </div>
                             </div>
                           );
@@ -418,6 +699,105 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
                     </Show>
                   )}
                 </For>
+                {/* ➕ 추가되지 않은 에이전트 — 감지된 tmux 중 미등록. 클릭 → 대화명(alias) 부여=등록. */}
+                <Show when={unregisteredSessions().length > 0}>
+                  <div class="group-title">
+                    ➕ 추가되지 않은 에이전트 <span class="gt-sub">({unregisteredSessions().length})</span>
+                  </div>
+                  <For each={unregisteredSessions()}>
+                    {(s) => (
+                      <div class="row kk-unreg-row" title="클릭 → 대화명(alias) 부여해 등록" onClick={() => addFromSession(s)}>
+                        <div class="ava c-group">＋<span class="dot" /></div>
+                        <div class="meta">
+                          <div class="kk-card-l1">
+                            <span class="nm">{s.display || s.identifier}</span>
+                            <span class="kk-card-model">tmux</span>
+                          </div>
+                          <div class="kk-card-l2">
+                            <span class="st" title={s.cwd ?? ""}>{s.cwd ? baseName(s.cwd) : "폴더 미상"}</span>
+                            <span class="kk-card-add">＋ 추가</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </For>
+                </Show>
+
+                {/* 👥 친구 (다른 머신·외부) — 머신 친구(agents_list 의 원격) + 외부 A2A(localStorage).
+                    원격이라 로컬 파일트리 없음 → 선택 시 우측에 "A2A로 통신" 안내. */}
+                <Show when={friendAgents().length + externalFriendRows().length > 0}>
+                  <div class="group-title">
+                    👥 친구 (다른 머신·외부) <span class="gt-sub">({friendAgents().length + externalFriendRows().length})</span>
+                  </div>
+                  <For each={[...friendAgents(), ...externalFriendRows()]}>
+                    {(a) => {
+                      const online = () => isOnline(peerMap().get(a.alias.toLowerCase())?.last_seen);
+                      const isExt = () => extFriends().some((f) => f.alias === a.alias);
+                      return (
+                        <div
+                          class={`row${selected() === a.alias ? " active" : ""}`}
+                          onClick={() => pick(a.alias)}
+                        >
+                          <div class={`ava ${avatarColor(a.ai_type)}`}>
+                            {isExt() ? "🌐" : "🖥"}
+                            <span class={`dot${online() ? " on" : ""}`} />
+                          </div>
+                          <div class="meta">
+                            <div class="kk-card-l1">
+                              <span class="nm" title={`@${a.alias}`}>{agentName(a)}</span>
+                              {/* 머신명 칩 — 외부 A2A 는 🌐 외부, 머신 친구는 🖥 머신명(a.machine).
+                                  "원격" 텍스트 태그 대체. machine 없으면 칩 생략. */}
+                              <Show when={isExt() || (a.machine && a.machine.trim())}>
+                                <Show
+                                  when={!isExt()}
+                                  fallback={
+                                    <span class="kk-card-mach" title="외부 A2A 에이전트">🌐 외부</span>
+                                  }
+                                >
+                                  {/* 머신명 칩 클릭 → 그 친구 머신의 OpenXgram GUI 열기(guiUrl/폴백).
+                                      stopPropagation 으로 카드 선택(대화 열기)과 분리. */}
+                                  <span
+                                    class="kk-card-mach"
+                                    style="cursor:pointer;"
+                                    title="OpenXgram 페이지 열기"
+                                    onClick={(e) => openFriendGui(e, a.machine)}
+                                  >
+                                    🖥 {a.machine!.trim()}
+                                  </span>
+                                </Show>
+                              </Show>
+                              <Show when={a.role && a.role.trim()}>
+                                <span class="kk-card-role" title="역할">{a.role!.trim()}</span>
+                              </Show>
+                              <Show when={(a.unread ?? 0) > 0}>
+                                <span class="kk-unread kk-card-unread">{(a.unread ?? 0) > 99 ? "99+" : a.unread}</span>
+                              </Show>
+                            </div>
+                            <div class="kk-card-l2">
+                              <span class="st" title={a.machine ?? ""}>{isExt() ? "외부 A2A — AgentCard URL 로 통신" : "다른 머신 — A2A/peer 통신"}</span>
+                              <Show when={previewTime(a)}>
+                                <span class="kk-card-time">{previewTime(a)}</span>
+                              </Show>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }}
+                  </For>
+                </Show>
+
+                {/* ➕ 친구 추가 — 종류 선택(머신 / 외부 A2A) 모달. */}
+                <div class="row kk-unreg-row" title="다른 머신·외부 에이전트를 친구로 추가" onClick={() => setFriendOpen(true)}>
+                  <div class="ava c-group">＋<span class="dot" /></div>
+                  <div class="meta">
+                    <div class="kk-card-l1">
+                      <span class="nm">➕ 친구 추가</span>
+                    </div>
+                    <div class="kk-card-l2">
+                      <span class="st">머신 · 외부 A2A</span>
+                    </div>
+                  </div>
+                </div>
               </Show>
             </Show>
           </Show>
@@ -439,6 +819,7 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
               preset={acpPreset()}
               popoutAlias={selAgent()?.alias ?? null}
               restartTrigger={restartTick}
+              importTrigger={importTick}
               status={() => ({
                 folder: selAgent()?.project_path ?? null,
                 role: selAgent()?.role ?? null,
@@ -450,14 +831,18 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
               // 스트리밍/⚡ACP/✕닫기 pill 과 겹치지 않음(절대 배치 제거).
               headerExtra={() => (
                 <span class="pill clk" onClick={() => setInfoOpen((v) => !v)}>
-                  ⌗ 상태{selSessions().length + selWorktrees().length > 0 ? ` ${selSessions().length + selWorktrees().length}` : ""}
+                  ⌗ 작업환경{selSessions().length + selWorktrees().length > 0 ? ` ${selSessions().length + selWorktrees().length}` : ""}
                 </span>
               )}
             />
           )}
         </Show>
       </Show>
-      <Show when={!acpMode() && !acpPreset()}>
+      {/* 친구(원격·외부) 선택 — 로컬 ACP/파일트리 시도 금지. A2A 로 통신. */}
+      <Show when={!acpMode() && selIsFriend() && selAgent()}>
+        {(a) => <FriendPanel agent={a()} isExternal={extFriends().some((f) => f.alias === a().alias)} onClose={() => setMobileChat(false)} />}
+      </Show>
+      <Show when={!acpMode() && !selIsFriend() && !acpPreset()}>
         <div class="kk-talk-chat">
           <div class="kk-talk-blank">좌측에서 대화할 에이전트를 선택하세요.</div>
         </div>
@@ -500,6 +885,38 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
               <button class="kk-restart-btn" onClick={() => setRestartTick((n) => n + 1)} title="ACP 세션을 닫고 다시 구동(대화 복원)">
                 ↻ 세션 재시작
               </button>
+            </div>
+
+            {/* ── 가져오기/보내기 — 외부 앱 LLM(ChatGPT 등) 과의 대화 핸드오프.
+                자주 안 쓰는 기능이라 컴포저에서 빼고 여기로. 내부 에이전트 위임은 컴포저 ⇢ 모달.
+                ① 📋 가져오기 지침 복사 — 외부 LLM 에게 줄 "정리해줘" 지침(붙여넣기 좋은 형식 유도)
+                ② 📥 가져오기 — 외부에서 정리한 내용을 붙여넣어 현재 대화에 들임(promptImport, me 버블)
+                ③ 📤 대화 텍스트 복사 — 현재 대화를 마크다운으로 복사해 외부 앱에 이어가기. ── */}
+            <div>
+              <h3>가져오기 / 보내기</h3>
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <button
+                  class="kk-io-btn"
+                  style="text-align:left;padding:7px 10px;border:1px solid #2a2f3a;border-radius:8px;background:#1a1d24;color:#cfe3d6;cursor:pointer;font-size:12px;"
+                  title="외부 앱 LLM 에게 줄 '작업 정리' 지침을 클립보드에 복사"
+                  onClick={() => void copyToClipboard(IMPORT_INSTRUCTIONS, "📋 가져오기 지침 복사됨 — 외부 LLM 에 붙여넣어 정리시키세요")}
+                >📋 가져오기 지침 복사</button>
+                <button
+                  class="kk-io-btn"
+                  style="text-align:left;padding:7px 10px;border:1px solid #2a2f3a;border-radius:8px;background:#1a1d24;color:#cfe3d6;cursor:pointer;font-size:12px;"
+                  title="다른 LLM/에이전트 작업을 붙여넣어 현재 대화에 들이기"
+                  onClick={() => setImportTick((n) => n + 1)}
+                >📥 가져오기 (붙여넣기)</button>
+                <button
+                  class="kk-io-btn"
+                  style="text-align:left;padding:7px 10px;border:1px solid #2a2f3a;border-radius:8px;background:#1a1d24;color:#cfe3d6;cursor:pointer;font-size:12px;"
+                  title="현재 대화를 마크다운으로 복사 → 외부 앱(ChatGPT 등)에 붙여넣어 이어가기"
+                  onClick={() => void exportConversationText(a().alias, agentName(a()))}
+                >📤 대화 텍스트 복사</button>
+                <Show when={ioMsg()}>
+                  <div style="font-size:11px;color:#7fc99a;line-height:1.4;">{ioMsg()}</div>
+                </Show>
+              </div>
             </div>
 
             <div>
@@ -575,14 +992,113 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
       {/* 에이전트 추가 모달 — ＋ 버튼으로 열림. 만들면 로스터 새로고침 + 자동 선택. */}
       <Show when={addOpen()}>
         <AddAgentModal
-          onClose={() => setAddOpen(false)}
+          prefillFolder={addPrefillFolder()}
+          onClose={() => { setAddOpen(false); setAddPrefillFolder(null); }}
           onCreated={(alias) => {
             setAddOpen(false);
+            setAddPrefillFolder(null);
             void refetchAgents();
             setSelected(alias);
           }}
         />
       </Show>
+
+      {/* 👥 친구 추가 모달 — 종류(머신/외부 A2A) 선택. 머신=agents_register 재사용, 외부=localStorage. */}
+      <Show when={friendOpen()}>
+        <AddFriendModal
+          onClose={() => setFriendOpen(false)}
+          onCreated={(alias, kind) => {
+            setFriendOpen(false);
+            if (kind === "machine") void refetchAgents();
+            else reloadExtFriends(); // 외부 A2A — localStorage 재로드.
+            setSelected(alias);
+          }}
+        />
+      </Show>
+    </div>
+  );
+}
+
+// 친구(원격 머신·외부 A2A) 대화 패널 — 로컬 ACP/파일트리 없이 A2A 로 통신.
+//   target = 외부면 AgentCard URL(machine 필드에 저장), 머신 친구면 alias(내부 alias 라우팅).
+//   a2a_send(target, task, from_agent) — endpoint 생략 시 데몬 기본(외부 URL or 내부 alias).
+function FriendPanel(props: { agent: AgentRow; isExternal: boolean; onClose: () => void }) {
+  const [draft, setDraft] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+  const [log, setLog] = createSignal<{ role: "me" | "agent" | "err"; text: string }[]>([]);
+  // 외부 A2A: target = AgentCard URL(machine 에 저장됨). 머신 친구: target = alias(내부 라우팅).
+  const target = () => (props.isExternal ? (props.agent.machine ?? "").trim() : props.agent.alias);
+
+  async function send() {
+    const text = draft().trim();
+    if (!text || busy()) return;
+    setBusy(true);
+    setLog((l) => [...l, { role: "me", text }]);
+    setDraft("");
+    try {
+      const r = await invoke<{ result?: { text?: string } }>("a2a_send", {
+        target: target(), task: text, from_agent: "Starian",
+      });
+      const ans = r?.result?.text?.trim() || "(응답 텍스트 없음)";
+      setLog((l) => [...l, { role: "agent", text: ans }]);
+    } catch (e) {
+      setLog((l) => [...l, { role: "err", text: `A2A 전송 실패: ${(e as Error)?.message ?? e}` }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div class="kk-talk-chat">
+      <div class="kk-friend-panel" style="display:flex;flex-direction:column;height:100%;">
+        <div style="padding:14px 16px;border-bottom:1px solid #2a2f3a;">
+          <div style="font-size:15px;font-weight:600;color:#cfe3d6;">
+            {(props.isExternal ? "🌐 " : "🖥 ") + agentName(props.agent)}
+            <span
+              title={props.isExternal ? "외부 A2A 에이전트" : "다른 머신의 에이전트(친구)"}
+              style="margin-left:8px;display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:999px;font-size:11px;font-weight:600;letter-spacing:0.2px;vertical-align:middle;background:rgba(124,150,255,0.16);color:#aebfff;border:1px solid rgba(124,150,255,0.30);"
+            >
+              <span style="width:5px;height:5px;border-radius:999px;background:#7c96ff;display:inline-block;"></span>
+              {props.isExternal ? "외부 A2A" : (props.agent.machine || "다른 머신")}
+            </span>
+          </div>
+          <div style="font-size:12px;color:#9aa1ad;margin-top:6px;line-height:1.5;">
+            {props.isExternal
+              ? "외부 A2A 에이전트 — 로컬 파일트리 없음. AgentCard URL 로 A2A 통신합니다."
+              : "다른 머신의 에이전트 — 로컬 파일트리 없음. 그쪽 primary 가 자기 에이전트를 처리합니다. A2A/peer 로 통신하세요."}
+          </div>
+          <div style="font-size:11px;color:#6b7280;margin-top:4px;" title={target()}>대상: {target() || "(주소 미상)"}</div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:8px;">
+          <Show when={log().length === 0}>
+            <div style="color:#6b7280;font-size:13px;text-align:center;margin-top:24px;">
+              아래에 메시지를 입력해 A2A 로 위임·대화하세요.
+            </div>
+          </Show>
+          <For each={log()}>
+            {(m) => (
+              <div style={`align-self:${m.role === "me" ? "flex-end" : "flex-start"};max-width:78%;padding:8px 11px;border-radius:10px;font-size:13px;line-height:1.5;white-space:pre-wrap;` +
+                (m.role === "me" ? "background:#2f5d3a;color:#eafff0;" : m.role === "err" ? "background:#4a2222;color:#ffd6d6;" : "background:#1a1d24;color:#cfe3d6;border:1px solid #2a2f3a;")}>
+                {m.text}
+              </div>
+            )}
+          </For>
+        </div>
+        <div style="padding:12px 14px;border-top:1px solid #2a2f3a;display:flex;gap:8px;">
+          <textarea
+            class="ctl"
+            style="flex:1;resize:none;height:42px;font-size:13px;"
+            placeholder={target() ? "A2A 메시지·위임 내용…" : "주소가 없어 전송 불가"}
+            value={draft()}
+            disabled={!target() || busy()}
+            onInput={(e) => setDraft(e.currentTarget.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }}
+          />
+          <button class="btn-go" style="white-space:nowrap;" disabled={!target() || busy() || !draft().trim()} onClick={() => void send()}>
+            {busy() ? "전송 중…" : "⇢ 보내기"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

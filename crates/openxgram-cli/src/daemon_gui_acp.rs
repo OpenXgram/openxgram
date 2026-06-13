@@ -124,6 +124,25 @@ impl AcpHttpState {
         self
     }
 
+    /// 임의 메시지를 `acp_messages` 에 기록 — ACP HTTP 핸들러(acp_session_prompt) 밖에서 생성된
+    /// 대화(예: A2A 위임 교환)를 사용자 가시 스레드로 영속화한다. db 미주입(None)이면 no-op.
+    pub async fn record_message(&self, conv_key: &str, role: &str, text: &str) {
+        if text.trim().is_empty() {
+            return;
+        }
+        let Some(db) = self.db.as_ref() else {
+            return;
+        };
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut g = db.lock().await;
+        if let Err(e) = g.conn().execute(
+            "INSERT INTO acp_messages (conv_key, role, text, created_at) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![conv_key, role, text.trim(), now],
+        ) {
+            tracing::error!(target: "acp.daemon", conv_key = %conv_key, "a2a record_message 기록 실패: {e}");
+        }
+    }
+
     fn new_session_id(&self) -> String {
         let n = self
             .next_session
@@ -140,6 +159,17 @@ impl AcpHttpState {
             .get(session_id)
             .and_then(|s| s.label.clone())
             .filter(|l| !l.is_empty())
+    }
+
+    /// 살아있는 ACP 세션 목록을 `(sessionId, label, cwd)` 로 반환 — A2A `existing_acp`
+    /// 엔드포인트 조회(`list_agent_endpoints`)에서 label==alias 세션을 고르는 데 쓴다.
+    /// label 없는(picker 진입 등) 세션은 빈 문자열로 노출되니 호출자가 필터한다.
+    pub async fn list_sessions_brief(&self) -> Vec<(String, String, String)> {
+        let sessions = self.sessions.lock().await;
+        sessions
+            .iter()
+            .map(|(id, s)| (id.clone(), s.label.clone().unwrap_or_default(), s.cwd.clone()))
+            .collect()
     }
 }
 
@@ -513,8 +543,20 @@ pub async fn prompt(
                 "session has no handle after spawn".to_string(),
             )
         })?;
-        // label = conv_key(대화 신원). 증분 툴 기록 대상 키. picker 진입(label 없음)이면 None → 증분 skip.
+        // label = conv_key(대화 신원). 증분 툴 기록 + 맥락 복원 대상 키. picker(label 없음)면 None.
         (hid, sess.cwd.clone(), sess.updates_tx.clone(), sess.label.clone())
+    };
+
+    // 🔑 데몬측 맥락 복원 — 어댑터는 매 프롬프트마다 session/new(새 Claude Code 세션, 무상태)를 연다.
+    // 즉 턴 간 메모리가 없다. 따라서 매 프롬프트에 그 conv_key 의 DB 기록을 prepend 해야 에이전트가
+    // 맥락을 갖는다(stateless chat 모델 — 매 턴 전체 히스토리 전송). UI pendingContext 의존 제거.
+    let restored = match (state.db.as_ref(), conv_key.as_deref()) {
+        (Some(db), Some(key)) => build_resume_preamble(db, key, &body.text).await,
+        _ => None,
+    };
+    let prompt_text: String = match restored {
+        Some(preamble) => format!("{preamble}{}", body.text),
+        None => body.text.clone(),
     };
 
     // Live relay: each `session/update` is forwarded onto the per-session
@@ -540,7 +582,7 @@ pub async fn prompt(
 
     let result = state
         .tools
-        .acp_prompt_streaming(handle_id, &cwd, &body.text, Some(update_tx))
+        .acp_prompt_streaming(handle_id, &cwd, &prompt_text, Some(update_tx))
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("acp prompt failed: {e}")))?;
 
@@ -555,6 +597,55 @@ pub async fn prompt(
     // HTTP body for non-SSE callers — the GUI applies them only as a fallback
     // when its stream is down, so there is no double-render.
     Ok(result)
+}
+
+/// 세션이 새로 spawn 될 때(was_fresh) 첫 프롬프트에 prepend 할 이전 대화 맥락을 DB 에서 구성.
+/// `acp_messages` 의 me/agent 행만 사용(tool/plan/note 는 노이즈라 제외). 최근 ~20k char 만(토큰 보호).
+/// 기록이 없으면 None. 이게 UI 의존 재주입(pendingContext)을 대체하는 데몬 권위 맥락 복원의 핵심.
+async fn build_resume_preamble(
+    db: &Arc<Mutex<openxgram_db::Db>>,
+    conv_key: &str,
+    current: &str,
+) -> Option<String> {
+    let mut rows: Vec<(String, String)> = {
+        let mut g = db.lock().await;
+        let conn = g.conn();
+        let mut stmt = conn
+            .prepare("SELECT role, text FROM acp_messages WHERE conv_key = ?1 ORDER BY id")
+            .ok()?;
+        let collected: Vec<(String, String)> = stmt
+            .query_map(rusqlite::params![conv_key], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })
+            .ok()?
+            .filter_map(|x| x.ok())
+            .collect();
+        collected
+    };
+    // 마지막 행이 현재 프롬프트(UI 가 전송 직전 기록한 'me')면 제외 — '현재 요청'으로 따로 붙어 중복되니까.
+    if matches!(rows.last(), Some((role, text)) if role.as_str() == "me" && text.trim() == current.trim()) {
+        rows.pop();
+    }
+    let mut lines: Vec<String> = Vec::new();
+    for (role, text) in &rows {
+        match role.as_str() {
+            "me" => lines.push(format!("사용자: {text}")),
+            "agent" => lines.push(format!("너(에이전트): {text}")),
+            _ => {} // tool/plan/note 제외
+        }
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    let mut body = lines.join("\n");
+    let total = body.chars().count();
+    if total > 20000 {
+        let tail: String = body.chars().skip(total - 20000).collect();
+        body = format!("…(이전 일부 생략)\n{tail}");
+    }
+    Some(format!(
+        "[이전 대화 맥락 — 너는 이 대화를 이어가는 중이다. 아래는 우리의 지난 대화다.]\n{body}\n[위 맥락을 모두 기억하고, 아래 현재 요청에 이어서 답하라.]\n\n현재 요청: "
+    ))
 }
 
 /// 진행 중 턴의 `tool_call`/`tool_call_update` 를 `acp_messages` 에 증분 기록한다.

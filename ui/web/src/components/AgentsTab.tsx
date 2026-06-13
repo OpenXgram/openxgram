@@ -1,5 +1,6 @@
 import { createSignal, createResource, createMemo, onCleanup, For, Show } from "solid-js";
 import { invoke } from "../api/client";
+import { ProviderLogo, providerKey } from "./ProviderLogo";
 import "./agents-extra.css";
 
 // Phase 2 (B+C+D) — 에이전트 탭. 정본 디자인: _mockups/kakao-mockup.html.
@@ -232,7 +233,7 @@ export function AgentsTab(props: { onGotoChat?: (alias: string) => void; onGotoM
                       <div class="kk-meta">
                         <div class="kk-nm">
                           {agentName(a)}
-                          <Show when={a.ai_type}><span class="tag">{a.ai_type}</span></Show>
+                          <ProviderLogo provider={providerKey(a)} />
                           <Show when={a.is_public}><span class="tag">공개</span></Show>
                           {/* built-in 동봉 에이전트: 미활성이면 활성화 버튼, 활성이면 배지. */}
                           <Show when={a.source === "built_in" && !a.activated}>
@@ -370,7 +371,7 @@ function ProfileView(props: {
           </Show>
         </div>
         <div class="apvcard"><div class="k">에이전트명 (ID)</div><div class="v" style="font-family:ui-monospace,Menlo,monospace; font-size:12px;">{p().alias}</div></div>
-        <div class="apvcard"><div class="k">AI 종류</div><div class="v">{p().ai_type}</div></div>
+        <div class="apvcard"><div class="k">AI 종류</div><div class="v" style="display:flex;align-items:center;gap:6px;"><ProviderLogo provider={providerKey(p())} /></div></div>
         {/* 분류 — 클릭해서 변경. primary 로 지정하면 기존 프라이머리는 자동 강등(단일 프라이머리). */}
         <div class="apvcard">
           <div class="k">분류 <span style="opacity:.6">(클릭 변경)</span></div>

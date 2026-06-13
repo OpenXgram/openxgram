@@ -176,6 +176,17 @@ fn git_worktrees(project_path: &str) -> Vec<Worktree> {
     worktrees
 }
 
+/// 로컬 tmux 세션을 `(session_name, cwd)` 로 반환 — A2A `tmux` 엔드포인트 조회
+/// (`list_agent_endpoints`)가 에이전트 project_path 하위 세션을 고르는 데 쓴다.
+/// `detect_tmux()` 결과를 재사용한다(중복 tmux 호출·로직 분기 방지).
+pub fn tmux_sessions_brief() -> Vec<(String, Option<String>)> {
+    detect_tmux()
+        .into_iter()
+        .filter(|s| s.kind == SessionKind::Tmux)
+        .map(|s| (s.display, s.cwd))
+        .collect()
+}
+
 /// `tmux ls -F '#{session_name}|#{session_windows}|#{session_attached}|#{session_created}'`
 /// tmux 미설치·없는 세션이면 빈 Vec.
 fn detect_tmux() -> Vec<DetectedSession> {

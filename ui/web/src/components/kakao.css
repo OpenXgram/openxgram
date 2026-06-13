@@ -365,6 +365,28 @@
 .kk-card-sub{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
 .kk-card-sub span{white-space:nowrap;}
 .kk-card-alias{color:#8a94a6; font-family:ui-monospace,Menlo,monospace; font-size:11px;}
+
+/* ── 컴팩트 2줄 카드 (TalkTab 좌측 명부) ──
+   1줄(.kk-card-l1): 대화명(.nm) · AI모델 칩 · 역할 배지 · (우측) 안읽음
+   2줄(.kk-card-l2): 미리보기(.st) · (우측) 시각 */
+.kk-talk-roster .kk-card-l1{display:flex; align-items:center; gap:6px; min-width:0;}
+.kk-talk-roster .kk-card-l1 .nm{font-size:14.5px; font-weight:700; color:var(--kk-ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:0 1 auto; min-width:0;}
+.kk-card-model{font-size:10px; font-weight:700; color:#5b6b8c; background:#eef2fb; border-radius:6px; padding:1px 6px; white-space:nowrap; flex:none;}
+/* AI 제공자 로고 칩 — 모델 텍스트 대신 브랜드 마크. 인라인, 1줄 베이스라인 정렬. */
+.kk-card-logo{display:inline-flex; align-items:center; justify-content:center; flex:none; line-height:0;}
+.kk-card-logo svg{display:block;}
+.kk-card-role{font-size:10px; font-weight:600; color:#1f9d4d; background:#e6f6ec; border-radius:6px; padding:1px 6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:120px; flex:0 1 auto;}
+/* 친구 카드 머신명 칩 — "원격" 텍스트 태그 대체. 머신 친구=🖥 머신명, 외부 A2A=🌐 외부. */
+.kk-card-mach{font-size:10px; font-weight:600; color:#5b6b8c; background:#eef2fb; border-radius:6px; padding:1px 6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:140px; flex:0 1 auto; transition:background .12s,color .12s;}
+.kk-card-mach[style*="cursor:pointer"]:hover{background:#dbe6fb; color:#2f4a7a;}
+.kk-card-unread{margin-top:0; margin-left:auto; flex:none;}
+.kk-talk-roster .kk-card-l2{display:flex; align-items:center; gap:8px; margin-top:2px;}
+.kk-talk-roster .kk-card-l2 .st{flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:12px; color:var(--kk-sub); margin-top:0;}
+.kk-card-time{font-size:11px; color:#b6bcc6; flex:none;}
+/* 미등록 tmux row */
+.kk-unreg-row .ava{background:#e9edf4; color:#6b7686;}
+.kk-card-add{font-size:10.5px; font-weight:700; color:#2f6bd8; flex:none;}
+.kk-unreg-row:hover .kk-card-add{text-decoration:underline;}
 .kk-rename-btn{cursor:pointer; margin-left:7px; opacity:.6; font-size:12px;}
 .kk-rename-btn:hover{opacity:1;}
 .kk-rename-edit{display:flex; gap:5px; align-items:center; flex:1;}

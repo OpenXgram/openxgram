@@ -100,6 +100,12 @@ pub struct SendBody {
     /// Optional session/context id passed through to `tasks/send`.
     #[serde(default)]
     pub session_id: Option<String>,
+    /// 전달 엔드포인트 — 같은 신원(alias)이라도 보낼 곳(전달 위치)은 여럿이다.
+    /// 값: `"new_acp"` | `"existing_acp:<sessionId>"` | `"tmux:<sessionName>"` |
+    /// `"worktree"` | `"external"`. `None` 이면 `new_acp` 와 동일(기존 동작 보존).
+    /// 라우팅 분기는 `daemon_gui.rs::a2a_send` 가 수행한다.
+    #[serde(default)]
+    pub endpoint: Option<String>,
 }
 
 // ── Handlers (free fns; daemon_gui.rs wraps them after require_auth) ────────
@@ -422,6 +428,9 @@ pub mod server {
         /// Optional A2A session/context id (reused as the ACP cwd is per-alias).
         #[serde(default)]
         pub session_id: Option<String>,
+        /// 호출한 에이전트 alias(내부 위임 시 채워짐) — 가시 스레드 conv_key/표시에 사용. 외부 호출이면 None.
+        #[serde(default)]
+        pub from: Option<String>,
     }
 
     /// One tracked served task (in-memory, mirrors the ACP session bookkeeping).
@@ -567,6 +576,16 @@ pub mod server {
 
         let prompt_text = extract_prompt(&body)?;
 
+        // 갭#1 — A2A 위임 교환을 사용자 가시 스레드로 영속화한다. conv_key = `a2a:{from}->{B}`
+        // (호출자 alias 를 알면), 외부 호출이면 `a2a:{B}`. label 로도 부여 → 세션의 툴 호출이
+        // prompt() 증분 기록(record_stream_tool)을 통해 같은 스레드에 실시간 영속된다.
+        let conv_key = match body.from.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(from) => format!("a2a:{from}->{}", meta.alias),
+            None => format!("a2a:{}", meta.alias),
+        };
+        // 호출자(A)의 요청을 'me' 로 기록 → 스레드 시작점.
+        acp.record_message(&conv_key, "me", &prompt_text).await;
+
         // Reuse the shared ACP registry: create a session (always-mode spawns the
         // adapter now → explicit error if not installed), prompt, then close.
         let create = daemon_gui_acp::create_session(
@@ -581,7 +600,8 @@ pub mod server {
                 model: None,
                 thinking: None,
                 machine: None,
-                label: None,
+                // 가시 스레드 키 — B 의 응답·툴이 이 conv_key 로 영속된다.
+                label: Some(conv_key.clone()),
             },
         )
         .await?;
@@ -614,6 +634,9 @@ pub mod server {
             .cloned()
             .unwrap_or(Value::Null);
         let agent_text = collect_agent_text(&acp_result);
+
+        // 갭#1 — B 의 최종 응답을 'agent' 로 기록 → 가시 스레드 완성(me → ▸단계(증분 툴) → agent).
+        acp.record_message(&conv_key, "agent", &agent_text).await;
 
         let task_id = served.new_task_id();
         let result = json!({

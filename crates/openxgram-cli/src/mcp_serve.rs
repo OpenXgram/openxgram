@@ -718,6 +718,32 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     "required": ["agentUrl", "taskId"]
                 }),
             },
+            // 신원(alias) + 엔드포인트(전달 위치) 모델 — 같은 에이전트라도 보낼 곳은 여럿.
+            // 터미널 에이전트는 셀렉터를 못 보니 조회 도구(list_agent_endpoints) 필수.
+            ToolSpec {
+                name: "list_agent_endpoints".into(),
+                description: "한 에이전트(alias)로 보낼 수 있는 전달 위치(endpoint) 5종 조회. 반환: {new_acp, existing_acp:[{id,label}], tmux:[{name,cwd}], worktree, external}. ask_agent 의 endpoint 값을 고르기 전에 호출.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": { "alias": {"type": "string"} },
+                    "required": ["alias"]
+                }),
+            },
+            ToolSpec {
+                name: "ask_agent".into(),
+                description: "다른 에이전트에게 작업 위임 — 신원(alias) + endpoint(전달 위치)로 라우팅. endpoint: 'new_acp'(기본/생략) | 'existing_acp:<sessionId>' | 'tmux:<sessionName>' | 'worktree' | 'external'. 내부=ACP, external=외부 A2A(이때 alias=http URL). 가시 스레드로 영속됨.".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "alias": {"type": "string", "description": "대상 에이전트 신원(또는 external 시 http base URL)"},
+                        "endpoint": {"type": "string", "description": "전달 위치. 생략 시 new_acp."},
+                        "body": {"type": "string", "description": "위임 내용(작업 텍스트)"},
+                        "skill": {"type": "string", "description": "(선택) 호출할 skill id"},
+                        "sessionId": {"type": "string", "description": "(선택) A2A context id"}
+                    },
+                    "required": ["alias", "body"]
+                }),
+            },
         ]);
 
         // Marketplace (a2a 상거래) tools — OpenAgentX 디렉토리 검색·조회. 항상 노출.
@@ -2568,6 +2594,60 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 serde_json::to_value(task).map_err(internal)
             }
 
+            // 신원+엔드포인트 위임 — 라우팅 로직은 데몬에 단일 소스(AcpHttpState/sessions 보유).
+            // MCP 는 데몬 HTTP(`XGRAM_MCP_TOKEN`)로 위임만 한다(peer_send 와 동일 패턴).
+            "list_agent_endpoints" => {
+                let alias = args
+                    .get("alias")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'alias'"))?
+                    .to_string();
+                let path = format!(
+                    "/v1/gui/a2a/agents/{}/endpoints",
+                    urlencoding::encode(&alias)
+                );
+                self.daemon_get(&path)
+            }
+            "ask_agent" => {
+                let alias = args
+                    .get("alias")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'alias'"))?
+                    .to_string();
+                let body_text = args
+                    .get("body")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| invalid("missing 'body'"))?
+                    .to_string();
+                let endpoint = args
+                    .get("endpoint")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let skill = args
+                    .get("skill")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let session_id = args
+                    .get("sessionId")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                // a2a_send 데몬 핸들러는 평문 task 를 prompt 본문으로 라우팅한다.
+                let mut payload = json!({
+                    "target": alias,
+                    "task": body_text,
+                });
+                if let Some(ep) = endpoint {
+                    payload["endpoint"] = json!(ep);
+                }
+                if let Some(sk) = skill {
+                    payload["skill"] = json!(sk);
+                }
+                if let Some(sid) = session_id {
+                    payload["session_id"] = json!(sid);
+                }
+                self.daemon_post("/v1/gui/a2a/send", payload)
+            }
+
             // Marketplace 상거래 — block_in_place bridge (a2a 동일). marketplace_tools 는 Arc 공유.
             // 핸들러 반환(SearchResult/Agent/Job) → serde_json::to_value. 디렉토리 미배포면 HTTP 에러 그대로.
             "marketplace_search" => {
@@ -2736,6 +2816,82 @@ impl OpenxgramDispatcher {
             code: ERR_INVALID_PARAMS,
             message: "vault_* tool 사용 시 XGRAM_KEYSTORE_PASSWORD 환경변수 필요".into(),
         })
+    }
+
+    /// 데몬 GUI HTTP 의 base URL (`XGRAM_DAEMON_GUI_URL` 또는 기본 loopback).
+    fn daemon_gui_url() -> String {
+        std::env::var("XGRAM_DAEMON_GUI_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:47302".to_string())
+    }
+
+    /// 데몬 서명 토큰. 없으면 명시 에러(fallback 금지) — ask_agent/list_agent_endpoints 는
+    /// 데몬이 보유한 ACP 레지스트리를 거쳐야 하므로 데몬 HTTP 경로가 필수다.
+    fn daemon_token() -> Result<String, JsonRpcError> {
+        std::env::var("XGRAM_MCP_TOKEN").map_err(|_| {
+            internal("XGRAM_MCP_TOKEN env 부재 — 데몬 HTTP 경로 불가(ask_agent/list_agent_endpoints 는 데몬 ACP 레지스트리 필요)")
+        })
+    }
+
+    /// 데몬 GUI 에 인증된 GET. 응답 JSON 을 그대로 반환. 비-2xx 면 명시 에러.
+    fn daemon_get(&self, path: &str) -> Result<Value, JsonRpcError> {
+        let token = Self::daemon_token()?;
+        let url = format!("{}{}", Self::daemon_gui_url().trim_end_matches('/'), path);
+        let handle = tokio::runtime::Handle::current();
+        let res: std::result::Result<(reqwest::StatusCode, String), reqwest::Error> =
+            tokio::task::block_in_place(|| {
+                handle.block_on(async move {
+                    let client = reqwest::Client::new();
+                    let resp = client
+                        .get(&url)
+                        .header("Authorization", format!("Bearer {token}"))
+                        .send()
+                        .await?;
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    Ok((status, text))
+                })
+            });
+        match res {
+            Ok((status, text)) if status.is_success() => {
+                Ok(serde_json::from_str(&text).unwrap_or_else(|_| json!({ "raw": text })))
+            }
+            Ok((status, text)) => Err(internal(format!(
+                "데몬 GET {path} 실패 (HTTP {status}): {text}"
+            ))),
+            Err(e) => Err(internal(format!("데몬 GET {path} 요청 실패: {e}"))),
+        }
+    }
+
+    /// 데몬 GUI 에 인증된 POST(JSON). 응답 JSON 을 그대로 반환. 비-2xx 면 명시 에러.
+    fn daemon_post(&self, path: &str, payload: Value) -> Result<Value, JsonRpcError> {
+        let token = Self::daemon_token()?;
+        let url = format!("{}{}", Self::daemon_gui_url().trim_end_matches('/'), path);
+        let handle = tokio::runtime::Handle::current();
+        let res: std::result::Result<(reqwest::StatusCode, String), reqwest::Error> =
+            tokio::task::block_in_place(|| {
+                handle.block_on(async move {
+                    let client = reqwest::Client::new();
+                    let resp = client
+                        .post(&url)
+                        .header("Authorization", format!("Bearer {token}"))
+                        .header("Content-Type", "application/json")
+                        .json(&payload)
+                        .send()
+                        .await?;
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    Ok((status, text))
+                })
+            });
+        match res {
+            Ok((status, text)) if status.is_success() => {
+                Ok(serde_json::from_str(&text).unwrap_or_else(|_| json!({ "raw": text })))
+            }
+            Ok((status, text)) => Err(internal(format!(
+                "데몬 POST {path} 실패 (HTTP {status}): {text}"
+            ))),
+            Err(e) => Err(internal(format!("데몬 POST {path} 요청 실패: {e}"))),
+        }
     }
 }
 

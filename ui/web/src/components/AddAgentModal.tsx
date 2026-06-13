@@ -58,7 +58,7 @@ const CLASS_OPTS = [
   { v: "primary", label: "⭐ 통합관리 (프라이머리)" },
 ];
 
-export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: string) => void }) {
+export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: string) => void; prefillFolder?: string | null }) {
   // 머신 목록 — config(machines.json) 기반(하드코딩 제거). 로컬 + 설정 머신.
   const [machines] = createResource<string[]>(
     async () => {
@@ -72,7 +72,8 @@ export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: s
     { initialValue: MACHINES_FALLBACK },
   );
   const [machine, setMachine] = createSignal(MACHINES_FALLBACK[0]);
-  const [folder, setFolder] = createSignal("/home/llm/projects/starian-set");
+  // 미등록 tmux "추가" 진입 시 그 세션 cwd 를 폴더로 prefill(=project_path). 없으면 기본.
+  const [folder, setFolder] = createSignal((props.prefillFolder && props.prefillFolder.trim()) || "/home/llm/projects/starian-set");
   const [aiType, setAiType] = createSignal("claude");
   const [alias, setAlias] = createSignal("");
   const [role, setRole] = createSignal("");

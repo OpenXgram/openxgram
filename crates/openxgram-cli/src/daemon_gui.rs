@@ -448,6 +448,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/ops/health", get(gui_ops_health))
         .route("/v1/gui/ops/diagnostic", get(gui_ops_diagnostic))
         .route("/v1/gui/ops/machines", get(gui_ops_machines))
+        // 친구 추가(머신) UI — Tailscale tailnet 장치 목록 (자동 목록 표시).
+        .route("/v1/gui/tailnet/devices", get(gui_tailnet_devices))
         .route("/v1/gui/ops/backup-status", get(gui_ops_backup_status))
         .route("/v1/gui/ops/backup-now", post(gui_ops_backup_now))
         .route("/v1/gui/ops/update-check", get(gui_ops_update_check))
@@ -629,6 +631,10 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // Agent↔agent: OpenXgram calls another agent's A2A endpoint.
         // All behind require_auth like the other /v1/gui routes.
         .route("/v1/gui/a2a/agents", get(a2a_agents))
+        .route(
+            "/v1/gui/a2a/agents/{alias}/endpoints",
+            get(a2a_list_agent_endpoints),
+        )
         .route("/v1/gui/a2a/send", post(a2a_send))
         .route("/v1/gui/a2a/tasks/{id}", get(a2a_task_get))
         // ── A2A SERVER (ACP-A2A-CORE) — OpenXgram agents CALLABLE via A2A ───
@@ -7496,6 +7502,220 @@ async fn gui_ops_machines(
     })))
 }
 
+/// 각 tailnet 장치의 OpenXgram GUI 포트를 탐지(probe)해 `guiUrl` 필드를 채운다.
+///
+/// GUI 포트는 설치마다 다르다(예: 서울 47302, 잘만 17402). 따라서 후보 포트들에
+/// 무인증 health 라우트(`/v1/gui/health`)를 GET 해서 200 이면 그 포트를 GUI 로 간주.
+/// - 첫 성공 포트로 `guiUrl = "http://{ip}:{port}/gui/"`.
+/// - 못 찾으면 `guiUrl = null`.
+///
+/// 동시성: 모든 장치(+각 후보 포트)를 `join_all` 로 병렬 probe → 전체 wall time 최소화.
+/// 짧은 타임아웃(~800ms)으로 hang/방화벽 장치가 라우트를 지연시키지 않게 한다.
+/// probe 실패/타임아웃은 조용히 `guiUrl = null` (라우트 전체를 죽이지 않음).
+async fn probe_gui_urls(devices: &mut [serde_json::Value]) {
+    // 후보 GUI 포트 (설치별 상이). 첫 성공 포트가 채택됨.
+    const CANDIDATE_PORTS: [u16; 2] = [47302, 17402];
+
+    // probe 실패 시 client 빌드 불가 → 모든 guiUrl 은 그대로 (null). 라우트는 정상.
+    let client = match reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_millis(1500))
+        .timeout(std::time::Duration::from_millis(3000))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    // ip → 한 device 의 guiUrl 을 찾는 future. 후보 포트를 순차로 시도하되
+    // 각 포트 probe 는 짧은 타임아웃. 장치 간에는 병렬(join_all).
+    let probes = devices.iter().enumerate().map(|(idx, dev)| {
+        let http = client.clone();
+        let ip = dev.get("ip").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let dns = dev.get("dnsName").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        async move {
+            // 1) MagicDNS 도메인 (Funnel/Serve) 우선 — 표준 HTTPS(443), 포트 추측 불필요.
+            //    예: https://whitegun-win-1.tail0957ca.ts.net/gui/ (브라우저에서 그대로 열림).
+            if !dns.is_empty() {
+                let url = format!("https://{dns}/gui/");
+                if let Ok(resp) = http.get(&url).send().await {
+                    if resp.status().is_success() {
+                        return (idx, Some(url));
+                    }
+                }
+            }
+            // 2) 폴백 — IP:후보포트 무인증 health probe (Funnel 미설정 장치).
+            if !ip.is_empty() {
+                for port in CANDIDATE_PORTS {
+                    let health_url = format!("http://{ip}:{port}/v1/gui/health");
+                    if let Ok(resp) = http.get(&health_url).send().await {
+                        if resp.status().is_success() {
+                            return (idx, Some(format!("http://{ip}:{port}/gui/")));
+                        }
+                    }
+                }
+            }
+            (idx, None::<String>)
+        }
+    });
+
+    let results = futures_util::future::join_all(probes).await;
+    for (idx, gui_url) in results {
+        if let Some(dev) = devices.get_mut(idx) {
+            if let Some(obj) = dev.as_object_mut() {
+                obj.insert(
+                    "guiUrl".to_string(),
+                    match gui_url {
+                        Some(u) => serde_json::Value::String(u),
+                        None => serde_json::Value::Null,
+                    },
+                );
+            }
+        }
+    }
+}
+
+/// `GET /v1/gui/tailnet/devices` — Tailscale tailnet 장치 목록.
+/// 친구 추가(머신) UI 가 자동 목록으로 사용.
+///
+/// `tailscale status --json` (`.Self` + `.Peer.*`) 를 파싱하여
+/// `{ devices: [{ name, ip, online, os?, self? }] }` 반환.
+/// tailscale 미설치/실패 시 에러 대신 `{ devices: [], note: "tailscale 없음" }`.
+async fn gui_tailnet_devices(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+
+    // `tailscale status --json` 실행. 없으면 텍스트 폴백.
+    let json_out = std::process::Command::new("tailscale")
+        .arg("status")
+        .arg("--json")
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout).ok()
+            } else {
+                None
+            }
+        })
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+
+    // 한 노드 JSON 객체 → device DTO 매핑.
+    fn map_node(node: &serde_json::Value, is_self: bool) -> serde_json::Value {
+        // HostName 우선, 없으면 DNSName(첫 라벨), 없으면 빈 문자열.
+        let name = node
+            .get("HostName")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                node.get("DNSName")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim_end_matches('.').split('.').next().unwrap_or(s).to_string())
+            })
+            .unwrap_or_default();
+        let ip = node
+            .get("TailscaleIPs")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let online = node.get("Online").and_then(|v| v.as_bool()).unwrap_or(false);
+        let os = node
+            .get("OS")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        // 전체 MagicDNS 도메인(예: whitegun-win-1.tail0957ca.ts.net). Funnel/Serve 설정 시
+        // https://{dnsName}/gui/ 로 표준 HTTPS 접근 — 포트 추측 불필요(probe 우선순위 1).
+        let dns_name = node
+            .get("DNSName")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim_end_matches('.').to_string())
+            .filter(|s| !s.is_empty());
+        serde_json::json!({
+            "name": name,
+            "ip": ip,
+            "online": online,
+            "os": os,
+            "dnsName": dns_name,
+            "self": is_self,
+        })
+    }
+
+    if let Some(root) = json_out {
+        let mut devices: Vec<serde_json::Value> = Vec::new();
+        // Self 노드 (자기 자신, self:true).
+        if let Some(self_node) = root.get("Self") {
+            if self_node.is_object() {
+                devices.push(map_node(self_node, true));
+            }
+        }
+        // Peer 노드들 — `.Peer` 는 { "<key>": {node}, ... } 형태의 객체.
+        if let Some(peers) = root.get("Peer").and_then(|v| v.as_object()) {
+            for node in peers.values() {
+                if node.is_object() {
+                    devices.push(map_node(node, false));
+                }
+            }
+        }
+        probe_gui_urls(&mut devices).await;
+        return Ok(Json(serde_json::json!({ "devices": devices })));
+    }
+
+    // JSON 실패 → 텍스트 폴백 (`tailscale status`).
+    // 각 라인: `<ip>  <name>  <user>  <os>  <online/offline...>` (공백 구분).
+    let text_out = std::process::Command::new("tailscale")
+        .arg("status")
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout).ok()
+            } else {
+                None
+            }
+        });
+
+    if let Some(text) = text_out {
+        let mut devices: Vec<serde_json::Value> = Vec::new();
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let cols: Vec<&str> = line.split_whitespace().collect();
+            if cols.len() < 2 {
+                continue;
+            }
+            let ip = cols[0].to_string();
+            let name = cols[1].to_string();
+            let os = cols.get(3).map(|s| s.to_string());
+            // online 여부: 라인에 "offline" 이 없으면 online 으로 간주.
+            let online = !line.to_lowercase().contains("offline");
+            // 텍스트 모드에선 self 표시: 첫 줄(보통 자기 자신) 또는 "(self)" 토큰.
+            let is_self = devices.is_empty() || line.contains("(self)");
+            devices.push(serde_json::json!({
+                "name": name,
+                "ip": ip,
+                "online": online,
+                "os": os,
+                "self": is_self,
+            }));
+        }
+        probe_gui_urls(&mut devices).await;
+        return Ok(Json(serde_json::json!({ "devices": devices })));
+    }
+
+    // tailscale 미설치/완전 실패 → 에러 아닌 빈 배열 + note (절대 규칙: 명시 처리).
+    Ok(Json(serde_json::json!({
+        "devices": [],
+        "note": "tailscale 없음"
+    })))
+}
+
 /// `GET /v1/gui/ops/backup-status` — 백업 last/next + 백업 dir 의 파일 count.
 async fn gui_ops_backup_status(
     State(state): State<GuiServerState>,
@@ -9300,10 +9520,356 @@ async fn a2a_send(
     Json(body): Json<crate::daemon_gui_a2a::SendBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    crate::daemon_gui_a2a::send(&state.a2a, body)
+    // 주소 = alias(신원) + endpoint(전달 위치). 같은 에이전트라도 보낼 곳은 여럿.
+    // endpoint 분기:
+    //   - new_acp(또는 None) + 내부 alias → load_a2a_agent_meta + handle_task (가시 스레드).
+    //   - existing_acp:<id> → 그 ACP 세션에 prompt + record_message(가시 기록).
+    //   - tmux:<name> → tmux send-keys 주입 + 가시 기록.
+    //   - worktree → git worktree add 신규 + 그 cwd ACP 세션 prompt.
+    //   - external (target=http URL) → 기존 외부 client send.
+    let endpoint = body
+        .endpoint
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    // target 이 http 면 외부(A2A) — endpoint 미지정/external 로 간주.
+    let target_is_http = {
+        let t = body.target.trim();
+        t.starts_with("http://") || t.starts_with("https://")
+    };
+
+    // 명시 external 또는 http target → 기존 외부 client.
+    if endpoint.as_deref() == Some("external") || (endpoint.is_none() && target_is_http) {
+        return crate::daemon_gui_a2a::send(&state.a2a, body)
+            .await
+            .map(Json)
+            .map_err(a2a_err);
+    }
+
+    // 이하 내부 경로 — alias 필수.
+    let alias = body.target.trim().to_string();
+    if alias.is_empty() {
+        return Err(bad_request("a2a_send: 'target' (alias) 비어 있음"));
+    }
+
+    match endpoint.as_deref() {
+        // ① 신규 ACP (기본). load_a2a_agent_meta + handle_task — 기존 동작 보존.
+        None | Some("new_acp") => {
+            let meta = load_a2a_agent_meta(&state, &alias).await?.ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(ErrorDto {
+                        error: format!("unknown agent: {alias}"),
+                    }),
+                )
+            })?;
+            let task_body = crate::daemon_gui_a2a::TaskBody {
+                skill: body.skill.clone(),
+                message: if body.task.is_string() {
+                    serde_json::Value::Null
+                } else {
+                    body.task.clone()
+                },
+                task: body.task.as_str().map(|s| s.to_string()),
+                text: None,
+                session_id: body.session_id.clone(),
+                from: body.from_agent.clone(),
+            };
+            crate::daemon_gui_a2a::handle_task(&state.acp, &state.served_a2a, &meta, task_body)
+                .await
+                .map(Json)
+                .map_err(a2a_err)
+        }
+        // ② 기존 ACP 세션 — existing_acp:<sessionId>. 그 세션에 prompt + 가시 기록.
+        Some(ep) if ep.starts_with("existing_acp:") => {
+            let session_id = ep["existing_acp:".len()..].trim().to_string();
+            if session_id.is_empty() {
+                return Err(bad_request("existing_acp: sessionId 비어 있음"));
+            }
+            let prompt_text = a2a_prompt_text(&body)?;
+            // 가시 스레드 키 = 그 세션의 label(=alias). 없으면 명시 에러(추측 금지).
+            let conv_key = state.acp.session_label(&session_id).await.ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(ErrorDto {
+                        error: format!(
+                            "existing_acp: session '{session_id}' 없음 또는 label(대화신원) 미부여 — 가시 기록 불가"
+                        ),
+                    }),
+                )
+            })?;
+            state.acp.record_message(&conv_key, "me", &prompt_text).await;
+            let res = crate::daemon_gui_acp::prompt(
+                &state.acp,
+                &session_id,
+                crate::daemon_gui_acp::PromptBody {
+                    text: prompt_text.clone(),
+                },
+            )
+            .await
+            .map_err(a2a_err)?;
+            let agent_text = a2a_collect_agent_text(&res);
+            state.acp.record_message(&conv_key, "agent", &agent_text).await;
+            Ok(Json(serde_json::json!({
+                "status": "completed",
+                "endpoint": ep,
+                "agent": alias,
+                "sessionId": session_id,
+                "convKey": conv_key,
+                "text": agent_text,
+            })))
+        }
+        // ③ TMUX 세션 — tmux:<sessionName>. send-keys 주입 + 가시 기록.
+        Some(ep) if ep.starts_with("tmux:") => {
+            let session_name = ep["tmux:".len()..].trim().to_string();
+            if session_name.is_empty() {
+                return Err(bad_request("tmux: sessionName 비어 있음"));
+            }
+            let prompt_text = a2a_prompt_text(&body)?;
+            a2a_tmux_inject(&session_name, &prompt_text)
+                .await
+                .map_err(|e| internal(&format!("tmux inject 실패: {e}")))?;
+            // 가시 기록 — tmux 엔드포인트도 같은 신원 스레드(conv_key=alias)에 남긴다.
+            let conv_key = format!("a2a:{alias}");
+            state.acp.record_message(&conv_key, "me", &prompt_text).await;
+            Ok(Json(serde_json::json!({
+                "status": "delivered",
+                "endpoint": ep,
+                "agent": alias,
+                "tmuxSession": session_name,
+                "convKey": conv_key,
+                "note": "tmux send-keys 주입 완료 — 응답은 그 세션 화면/회신으로 온다(동기 결과 없음).",
+            })))
+        }
+        // ④ 신규 워크트리 — worktree. git worktree add 후 그 cwd ACP 세션 prompt.
+        Some("worktree") => {
+            let meta = load_a2a_agent_meta(&state, &alias).await?.ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(ErrorDto {
+                        error: format!("unknown agent: {alias}"),
+                    }),
+                )
+            })?;
+            let project_path = meta
+                .project_path
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    internal(&format!(
+                        "agent '{alias}' has no project_path — worktree 기준 경로 없음"
+                    ))
+                })?
+                .to_string();
+            let ai_type = meta
+                .ai_type
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    internal(&format!("agent '{alias}' has no ai_type — not ACP-drivable"))
+                })?;
+            let adapter = crate::daemon_gui_a2a::server::resolve_acp_agent(ai_type).ok_or_else(
+                || internal(&format!("agent '{alias}' ai_type '{ai_type}' 에 매칭되는 ACP adapter 없음")),
+            )?;
+            let prompt_text = a2a_prompt_text(&body)?;
+
+            // git worktree add <project_path>/.worktrees/a2a-<ts> <branch>
+            let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
+            let branch = format!("a2a-{ts}");
+            let wt_path = format!("{project_path}/.worktrees/{branch}");
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&project_path)
+                .args(["worktree", "add", "-b", &branch, &wt_path, "HEAD"])
+                .output()
+                .map_err(|e| internal(&format!("git worktree add 실행 실패: {e}")))?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                return Err(internal(&format!(
+                    "git worktree add 실패(path={wt_path}, branch={branch}): {stderr}"
+                )));
+            }
+
+            // 그 cwd 로 ACP 세션 생성 + prompt. conv_key = a2a:{alias}:wt:<branch>(가시).
+            let conv_key = format!("a2a:{alias}:wt:{branch}");
+            state.acp.record_message(&conv_key, "me", &prompt_text).await;
+            let create = crate::daemon_gui_acp::create_session(
+                &state.acp,
+                crate::daemon_gui_acp::CreateSessionBody {
+                    agent: adapter.to_string(),
+                    cwd: wt_path.clone(),
+                    mcp_servers: Vec::new(),
+                    execution_mode: Some("always".to_string()),
+                    permission_mode: Some("bypassPermissions".to_string()),
+                    model: None,
+                    thinking: None,
+                    machine: None,
+                    label: Some(conv_key.clone()),
+                },
+            )
+            .await
+            .map_err(a2a_err)?;
+            let session_id = create
+                .get("sessionId")
+                .and_then(|s| s.as_str())
+                .ok_or_else(|| internal("worktree ACP create_session 이 sessionId 미반환"))?
+                .to_string();
+            let prompt_res = crate::daemon_gui_acp::prompt(
+                &state.acp,
+                &session_id,
+                crate::daemon_gui_acp::PromptBody {
+                    text: prompt_text.clone(),
+                },
+            )
+            .await;
+            let _ = crate::daemon_gui_acp::close(&state.acp, &session_id).await;
+            let acp_result = prompt_res.map_err(a2a_err)?;
+            let agent_text = a2a_collect_agent_text(&acp_result);
+            state.acp.record_message(&conv_key, "agent", &agent_text).await;
+            Ok(Json(serde_json::json!({
+                "status": "completed",
+                "endpoint": "worktree",
+                "agent": alias,
+                "worktree": wt_path,
+                "branch": branch,
+                "sessionId": session_id,
+                "convKey": conv_key,
+                "text": agent_text,
+            })))
+        }
+        Some(other) => Err(bad_request(&format!(
+            "a2a_send: 알 수 없는 endpoint '{other}' (new_acp|existing_acp:<id>|tmux:<name>|worktree|external)"
+        ))),
+    }
+}
+
+/// `SendBody` 의 task/skill 에서 prompt 텍스트 추출 — 평문 task 우선, 없으면 skill.
+/// 둘 다 비면 명시 에러(추측 default 없음).
+fn a2a_prompt_text(body: &crate::daemon_gui_a2a::SendBody) -> Result<String, (StatusCode, Json<ErrorDto>)> {
+    if let Some(s) = body.task.as_str() {
+        let t = s.trim();
+        if !t.is_empty() {
+            return Ok(t.to_string());
+        }
+    }
+    // 구조화 task 면 그대로 직렬화해 전달(텍스트 본문이 명확치 않을 때).
+    if body.task.is_object() || body.task.is_array() {
+        return serde_json::to_string(&body.task)
+            .map_err(|e| internal(&format!("task 직렬화 실패: {e}")));
+    }
+    Err(bad_request(
+        "a2a_send: 전달할 'task' 텍스트 비어 있음 (endpoint 라우팅엔 task 본문 필요)",
+    ))
+}
+
+/// ACP `{stopReason, updates}` 에서 agent 응답 텍스트만 이어붙인다(가시 기록·반환용).
+fn a2a_collect_agent_text(acp_result: &serde_json::Value) -> String {
+    let Some(updates) = acp_result.get("updates").and_then(|u| u.as_array()) else {
+        return String::new();
+    };
+    let mut out = String::new();
+    for u in updates {
+        if u.get("type").and_then(|t| t.as_str()) != Some("agent_message_chunk") {
+            continue;
+        }
+        if let Some(text) = u
+            .get("content")
+            .and_then(|c| c.get("text"))
+            .and_then(|t| t.as_str())
+        {
+            out.push_str(text);
+        }
+    }
+    out
+}
+
+/// tmux send-keys 주입 — `daemon.rs:768` 의 `send-keys -t <target> -l <wrapped>` +
+/// `send-keys -t <target> Enter` 패턴 재사용(bracketed paste wrap + sleep + Enter).
+/// 대상은 `<sessionName>:0`(active window). 실패 시 명시 에러 반환(fallback 금지).
+async fn a2a_tmux_inject(session_name: &str, text: &str) -> Result<(), String> {
+    let target = format!("{session_name}:0");
+    let wrapped = format!("\x1b[200~{}\x1b[201~", text);
+    let out = crate::notify::tmux_command_async()
+        .args(["send-keys", "-t", &target, "-l", &wrapped])
+        .output()
         .await
-        .map(Json)
-        .map_err(a2a_err)
+        .map_err(|e| format!("send-keys -l 실행 실패: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "send-keys -l 실패: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    let out2 = crate::notify::tmux_command_async()
+        .args(["send-keys", "-t", &target, "Enter"])
+        .output()
+        .await
+        .map_err(|e| format!("send-keys Enter 실행 실패: {e}"))?;
+    if !out2.status.success() {
+        return Err(format!(
+            "send-keys Enter 실패: {}",
+            String::from_utf8_lossy(&out2.stderr)
+        ));
+    }
+    Ok(())
+}
+
+/// `GET /v1/gui/a2a/agents/{alias}/endpoints` — 그 신원(alias)으로 보낼 수 있는
+/// 전달 위치(endpoint) 5종을 조회한다. GUI 셀렉터·MCP `list_agent_endpoints` 공용 소스.
+async fn a2a_list_agent_endpoints(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+
+    // 에이전트 메타(project_path) — 없으면 tmux/worktree 필터 기준이 없으니 빈 결과로.
+    let meta = load_a2a_agent_meta(&state, &alias).await?;
+    let project_path = meta
+        .as_ref()
+        .and_then(|m| m.project_path.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    // existing_acp — 살아있는 ACP 세션 중 label==alias.
+    let existing_acp: Vec<serde_json::Value> = state
+        .acp
+        .list_sessions_brief()
+        .await
+        .into_iter()
+        .filter(|(_, label, _)| label == &alias)
+        .map(|(id, label, _)| serde_json::json!({ "id": id, "label": label }))
+        .collect();
+
+    // tmux — 그 프로젝트 project_path(또는 하위)에서 도는 tmux 세션.
+    let tmux: Vec<serde_json::Value> = {
+        let pp = project_path.clone();
+        tokio::task::spawn_blocking(crate::daemon_gui_sessions::tmux_sessions_brief)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(_, cwd)| match (&pp, cwd) {
+                (Some(p), Some(c)) => c == p || c.starts_with(&format!("{p}/")),
+                _ => false,
+            })
+            .map(|(name, cwd)| serde_json::json!({ "name": name, "cwd": cwd }))
+            .collect()
+    };
+
+    Ok(Json(serde_json::json!({
+        "alias": alias,
+        "new_acp": true,
+        "existing_acp": existing_acp,
+        "tmux": tmux,
+        "worktree": project_path.is_some(),
+        "external": false,
+    })))
 }
 
 /// `GET /v1/gui/a2a/tasks/{id}?target=<url>` — tasks/get 상태 조회.

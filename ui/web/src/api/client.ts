@@ -107,12 +107,18 @@ const ROUTES: Record<string, Route> = {
  fs_file_get: { method: "GET", path: "/fs/file"},
  fs_file_put: { method: "PUT", path: "/fs/file", body: true},
  machines_list: { method: "GET", path: "/machines", emptyAs: []},
+ // Tailscale 장치 자동 목록 (친구 추가=머신 피커용). 백엔드 라우트가 아직 없을 수 있음(다른 에이전트가 추가 중)
+ // → 호출 실패 시 AddFriendModal 이 graceful 폴백(수동 IP 입력)으로 처리한다.
+ tailnet_devices: { method: "GET", path: "/tailnet/devices"},
  agent_machines: { method: "GET", path: "/agent-machines"},
  models_list: { method: "GET", path: "/models"},
  // Phase 3 — A2A(에이전트↔에이전트)
  a2a_agents: { method: "GET", path: "/a2a/agents", emptyAs: []},
  a2a_send: { method: "POST", path: "/a2a/send", body: true},
  a2a_task_get: { method: "GET", path: "/a2a/tasks/{id}"},
+ // A2A 엔드포인트 동적 조회 (위임 모달용) — alias 의 도달 위치 5종 반환.
+ // 백엔드 라우트 빌드 전일 수 있음 → 호출 실패 시 graceful fallback (new_acp/external).
+ a2a_agent_endpoints: { method: "GET", path: "/a2a/agents/{alias}/endpoints"},
  // Phase 2-D — 에이전트 프로필 (classification/execution_mode/ai_type/worktree/public + folder/group/role)
  agent_profile_get: { method: "GET", path: "/agent/{alias}/profile"},
  agent_profile_set: { method: "POST", path: "/agent/{alias}/profile", body: true},

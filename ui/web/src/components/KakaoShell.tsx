@@ -23,7 +23,7 @@ const TABS: { id: KkTab; ic: string; label: string }[] = [
 type SettingsSub = "general" | "runtime" | "wiki";
 const SETTINGS_SUB: { id: SettingsSub; ic: string; label: string }[] = [
   { id: "general", ic: "⚙️", label: "일반" },
-  { id: "runtime", ic: "🧠", label: "런타임" },
+  { id: "runtime", ic: "🧠", label: "하네스" },
   { id: "wiki", ic: "📚", label: "위키" },
 ];
 

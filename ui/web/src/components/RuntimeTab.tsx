@@ -16,12 +16,23 @@ type RuntimeConfig = {
   mandatory_note: string; extract_on_end: boolean; deny_patterns: string;
 };
 const DEF: RuntimeConfig = {
-  inject_memory: true, memory_count: 8, memory_kinds: ["fact", "decision", "rule", "reference"], memory_pins: [],
+  inject_memory: false, memory_count: 8, memory_kinds: ["fact", "decision", "rule", "reference"], memory_pins: [],
   inject_wiki: false, wiki_pins: [], search_enabled: false,
   perm_default: "bypassPermissions", model_default: "default", thinking_default: "high", max_inject_chars: 6000,
   mandatory_note: "", extract_on_end: false, deny_patterns: "",
 };
 const KIND: Record<string, string> = { fact: "사실", decision: "결정", rule: "규칙", reference: "참조" };
+
+// 기본 하네스 룰 — 에이전트의 작동 원리(자가발전·실수방지·wiki기록). 클릭하면 주입 규칙으로 추가.
+// L2(사실/결정)는 조회 데이터지 주입 대상 아님 — 주입할 건 "어떻게 작동·발전하라"는 운영 하네스.
+const HARNESS_PRESETS: { name: string; content: string }[] = [
+  { name: "자가 발전", content: "매 작업에서 무엇을 배웠는지 인지하고, 다음엔 더 나은 방법으로 수행하라. 같은 접근을 반복하기 전에 개선 여지를 점검하라." },
+  { name: "실수 반복 방지", content: "새 작업 전 find_similar_failures 로 과거 유사 실수를 조회하고, 실수가 발생하면 log_mistake 로 기록하라. 같은 실수를 두 번 하지 마라." },
+  { name: "위키 기록", content: "작업 중 새로 알게 된 사실·해결책·패턴은 write_wiki_page 로 LLM wiki 에 기록하라. 지식을 축적해 같은 문제를 다시 풀지 않도록 하라." },
+  { name: "에이전트 통신 (ACP/A2A)", content: "다른 에이전트와 협업할 수 있다. 내부 에이전트끼리는 ACP(서로 새 대화 스레드를 열어 연결), 외부 에이전트는 A2A(AgentCard)로 연결한다. 사용자가 대화에서 ⇢위임으로 다른 에이전트에게 작업을 넘기면 그 교환이 a2a:A→B 스레드로 사용자에게 보인다. 협업·위임이 필요하면 이 경로를 쓴다." },
+  { name: "회신 규칙 (ACK)", content: "메시지를 받으면 보낸 쪽으로 반드시 최소 1번 회신한다. ① 먼저 '받았다' 확인 회신(peer_ack 또는 짧은 답). ② 내용상 답이 필요하면 그 답신도 보낸다. ③ 상대가 보낸 답신에 대해서도 '받았다' 회신을 꼭 보낸다. 회신이 없으면 상대가 재전송 루프에 빠진다 — 확인 회신은 필수다." },
+  { name: "멀티 머신 SSH", content: "여러 머신에 ssh 로 접속해 작업할 수 있다. 공용 키 ~/.ssh/gcp_key.pem, User=llm. server-seoul(메인 GCP, 현재): ssh -i ~/.ssh/gcp_key.pem llm@100.101.237.9 (Tailscale, User 반드시 llm·키인증만). ~/.ssh/config 등록: gcp-1(34.64.140.14)·gcp-2(34.64.186.218)·gcp-3(34.64.226.202)·gcp-golchin(34.135.167.135)·macmini·macbookair15·zalman(WSL: ssh zalman 'wsl -- bash -lc \"...\"') 등. 다른 머신 실행 필요 시 ssh <host> '<cmd>'." },
+];
 // 도구 승인 — 클릭하면 차단 패턴에 들어가는 예시(자주 쓰는 위험 명령).
 const DENY_EXAMPLES = ["rm -rf", "git push --force", "git push -f", "sudo", "chmod 777", "DROP TABLE", "DELETE FROM", "> /dev/sd", "mkfs", "curl | sh"];
 
@@ -75,6 +86,14 @@ export function RuntimeTab() {
     const tmpId = `new_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     setInjections([...injections(), { id: tmpId, scope, name: "", content: "", enabled: true, sort_order: injections().length }]);
   }
+  // 기본 하네스 룰을 주입 규칙으로 추가 + 즉시 저장(편집 가능 상태로 노출).
+  async function addHarnessPreset(p: { name: string; content: string }) {
+    const scope = target() || "*";
+    const tmpId = `new_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const it: Injection = { id: tmpId, scope, name: p.name, content: p.content, enabled: true, sort_order: injections().length };
+    setInjections([...injections(), it]);
+    await saveInjection(it);
+  }
   async function saveInjection(it: Injection) {
     setInjBusy(true);
     try {
@@ -126,7 +145,7 @@ export function RuntimeTab() {
   return (
     <div class="kk-set" style="height:100%; overflow:auto;">
       <div class="board" style="max-width:none;">
-        <div class="bh"><h2>🧠 런타임 (하네스)</h2><span class="sub">이벤트별 훅 — 각 이벤트에 무엇을 할지. 에이전트별/전역.</span></div>
+        <div class="bh"><h2>🧠 하네스</h2><span class="sub">에이전트 작동·발전 원리 주입 — 자가발전·실수방지·wiki기록. L2(사실/결정)는 조회용이라 주입 안 함. 에이전트별/전역.</span></div>
         <div class="bb" style="color:var(--kk-ink); max-width:none;">
           <div style="display:flex; gap:10px; align-items:center; margin-bottom:14px; flex-wrap:wrap;">
             <span style="font-weight:700;">설정 대상</span>
@@ -143,7 +162,7 @@ export function RuntimeTab() {
             <div style={hint}>이 이벤트에 할 일: 프롬프트 앞에 무엇을 합성해 보낼지</div>
 
             <label style="display:flex; gap:8px; align-items:center; margin-top:11px; font-size:13px; font-weight:600;">
-              <input type="checkbox" checked={cfg().inject_memory} onChange={(e) => set("inject_memory", e.currentTarget.checked)} /> 기억(L2) 주입
+              <input type="checkbox" checked={cfg().inject_memory} onChange={(e) => { set("inject_memory", e.currentTarget.checked); void save(); }} /> 기억(L2) 주입
             </label>
             <Show when={cfg().inject_memory}>
               <div style="margin:8px 0 0 4px;">
@@ -203,7 +222,7 @@ export function RuntimeTab() {
                   return (
                     <div style={`border:1px solid var(--kk-line); border-radius:8px; padding:10px; ${it.scope === "*" ? "background:#f7faf7;" : "background:#f7f8fa;"}`}>
                       <div style="display:flex; gap:8px; align-items:center;">
-                        <input type="checkbox" checked={it.enabled} disabled={!editable} onChange={(e) => { setInj(it.id, { enabled: e.currentTarget.checked }); }} title="이 항목을 주입에 사용" />
+                        <input type="checkbox" checked={it.enabled} disabled={!editable} onChange={(e) => { const v = e.currentTarget.checked; setInj(it.id, { enabled: v }); void saveInjection({ ...it, enabled: v }); }} title="이 항목을 주입에 사용 (토글 즉시 저장)" />
                         <input placeholder="규칙 이름 (예: 통신 원칙)" value={it.name} disabled={!editable} onInput={(e) => setInj(it.id, { name: e.currentTarget.value })} style={`${ctl} flex:1;`} />
                         <span style={`font-size:11px; padding:2px 7px; border-radius:10px; ${it.scope === "*" ? "background:#dff0df; color:#2f6f2f;" : "background:#e7ecf5; color:#41567f;"}`}>{it.scope === "*" ? "🌐 전역" : it.scope}</span>
                         <Show when={editable}><span style="cursor:pointer; font-size:15px;" title="삭제" onClick={() => deleteInjection(it)}>🗑</span></Show>
@@ -215,6 +234,14 @@ export function RuntimeTab() {
                     </div>
                   );
                 }}</For>
+              </div>
+              <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:8px;">
+                <span style={hint}>기본 하네스 룰:</span>
+                <For each={HARNESS_PRESETS}>{(p) => (
+                  <Show when={!injections().some((x) => x.name === p.name)}>
+                    <span style={chip} title={p.content} onClick={() => void addHarnessPreset(p)}>+ {p.name}</span>
+                  </Show>
+                )}</For>
               </div>
               <button class="qbtn" onClick={addInjection} style="margin-top:8px; font-size:12.5px;">➕ 항목 추가</button>
             </div>
