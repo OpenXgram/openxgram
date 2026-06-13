@@ -22,6 +22,11 @@
 .kk-add{background:var(--kk-yellow); border:none; border-radius:20px; padding:7px 13px; font-size:12.5px; font-weight:700; color:#3c1e1e; cursor:pointer; white-space:nowrap;}
 .kk button{white-space:nowrap;}
 @media (max-width:380px){ .kk-add .lbl, .add-btn .lbl{display:none;} }
+.kk-typing{display:inline-flex; gap:3px; align-items:center;}
+.kk-typing i{width:5px; height:5px; border-radius:50%; background:#7c96ff; display:inline-block; animation:kk-bounce 1.2s infinite ease-in-out;}
+.kk-typing i:nth-child(2){animation-delay:.2s;}
+.kk-typing i:nth-child(3){animation-delay:.4s;}
+@keyframes kk-bounce{0%,80%,100%{transform:scale(.5); opacity:.4;} 40%{transform:scale(1); opacity:1;}}
 .kk-search{margin:4px 16px 8px; background:#f1f2f4; border-radius:10px; padding:8px 12px; font-size:13px; color:var(--kk-sub);}
 .kk-list{flex:1; overflow-y:auto; padding:4px 0 0;}
 .kk-gt{font-size:11.5px; font-weight:700; color:var(--kk-sub); padding:12px 18px 5px;}

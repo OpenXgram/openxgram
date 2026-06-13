@@ -1011,7 +1011,8 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
 function FriendPanel(props: { agent: AgentRow; isExternal: boolean; onClose: () => void }) {
   const [draft, setDraft] = createSignal("");
   const [busy, setBusy] = createSignal(false);
-  const [log, setLog] = createSignal<{ role: "me" | "agent" | "err"; text: string }[]>([]);
+  const [log, setLog] = createSignal<{ role: "me" | "agent" | "err"; text: string; ts: string }[]>([]);
+  const timeStr = () => new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
   // 외부 A2A: target = AgentCard URL(machine 에 저장됨). 머신 친구: target = alias(내부 라우팅).
   const target = () => (props.isExternal ? (props.agent.machine ?? "").trim() : props.agent.alias);
 
@@ -1048,16 +1049,16 @@ function FriendPanel(props: { agent: AgentRow; isExternal: boolean; onClose: () 
     const text = draft().trim();
     if (!text || busy()) return;
     setBusy(true);
-    setLog((l) => [...l, { role: "me", text }]);
+    setLog((l) => [...l, { role: "me", text, ts: timeStr() }]);
     setDraft("");
     try {
       const r = await invoke<{ result?: { text?: string } }>("a2a_send", {
         target: target(), task: text, from_agent: "Starian",
       });
       const ans = r?.result?.text?.trim() || "(응답 텍스트 없음)";
-      setLog((l) => [...l, { role: "agent", text: ans }]);
+      setLog((l) => [...l, { role: "agent", text: ans, ts: timeStr() }]);
     } catch (e) {
-      setLog((l) => [...l, { role: "err", text: `A2A 전송 실패: ${(e as Error)?.message ?? e}` }]);
+      setLog((l) => [...l, { role: "err", text: `A2A 전송 실패: ${(e as Error)?.message ?? e}`, ts: timeStr() }]);
     } finally {
       setBusy(false);
     }
@@ -1120,20 +1121,35 @@ function FriendPanel(props: { agent: AgentRow; isExternal: boolean; onClose: () 
             </div>
           </Show>
         </div>
-        <div style="flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:8px;">
-          <Show when={log().length === 0}>
+        <div style="flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px;">
+          <Show when={log().length === 0 && !busy()}>
             <div style="color:#6b7280;font-size:13px;text-align:center;margin-top:24px;">
               아래에 메시지를 입력해 A2A 로 위임·대화하세요.
             </div>
           </Show>
           <For each={log()}>
             {(m) => (
-              <div style={`align-self:${m.role === "me" ? "flex-end" : "flex-start"};max-width:78%;padding:8px 11px;border-radius:10px;font-size:13px;line-height:1.5;white-space:pre-wrap;` +
-                (m.role === "me" ? "background:#2f5d3a;color:#eafff0;" : m.role === "err" ? "background:#4a2222;color:#ffd6d6;" : "background:#1a1d24;color:#cfe3d6;border:1px solid #2a2f3a;")}>
-                {m.text}
+              <div style={`display:flex;flex-direction:column;gap:3px;align-items:${m.role === "me" ? "flex-end" : "flex-start"};`}>
+                <div style="font-size:10.5px;color:#6b7280;padding:0 3px;">
+                  {m.role === "me" ? "나" : m.role === "err" ? "⚠ 오류" : agentName(props.agent)} · {m.ts}
+                </div>
+                <div style={`max-width:78%;padding:8px 11px;border-radius:10px;font-size:13px;line-height:1.5;white-space:pre-wrap;` +
+                  (m.role === "me" ? "background:#2f5d3a;color:#eafff0;" : m.role === "err" ? "background:#4a2222;color:#ffd6d6;" : "background:#1a1d24;color:#cfe3d6;border:1px solid #2a2f3a;")}>
+                  {m.text}
+                </div>
               </div>
             )}
           </For>
+          {/* A2A 동기 응답 대기 — 타이핑 인디케이터로 "답이 오는 중"임을 명시. */}
+          <Show when={busy()}>
+            <div style="display:flex;flex-direction:column;gap:3px;align-items:flex-start;">
+              <div style="font-size:10.5px;color:#6b7280;padding:0 3px;">{agentName(props.agent)}</div>
+              <div style="background:#1a1d24;border:1px solid #2a2f3a;border-radius:10px;padding:9px 13px;display:flex;align-items:center;gap:8px;">
+                <span class="kk-typing"><i></i><i></i><i></i></span>
+                <span style="font-size:12px;color:#9aa1ad;">응답을 기다리는 중…</span>
+              </div>
+            </div>
+          </Show>
         </div>
         <div style="padding:12px 14px;border-top:1px solid #2a2f3a;display:flex;gap:8px;">
           <textarea
