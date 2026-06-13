@@ -372,7 +372,7 @@
 .ax-add .seg .s.on {
   background: var(--kk-yellow);
   border-color: var(--kk-yellow-d);
-  color: #fff;
+  color: #3c1e1e;
   font-weight: 700;
 }
 .ax-add .seg.lock .s {
@@ -403,7 +403,7 @@
   padding: 11px;
   font-size: 14px;
   font-weight: 800;
-  color: #fff;
+  color: #3c1e1e;
   cursor: pointer;
 }
 .ax-add .btn-go:hover {

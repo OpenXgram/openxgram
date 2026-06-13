@@ -639,7 +639,7 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
       <div class="kk-talk-roster">
         <div class="side-top">
           <h1>OpenXgram</h1>
-          <button class="add-btn" onClick={() => setAddOpen(true)}>＋ 에이전트 추가</button>
+          <button class="add-btn" onClick={() => setAddOpen(true)}>＋ <span class="lbl">에이전트 추가</span></button>
         </div>
         <input
           class="search"
@@ -647,7 +647,7 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
           value={talkQ()}
           onInput={(e) => setTalkQ(e.currentTarget.value)}
           placeholder="🔍 에이전트·대화명·내용 검색"
-          style="width:100%;box-sizing:border-box;padding:9px 10px;background:#11151c;border:1px solid #2a2f3a;border-radius:8px;color:#e6e6e6;font-size:13px;outline:none;"
+          style="display:block;width:calc(100% - 32px);box-sizing:border-box;margin:6px 16px 8px;padding:9px 12px;background:#f1f2f4;border:1px solid #e3e5e9;border-radius:10px;color:#333;font-size:13px;outline:none;"
         />
 
         <div class="list">

@@ -1,7 +1,7 @@
 /* OpenXgram — 카카오톡 셸 스타일 (정본: _mockups/kakao-mockup.html 포팅)
    Phase 1: 셸 레이아웃 + 명부 + 대화/프로필 + 컴포저 + 하단탭 + 반응형 */
 .kk{
-  --kk-yellow:#262b33; --kk-yellow-d:#363c46; --kk-me:#e8edf3;
+  --kk-yellow:#fee500; --kk-yellow-d:#f2d800; --kk-me:#e8edf3;
   --kk-surface:#f6f7f9; --kk-list:#ffffff; --kk-ink:#1f2937;
   --kk-sub:#8a94a6; --kk-line:#e9ebf0; --kk-online:#27c24c; --kk-accent:#2f9e44;
   position:fixed; inset:0; z-index:50; display:flex; flex-direction:column; background:#fff; overflow:hidden;
@@ -19,7 +19,9 @@
 .kk-side{width:330px; background:var(--kk-list); border-right:1px solid var(--kk-line); display:flex; flex-direction:column;}
 .kk-side-top{padding:16px 18px 10px; display:flex; align-items:center; justify-content:space-between;}
 .kk-side-top h1{font-size:18px; font-weight:800; color:var(--kk-ink); letter-spacing:-.3px; margin:0;}
-.kk-add{background:var(--kk-yellow); border:none; border-radius:20px; padding:7px 13px; font-size:12.5px; font-weight:700; color:#fff; cursor:pointer;}
+.kk-add{background:var(--kk-yellow); border:none; border-radius:20px; padding:7px 13px; font-size:12.5px; font-weight:700; color:#3c1e1e; cursor:pointer; white-space:nowrap;}
+.kk button{white-space:nowrap;}
+@media (max-width:380px){ .kk-add .lbl, .add-btn .lbl{display:none;} }
 .kk-search{margin:4px 16px 8px; background:#f1f2f4; border-radius:10px; padding:8px 12px; font-size:13px; color:var(--kk-sub);}
 .kk-list{flex:1; overflow-y:auto; padding:4px 0 0;}
 .kk-gt{font-size:11.5px; font-weight:700; color:var(--kk-sub); padding:12px 18px 5px;}
@@ -109,7 +111,7 @@
 .apvhint{font-size:11px; color:#9aa1ad; margin:6px 0 11px; line-height:1.55;}
 .kk-seg{display:flex; gap:7px; max-width:460px;}
 .kk-seg .s{flex:1; text-align:center; background:#f4f5f7; border:1px solid #e7e9ee; border-radius:9px; padding:8px; font-size:12.5px; color:#7b8494; cursor:pointer;}
-.kk-seg .s.on{background:var(--kk-yellow); border-color:var(--kk-yellow-d); color:#fff; font-weight:700;}
+.kk-seg .s.on{background:var(--kk-yellow); border-color:var(--kk-yellow-d); color:#3c1e1e; font-weight:700;}
 .kk-seg .s.lock{opacity:.5; cursor:not-allowed;}
 .cfgrow{display:flex; align-items:center; gap:11px; padding:9px 11px; border:1px solid var(--kk-line); border-radius:9px; background:#fff; margin-bottom:7px;}
 .cfgrow.miss{opacity:.42;}
@@ -129,7 +131,7 @@
 .kk-modal input, .kk-modal select{width:100%; font-size:13px; border:1px solid var(--kk-line); border-radius:8px; padding:9px 11px; color:var(--kk-ink); background:#fff;}
 .kk-modal .mrow{display:flex; gap:8px; margin-top:20px;}
 .kk-modal .mrow button{flex:1; font-size:13px; font-weight:700; border-radius:9px; padding:10px; cursor:pointer; border:1px solid var(--kk-line); background:#eef1f5; color:#54607a;}
-.kk-modal .mrow button.go{background:var(--kk-yellow); color:#fff; border-color:var(--kk-yellow-d);}
+.kk-modal .mrow button.go{background:var(--kk-yellow); color:#3c1e1e; border-color:var(--kk-yellow-d);}
 .kk-modal .chk{display:flex; align-items:center; gap:8px; margin-top:14px; font-size:13px; color:var(--kk-ink); cursor:pointer;}
 .kk-modal .chk input{width:auto;}
 .kk-modal .err{color:#e03131; font-size:12px; margin-top:10px;}
@@ -148,7 +150,7 @@
    토큰을 자체 정의한다.
    =========================================================== */
 .kk-login{
-  --kk-yellow:#262b33; --kk-yellow-d:#363c46;
+  --kk-yellow:#fee500; --kk-yellow-d:#f2d800;
   --kk-surface:#f6f7f9; --kk-list:#ffffff; --kk-ink:#1f2937;
   --kk-sub:#8a94a6; --kk-line:#e9ebf0; --kk-online:#27c24c;
   min-height:100vh; flex:1; display:flex; align-items:center; justify-content:center;
@@ -165,7 +167,7 @@
 .kk-login-brandmark{
   width:60px; height:60px; border-radius:20px; margin:0 auto 16px;
   background:var(--kk-yellow); display:flex; align-items:center; justify-content:center;
-  color:#fff; font-size:26px; font-weight:800; letter-spacing:-.5px;
+  color:#3c1e1e; font-size:26px; font-weight:800; letter-spacing:-.5px;
 }
 .kk-login-brand{
   text-align:center; font-size:16px; font-weight:800; color:var(--kk-ink);
@@ -199,7 +201,7 @@
   border:1px solid #f7c9c9; border-radius:9px; padding:9px 11px; margin-top:4px;
 }
 .kk-login-btn{
-  margin-top:14px; width:100%; font-size:14.5px; font-weight:700; color:#fff;
+  margin-top:14px; width:100%; font-size:14.5px; font-weight:700; color:#3c1e1e;
   background:var(--kk-yellow); border:none; border-radius:12px; padding:13px;
   cursor:pointer; transition:background .14s ease, opacity .14s ease;
 }
@@ -232,7 +234,7 @@
 .kk-talk-roster{width:330px; flex:none; background:var(--kk-list); border-right:1px solid var(--kk-line); display:flex; flex-direction:column;}
 .kk-talk-roster .side-top{padding:18px 18px 10px; display:flex; align-items:center; justify-content:space-between; flex:none;}
 .kk-talk-roster .side-top h1{font-size:19px; font-weight:800; color:var(--kk-ink); letter-spacing:-.3px; margin:0;}
-.kk-talk-roster .add-btn{background:var(--kk-yellow); border:none; border-radius:20px; padding:7px 13px; font-size:12.5px; font-weight:700; color:#fff; cursor:pointer;}
+.kk-talk-roster .add-btn{background:var(--kk-yellow); border:none; border-radius:20px; padding:7px 13px; font-size:12.5px; font-weight:700; color:#3c1e1e; cursor:pointer; white-space:nowrap;}
 .kk-talk-roster .add-btn:hover{background:var(--kk-yellow-d);}
 .kk-talk-roster .search{margin:4px 16px 8px; background:#f1f2f4; border-radius:10px; padding:8px 12px; font-size:13px; color:var(--kk-sub); flex:none;}
 .kk-talk-roster .list{flex:1; overflow-y:auto; padding:4px 0 0;}
@@ -541,7 +543,7 @@
 .kk-set-num{width:110px; font-size:13px; border:1px solid var(--kk-line); border-radius:9px; padding:9px 11px; color:var(--kk-ink); background:#fff;}
 .kk-set-num:focus{outline:none; border-color:var(--kk-accent);}
 .kk-set-unit{font-size:12px; color:var(--kk-sub);}
-.kk-set-btn{font-size:12.5px; font-weight:700; border:1px solid var(--kk-yellow-d); border-radius:9px; padding:9px 16px; cursor:pointer; background:var(--kk-yellow); color:#fff;}
+.kk-set-btn{font-size:12.5px; font-weight:700; border:1px solid var(--kk-yellow-d); border-radius:9px; padding:9px 16px; cursor:pointer; background:var(--kk-yellow); color:#3c1e1e;}
 .kk-set-btn.alt{background:#eef1f5; color:#5b6678; border-color:var(--kk-line);}
 .kk-set-btn:hover{opacity:.92;}
 .kk-set-msg{font-size:11.5px; color:#5b6678; margin-top:8px; word-break:break-word;}
@@ -589,7 +591,7 @@
 .kk-wfbtn{margin-left:auto; font-size:11.5px; font-weight:700; color:#5b6678; background:#eef1f5; border:none; border-radius:8px; padding:7px 13px; cursor:pointer;}
 .kk-wfbtn + .kk-wfbtn{margin-left:0;}
 .kk-wfbtn:hover{background:#e3e7ee;}
-.kk-wfbtn.run{color:#fff; background:var(--kk-yellow);}
+.kk-wfbtn.run{color:#3c1e1e; background:var(--kk-yellow);}
 .kk-wfbtn.run:hover{background:var(--kk-yellow-d);}
 .kk-wfbtn:disabled{opacity:.5; cursor:default;}
 

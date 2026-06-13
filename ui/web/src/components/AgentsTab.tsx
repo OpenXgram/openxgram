@@ -243,7 +243,7 @@ export function AgentsTab(props: { onGotoChat?: (alias: string) => void; onGotoM
       <div class="kk-roster">
         <div class="rtop">
           <h2>에이전트</h2>
-          <button class="kk-add" onClick={() => { setAddPrefillFolder(null); setShowAdd(true); }}>➕ 에이전트 추가</button>
+          <button class="kk-add" onClick={() => { setAddPrefillFolder(null); setShowAdd(true); }}>➕ <span class="lbl">에이전트 추가</span></button>
         </div>
         {/* 🔍 검색 — alias·id·역할·경로·ai_type·머신 등 횡단 부분일치(예: d63f41f, turbo, aoe, tmux) */}
         <input
@@ -251,7 +251,7 @@ export function AgentsTab(props: { onGotoChat?: (alias: string) => void; onGotoM
           value={q()}
           onInput={(e) => setQ(e.currentTarget.value)}
           placeholder="🔍 검색 (이름·id·역할·tmux·경로 …)"
-          style="width:100%;box-sizing:border-box;margin:0 0 8px;padding:8px 10px;border:1px solid #2a2f3a;border-radius:8px;background:#11151c;color:#e6e6e6;font-size:13px;"
+          style="display:block;width:calc(100% - 32px);box-sizing:border-box;margin:6px 16px 8px;padding:9px 12px;border:1px solid #e3e5e9;border-radius:10px;background:#f1f2f4;color:#333;font-size:13px;outline:none;"
         />
         <Show when={!agents.loading} fallback={<div class="empty">불러오는 중…</div>}>
           <For each={CLASS_GROUPS}>
