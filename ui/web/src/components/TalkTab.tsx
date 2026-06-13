@@ -38,6 +38,10 @@ interface AgentRow {
   model?: string | null;
   thinking?: string | null;
   unread?: number | null;
+  // rc.321 — 친구 단위 정책 (classification="friend" 일 때만 의미).
+  friend_permission?: string | null;
+  friend_isolated?: boolean | null;
+  friend_cost_tracked?: boolean | null;
 }
 
 // 표시 이름 — display_name 있으면 그것, 없으면 alias.
@@ -972,6 +976,35 @@ function FriendPanel(props: { agent: AgentRow; isExternal: boolean; onClose: () 
   // 외부 A2A: target = AgentCard URL(machine 에 저장됨). 머신 친구: target = alias(내부 라우팅).
   const target = () => (props.isExternal ? (props.agent.machine ?? "").trim() : props.agent.alias);
 
+  // rc.321 — 친구 정책 편집 (머신 친구만; 외부 A2A 는 DB row 없음 → 정책 미적용).
+  const [polOpen, setPolOpen] = createSignal(false);
+  const [perm, setPerm] = createSignal<"blocked" | "read" | "request" | "full">(
+    (props.agent.friend_permission as "blocked" | "read" | "request" | "full") ?? "request",
+  );
+  const [iso, setIso] = createSignal<boolean>(props.agent.friend_isolated ?? false);
+  const [cost, setCost] = createSignal<boolean>(props.agent.friend_cost_tracked ?? true);
+  const [polBusy, setPolBusy] = createSignal(false);
+  const [polMsg, setPolMsg] = createSignal<string | null>(null);
+
+  async function savePolicy() {
+    if (polBusy()) return;
+    setPolBusy(true);
+    setPolMsg(null);
+    try {
+      await invoke("friends_policy_set", {
+        alias: props.agent.alias,
+        permission: perm(),
+        isolated: iso(),
+        cost_tracked: cost(),
+      });
+      setPolMsg("정책 저장됨 ✓");
+    } catch (e) {
+      setPolMsg(`저장 실패: ${(e as Error)?.message ?? e}`);
+    } finally {
+      setPolBusy(false);
+    }
+  }
+
   async function send() {
     const text = draft().trim();
     if (!text || busy()) return;
@@ -1011,6 +1044,42 @@ function FriendPanel(props: { agent: AgentRow; isExternal: boolean; onClose: () 
               : "다른 머신의 에이전트 — 로컬 파일트리 없음. 그쪽 primary 가 자기 에이전트를 처리합니다. A2A/peer 로 통신하세요."}
           </div>
           <div style="font-size:11px;color:#6b7280;margin-top:4px;" title={target()}>대상: {target() || "(주소 미상)"}</div>
+          {/* rc.321 — 친구 정책 편집 (머신 친구만). */}
+          <Show when={!props.isExternal}>
+            <div style="margin-top:8px;">
+              <button class="btn-q" style="font-size:11px;padding:3px 9px;" onClick={() => setPolOpen(!polOpen())}>
+                {polOpen() ? "▾ 정책 닫기" : "⚙ 정책 (권한·격리·비용)"}
+              </button>
+              <Show when={polOpen()}>
+                <div style="margin-top:8px;display:flex;flex-direction:column;gap:7px;padding:10px;border:1px solid #2a2f3a;border-radius:8px;background:#15171c;">
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:11px;color:#8b94a3;width:48px;flex:none;">권한</span>
+                    <select class="ctl" style="flex:1;font-size:12px;" value={perm()}
+                      onChange={(e) => setPerm(e.currentTarget.value as "blocked" | "read" | "request" | "full")}>
+                      <option value="blocked">차단</option>
+                      <option value="read">읽기</option>
+                      <option value="request">작업요청</option>
+                      <option value="full">전체</option>
+                    </select>
+                  </div>
+                  <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:#cfe3d6;">
+                    <input type="checkbox" checked={iso()} onChange={(e) => setIso(e.currentTarget.checked)} /> 격리 실행
+                  </label>
+                  <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:#cfe3d6;">
+                    <input type="checkbox" checked={cost()} onChange={(e) => setCost(e.currentTarget.checked)} /> 비용 기록
+                  </label>
+                  <div style="display:flex;align-items:center;gap:10px;">
+                    <button class="btn-go" style="font-size:12px;padding:4px 12px;" disabled={polBusy()} onClick={() => void savePolicy()}>
+                      {polBusy() ? "저장 중…" : "정책 저장"}
+                    </button>
+                    <Show when={polMsg()}>
+                      <span style="font-size:11px;color:#9aa1ad;">{polMsg()}</span>
+                    </Show>
+                  </div>
+                </div>
+              </Show>
+            </div>
+          </Show>
         </div>
         <div style="flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:8px;">
           <Show when={log().length === 0}>

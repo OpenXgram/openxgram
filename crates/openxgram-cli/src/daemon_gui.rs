@@ -417,6 +417,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // 이 머신의 친구-가능 로컬 에이전트 노출). remote-agents: 인증 필요 (로컬→원격 roster fetch).
         .route("/v1/gui/friends/roster", get(gui_friends_roster))
         .route("/v1/gui/friends/remote-agents", get(gui_friends_remote_agents))
+        // rc.321 — 친구 단위 정책 읽기/갱신 (권한/격리/비용). 인증 필요.
+        .route("/v1/gui/friends/{alias}/policy", get(gui_friend_policy_get).post(gui_friend_policy_set))
         .route("/v1/gui/agents/{alias}",
                post(gui_agents_delete))
         // rc.125 — 자동 감지 (alias 의 cwd CLAUDE.md + .mcp.json)
@@ -4231,6 +4233,10 @@ struct AgentRegisterBody {
     #[serde(default)] machine: Option<String>,
     #[serde(default)] worktree: Option<String>,
     #[serde(default)] is_public: Option<bool>,
+    // rc.321 — 친구 단위 정책 (classification="friend" 일 때만 의미 있음).
+    #[serde(default)] friend_permission: Option<String>,
+    #[serde(default)] friend_isolated: Option<bool>,
+    #[serde(default)] friend_cost_tracked: Option<bool>,
 }
 
 #[derive(serde::Deserialize)]
@@ -4259,6 +4265,7 @@ async fn gui_agents_list(
                 ac.group_name, ac.messenger_enabled, ac.orchestration_role, ac.special_instructions, ac.updated_at, \
                 p.classification, p.execution_mode, p.ai_type, p.is_public, p.machine, p.display_name, \
                 p.source, p.activated, p.perm_mode, p.model, p.thinking, \
+                p.friend_permission, p.friend_isolated, p.friend_cost_tracked, \
                 (SELECT COUNT(*) FROM acp_messages am WHERE am.conv_key = ac.alias AND am.role='agent' \
                    AND am.created_at > COALESCE((SELECT last_read FROM acp_read WHERE conv_key = ac.alias), '')) AS unread \
          FROM agent_capabilities ac \
@@ -4290,7 +4297,10 @@ async fn gui_agents_list(
             "perm_mode": r.get::<_, Option<String>>(19)?,
             "model": r.get::<_, Option<String>>(20)?,
             "thinking": r.get::<_, Option<String>>(21)?,
-            "unread": r.get::<_, i64>(22)?,
+            "friend_permission": r.get::<_, Option<String>>(22)?,
+            "friend_isolated": r.get::<_, Option<i64>>(23)?.map(|v| v != 0),
+            "friend_cost_tracked": r.get::<_, Option<i64>>(24)?.map(|v| v != 0),
+            "unread": r.get::<_, i64>(25)?,
         }))
     }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("q: {e}")})))?
         .filter_map(|r| r.ok()).collect();
@@ -4663,6 +4673,10 @@ async fn gui_agents_register(
         body.worktree.as_deref(),
         body.is_public.unwrap_or(false),
         &now,
+        // rc.321 — 친구 정책 (classification="friend" 일 때만 의미; 그 외엔 컬럼 기본값 보존).
+        body.friend_permission.as_deref().filter(|s| !s.is_empty()),
+        body.friend_isolated,
+        body.friend_cost_tracked,
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("profiles upsert: {e}")})))?;
 
     // rc.192 본질 fix — UI 토글 messenger_enabled=true 시 sub-keypair + peer entry 자동 생성.
@@ -4779,11 +4793,22 @@ fn upsert_agent_profile(
     worktree: Option<&str>,
     is_public: bool,
     now: &str,
+    // rc.321 — 친구 단위 정책 (None 이면 DB DEFAULT 또는 기존값 유지).
+    friend_permission: Option<&str>,
+    friend_isolated: Option<bool>,
+    friend_cost_tracked: Option<bool>,
 ) -> rusqlite::Result<usize> {
+    // None 컬럼은 COALESCE(excluded, existing) 로 기존값 보존. INSERT 신규행은
+    // friend_permission='request'/isolated=0/cost_tracked=1 의 컬럼 DEFAULT 가 적용되도록
+    // None → 명시 기본값으로 매핑(신규행에 NULL NOT NULL 위반 방지).
+    let perm = friend_permission.unwrap_or("request");
+    let iso = friend_isolated.map(|b| b as i64).unwrap_or(0);
+    let cost = friend_cost_tracked.map(|b| b as i64).unwrap_or(1);
     conn.execute(
         "INSERT INTO agent_profiles \
-            (alias, ai_type, classification, execution_mode, machine, worktree, is_public, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
+            (alias, ai_type, classification, execution_mode, machine, worktree, is_public, \
+             friend_permission, friend_isolated, friend_cost_tracked, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11) \
          ON CONFLICT(alias) DO UPDATE SET \
             ai_type = excluded.ai_type, \
             classification = excluded.classification, \
@@ -4791,10 +4816,18 @@ fn upsert_agent_profile(
             machine = COALESCE(excluded.machine, machine), \
             worktree = COALESCE(excluded.worktree, worktree), \
             is_public = excluded.is_public, \
+            friend_permission = COALESCE(?12, friend_permission), \
+            friend_isolated = COALESCE(?13, friend_isolated), \
+            friend_cost_tracked = COALESCE(?14, friend_cost_tracked), \
             updated_at = excluded.updated_at",
         rusqlite::params![
             alias, ai_type, classification, execution_mode,
-            machine, worktree, is_public as i64, now,
+            machine, worktree, is_public as i64,
+            perm, iso, cost, now,
+            // UPDATE 분기는 명시 입력만 덮어쓰도록 raw Option 전달(None → 기존값 보존).
+            friend_permission,
+            friend_isolated.map(|b| b as i64),
+            friend_cost_tracked.map(|b| b as i64),
         ],
     )
 }
@@ -4946,12 +4979,18 @@ async fn gui_friends_roster(
     State(state): State<GuiServerState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     let mut db = state.db.lock().await;
+    // rc.321 — LEFT JOIN + null/empty classification 포함 fix.
+    // 이전: INNER JOIN + classification IN (primary/pinned/project/special) 는
+    //   프로필 없는(자동등록) 에이전트 + classification 이 NULL/'' 인 실제 작업 에이전트를
+    //   모두 누락시켰다 → 머신의 진짜 working 에이전트가 친구 browse 목록에 안 보였음.
+    // 수정: classification 이 'friend' 가 아니기만 하면 포함(NULL/'' 는 project 로 취급).
+    //   노이즈/시스템 alias 는 아래 filter 에서 제외.
     let mut stmt = db.conn().prepare(
         "SELECT ac.alias, p.ai_type, ac.role, p.classification \
          FROM agent_capabilities ac \
-         JOIN agent_profiles p ON p.alias = ac.alias \
+         LEFT JOIN agent_profiles p ON p.alias = ac.alias \
          WHERE ac.role IS NOT 'tmux' \
-           AND p.classification IN ('primary','pinned','project','special') \
+           AND (p.classification IS NULL OR p.classification != 'friend') \
          ORDER BY ac.alias ASC",
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto { error: format!("roster prep: {e}") })))?;
     let agents: Vec<serde_json::Value> = stmt.query_map([], |r| {
@@ -4980,6 +5019,134 @@ async fn gui_friends_roster(
     Ok(Json(serde_json::json!({
         "machine": this_machine_alias(),
         "agents": agents,
+    })))
+}
+
+/// rc.321 — 친구 단위 정책 (권한/격리/비용). DB `agent_profiles` 의 friend_* 컬럼 사상.
+#[derive(Clone, Debug)]
+struct FriendPolicy {
+    permission: String,
+    isolated: bool,
+    cost_tracked: bool,
+}
+
+impl Default for FriendPolicy {
+    fn default() -> Self {
+        // 친구 row 가 없거나(=알 수 없는 발신자) 정책 미설정 시의 안전 기본값.
+        // 기본 permission=request(작업 허용), 격리 off, 비용기록 on.
+        Self { permission: "request".to_string(), isolated: false, cost_tracked: true }
+    }
+}
+
+/// `permission` 입력 검증 — 4개 enum 만 허용.
+fn validate_friend_permission(p: &str) -> Result<(), String> {
+    match p {
+        "blocked" | "read" | "request" | "full" => Ok(()),
+        other => Err(format!("friend_permission 은 blocked|read|request|full (받음: {other})")),
+    }
+}
+
+/// `agent_profiles` 에서 `alias` 의 친구 정책을 로드.
+/// row 가 없으면 `Ok(None)` (발신자가 로컬 친구가 아님 — 호출측이 정책 미적용 판단).
+fn load_friend_policy(
+    conn: &rusqlite::Connection,
+    alias: &str,
+) -> rusqlite::Result<Option<FriendPolicy>> {
+    let mut stmt = conn.prepare(
+        "SELECT friend_permission, friend_isolated, friend_cost_tracked, classification \
+         FROM agent_profiles WHERE alias = ?1",
+    )?;
+    let mut rows = stmt.query_map([alias], |r| {
+        Ok((
+            r.get::<_, Option<String>>(0)?,
+            r.get::<_, Option<i64>>(1)?,
+            r.get::<_, Option<i64>>(2)?,
+            r.get::<_, Option<String>>(3)?,
+        ))
+    })?;
+    match rows.next() {
+        Some(Ok((perm, iso, cost, _class))) => Ok(Some(FriendPolicy {
+            permission: perm.filter(|s| !s.is_empty()).unwrap_or_else(|| "request".to_string()),
+            isolated: iso.unwrap_or(0) != 0,
+            cost_tracked: cost.unwrap_or(1) != 0,
+        })),
+        Some(Err(e)) => Err(e),
+        None => Ok(None),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct FriendPolicySetBody {
+    #[serde(default)] permission: Option<String>,
+    #[serde(default)] isolated: Option<bool>,
+    #[serde(default)] cost_tracked: Option<bool>,
+}
+
+/// `GET /v1/gui/friends/{alias}/policy` — 친구 정책 읽기.
+async fn gui_friend_policy_get(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let pol = load_friend_policy(db.conn(), &alias)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto { error: format!("policy load: {e}") })))?;
+    match pol {
+        Some(p) => Ok(Json(serde_json::json!({
+            "alias": alias,
+            "permission": p.permission,
+            "isolated": p.isolated,
+            "cost_tracked": p.cost_tracked,
+        }))),
+        None => Err((StatusCode::NOT_FOUND, Json(ErrorDto { error: format!("unknown friend: {alias}") }))),
+    }
+}
+
+/// `POST /v1/gui/friends/{alias}/policy` — 기존 친구 정책 갱신.
+/// body `{permission?, isolated?, cost_tracked?}` — 제공된 필드만 갱신(나머지 보존).
+async fn gui_friend_policy_set(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+    Json(body): Json<FriendPolicySetBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    if let Some(p) = body.permission.as_deref().filter(|s| !s.is_empty()) {
+        validate_friend_permission(p)
+            .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, Json(ErrorDto { error: e })))?;
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut db = state.db.lock().await;
+    let affected = db.conn().execute(
+        "UPDATE agent_profiles SET \
+            friend_permission = COALESCE(?2, friend_permission), \
+            friend_isolated = COALESCE(?3, friend_isolated), \
+            friend_cost_tracked = COALESCE(?4, friend_cost_tracked), \
+            updated_at = ?5 \
+         WHERE alias = ?1",
+        rusqlite::params![
+            alias,
+            body.permission.as_deref().filter(|s| !s.is_empty()),
+            body.isolated.map(|b| b as i64),
+            body.cost_tracked.map(|b| b as i64),
+            now,
+        ],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto { error: format!("policy update: {e}") })))?;
+    if affected == 0 {
+        tracing::warn!(alias = %alias, "friend policy set: alias 없음 (갱신 0행)");
+        return Err((StatusCode::NOT_FOUND, Json(ErrorDto { error: format!("unknown friend: {alias}") })));
+    }
+    let pol = load_friend_policy(db.conn(), &alias)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto { error: format!("policy reload: {e}") })))?
+        .unwrap_or_default();
+    tracing::info!(alias = %alias, permission = %pol.permission, isolated = pol.isolated, cost_tracked = pol.cost_tracked, "friend policy updated");
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "alias": alias,
+        "permission": pol.permission,
+        "isolated": pol.isolated,
+        "cost_tracked": pol.cost_tracked,
     })))
 }
 
@@ -9896,7 +10063,7 @@ async fn a2a_served_task_send(
     Json(body): Json<crate::daemon_gui_a2a::TaskBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    let meta = load_a2a_agent_meta(&state, &alias).await?.ok_or_else(|| {
+    let mut meta = load_a2a_agent_meta(&state, &alias).await?.ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             Json(ErrorDto {
@@ -9904,10 +10071,125 @@ async fn a2a_served_task_send(
             }),
         )
     })?;
-    crate::daemon_gui_a2a::handle_task(&state.acp, &state.served_a2a, &meta, body)
-        .await
-        .map(Json)
-        .map_err(a2a_err)
+
+    // rc.321 — 친구 단위 POLICY 적용. 발신자(body.from)가 로컬 친구로 등록돼 있으면
+    // 그 정책(권한/격리/비용)을 enforce 한다. from 미상 또는 비-친구면 정책 미적용(기존 동작).
+    // owned 으로 보유 — handle_task 가 body 를 move 하므로 이후(비용 기록)에도 from 이 살아있어야 함.
+    let from_owned: Option<String> = body.from.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| s.to_string());
+    let from = from_owned.as_deref();
+    let policy: Option<FriendPolicy> = if let Some(f) = from {
+        let mut db = state.db.lock().await;
+        load_friend_policy(db.conn(), f)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto { error: format!("friend policy load: {e}") })))?
+    } else {
+        None
+    };
+
+    if let (Some(f), Some(pol)) = (from, policy.as_ref()) {
+        // 요청이 읽기/상태성인지 판별 — skill 이 status/read/get/list 류면 read 로 간주.
+        let skill_lc = body.skill.as_deref().unwrap_or("").to_ascii_lowercase();
+        let is_read_only = matches!(skill_lc.as_str(), "status" | "read" | "get" | "list" | "ping")
+            || skill_lc.starts_with("read")
+            || skill_lc.starts_with("status")
+            || skill_lc.starts_with("get");
+
+        match pol.permission.as_str() {
+            "blocked" => {
+                tracing::warn!(from = %f, target = %alias, "A2A friend request DENIED (permission=blocked)");
+                return Err((StatusCode::FORBIDDEN, Json(ErrorDto {
+                    error: format!("friend '{f}' is blocked — request declined"),
+                })));
+            }
+            "read" if !is_read_only => {
+                tracing::warn!(from = %f, target = %alias, skill = %skill_lc, "A2A friend request DENIED (permission=read, task-exec not allowed)");
+                return Err((StatusCode::FORBIDDEN, Json(ErrorDto {
+                    error: format!("friend '{f}' has read-only permission — task execution declined"),
+                })));
+            }
+            "read" | "request" | "full" => { /* allowed */ }
+            other => {
+                tracing::warn!(from = %f, target = %alias, permission = %other, "A2A friend request DENIED (unknown permission)");
+                return Err((StatusCode::FORBIDDEN, Json(ErrorDto {
+                    error: format!("friend '{f}' has unrecognized permission '{other}' — declined"),
+                })));
+            }
+        }
+
+        // 격리 — 친구의 작업을 메인 워크트리가 아닌 per-friend 격리 cwd 에서 실행.
+        // {data_dir}/friend-isolated/{from} 디렉토리를 보장하고 meta.project_path 를 덮어쓴다.
+        if pol.isolated {
+            let iso_dir = state.data_dir.join("friend-isolated").join(sanitize_path_segment(f));
+            match std::fs::create_dir_all(&iso_dir) {
+                Ok(_) => {
+                    tracing::info!(from = %f, target = %alias, cwd = %iso_dir.display(), "A2A friend ISOLATED — overriding cwd to per-friend dir");
+                    meta.project_path = Some(iso_dir.display().to_string());
+                }
+                Err(e) => {
+                    // 격리 플래그를 silent 무시 금지 — 격리 보장 불가 시 거절.
+                    tracing::warn!(from = %f, target = %alias, error = %e, "A2A friend isolation dir 생성 실패 — 요청 거절(격리 보장 불가)");
+                    return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto {
+                        error: format!("friend '{f}' requires isolation but isolated cwd could not be prepared: {e}"),
+                    })));
+                }
+            }
+        }
+    }
+
+    // 실제 실행. 토큰 카운트 가용 신호가 없으므로(현 ACP turn 은 토큰 미집계) tokens=0 placeholder.
+    let kind = body.skill.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| "task".to_string());
+    let result = crate::daemon_gui_a2a::handle_task(&state.acp, &state.served_a2a, &meta, body)
+        .await;
+
+    // 비용 기록 — 성공/실패 무관하게 1 row (cost_tracked=1 일 때). 토큰=0 (집계 신호 부재).
+    if let (Some(f), Some(pol)) = (from, policy.as_ref()) {
+        if pol.cost_tracked {
+            let machine: Option<String> = {
+                let mut db = state.db.lock().await;
+                db.conn().query_row(
+                    "SELECT machine FROM agent_profiles WHERE alias = ?1",
+                    [f],
+                    |r| r.get::<_, Option<String>>(0),
+                ).ok().flatten()
+            };
+            let occurred = kst_now_string();
+            let note = match &result {
+                Ok(_) => "a2a request handled".to_string(),
+                Err((code, msg)) => format!("a2a request failed ({code}): {msg}"),
+            };
+            let mut db = state.db.lock().await;
+            if let Err(e) = db.conn().execute(
+                "INSERT INTO friend_cost_ledger (friend_alias, machine, occurred_at_kst, kind, tokens, note) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![f, machine, occurred, kind, 0_i64, note],
+            ) {
+                // 원장 기록 실패는 요청 자체를 죽이지 않되, 절대 silent X — 명시 로그.
+                tracing::warn!(from = %f, error = %e, "friend_cost_ledger insert 실패 (요청 결과는 보존)");
+            }
+        }
+    }
+
+    result.map(Json).map_err(a2a_err)
+}
+
+/// 경로 세그먼트 안전화 — alias 를 디렉토리명으로 쓸 때 path traversal/구분자 제거.
+/// 영숫자·`-`·`_`·`.` 만 유지, 나머지는 `_` 로 치환. 빈 결과면 "unknown".
+fn sanitize_path_segment(s: &str) -> String {
+    let out: String = s
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .collect();
+    let trimmed = out.trim_matches('.').to_string();
+    if trimmed.is_empty() { "unknown".to_string() } else { trimmed }
+}
+
+/// KST(Asia/Seoul) 현재 시각 문자열 (절대 규칙 #4 — 모든 타임스탬프 KST).
+fn kst_now_string() -> String {
+    use chrono::{FixedOffset, Utc};
+    // +09:00 은 유효한 오프셋(33+ hr 범위 내) → east_opt 는 Some. 방어적으로 None 이면 UTC.
+    match FixedOffset::east_opt(9 * 3600) {
+        Some(kst) => Utc::now().with_timezone(&kst).to_rfc3339(),
+        None => Utc::now().to_rfc3339(),
+    }
 }
 
 /// `GET /v1/a2a/agents/{alias}/tasks/{id}` — A2A tasks/get for a served task.

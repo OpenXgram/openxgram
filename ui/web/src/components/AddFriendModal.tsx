@@ -90,6 +90,11 @@ export function AddFriendModal(props: {
   const [rosterErr, setRosterErr] = createSignal<string | null>(null);
   const [pickedAgent, setPickedAgent] = createSignal<string | null>(null); // 고른 원격 에이전트 alias
 
+  // rc.321 — 친구 단위 정책 (권한/격리/비용). 에이전트 선택 후 추가 전에 설정.
+  const [permission, setPermission] = createSignal<"blocked" | "read" | "request" | "full">("request");
+  const [isolated, setIsolated] = createSignal(false);
+  const [costTracked, setCostTracked] = createSignal(true);
+
   onMount(() => { void loadDevices(); });
 
   async function loadDevices() {
@@ -183,6 +188,10 @@ export function AddFriendModal(props: {
           machine: machineAddr,
           worktree: null,
           is_public: false,
+          // rc.321 — 친구 정책 (권한/격리/비용).
+          friend_permission: permission(),
+          friend_isolated: isolated(),
+          friend_cost_tracked: costTracked(),
         });
         props.onCreated(name, "machine");
       } catch (e) {
@@ -322,6 +331,33 @@ export function AddFriendModal(props: {
               </div>
             </Show>
           </div>
+
+          {/* ③ rc.321 — 친구 정책 (에이전트 선택 후 추가 전). 권한/격리/비용. */}
+          <Show when={pickedAgent()}>
+            <div class="fld">
+              <label>③ 친구 정책</label>
+              <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span style="font-size:12px;color:#8b94a3;width:64px;flex:none;">권한</span>
+                  <select class="ctl" style="flex:1;" value={permission()}
+                    onChange={(e) => setPermission(e.currentTarget.value as "blocked" | "read" | "request" | "full")}>
+                    <option value="blocked">차단 (요청 거절)</option>
+                    <option value="read">읽기 (상태/조회만)</option>
+                    <option value="request">작업요청 (기본)</option>
+                    <option value="full">전체</option>
+                  </select>
+                </div>
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#cfe3d6;">
+                  <input type="checkbox" checked={isolated()} onChange={(e) => setIsolated(e.currentTarget.checked)} />
+                  격리 — 친구 작업을 별도 디렉토리에서 실행 (메인 워크트리 보호)
+                </label>
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#cfe3d6;">
+                  <input type="checkbox" checked={costTracked()} onChange={(e) => setCostTracked(e.currentTarget.checked)} />
+                  비용 기록 — 친구별 사용량 원장에 기록
+                </label>
+              </div>
+            </div>
+          </Show>
         </Show>
 
         {/* 외부 A2A — 별칭 + AgentCard URL */}

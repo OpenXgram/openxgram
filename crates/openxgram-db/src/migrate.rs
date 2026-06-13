@@ -312,6 +312,12 @@ const MIGRATIONS: &[Migration] = &[
         name: "injection_rules",
         sql: include_str!("../migrations/0057_injection_rules.sql"),
     },
+    // rc.321 — 친구 단위 POLICY (권한/격리/비용). agent_profiles 정책 컬럼 + friend_cost_ledger.
+    Migration {
+        version: 58,
+        name: "friend_policy",
+        sql: include_str!("../migrations/0058_friend_policy.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

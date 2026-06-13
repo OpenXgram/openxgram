@@ -115,6 +115,9 @@ const ROUTES: Record<string, Route> = {
  // rc.320 — agent-level opt-in 친구. 원격 머신(host=Tailscale IP/host)의 친구-가능 에이전트 로스터를
  // 가져온다. 잔여 args(host)는 GET query 로 전송. { ok, base, machine, agents:[{alias,ai_type,role}] }.
  friends_remote_agents: { method: "GET", path: "/friends/remote-agents"},
+ // rc.321 — 친구 단위 정책(권한/격리/비용) 읽기/갱신. {alias} 치환. body {permission?, isolated?, cost_tracked?}.
+ friends_policy_get: { method: "GET", path: "/friends/{alias}/policy"},
+ friends_policy_set: { method: "POST", path: "/friends/{alias}/policy", body: true},
  agent_machines: { method: "GET", path: "/agent-machines"},
  models_list: { method: "GET", path: "/models"},
  // Phase 3 — A2A(에이전트↔에이전트)
