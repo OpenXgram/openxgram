@@ -194,12 +194,18 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
     // slug 화(소문자·비영숫자→'-'·trim)하여 cross-machine name collision 방지.
     // 레거시 xgram-ops 는 (충돌 없을 때만) <slug>-master 로 rename 마이그레이션.
     {
-        let machine = crate::daemon_gui_sessions::detect_machine();
-        let slug = machine_slug(&machine.alias);
+        // rc.316 — 머신 alias override: XGRAM_MACHINE_ALIAS 환경변수 우선(없으면 hostname).
+        //   마스터가 머신별 깔끔한 이름 지정용(seoul/zalman). ops 에이전트 slug 에만 영향(peer 신원 무관).
+        let machine_name = std::env::var("XGRAM_MACHINE_ALIAS")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| crate::daemon_gui_sessions::detect_machine().alias);
+        let slug = machine_slug(&machine_name);
         match ensure_machine_master(&opts.data_dir, &slug) {
             Ok(alias) => {
-                println!("  ✓ rc.315 ops 에이전트 보장: {alias} (머신 '{}' → slug '{slug}')", machine.alias);
-                tracing::info!(alias = %alias, machine = %machine.alias, slug = %slug, "per-machine ops agent ensured");
+                println!("  ✓ rc.316 ops 에이전트 보장: {alias} (머신 '{machine_name}' → slug '{slug}')");
+                tracing::info!(alias = %alias, machine = %machine_name, slug = %slug, "per-machine ops agent ensured");
             }
             Err(e) => tracing::warn!(error = %e, slug = %slug, "rc.315 per-machine ops agent 보장 실패 (계속)"),
         }
