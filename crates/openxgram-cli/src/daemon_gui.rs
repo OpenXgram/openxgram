@@ -5000,9 +5000,25 @@ async fn gui_friends_roster(
         ))
     }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto { error: format!("roster q: {e}") })))?
         .filter_map(|r| r.ok())
-        .filter(|(alias, _, _)| {
+        .filter(|(alias, _, role)| {
             let a = alias.trim();
+            // rc.322 — 운영/마스터 에이전트는 친구 대상에서 제외 (마스터 명시:
+            //   ops·워크플로우 오케스트레이터는 절대 friend 가 될 수 없음).
+            //   alias 가 '-master' 로 끝나거나 레거시 'xgram-ops' 거나,
+            //   role 이 ops 역할(운영·워크플로우 오케스트레이터 / openxgram-ops / ops-orchestrator)이면 제외.
+            let is_ops = a.ends_with("-master")
+                || a == "xgram-ops"
+                || role
+                    .as_deref()
+                    .map(|r| {
+                        let rt = r.trim();
+                        rt == "운영 · 워크플로우 오케스트레이터"
+                            || rt == "openxgram-ops"
+                            || rt == "ops-orchestrator"
+                    })
+                    .unwrap_or(false);
             !a.is_empty()
+                && !is_ops
                 && !a.starts_with("sv_aoe_")
                 && !a.starts_with("term_")
                 && a != "null"

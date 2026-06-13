@@ -35,12 +35,28 @@ pub fn run_rekey(data_dir: &Path, old: &str, new: &str) -> Result<()> {
     println!("[rekey] backup 생성: {}", backup_dir.display());
 
     // (b) keystore 재암호화.
+    //   RESILIENT (rc.322): 역사적으로 다른 비번으로 만들어져 섞인 keyfile 은
+    //   old 비번으로 복호화 안 되면 skip(warn) 하고 진행. vault(아래)가 로그인
+    //   게이트이므로 깨진 서명 keyfile 몇 개가 비번 변경을 막지 않는다.
     let ks_dir = keystore_dir(data_dir);
     let ks = FsKeystore::new(&ks_dir);
-    let ks_count = ks
+    let (ks_count, ks_skipped) = ks
         .reencrypt_all(old, new)
         .map_err(|e| with_backup_hint(&backup_dir, format!("keystore 재암호화 실패: {e}")))?;
     println!("[rekey] keystore 재암호화: {ks_count} 개 keyfile");
+    if !ks_skipped.is_empty() {
+        // 매 skip 은 keystore 레이어에서 이미 warn 로그됨 — 여기선 집계 보고.
+        tracing::warn!(
+            skipped = ks_skipped.len(),
+            keyfiles = ?ks_skipped,
+            "rc.322 keystore rekey: old 비번 불일치 keyfile skip (재암호화 안 됨 — 원본 유지)",
+        );
+        println!(
+            "[rekey] keystore skip: {} 개 (old 비번 불일치 — {})",
+            ks_skipped.len(),
+            ks_skipped.join(", ")
+        );
+    }
 
     // (c) vault 재암호화.
     let vault_count = {
@@ -58,8 +74,10 @@ pub fn run_rekey(data_dir: &Path, old: &str, new: &str) -> Result<()> {
         .map_err(|e| with_backup_hint(&backup_dir, format!("daemon.env 갱신 실패: {e}")))?;
     println!("[rekey] daemon.env 갱신 완료");
 
-    // (e) VERIFY — 새 비번으로 keystore.load + vault.get 성공해야 한다.
-    verify(data_dir, new, ks_count, vault_count)
+    // (e) VERIFY — vault.get 은 hard check(로그인 게이트). keystore 는
+    //   '성공적으로 재암호화된' 키만 검증(skip 된 깨진 keyfile 은 검증 대상 아님).
+    //   재암호화된 keyfile 이 0 개면 keystore 검증을 skip(warn) 한다 — vault 가 게이트.
+    verify(data_dir, new, &ks_skipped, vault_count)
         .map_err(|e| with_backup_hint(&backup_dir, format!("검증 실패: {e}")))?;
     println!("[rekey] 검증 통과 — 새 비밀번호로 keystore/vault 복호화 확인");
 
@@ -167,15 +185,29 @@ fn update_daemon_env(data_dir: &Path, new: &str) -> Result<()> {
 }
 
 /// 새 비번으로 keystore + vault 가 복호화되는지 확인.
-fn verify(data_dir: &Path, new: &str, ks_count: usize, vault_count: usize) -> Result<()> {
-    if ks_count > 0 {
-        let ks = FsKeystore::new(keystore_dir(data_dir));
-        let entries = ks.list().map_err(|e| anyhow!("keystore list: {e}"))?;
-        let first = entries
-            .first()
-            .ok_or_else(|| anyhow!("keystore 항목이 사라짐"))?;
-        ks.load(&first.name, new)
-            .map_err(|e| anyhow!("새 비번으로 keystore.load 실패: {e}"))?;
+///
+/// keystore 검증은 **성공적으로 재암호화된 키 1개**만 대상으로 한다(`ks_skipped`
+/// 에 든 깨진 keyfile 은 old 비번 그대로 남아 있으므로 new 로 load 하면 당연히
+/// 실패 → 검증 대상에서 제외). 재암호화된 키가 하나도 없으면(전부 skip) keystore
+/// 검증을 건너뛰고 warn 만 남긴다 — vault 가 로그인 게이트라 비번 변경은 유효.
+fn verify(data_dir: &Path, new: &str, ks_skipped: &[String], vault_count: usize) -> Result<()> {
+    let ks = FsKeystore::new(keystore_dir(data_dir));
+    let entries = ks.list().map_err(|e| anyhow!("keystore list: {e}"))?;
+    // skip 되지 않은(=재암호화 성공한) 첫 keyfile 을 검증 대상으로 선택.
+    let verify_target = entries
+        .iter()
+        .find(|e| !ks_skipped.iter().any(|s| s == &e.name));
+    match verify_target {
+        Some(entry) => {
+            ks.load(&entry.name, new)
+                .map_err(|e| anyhow!("새 비번으로 keystore.load 실패: {e}"))?;
+        }
+        None => {
+            // 재암호화된 keyfile 0 개 — 검증 skip(hard fail 아님). vault 가 게이트.
+            tracing::warn!(
+                "rc.322 rekey verify: 재암호화된 keystore keyfile 이 없어 keystore 검증 skip (vault 검증으로 게이트)",
+            );
+        }
     }
 
     if vault_count > 0 {

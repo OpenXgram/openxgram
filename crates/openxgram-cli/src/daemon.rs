@@ -1437,9 +1437,22 @@ fn ensure_machine_master(data_dir: &std::path::Path, machine_slug: &str) -> anyh
             )
             .is_ok();
         if master_exists {
+            // rc.322 — <slug>-master 가 이미 있고 레거시 xgram-ops 도 남아 있으면
+            //   중복 ops 에이전트다. 머신당 ops 는 1개여야 하므로 레거시 xgram-ops
+            //   행을 양 테이블에서 삭제하여 self-heal (master 가 정본).
+            let del_caps = db.conn().execute(
+                "DELETE FROM agent_capabilities WHERE alias = 'xgram-ops'",
+                [],
+            )?;
+            let del_prof = db.conn().execute(
+                "DELETE FROM agent_profiles WHERE alias = 'xgram-ops'",
+                [],
+            )?;
             tracing::warn!(
                 target_alias = %alias,
-                "rc.315 마이그레이션 skip: xgram-ops 와 {alias} 둘 다 존재 — clobber 방지, xgram-ops 유지",
+                deleted_caps = del_caps,
+                deleted_profiles = del_prof,
+                "rc.322 중복 ops 정리: xgram-ops 와 {alias} 둘 다 존재 — 레거시 xgram-ops 삭제 (머신당 ops 1개 보장)",
             );
         } else {
             // alias 컬럼만 rename (양 테이블). 다른 컬럼(role/description/capabilities/project_path 등)은 보존.

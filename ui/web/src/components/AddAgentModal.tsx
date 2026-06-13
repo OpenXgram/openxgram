@@ -50,7 +50,6 @@ function TreeNode(p: {
 // POST agents_register → agent_capabilities + agent_profiles 둘 다 기록(이게 있어야 로스터에 노출).
 // 만들면 바로 대화방. onCreated(alias) 로 부모가 새로고침 + 선택.
 
-const MACHINES_FALLBACK = ["서울"]; // config 로드 실패 시 로컬만.
 const AI_TYPES = ["claude", "codex", "gemini", "ollama", "hermes"];
 const CLASS_OPTS = [
   { v: "project", label: "📁 프로젝트 에이전트" },
@@ -59,19 +58,23 @@ const CLASS_OPTS = [
 ];
 
 export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: string) => void; prefillFolder?: string | null }) {
-  // 머신 목록 — config(machines.json) 기반(하드코딩 제거). 로컬 + 설정 머신.
-  const [machines] = createResource<string[]>(
+  // rc.322 — 로컬 에이전트 추가는 '현재 머신'에만 의미 있다(잘만 GUI 에서 서울
+  //   에이전트를 만들 수 없음). 그래서 cross-machine 선택 dropdown 을 제거하고
+  //   현재 머신을 sessions 라우트(machine.alias / hostname — TalkTab·Messenger 가
+  //   self 머신을 얻는 동일 출처)에서 읽어 read-only 로 표시한다.
+  const [selfMachine] = createResource<string>(
     async () => {
       try {
-        const r = await invoke<{ machines: string[] }>("agent_machines");
-        return r?.machines?.length ? r.machines : MACHINES_FALLBACK;
+        const r = await invoke<{ machine?: { alias?: string; hostname?: string } }>("sessions");
+        return r?.machine?.alias?.trim() || r?.machine?.hostname?.trim() || "(이 머신)";
       } catch {
-        return MACHINES_FALLBACK;
+        return "(이 머신)";
       }
     },
-    { initialValue: MACHINES_FALLBACK },
+    { initialValue: "(이 머신)" },
   );
-  const [machine, setMachine] = createSignal(MACHINES_FALLBACK[0]);
+  // 머신 = 항상 현재 머신. 표시는 read-only, agents_register 에는 이 값을 전달.
+  const machine = () => selfMachine();
   // 미등록 tmux "추가" 진입 시 그 세션 cwd 를 폴더로 prefill(=project_path). 없으면 기본.
   const [folder, setFolder] = createSignal((props.prefillFolder && props.prefillFolder.trim()) || "/home/llm/projects/starian-set");
   const [aiType, setAiType] = createSignal("claude");
@@ -159,9 +162,8 @@ export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: s
         <div class="mrow">
           <div class="fld">
             <label>1 · 머신</label>
-            <select class="ctl" value={machine()} onChange={(e) => { setMachine(e.currentTarget.value); setTree(null); setTreeErr(null); if (treeOpen()) void loadTree(treeRoot()); }}>
-              {(machines() ?? MACHINES_FALLBACK).map((m) => <option value={m}>{m}</option>)}
-            </select>
+            {/* rc.322 — 로컬 추가는 현재 머신 전용. 선택 불가(read-only). */}
+            <input class="ctl" value={machine()} readonly disabled title="로컬 에이전트는 현재 머신에만 추가됩니다" />
           </div>
           <div class="fld">
             <label>3 · AI 종류</label>

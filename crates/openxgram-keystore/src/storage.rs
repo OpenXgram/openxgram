@@ -314,16 +314,38 @@ impl FsKeystore {
     /// keystore 의 모든 keyfile 을 old → new 비번으로 재암호화한다 (rekey).
     ///
     /// 봉투(envelope/DEK) 구조가 없어 각 keyfile 이 비번에서 직접 파생되므로
-    /// 모든 항목을 순회하며 개별 재암호화한다. 재암호화한 keyfile 수를 반환.
-    /// 어느 한 항목이라도 실패하면 즉시 raise (fallback 금지).
-    pub fn reencrypt_all(&self, old: &str, new: &str) -> Result<usize, KeystoreError> {
+    /// 모든 항목을 순회하며 개별 재암호화한다.
+    ///
+    /// RESILIENT (rc.322): 한 머신의 keystore 가 서로 다른 시점·다른 비번으로
+    /// 만들어져 섞여 있을 수 있다(역사적 불일치). 어떤 keyfile 이 `old` 비번으로
+    /// 복호화되지 않으면(`KeystoreError::InvalidPassword`) 그 파일만 건너뛰고
+    /// (warn 로그 남김) 다음 파일로 진행한다. **그 외 모든 오류는 즉시 raise**
+    /// (fallback 금지 — 조용히 삼키지 않고 매 skip 마다 warn).
+    ///
+    /// 반환: `(reencrypted, skipped)` — 재암호화 성공 개수 + skip 된 keyfile 이름들.
+    /// vault 가 로그인 게이트이므로 깨진 서명 keyfile 몇 개는 비번 변경을 막지 않는다.
+    pub fn reencrypt_all(
+        &self,
+        old: &str,
+        new: &str,
+    ) -> Result<(usize, Vec<String>), KeystoreError> {
         let entries = self.list()?;
         let mut count = 0usize;
+        let mut skipped: Vec<String> = Vec::new();
         for entry in entries {
-            self.reencrypt_keyfile(&entry.name, old, new)?;
-            count += 1;
+            match self.reencrypt_keyfile(&entry.name, old, new) {
+                Ok(()) => count += 1,
+                Err(KeystoreError::InvalidPassword) => {
+                    tracing::warn!(
+                        keyfile = %entry.name,
+                        "rc.322 keystore rekey: old 비번으로 복호화 불가 — skip (비번 변경은 계속)",
+                    );
+                    skipped.push(entry.name);
+                }
+                Err(e) => return Err(e),
+            }
         }
-        Ok(count)
+        Ok((count, skipped))
     }
 }
 
