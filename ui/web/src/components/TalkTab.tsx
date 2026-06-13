@@ -125,7 +125,11 @@ function isLocalPath(projectPath: string | null | undefined): boolean {
 // 로컬 에이전트 여부 — classification==="friend" 면 무조건 친구(명시 친구 등록).
 // 그 외엔: machine 이 원격값이면 친구, project_path 가 다른 머신 경로면 친구. 둘 다 아니면 로컬.
 function isLocalAgent(a: { machine?: string | null; project_path?: string | null; classification?: string | null }, selfNames: string[]): boolean {
-  if ((a.classification ?? "") === "friend") return false; // 명시 친구.
+  const cls = (a.classification ?? "");
+  if (cls === "friend") return false; // 명시 친구.
+  // 마스터/시스템·프라이머리 에이전트는 머신-로컬(친구 아님 — 마스터 명시). machine 필드가 alias
+  //   라벨(zalman)이라 GUI self-name(whitegun-win)과 안 맞아도 로컬로 본다.
+  if (cls === "special" || cls === "primary") return true;
   // 로컬/친구는 machine 필드로만 판정. project_path 기반 휴리스틱(하드코딩 /home/llm)은 제거 —
   //   머신마다 유저 홈이 다르다(서울 /home/llm, 잘만 /home/pasia). 그 하드코딩 때문에 잘만이
   //   자기 /home/pasia 에이전트를 친구로 오분류해 로컬 로스터에서 사라지던 버그(CLAUDE.md #7 위반).
