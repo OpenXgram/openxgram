@@ -126,10 +126,10 @@ function isLocalPath(projectPath: string | null | undefined): boolean {
 // 그 외엔: machine 이 원격값이면 친구, project_path 가 다른 머신 경로면 친구. 둘 다 아니면 로컬.
 function isLocalAgent(a: { machine?: string | null; project_path?: string | null; classification?: string | null }, selfNames: string[]): boolean {
   if ((a.classification ?? "") === "friend") return false; // 명시 친구.
-  const p = (a.project_path ?? "").trim();
-  // project_path 가 명확히 다른 머신 경로(HOME 외 절대경로)면 친구.
-  if (p && !isLocalPath(p) && p.startsWith("/home/")) return false; // /home/pasia 등.
-  // machine 필드 기준 — 원격이면 친구.
+  // 로컬/친구는 machine 필드로만 판정. project_path 기반 휴리스틱(하드코딩 /home/llm)은 제거 —
+  //   머신마다 유저 홈이 다르다(서울 /home/llm, 잘만 /home/pasia). 그 하드코딩 때문에 잘만이
+  //   자기 /home/pasia 에이전트를 친구로 오분류해 로컬 로스터에서 사라지던 버그(CLAUDE.md #7 위반).
+  //   machine 이 비었거나 현재 머신 = 로컬, 원격 머신값 = 친구.
   if (!isLocalMachineField(a.machine, selfNames)) return false;
   return true;
 }
