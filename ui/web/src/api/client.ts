@@ -112,6 +112,9 @@ const ROUTES: Record<string, Route> = {
  // Tailscale 장치 자동 목록 (친구 추가=머신 피커용). 백엔드 라우트가 아직 없을 수 있음(다른 에이전트가 추가 중)
  // → 호출 실패 시 AddFriendModal 이 graceful 폴백(수동 IP 입력)으로 처리한다.
  tailnet_devices: { method: "GET", path: "/tailnet/devices"},
+ // rc.320 — agent-level opt-in 친구. 원격 머신(host=Tailscale IP/host)의 친구-가능 에이전트 로스터를
+ // 가져온다. 잔여 args(host)는 GET query 로 전송. { ok, base, machine, agents:[{alias,ai_type,role}] }.
+ friends_remote_agents: { method: "GET", path: "/friends/remote-agents"},
  agent_machines: { method: "GET", path: "/agent-machines"},
  models_list: { method: "GET", path: "/models"},
  // Phase 3 — A2A(에이전트↔에이전트)

@@ -413,8 +413,10 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // GET: 등록된 모든 에이전트 (messenger_enabled 포함). POST: 등록/갱신 upsert.
         .route("/v1/gui/agents",
                get(gui_agents_list).post(gui_agents_register))
-        // rc.317 — 양방향 친구 등록 수신측 (cross-daemon, 인증 없음 — peer-inbound).
-        .route("/v1/gui/friends/announce", post(gui_friend_announce))
+        // rc.320 — agent-level opt-in 친구. roster: 인증 없음 (cross-daemon peer-inbound,
+        // 이 머신의 친구-가능 로컬 에이전트 노출). remote-agents: 인증 필요 (로컬→원격 roster fetch).
+        .route("/v1/gui/friends/roster", get(gui_friends_roster))
+        .route("/v1/gui/friends/remote-agents", get(gui_friends_remote_agents))
         .route("/v1/gui/agents/{alias}",
                post(gui_agents_delete))
         // rc.125 — 자동 감지 (alias 의 cwd CLAUDE.md + .mcp.json)
@@ -4712,78 +4714,11 @@ async fn gui_agents_register(
         );
     }
 
-    // rc.317 — 양방향(mutual) 친구 등록. machine 친구(원격 머신 OpenXgram)를 로컬에 등록할 때,
-    // 그 머신 데몬에 best-effort 로 reciprocal announce 를 POST 하여 양쪽이 서로를 친구로 본다.
-    // 트리거 조건: classification="friend" + machine(원격 도달 주소) 보유 (AddFriendModal 머신 친구 경로).
-    // fire-and-forget: announce 실패는 로컬 add 를 실패시키지 않고 warn 로그만 (silent-degrade 금지).
-    // 한계: 친구의 도달 가능 GUI 주소는 machine 필드(Tailscale IP/host)에서 GUI_PORT 로 derive →
-    //       tailnet/LAN reachable peer 에서만 동작. (머신 친구 = tailnet peer 라는 가정.)
-    if classification == "friend" {
-        if let Some(friend_host) = body.machine.as_deref().filter(|s| !s.is_empty()) {
-            // rc.318 — 단일 URL 대신 ORDERED 후보 base URL 목록을 derive 하여 순차 시도.
-            // (설치별 GUI 포트 + localhost-bound + Funnel + 0.0.0.0-bound 토폴로지 모두 커버.)
-            let candidates = friend_announce_base_urls(friend_host);
-            if candidates.is_empty() {
-                tracing::warn!(host = %friend_host, "friend announce skip: 후보 GUI base URL 없음 (도달 불가 주소)");
-            } else {
-                // THIS 머신을 기술하는 announce payload.
-                let me_machine = std::env::var("XGRAM_MACHINE_ALIAS")
-                    .ok()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| crate::daemon_gui_sessions::detect_machine().alias);
-                let me_address = openxgram_transport::tailscale::self_reachable_url(
-                    openxgram_core::ports::GUI_PORT,
-                );
-                let me_eth = self_master_eth(state.data_dir.as_ref());
-                let payload = FriendAnnounceBody {
-                    machine: me_machine.clone(),
-                    address: me_address,
-                    eth_address: me_eth,
-                    ai_type: Some("claude".to_string()),
-                };
-                let friend_host = friend_host.to_string();
-                // detached: 로컬 응답을 막지 않는다. 후보를 순차 시도, 첫 2xx 성공 시 STOP.
-                // 모든 후보 실패 시 warn (silent-degrade 금지).
-                tokio::spawn(async move {
-                    let client = match reqwest::Client::builder()
-                        .timeout(std::time::Duration::from_secs(5))
-                        .build()
-                    {
-                        Ok(c) => c,
-                        Err(e) => {
-                            tracing::warn!(error = %e, "friend announce: reqwest client build 실패");
-                            return;
-                        }
-                    };
-                    let mut last_err: Option<String> = None;
-                    for base in &candidates {
-                        let url = format!("{}/v1/gui/friends/announce", base.trim_end_matches('/'));
-                        match client.post(&url).json(&payload).send().await {
-                            Ok(resp) if resp.status().is_success() => {
-                                tracing::info!(machine = %me_machine, target = %url, "friend announce 송신 성공 (mutual)");
-                                return;
-                            }
-                            Ok(resp) => {
-                                last_err = Some(format!("{url} → status {}", resp.status()));
-                                tracing::debug!(target = %url, status = %resp.status(), "friend announce: 후보 비정상 응답, 다음 후보 시도");
-                            }
-                            Err(e) => {
-                                last_err = Some(format!("{url} → {e}"));
-                                tracing::debug!(target = %url, error = %e, "friend announce: 후보 송신 실패, 다음 후보 시도");
-                            }
-                        }
-                    }
-                    tracing::warn!(
-                        host = %friend_host,
-                        candidates = ?candidates,
-                        last_error = ?last_err,
-                        "friend announce: 모든 후보 실패 — 한쪽만 등록됨 (silent-degrade 아님)"
-                    );
-                });
-            }
-        }
-    }
+    // rc.320 — agent-level opt-in 친구 모델 (model "B"). 머신 단위 양방향 announce 폐기.
+    // 친구 추가는 원격의 SPECIFIC 에이전트를 사용자가 골라 단방향(one-directional)으로 등록한다.
+    // 따라서 여기서는 reciprocal announce 를 발사하지 않는다 — 로컬 친구 row 만 UPSERT.
+    // (원격이 자기 로스터를 노출하는 경로는 GET /v1/gui/friends/roster + remote-agents.)
+    let _ = classification; // 친구 분류는 위 upsert_agent_profile 에서 이미 기록됨.
 
     Ok(Json(serde_json::json!({
         "ok": true,
@@ -4989,82 +4924,148 @@ fn friend_announce_base_urls(machine: &str) -> Vec<String> {
         .collect()
 }
 
-/// THIS 머신의 master eth address (announce 신원용). keystore 비번 없으면 None — 무해.
-fn self_master_eth(data_dir: &std::path::Path) -> Option<String> {
-    use openxgram_keystore::Keystore;
-    let pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").ok()?;
-    let ks = openxgram_keystore::FsKeystore::new(openxgram_core::paths::keystore_dir(data_dir));
-    let kp = ks.load(openxgram_core::paths::MASTER_KEY_NAME, &pw).ok()?;
-    Some(kp.address.as_str().to_string())
-}
-
-/// `POST /v1/gui/friends/announce` body — announce 를 보내는 머신(THIS)의 신원.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct FriendAnnounceBody {
-    /// 보내는 머신 이름 (XGRAM_MACHINE_ALIAS 또는 hostname).
-    machine: String,
-    /// 보내는 머신의 reachable GUI base URL (없으면 수신측이 친구 추가만, 역-announce 불가).
-    #[serde(default)]
-    address: Option<String>,
-    #[serde(default)]
-    eth_address: Option<String>,
-    #[serde(default)]
-    ai_type: Option<String>,
-}
-
-/// `POST /v1/gui/friends/announce` — 다른 머신이 "나를 친구로 추가했다"고 알려옴.
-/// rc.317 양방향 등록 수신측. 인증 없음 (cross-daemon peer-inbound — `/v1/peers/reachable`
-/// 와 동일 신뢰 모델: tailnet/LAN 도달 가능 데몬만 호출 가능). idempotent UPSERT.
-/// 결과: announce 한 머신을 로컬 친구(classification="friend", machine=<address>,
-/// messenger_enabled=1)로 등록 → A↔B 상호 친구.
-async fn gui_friend_announce(
-    State(state): State<GuiServerState>,
-    Json(body): Json<FriendAnnounceBody>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
-    let machine = body.machine.trim();
-    if machine.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, Json(ErrorDto { error: "machine 필수".into() })));
-    }
-    // 친구 alias = 보내온 머신 이름. machine 필드에는 역방향 announce 용 reachable 주소를 저장
-    // (gui_agents_register 의 머신 친구와 동일 분류 규칙 — TalkTab 이 친구 섹션에 표시).
-    let friend_machine_addr = body
-        .address
-        .as_deref()
-        .map(str::trim)
+/// 이 머신의 이름 — `XGRAM_MACHINE_ALIAS` env 우선, 없으면 `detect_machine().alias`.
+fn this_machine_alias() -> String {
+    std::env::var("XGRAM_MACHINE_ALIAS")
+        .ok()
+        .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or(machine);
-    let ai_type = body.ai_type.as_deref().filter(|s| !s.is_empty()).unwrap_or("claude");
-    let now = openxgram_core::time::kst_now().to_rfc3339();
+        .unwrap_or_else(|| crate::daemon_gui_sessions::detect_machine().alias)
+}
 
+/// `GET /v1/gui/friends/roster` — rc.320 agent-level opt-in 친구 모델.
+/// 인증 없음 (cross-daemon peer-inbound — `gui_friend_announce`(폐기 전) / `/v1/peers/reachable`
+/// 와 동일 신뢰 모델: tailnet/LAN 도달 가능 데몬만 호출 가능). 이 머신의 **친구로 추가 가능한
+/// 로컬 에이전트**를 노출 → 원격 머신이 어떤 에이전트를 친구로 고를지 browse 할 수 있게 한다.
+///
+/// 포함 규칙: classification in (primary/pinned/project/special) — 실제 로컬 에이전트만.
+///   제외: classification="friend" (남의 친구 row 재노출 금지) + 시스템/노이즈
+///   (alias 가 `^(sv_aoe_|term_|null|default)` 매칭 또는 빈 문자열).
+/// 반환: `{ machine, agents: [{ alias, ai_type, role }] }`.
+async fn gui_friends_roster(
+    State(state): State<GuiServerState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     let mut db = state.db.lock().await;
-    upsert_agent_capabilities(
-        db.conn(),
-        machine,
-        "친구 머신",
-        Some(&format!("원격 머신 OpenXgram (announce: {friend_machine_addr})")),
-        None,
-        None,
-        None,
-        None,
-        true, // messenger_enabled — 실제 peer 통신 대상.
-        None,
-        None,
-        &now,
-    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto { error: format!("announce capabilities upsert: {e}") })))?;
-    upsert_agent_profile(
-        db.conn(),
-        machine,
-        ai_type,
-        "friend",
-        "on_demand",
-        Some(friend_machine_addr),
-        None,
-        false,
-        &now,
-    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto { error: format!("announce profile upsert: {e}") })))?;
+    let mut stmt = db.conn().prepare(
+        "SELECT ac.alias, p.ai_type, ac.role, p.classification \
+         FROM agent_capabilities ac \
+         JOIN agent_profiles p ON p.alias = ac.alias \
+         WHERE ac.role IS NOT 'tmux' \
+           AND p.classification IN ('primary','pinned','project','special') \
+         ORDER BY ac.alias ASC",
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto { error: format!("roster prep: {e}") })))?;
+    let agents: Vec<serde_json::Value> = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, Option<String>>(1)?,
+            r.get::<_, Option<String>>(2)?,
+        ))
+    }).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto { error: format!("roster q: {e}") })))?
+        .filter_map(|r| r.ok())
+        .filter(|(alias, _, _)| {
+            let a = alias.trim();
+            !a.is_empty()
+                && !a.starts_with("sv_aoe_")
+                && !a.starts_with("term_")
+                && a != "null"
+                && a != "default"
+        })
+        .map(|(alias, ai_type, role)| serde_json::json!({
+            "alias": alias,
+            "ai_type": ai_type.filter(|s| !s.is_empty()).unwrap_or_else(|| "claude".to_string()),
+            "role": role,
+        }))
+        .collect();
 
-    tracing::info!(machine = %machine, addr = %friend_machine_addr, eth = ?body.eth_address, "friend announce 수신 — 로컬 친구 등록 (mutual)");
-    Ok(Json(serde_json::json!({ "ok": true, "registered": machine })))
+    Ok(Json(serde_json::json!({
+        "machine": this_machine_alias(),
+        "agents": agents,
+    })))
+}
+
+/// `GET /v1/gui/friends/remote-agents?host=<ip|host>` — rc.320.
+/// AUTH 필요 (일반 GUI 라우트). `host`(원격 머신의 Tailscale IP/host)의 reachable GUI base URL 을
+/// `friend_announce_base_urls` 로 derive 한 뒤, 순서대로 `{base}/v1/gui/friends/roster` 를 GET 하여
+/// 첫 성공 후보의 로스터를 반환한다 (short timeout). 친구로 고를 원격 에이전트 목록 browse 용.
+/// 도달 후보 없음/전부 실패 시 `{ ok:false, error }` + warn 로그 (silent fallback 금지).
+#[derive(Debug, Deserialize)]
+struct RemoteAgentsQuery {
+    host: String,
+}
+
+async fn gui_friends_remote_agents(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Query(q): Query<RemoteAgentsQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let host = q.host.trim();
+    if host.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorDto { error: "host 필수".into() })));
+    }
+
+    let candidates = friend_announce_base_urls(host);
+    if candidates.is_empty() {
+        tracing::warn!(host = %host, "remote-agents: 도달 가능 base URL 후보 없음");
+        return Ok(Json(serde_json::json!({
+            "ok": false,
+            "error": format!("도달 가능 GUI 주소를 찾지 못함 ({host})"),
+        })));
+    }
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(4))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = %e, "remote-agents: reqwest client build 실패");
+            return Ok(Json(serde_json::json!({
+                "ok": false,
+                "error": format!("HTTP 클라이언트 생성 실패: {e}"),
+            })));
+        }
+    };
+
+    let mut last_err: Option<String> = None;
+    for base in &candidates {
+        let url = format!("{}/v1/gui/friends/roster", base.trim_end_matches('/'));
+        match client.get(&url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.json::<serde_json::Value>().await {
+                    Ok(roster) => {
+                        let machine = roster.get("machine").cloned().unwrap_or(serde_json::Value::Null);
+                        let agents = roster.get("agents").cloned().unwrap_or_else(|| serde_json::json!([]));
+                        tracing::info!(host = %host, base = %base, "remote-agents: 로스터 fetch 성공");
+                        return Ok(Json(serde_json::json!({
+                            "ok": true,
+                            "base": base,
+                            "machine": machine,
+                            "agents": agents,
+                        })));
+                    }
+                    Err(e) => {
+                        last_err = Some(format!("{url} → JSON 파싱 실패: {e}"));
+                        tracing::debug!(target = %url, error = %e, "remote-agents: 응답 JSON 파싱 실패, 다음 후보 시도");
+                    }
+                }
+            }
+            Ok(resp) => {
+                last_err = Some(format!("{url} → status {}", resp.status()));
+                tracing::debug!(target = %url, status = %resp.status(), "remote-agents: 후보 비정상 응답, 다음 후보 시도");
+            }
+            Err(e) => {
+                last_err = Some(format!("{url} → {e}"));
+                tracing::debug!(target = %url, error = %e, "remote-agents: 후보 송신 실패, 다음 후보 시도");
+            }
+        }
+    }
+
+    tracing::warn!(host = %host, candidates = ?candidates, last_error = ?last_err, "remote-agents: 모든 후보 실패");
+    Ok(Json(serde_json::json!({
+        "ok": false,
+        "error": last_err.unwrap_or_else(|| "원격 데몬 도달 실패".to_string()),
+    })))
 }
 
 // rc.132 — agent_templates: agency-agents 카탈로그 (msitarzewski/agency-agents).
