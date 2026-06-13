@@ -342,6 +342,38 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
     return map;
   });
 
+  // ── 명부 검색 ──────────────────────────────────────────────
+  // 대화명·이름·id(alias)·머신 등 + 메시지 본문(CONTENT)까지 검색.
+  const [talkQ, setTalkQ] = createSignal("");
+
+  // messages_recent → alias 별 누적 메시지 텍스트(소문자). 본문 검색 인덱스.
+  // 매칭 규칙은 lastMsgByAlias 와 동일(sender / peer: / conversation_id 포함).
+  const msgTextByAlias = createMemo<Map<string, string>>(() => {
+    const map = new Map<string, string>();
+    const aliases = (agents() ?? []).map((a) => a.alias);
+    for (const m of recent() ?? []) {
+      const s = (m.sender || "").toLowerCase();
+      const cid = (m.conversation_id || "").toLowerCase();
+      const text = `${m.sender || ""} ${m.body || ""}`.toLowerCase();
+      for (const a of aliases) {
+        const al = a.toLowerCase();
+        if (s === al || s === `peer:${al}` || cid.includes(al)) {
+          map.set(al, (map.get(al) ?? "") + " " + text);
+        }
+      }
+    }
+    return map;
+  });
+
+  // 한 에이전트(AgentRow)가 현재 쿼리에 매칭되는지 — 빈 쿼리면 항상 true(전체 노출).
+  const talkMatch = (a: AgentRow): boolean => {
+    const ql = talkQ().trim().toLowerCase();
+    if (!ql) return true;
+    const fields = [a.alias, a.display_name, a.role, a.machine, a.ai_type, a.project_path];
+    if (fields.some((f) => (f ?? "").toLowerCase().includes(ql))) return true;
+    return (msgTextByAlias().get(a.alias.toLowerCase()) ?? "").includes(ql);
+  };
+
   // 현재 머신 식별 — sessions().machine.alias/hostname. 로컬/친구 분류 기준.
   // 기본값 "server-seoul"(이 머신) — sessions 미로드 시 폴백.
   const selfMachineNames = createMemo<string[]>(() => {
@@ -376,7 +408,7 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
   // 로컬 에이전트만 그룹화(친구는 별도 "👥 친구" 섹션).
   const grouped = createMemo(() => {
     const by: Record<string, AgentRow[]> = { primary: [], pinned: [], project: [], special: [] };
-    for (const a of localAgents()) {
+    for (const a of localAgents().filter(talkMatch)) {
       const cls = a.classification && by[a.classification] ? a.classification : "project";
       by[cls].push(a);
     }
@@ -609,7 +641,14 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
           <h1>OpenXgram</h1>
           <button class="add-btn" onClick={() => setAddOpen(true)}>＋ 에이전트 추가</button>
         </div>
-        <div class="search">🔍 에이전트·대화 검색</div>
+        <input
+          class="search"
+          type="text"
+          value={talkQ()}
+          onInput={(e) => setTalkQ(e.currentTarget.value)}
+          placeholder="🔍 에이전트·대화명·내용 검색"
+          style="width:100%;box-sizing:border-box;padding:9px 10px;background:#11151c;border:1px solid #2a2f3a;border-radius:8px;color:#e6e6e6;font-size:13px;outline:none;"
+        />
 
         <div class="list">
           <Show when={!agents.loading} fallback={<div class="empty">불러오는 중…</div>}>
@@ -672,11 +711,11 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
 
                 {/* 👥 친구 (다른 머신·외부) — 머신 친구(agents_list 의 원격) + 외부 A2A(localStorage).
                     원격이라 로컬 파일트리 없음 → 선택 시 우측에 "A2A로 통신" 안내. */}
-                <Show when={friendAgents().length + externalFriendRows().length > 0}>
+                <Show when={friendAgents().filter(talkMatch).length + externalFriendRows().filter(talkMatch).length > 0}>
                   <div class="group-title">
-                    👥 친구 (다른 머신·외부) <span class="gt-sub">({friendAgents().length + externalFriendRows().length})</span>
+                    👥 친구 (다른 머신·외부) <span class="gt-sub">({friendAgents().filter(talkMatch).length + externalFriendRows().filter(talkMatch).length})</span>
                   </div>
-                  <For each={[...friendAgents(), ...externalFriendRows()]}>
+                  <For each={[...friendAgents().filter(talkMatch), ...externalFriendRows().filter(talkMatch)]}>
                     {(a) => {
                       const online = () => isOnline(peerMap().get(a.alias.toLowerCase())?.last_seen);
                       const isExt = () => extFriends().some((f) => f.alias === a.alias);

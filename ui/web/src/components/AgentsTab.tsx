@@ -172,8 +172,16 @@ export function AgentsTab(props: { onGotoChat?: (alias: string) => void; onGotoM
     (src) => invoke<ConfigChain>("agent_config_chain", { alias: src.alias, ai_type: src.ai_type }),
   );
 
+  // 🔍 에이전트 검색 — alias(id 포함, 예 aoe_X_d63f41f)·역할(tmux)·경로(turbo)·ai_type·머신·분류 등 횡단 부분일치.
+  const [q, setQ] = createSignal("");
+  const matchAgent = (a: AgentRow, ql: string) =>
+    !ql ||
+    [a.alias, a.display_name, a.role, a.description, a.ai_type, a.machine, a.project_path, a.group_name, a.classification, a.execution_mode]
+      .some((f) => (f ?? "").toLowerCase().includes(ql));
+
   const grouped = createMemo(() => {
-    const list = agents() ?? [];
+    const ql = q().trim().toLowerCase();
+    const list = (agents() ?? []).filter((a) => matchAgent(a, ql));
     const by: Record<string, AgentRow[]> = { primary: [], project: [], special: [] };
     for (const a of list) {
       const cls = a.classification && by[a.classification] ? a.classification : "project";
@@ -237,6 +245,14 @@ export function AgentsTab(props: { onGotoChat?: (alias: string) => void; onGotoM
           <h2>에이전트</h2>
           <button class="kk-add" onClick={() => { setAddPrefillFolder(null); setShowAdd(true); }}>➕ 에이전트 추가</button>
         </div>
+        {/* 🔍 검색 — alias·id·역할·경로·ai_type·머신 등 횡단 부분일치(예: d63f41f, turbo, aoe, tmux) */}
+        <input
+          type="text"
+          value={q()}
+          onInput={(e) => setQ(e.currentTarget.value)}
+          placeholder="🔍 검색 (이름·id·역할·tmux·경로 …)"
+          style="width:100%;box-sizing:border-box;margin:0 0 8px;padding:8px 10px;border:1px solid #2a2f3a;border-radius:8px;background:#11151c;color:#e6e6e6;font-size:13px;"
+        />
         <Show when={!agents.loading} fallback={<div class="empty">불러오는 중…</div>}>
           <For each={CLASS_GROUPS}>
             {(g) => (

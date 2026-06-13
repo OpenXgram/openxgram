@@ -674,14 +674,10 @@ export function AcpConversation(props: {
   function convKey(): string {
     return props.preset?.label || props.preset?.adapter || "default";
   }
-  async function recordMsg(role: "me" | "agent" | "note", text: string) {
-    if (!text.trim()) return;
-    try {
-      await invoke("acp_conv_add", { key: convKey(), role, text });
-    } catch {
-      /* 영속화 실패는 대화 흐름을 막지 않음 */
-    }
-  }
+  // recordMsg 제거됨 — 사용자("me")·에이전트("agent") 메시지 영속화는 모두 데몬이 권위있게
+  // 담당한다(daemon_gui.rs acp_session_prompt: 턴 전 me-row, 턴 후 agent-row). UI 는 optimistic
+  // pushBubble 로 즉시 표시만 하고, DB 재동기화(loadHistory)가 권위 소스다. acp_conv_add 직접 호출
+  // 불필요(이중 기록 방지).
   // resync=true: conv_persisted 알림에 의한 재동기화(턴 완료 후 DB 최신화). 이때는
   // "복원됨" note·pendingContext 주입을 건너뛴다(라이브 세션이라 맥락 재주입 불필요·중복 note 방지).
   async function loadHistory(resync = false): Promise<boolean> {
@@ -819,7 +815,10 @@ export function AcpConversation(props: {
     setBusy(true);
     setSpawnErr(null);
     pushBubble({ id: nextId++, kind: "me", text, time: nowClock() });
-    void recordMsg("me", text); // 사용자 메시지 영속화(실제 입력만).
+    // 사용자 메시지("me") 영속화는 이제 데몬이 권위있게 담당한다(POST /v1/acp/sessions/{id}/prompt
+    // 핸들러가 턴 실행 전 record_message("me", ...) 기록). 종전의 optimistic recordMsg("me")는
+    // 타이밍 의존(conv_persisted 재동기화가 비동기 기록보다 먼저 돌면 'me' 버블 소실)이라 제거.
+    // pushBubble(optimistic 표시)는 유지 — 즉시 화면에 보이고, DB 권위 기록과 이중되지 않는다(agent 와 동일).
     setDraft("");
     curAgentBubbleId = null;
     // 런타임 메모리 주입(하네스) — inject_memory 면 세션 첫 프롬프트에 OpenXgram L2 메모리를

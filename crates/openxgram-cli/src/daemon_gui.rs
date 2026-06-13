@@ -9812,6 +9812,21 @@ async fn acp_session_prompt(
     Json(body): Json<crate::daemon_gui_acp::PromptBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
+
+    // ── 사용자 프롬프트("me") 권위 기록 (턴 실행 전) ─────────────────────────
+    // 핵심 버그 fix: 종전 MAIN ACP 경로는 사용자 메시지("me")를 프론트엔드의 optimistic
+    // recordMsg("me", ...) 에만 의존해 영속화했다. 이는 타이밍 의존적이라 큐된 follow-up
+    // (턴 끝에 자동 전송) 이나 UI 이탈 시 'me' 버블이 DB 재동기화(conv_persisted/loadHistory)
+    // 로 사라졌다. 이제 데몬이 agent 응답과 동일하게 "me" 도 권위 기록한다 — UI 와 무관히 영속.
+    // 순서: 여기서 me-row(턴 전) → 아래 agent-row(턴 후). created_at(me) ≤ created_at(agent).
+    // raw 텍스트 기록: 맥락 복원 preamble 은 prompt() 내부에서 body.text 앞에 붙으므로
+    // body.text 는 사용자가 실제로 친 원문이다. 그 원문을 기록해 화면에 정확히 보이게 한다.
+    let raw_user_text = body.text.clone();
+    if let Some(conv_key) = state.acp.session_label(&id).await {
+        // record_message 는 빈 텍스트면 no-op, 영속 실패 시 명시 로그(절대 규칙 1).
+        state.acp.record_message(&conv_key, "me", &raw_user_text).await;
+    }
+
     let result = crate::daemon_gui_acp::prompt(&state.acp, &id, body)
         .await
         .map_err(acp_err)?;
