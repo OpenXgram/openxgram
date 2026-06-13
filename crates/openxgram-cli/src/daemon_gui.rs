@@ -4989,8 +4989,7 @@ async fn gui_friends_roster(
         "SELECT ac.alias, p.ai_type, ac.role, p.classification \
          FROM agent_capabilities ac \
          LEFT JOIN agent_profiles p ON p.alias = ac.alias \
-         WHERE ac.role IS NOT 'tmux' \
-           AND (p.classification IS NULL OR p.classification != 'friend') \
+         WHERE (p.classification IS NULL OR p.classification != 'friend') \
          ORDER BY ac.alias ASC",
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto { error: format!("roster prep: {e}") })))?;
     let agents: Vec<serde_json::Value> = stmt.query_map([], |r| {
