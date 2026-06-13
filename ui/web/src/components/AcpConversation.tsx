@@ -474,6 +474,75 @@ export function AcpConversation(props: {
   // 파일 바이트 서빙 라우트(daemon)가 없으므로 같은-머신 file:// 미리보기 + 경로 복사 위주.
   const [artOpen, setArtOpen] = createSignal(false);
   const [artZoom, setArtZoom] = createSignal<string | null>(null); // 확대 중인 이미지 src
+  // 아티팩트별(=path 키) 인라인 뷰어/에디터 상태. 읽기·편집·저장은 fs_file_get/fs_file_put 사용.
+  type ArtState = {
+    open: boolean;          // 뷰어/에디터 펼침 여부
+    edit: boolean;          // 편집 모드(textarea) 여부
+    loading: boolean;       // fs_file_get 진행 중
+    loaded: boolean;        // 한 번이라도 로드 성공
+    content: string;        // 읽어온 원본 본문
+    buffer: string;         // 편집 버퍼
+    err: string | null;     // 읽기 에러 텍스트
+    saving: boolean;        // fs_file_put 진행 중
+    saveMsg: { ok: boolean; text: string } | null;
+  };
+  const emptyArtState = (): ArtState => ({ open: false, edit: false, loading: false, loaded: false, content: "", buffer: "", err: null, saving: false, saveMsg: null });
+  const [artStates, setArtStates] = createSignal<Record<string, ArtState>>({});
+  const artState = (path: string): ArtState => artStates()[path] ?? emptyArtState();
+  function patchArtState(path: string, patch: Partial<ArtState>) {
+    setArtStates((prev) => ({ ...prev, [path]: { ...(prev[path] ?? emptyArtState()), ...patch } }));
+  }
+  // 파일 본문 로드 (idempotent — 이미 로드됐으면 스킵). AgentsTab 편집 모달과 동일 호출 패턴.
+  async function loadArtContent(path: string): Promise<string | null> {
+    const st = artState(path);
+    if (st.loaded) return st.content;
+    patchArtState(path, { loading: true, err: null });
+    try {
+      const r = await invoke<{ content: string }>("fs_file_get", { path });
+      const content = r.content ?? "";
+      patchArtState(path, { loading: false, loaded: true, content, buffer: content });
+      return content;
+    } catch (e) {
+      patchArtState(path, { loading: false, err: String((e as Error).message || e) });
+      return null;
+    }
+  }
+  // 읽기 토글 — 펼치면서(닫혀있었으면) 본문 로드.
+  function toggleArtView(path: string) {
+    const st = artState(path);
+    if (st.open && !st.edit) { patchArtState(path, { open: false }); return; }
+    patchArtState(path, { open: true, edit: false });
+    if (!st.loaded) void loadArtContent(path);
+  }
+  // 편집 토글 — 펼치면서 본문 로드(버퍼 채움).
+  function toggleArtEdit(path: string) {
+    const st = artState(path);
+    if (st.open && st.edit) { patchArtState(path, { open: false, edit: false }); return; }
+    patchArtState(path, { open: true, edit: true, saveMsg: null });
+    if (!st.loaded) void loadArtContent(path);
+  }
+  async function saveArt(path: string) {
+    patchArtState(path, { saving: true, saveMsg: null });
+    try {
+      const r = await invoke<{ ok: boolean; path: string; bytes: number }>("fs_file_put", { path, content: artState(path).buffer });
+      patchArtState(path, { saving: false, content: artState(path).buffer, saveMsg: { ok: true, text: `✅ 저장됨 · ${r.bytes ?? artState(path).buffer.length}B` } });
+    } catch (e) {
+      patchArtState(path, { saving: false, saveMsg: { ok: false, text: `❌ ${String((e as Error).message || e)}` } });
+    }
+  }
+  // code/text/file 아티팩트 다운로드 — a.src 가 실 URL 이 아니면 fs_file_get 으로 본문 받아 Blob 다운로드.
+  async function downloadArt(path: string, name: string) {
+    const content = await loadArtContent(path);
+    if (content == null) return; // 에러는 loadArtContent 가 artState.err 에 기록
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+  // a.src 가 브라우저가 직접 다운로드 가능한 URL 인지(http(s)/blob). file:// 는 fetch 다운로드 대상.
+  const isUsableUrl = (src: string) => /^(https?:|blob:)/.test(src);
   type Artifact = { path: string; name: string; kind: "image" | "code" | "text" | "file"; src: string };
   const IMG_RE = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i;
   const CODE_RE = /\.(ts|tsx|js|jsx|rs|py|go|java|c|cpp|h|hpp|json|toml|yaml|yml|sh|sql|html|css|md|txt|csv|xml)$/i;
@@ -1485,13 +1554,13 @@ export function AcpConversation(props: {
           <Show when={artOpen()}>
             <div
               onClick={(e) => e.stopPropagation()}
-              style="position:fixed;top:0;right:0;bottom:0;width:min(320px,86vw);background:#15171c;border-left:1px solid #2a2f3a;z-index:1050;display:flex;flex-direction:column;box-shadow:-4px 0 14px rgba(0,0,0,.35);"
+              style="position:fixed;top:0;right:0;bottom:0;width:min(560px,94vw);min-width:280px;max-width:96vw;resize:horizontal;overflow:hidden;direction:rtl;background:#15171c;border-left:1px solid #2a2f3a;z-index:1050;display:flex;flex-direction:column;box-shadow:-4px 0 14px rgba(0,0,0,.35);"
             >
-              <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #2a2f3a;">
+              <div style="direction:ltr;display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #2a2f3a;">
                 <span style="font-weight:700;color:#e6e9ee;font-size:13px;">📎 아티팩트 ({artifacts().length})</span>
                 <span style="cursor:pointer;color:#9aa1ad;" onClick={() => setArtOpen(false)}>✕</span>
               </div>
-              <div style="flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:10px;">
+              <div style="direction:ltr;flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:10px;">
                 <Show when={artifacts().length === 0}>
                   <div style="color:#8b95a1;font-size:12px;">대화에 파일·이미지가 없습니다.</div>
                 </Show>
@@ -1511,10 +1580,53 @@ export function AcpConversation(props: {
                           onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
                         />
                       </Show>
-                      <div style="display:flex;gap:8px;margin-top:6px;font-size:11px;">
-                        <a href={a.src} download={a.name} target="_blank" rel="noopener" style="color:#58a6ff;text-decoration:none;">⬇ 다운로드</a>
+                      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;font-size:11px;align-items:center;">
+                        {/* code/text/file: 인라인 읽기·편집 액션 (image 는 위 미리보기로 충분) */}
+                        <Show when={a.kind !== "image"}>
+                          <span style="cursor:pointer;color:#58a6ff;" onClick={() => toggleArtView(a.path)}>👁 {artState(a.path).open && !artState(a.path).edit ? "닫기" : "읽기"}</span>
+                          <span style="cursor:pointer;color:#58a6ff;" onClick={() => toggleArtEdit(a.path)}>✎ {artState(a.path).open && artState(a.path).edit ? "닫기" : "편집"}</span>
+                        </Show>
+                        {/* 다운로드: image/실URL 은 native <a download>; 그 외는 fs_file_get → Blob 다운로드 */}
+                        <Show
+                          when={a.kind === "image" || isUsableUrl(a.src)}
+                          fallback={<span style="cursor:pointer;color:#58a6ff;" onClick={() => void downloadArt(a.path, a.name)}>⬇ 다운로드</span>}
+                        >
+                          <a href={a.src} download={a.name} target="_blank" rel="noopener" style="color:#58a6ff;text-decoration:none;">⬇ 다운로드</a>
+                        </Show>
                         <span style="cursor:pointer;color:#9aa1ad;" onClick={() => copyText(a.path)}>⧉ 경로 복사</span>
                       </div>
+                      {/* 인라인 뷰어/에디터 — 와이드 라인은 가로 스크롤(줄바꿈 없음) */}
+                      <Show when={artState(a.path).open}>
+                        <div style="margin-top:8px;">
+                          <Show when={artState(a.path).loading}>
+                            <div style="color:#8b95a1;font-size:11px;">불러오는 중…</div>
+                          </Show>
+                          <Show when={artState(a.path).err}>
+                            <div style="color:#f85149;font-size:11px;white-space:pre-wrap;word-break:break-word;">⚠ 읽기 실패: {artState(a.path).err}</div>
+                          </Show>
+                          <Show when={!artState(a.path).loading && !artState(a.path).err && !artState(a.path).edit}>
+                            <pre style="overflow:auto;overflow-x:auto;white-space:pre;max-height:320px;font-size:11px;background:#0e0f13;color:#cdd6e0;padding:8px;border-radius:6px;margin:0;">{artState(a.path).content}</pre>
+                          </Show>
+                          <Show when={!artState(a.path).loading && !artState(a.path).err && artState(a.path).edit}>
+                            <textarea
+                              wrap="off"
+                              style="white-space:pre;overflow:auto;overflow-x:auto;width:100%;min-height:200px;font-family:monospace;font-size:11px;background:#0e0f13;color:#cdd6e0;border:1px solid #2a2f3a;border-radius:6px;padding:8px;box-sizing:border-box;"
+                              value={artState(a.path).buffer}
+                              onInput={(e) => patchArtState(a.path, { buffer: (e.currentTarget as HTMLTextAreaElement).value })}
+                            />
+                            <div style="display:flex;gap:8px;align-items:center;margin-top:6px;">
+                              <button
+                                disabled={artState(a.path).saving}
+                                onClick={() => void saveArt(a.path)}
+                                style={`font-size:11px;padding:4px 12px;border-radius:6px;border:1px solid #2a2f3a;background:#238636;color:#fff;cursor:pointer;opacity:${artState(a.path).saving ? "0.6" : "1"};`}
+                              >{artState(a.path).saving ? "저장 중…" : "저장"}</button>
+                              <Show when={artState(a.path).saveMsg}>
+                                <span style={`font-size:11px;color:${artState(a.path).saveMsg!.ok ? "#3fb950" : "#f85149"};`}>{artState(a.path).saveMsg!.text}</span>
+                              </Show>
+                            </div>
+                          </Show>
+                        </div>
+                      </Show>
                       <div style="color:#5c6470;font-size:10px;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title={a.path}>{a.path}</div>
                     </div>
                   )}
