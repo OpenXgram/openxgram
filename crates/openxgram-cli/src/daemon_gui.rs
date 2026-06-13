@@ -413,6 +413,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // GET: 등록된 모든 에이전트 (messenger_enabled 포함). POST: 등록/갱신 upsert.
         .route("/v1/gui/agents",
                get(gui_agents_list).post(gui_agents_register))
+        // rc.317 — 양방향 친구 등록 수신측 (cross-daemon, 인증 없음 — peer-inbound).
+        .route("/v1/gui/friends/announce", post(gui_friend_announce))
         .route("/v1/gui/agents/{alias}",
                post(gui_agents_delete))
         // rc.125 — 자동 감지 (alias 의 cwd CLAUDE.md + .mcp.json)
@@ -4629,26 +4631,19 @@ async fn gui_agents_register(
     // (이전: body.role None → INSERT 시 SQL constraint fail)
     let role = body.role.as_deref().filter(|s| !s.is_empty()).unwrap_or("agent").to_string();
     let mut db = state.db.lock().await;
-    db.conn().execute(
-        "INSERT INTO agent_capabilities \
-            (alias, role, description, capabilities, tool_list, project_path, group_name, messenger_enabled, orchestration_role, special_instructions, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
-         ON CONFLICT(alias) DO UPDATE SET \
-            role = COALESCE(excluded.role, role), \
-            description = COALESCE(excluded.description, description), \
-            capabilities = COALESCE(excluded.capabilities, capabilities), \
-            tool_list = COALESCE(excluded.tool_list, tool_list), \
-            project_path = COALESCE(excluded.project_path, project_path), \
-            group_name = COALESCE(excluded.group_name, group_name), \
-            messenger_enabled = excluded.messenger_enabled, \
-            orchestration_role = COALESCE(excluded.orchestration_role, orchestration_role), \
-            special_instructions = COALESCE(excluded.special_instructions, special_instructions), \
-            updated_at = excluded.updated_at",
-        rusqlite::params![
-            body.alias, role, body.description, body.capabilities, body.tool_list,
-            body.project_path, body.group_name, body.messenger_enabled as i64,
-            body.orchestration_role, body.special_instructions, now,
-        ],
+    upsert_agent_capabilities(
+        db.conn(),
+        &body.alias,
+        &role,
+        body.description.as_deref(),
+        body.capabilities.as_deref(),
+        body.tool_list.as_deref(),
+        body.project_path.as_deref(),
+        body.group_name.as_deref(),
+        body.messenger_enabled,
+        body.orchestration_role.as_deref(),
+        body.special_instructions.as_deref(),
+        &now,
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("upsert: {e}")})))?;
 
     // 에이전트 프로필 upsert — 이 행이 있어야 "마스터가 생성한 에이전트"로 간주되어 로스터에 노출.
@@ -4656,22 +4651,16 @@ async fn gui_agents_register(
     let ai_type = body.ai_type.as_deref().filter(|s| !s.is_empty()).unwrap_or("claude");
     let classification = body.classification.as_deref().filter(|s| !s.is_empty()).unwrap_or("project");
     let exec_mode = body.execution_mode.as_deref().filter(|s| !s.is_empty()).unwrap_or("on_demand");
-    db.conn().execute(
-        "INSERT INTO agent_profiles \
-            (alias, ai_type, classification, execution_mode, machine, worktree, is_public, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
-         ON CONFLICT(alias) DO UPDATE SET \
-            ai_type = excluded.ai_type, \
-            classification = excluded.classification, \
-            execution_mode = excluded.execution_mode, \
-            machine = COALESCE(excluded.machine, machine), \
-            worktree = COALESCE(excluded.worktree, worktree), \
-            is_public = excluded.is_public, \
-            updated_at = excluded.updated_at",
-        rusqlite::params![
-            body.alias, ai_type, classification, exec_mode,
-            body.machine, body.worktree, body.is_public.unwrap_or(false) as i64, now,
-        ],
+    upsert_agent_profile(
+        db.conn(),
+        &body.alias,
+        ai_type,
+        classification,
+        exec_mode,
+        body.machine.as_deref(),
+        body.worktree.as_deref(),
+        body.is_public.unwrap_or(false),
+        &now,
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("profiles upsert: {e}")})))?;
 
     // rc.192 본질 fix — UI 토글 messenger_enabled=true 시 sub-keypair + peer entry 자동 생성.
@@ -4723,11 +4712,239 @@ async fn gui_agents_register(
         );
     }
 
+    // rc.317 — 양방향(mutual) 친구 등록. machine 친구(원격 머신 OpenXgram)를 로컬에 등록할 때,
+    // 그 머신 데몬에 best-effort 로 reciprocal announce 를 POST 하여 양쪽이 서로를 친구로 본다.
+    // 트리거 조건: classification="friend" + machine(원격 도달 주소) 보유 (AddFriendModal 머신 친구 경로).
+    // fire-and-forget: announce 실패는 로컬 add 를 실패시키지 않고 warn 로그만 (silent-degrade 금지).
+    // 한계: 친구의 도달 가능 GUI 주소는 machine 필드(Tailscale IP/host)에서 GUI_PORT 로 derive →
+    //       tailnet/LAN reachable peer 에서만 동작. (머신 친구 = tailnet peer 라는 가정.)
+    if classification == "friend" {
+        if let Some(friend_host) = body.machine.as_deref().filter(|s| !s.is_empty()) {
+            if let Some(friend_base) = friend_gui_base_url(friend_host) {
+                // THIS 머신을 기술하는 announce payload.
+                let me_machine = std::env::var("XGRAM_MACHINE_ALIAS")
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| crate::daemon_gui_sessions::detect_machine().alias);
+                let me_address = openxgram_transport::tailscale::self_reachable_url(
+                    openxgram_core::ports::GUI_PORT,
+                );
+                let me_eth = self_master_eth(state.data_dir.as_ref());
+                let payload = FriendAnnounceBody {
+                    machine: me_machine.clone(),
+                    address: me_address,
+                    eth_address: me_eth,
+                    ai_type: Some("claude".to_string()),
+                };
+                // detached: 로컬 응답을 막지 않는다. 실패는 warn.
+                tokio::spawn(async move {
+                    let url = format!("{}/v1/gui/friends/announce", friend_base.trim_end_matches('/'));
+                    let client = match reqwest::Client::builder()
+                        .timeout(std::time::Duration::from_secs(4))
+                        .build()
+                    {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "friend announce: reqwest client build 실패");
+                            return;
+                        }
+                    };
+                    match client.post(&url).json(&payload).send().await {
+                        Ok(resp) if resp.status().is_success() => {
+                            tracing::info!(machine = %me_machine, target = %url, "friend announce 송신 성공 (mutual)");
+                        }
+                        Ok(resp) => {
+                            tracing::warn!(target = %url, status = %resp.status(), "friend announce: 원격 데몬 비정상 응답");
+                        }
+                        Err(e) => {
+                            tracing::warn!(target = %url, error = %e, "friend announce: 송신 실패 (원격 도달 불가 추정 — 한쪽만 등록됨)");
+                        }
+                    }
+                });
+            } else {
+                tracing::warn!(host = %friend_host, "friend announce skip: GUI base URL derive 실패 (도달 불가 주소)");
+            }
+        }
+    }
+
     Ok(Json(serde_json::json!({
         "ok": true,
         "alias": body.alias,
         "eth_address": registered_eth,
     })))
+}
+
+/// `agent_capabilities` UPSERT — `gui_agents_register` 와 `gui_friend_announce` 공용 helper.
+/// 분기된 SQL 방지(단일 source of truth). idempotent (ON CONFLICT alias).
+#[allow(clippy::too_many_arguments)]
+fn upsert_agent_capabilities(
+    conn: &rusqlite::Connection,
+    alias: &str,
+    role: &str,
+    description: Option<&str>,
+    capabilities: Option<&str>,
+    tool_list: Option<&str>,
+    project_path: Option<&str>,
+    group_name: Option<&str>,
+    messenger_enabled: bool,
+    orchestration_role: Option<&str>,
+    special_instructions: Option<&str>,
+    now: &str,
+) -> rusqlite::Result<usize> {
+    conn.execute(
+        "INSERT INTO agent_capabilities \
+            (alias, role, description, capabilities, tool_list, project_path, group_name, messenger_enabled, orchestration_role, special_instructions, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
+         ON CONFLICT(alias) DO UPDATE SET \
+            role = COALESCE(excluded.role, role), \
+            description = COALESCE(excluded.description, description), \
+            capabilities = COALESCE(excluded.capabilities, capabilities), \
+            tool_list = COALESCE(excluded.tool_list, tool_list), \
+            project_path = COALESCE(excluded.project_path, project_path), \
+            group_name = COALESCE(excluded.group_name, group_name), \
+            messenger_enabled = excluded.messenger_enabled, \
+            orchestration_role = COALESCE(excluded.orchestration_role, orchestration_role), \
+            special_instructions = COALESCE(excluded.special_instructions, special_instructions), \
+            updated_at = excluded.updated_at",
+        rusqlite::params![
+            alias, role, description, capabilities, tool_list,
+            project_path, group_name, messenger_enabled as i64,
+            orchestration_role, special_instructions, now,
+        ],
+    )
+}
+
+/// `agent_profiles` UPSERT — `gui_agents_register` 와 `gui_friend_announce` 공용 helper.
+#[allow(clippy::too_many_arguments)]
+fn upsert_agent_profile(
+    conn: &rusqlite::Connection,
+    alias: &str,
+    ai_type: &str,
+    classification: &str,
+    execution_mode: &str,
+    machine: Option<&str>,
+    worktree: Option<&str>,
+    is_public: bool,
+    now: &str,
+) -> rusqlite::Result<usize> {
+    conn.execute(
+        "INSERT INTO agent_profiles \
+            (alias, ai_type, classification, execution_mode, machine, worktree, is_public, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
+         ON CONFLICT(alias) DO UPDATE SET \
+            ai_type = excluded.ai_type, \
+            classification = excluded.classification, \
+            execution_mode = excluded.execution_mode, \
+            machine = COALESCE(excluded.machine, machine), \
+            worktree = COALESCE(excluded.worktree, worktree), \
+            is_public = excluded.is_public, \
+            updated_at = excluded.updated_at",
+        rusqlite::params![
+            alias, ai_type, classification, execution_mode,
+            machine, worktree, is_public as i64, now,
+        ],
+    )
+}
+
+/// 친구 머신의 reachable GUI base URL 을 derive. `machine` 필드는 보통 bare host/IP
+/// (Tailscale IP `100.x.x.x` 또는 host) — scheme/포트가 없으면 `http://<host>:GUI_PORT` 로 보강.
+/// 이미 `http(s)://` 면 그대로 사용. 도달 불가(localhost/빈값) 면 None.
+fn friend_gui_base_url(machine: &str) -> Option<String> {
+    let raw = machine.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let candidate = if raw.starts_with("http://") || raw.starts_with("https://") {
+        raw.to_string()
+    } else if raw.contains(':') {
+        // host:port 형태 — scheme 만 보강.
+        format!("http://{raw}")
+    } else {
+        format!("http://{raw}:{}", openxgram_core::ports::GUI_PORT)
+    };
+    if openxgram_transport::tailscale::is_unreachable_address(&candidate) {
+        return None;
+    }
+    Some(candidate)
+}
+
+/// THIS 머신의 master eth address (announce 신원용). keystore 비번 없으면 None — 무해.
+fn self_master_eth(data_dir: &std::path::Path) -> Option<String> {
+    use openxgram_keystore::Keystore;
+    let pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").ok()?;
+    let ks = openxgram_keystore::FsKeystore::new(openxgram_core::paths::keystore_dir(data_dir));
+    let kp = ks.load(openxgram_core::paths::MASTER_KEY_NAME, &pw).ok()?;
+    Some(kp.address.as_str().to_string())
+}
+
+/// `POST /v1/gui/friends/announce` body — announce 를 보내는 머신(THIS)의 신원.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FriendAnnounceBody {
+    /// 보내는 머신 이름 (XGRAM_MACHINE_ALIAS 또는 hostname).
+    machine: String,
+    /// 보내는 머신의 reachable GUI base URL (없으면 수신측이 친구 추가만, 역-announce 불가).
+    #[serde(default)]
+    address: Option<String>,
+    #[serde(default)]
+    eth_address: Option<String>,
+    #[serde(default)]
+    ai_type: Option<String>,
+}
+
+/// `POST /v1/gui/friends/announce` — 다른 머신이 "나를 친구로 추가했다"고 알려옴.
+/// rc.317 양방향 등록 수신측. 인증 없음 (cross-daemon peer-inbound — `/v1/peers/reachable`
+/// 와 동일 신뢰 모델: tailnet/LAN 도달 가능 데몬만 호출 가능). idempotent UPSERT.
+/// 결과: announce 한 머신을 로컬 친구(classification="friend", machine=<address>,
+/// messenger_enabled=1)로 등록 → A↔B 상호 친구.
+async fn gui_friend_announce(
+    State(state): State<GuiServerState>,
+    Json(body): Json<FriendAnnounceBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    let machine = body.machine.trim();
+    if machine.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorDto { error: "machine 필수".into() })));
+    }
+    // 친구 alias = 보내온 머신 이름. machine 필드에는 역방향 announce 용 reachable 주소를 저장
+    // (gui_agents_register 의 머신 친구와 동일 분류 규칙 — TalkTab 이 친구 섹션에 표시).
+    let friend_machine_addr = body
+        .address
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(machine);
+    let ai_type = body.ai_type.as_deref().filter(|s| !s.is_empty()).unwrap_or("claude");
+    let now = openxgram_core::time::kst_now().to_rfc3339();
+
+    let mut db = state.db.lock().await;
+    upsert_agent_capabilities(
+        db.conn(),
+        machine,
+        "친구 머신",
+        Some(&format!("원격 머신 OpenXgram (announce: {friend_machine_addr})")),
+        None,
+        None,
+        None,
+        None,
+        true, // messenger_enabled — 실제 peer 통신 대상.
+        None,
+        None,
+        &now,
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto { error: format!("announce capabilities upsert: {e}") })))?;
+    upsert_agent_profile(
+        db.conn(),
+        machine,
+        ai_type,
+        "friend",
+        "on_demand",
+        Some(friend_machine_addr),
+        None,
+        false,
+        &now,
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto { error: format!("announce profile upsert: {e}") })))?;
+
+    tracing::info!(machine = %machine, addr = %friend_machine_addr, eth = ?body.eth_address, "friend announce 수신 — 로컬 친구 등록 (mutual)");
+    Ok(Json(serde_json::json!({ "ok": true, "registered": machine })))
 }
 
 // rc.132 — agent_templates: agency-agents 카탈로그 (msitarzewski/agency-agents).
