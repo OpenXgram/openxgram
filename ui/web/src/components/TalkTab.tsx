@@ -657,29 +657,7 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
                     </Show>
                   )}
                 </For>
-                {/* ➕ 추가되지 않은 에이전트 — 감지된 tmux 중 미등록. 클릭 → 대화명(alias) 부여=등록. */}
-                <Show when={unregisteredSessions().length > 0}>
-                  <div class="group-title">
-                    ➕ 추가되지 않은 에이전트 <span class="gt-sub">({unregisteredSessions().length})</span>
-                  </div>
-                  <For each={unregisteredSessions()}>
-                    {(s) => (
-                      <div class="row kk-unreg-row" title="클릭 → 대화명(alias) 부여해 등록" onClick={() => addFromSession(s)}>
-                        <div class="ava c-group">＋<span class="dot" /></div>
-                        <div class="meta">
-                          <div class="kk-card-l1">
-                            <span class="nm">{s.display || s.identifier}</span>
-                            <span class="kk-card-model">tmux</span>
-                          </div>
-                          <div class="kk-card-l2">
-                            <span class="st" title={s.cwd ?? ""}>{s.cwd ? baseName(s.cwd) : "폴더 미상"}</span>
-                            <span class="kk-card-add">＋ 추가</span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </For>
-                </Show>
+                {/* 추가되지 않은 에이전트(미등록 tmux) 섹션은 '에이전트 탭'으로 이동 — 대화 탭은 대화만. */}
 
                 {/* 👥 친구 (다른 머신·외부) — 머신 친구(agents_list 의 원격) + 외부 A2A(localStorage).
                     원격이라 로컬 파일트리 없음 → 선택 시 우측에 "A2A로 통신" 안내. */}

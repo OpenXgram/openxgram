@@ -6,6 +6,7 @@ import {
   setBearer,
   setDaemonUrl,
 } from "../api/client";
+import { SecuritySection } from "./SecuritySection";
 
 // 설정 탭 — 카카오톡 정본 목업(_mockups/kakao-mockup.html) 충실 이식.
 // 정본 #settingsOvl 의 .board / .bh("⚙️ 설정 · 계정·머신·연동") / .bb / .wsec / .qbtn 마크업·CSS 를
@@ -221,6 +222,9 @@ export function ConfigTab() {
             <button class="kk-set-btn alt" onClick={() => void testConn()}>연결 테스트</button>
           </div>
           <Show when={connMsg()}><div class="kk-set-msg">{connMsg()}</div></Show>
+
+          {/* 🔑 비밀번호 변경 (keystore/vault rekey) — 단일 출처 SecuritySection 컴포넌트 */}
+          <SecuritySection />
 
           {/* 연동 안내 (정본 hint) */}
           <div class="wsec" style="margin-top:18px;">연동</div>

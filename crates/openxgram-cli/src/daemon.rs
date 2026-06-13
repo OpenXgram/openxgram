@@ -188,6 +188,23 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
         Err(e) => tracing::warn!(error = %e, "built-in 에이전트 seed 실패 (계속)"),
     }
 
+    // rc.315 — per-머신 운영 에이전트 보장: `<machine>-master`.
+    // 머신마다 워크플로우/운영 소유 에이전트 1개가 항상 존재하도록 daemon boot 시 UPSERT.
+    // 머신 식별은 daemon 의 detect_machine() (= /v1/gui/sessions 의 machine 소스)과 동일,
+    // slug 화(소문자·비영숫자→'-'·trim)하여 cross-machine name collision 방지.
+    // 레거시 xgram-ops 는 (충돌 없을 때만) <slug>-master 로 rename 마이그레이션.
+    {
+        let machine = crate::daemon_gui_sessions::detect_machine();
+        let slug = machine_slug(&machine.alias);
+        match ensure_machine_master(&opts.data_dir, &slug) {
+            Ok(alias) => {
+                println!("  ✓ rc.315 ops 에이전트 보장: {alias} (머신 '{}' → slug '{slug}')", machine.alias);
+                tracing::info!(alias = %alias, machine = %machine.alias, slug = %slug, "per-machine ops agent ensured");
+            }
+            Err(e) => tracing::warn!(error = %e, slug = %slug, "rc.315 per-machine ops agent 보장 실패 (계속)"),
+        }
+    }
+
     // rc.268 — auto-seed 주기 tick: rc.201 auto-seed 는 startup 1회뿐이라, daemon 시작 이후
     // 새로 만든 tmux LLM 세션이 재시작 전까지 안 뜨던 본질 결함을 fix. 30초마다 재실행하여
     // 새 LLM tmux 세션을 재시작 없이 자동 등록 (auto_seed_local_tmux_agents 재사용 — INSERT OR IGNORE 라 idempotent).
@@ -1341,6 +1358,143 @@ fn seed_builtin_agents(data_dir: &std::path::Path) -> anyhow::Result<usize> {
         }
     }
     Ok(seeded)
+}
+
+/// rc.315 — 머신 식별자(alias/hostname)를 안전한 slug 로 변환.
+/// 소문자화 → 영숫자 아닌 문자는 '-' → 양끝 '-' 트림 → 연속 '-' 축약.
+/// 예: "server-seoul.internal" → "server-seoul", "zalman_WSL" → "zalman-wsl".
+/// 빈 결과면 "unknown" 폴백 (no silent fallback — 호출측에서 로그).
+fn machine_slug(raw: &str) -> String {
+    // rc.315 — 호스트명 첫 라벨만 사용해 깔끔한 머신명.
+    //   예: "server-seoul.c.teeup-492907.internal" → "server-seoul", "whitegun-win.local" → "whitegun-win".
+    let raw = raw.trim().split('.').next().unwrap_or(raw);
+    let mut slug = String::with_capacity(raw.len());
+    let mut prev_dash = false;
+    for ch in raw.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            for lc in ch.to_lowercase() {
+                slug.push(lc);
+            }
+            prev_dash = false;
+        } else if !prev_dash {
+            slug.push('-');
+            prev_dash = true;
+        }
+    }
+    let trimmed = slug.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        "unknown".to_string()
+    } else {
+        trimmed
+    }
+}
+
+/// rc.315 — per-머신 운영 에이전트 `<machine_slug>-master` 보장 (idempotent UPSERT).
+///
+/// 각 머신 daemon 이 boot 시 자기 머신의 워크플로우/운영 소유 에이전트가 존재함을 보장한다.
+/// 머신 prefix 로 cross-machine name collision 방지 (seoul-master / zalman-master).
+/// seed_builtin_agents 와 동일한 agent_capabilities + agent_profiles 양 테이블 UPSERT 패턴 재사용.
+///
+/// 마이그레이션: 레거시 `xgram-ops` 가 존재하고 `<slug>-master` 가 아직 없으면 rename.
+/// 둘 다 있으면 xgram-ops 를 건드리지 않고 경고만 로그 (clobber 방지).
+///
+/// 생성된 alias 를 반환.
+fn ensure_machine_master(data_dir: &std::path::Path, machine_slug: &str) -> anyhow::Result<String> {
+    let alias = format!("{machine_slug}-master");
+    let mut db = openxgram_db::Db::open(openxgram_db::DbConfig {
+        path: openxgram_core::paths::db_path(data_dir),
+        ..Default::default()
+    })?;
+    // rc.315 — fresh install 에선 agent_capabilities(0035) 미생성 상태일 수 있어 먼저 migrate.
+    // (마스터 요건: 머신-master 운영 에이전트는 '무조건' 존재 → 빈 DB 에서도 보장.)
+    db.migrate()?;
+    // 시간대 KST (CLAUDE.md 절대규칙 #4).
+    let now = openxgram_core::time::kst_now().to_rfc3339();
+
+    // ── 레거시 xgram-ops → <slug>-master 마이그레이션 ──
+    // 안전: 대상 alias 가 이미 있으면 절대 clobber 안 함 (경고만).
+    let legacy_exists: bool = db
+        .conn()
+        .query_row(
+            "SELECT 1 FROM agent_capabilities WHERE alias = 'xgram-ops'",
+            [],
+            |_| Ok(()),
+        )
+        .is_ok();
+    if legacy_exists {
+        let master_exists: bool = db
+            .conn()
+            .query_row(
+                "SELECT 1 FROM agent_capabilities WHERE alias = ?1",
+                rusqlite::params![alias],
+                |_| Ok(()),
+            )
+            .is_ok();
+        if master_exists {
+            tracing::warn!(
+                target_alias = %alias,
+                "rc.315 마이그레이션 skip: xgram-ops 와 {alias} 둘 다 존재 — clobber 방지, xgram-ops 유지",
+            );
+        } else {
+            // alias 컬럼만 rename (양 테이블). 다른 컬럼(role/description/capabilities/project_path 등)은 보존.
+            db.conn().execute(
+                "UPDATE agent_capabilities SET alias = ?1, updated_at = ?2 WHERE alias = 'xgram-ops'",
+                rusqlite::params![alias, now],
+            )?;
+            db.conn().execute(
+                "UPDATE agent_profiles SET alias = ?1, updated_at = ?2 WHERE alias = 'xgram-ops'",
+                rusqlite::params![alias, now],
+            )?;
+            tracing::info!(from = "xgram-ops", to = %alias, "rc.315 레거시 ops 에이전트 rename 완료");
+        }
+    }
+
+    // ── 운영 working dir materialize (ACP spawn cwd) ──
+    let agent_dir = data_dir.join("agents").join(&alias);
+    if let Err(e) = std::fs::create_dir_all(&agent_dir) {
+        tracing::warn!(error = %e, alias = %alias, "rc.315 ops 에이전트 디렉토리 생성 실패");
+    }
+    let project_path = agent_dir.to_string_lossy().to_string();
+
+    let role = "운영 · 워크플로우 오케스트레이터";
+    let description =
+        "이 머신의 운영·워크플로우 소유 에이전트. cron·heartbeat·스케줄링·배포 등 머신 운영 전반을 책임진다.";
+    let capabilities = r#"["workflow_orchestration","ops","scheduling"]"#;
+    let display_name = format!("{machine_slug} 운영");
+
+    // agent_capabilities — messenger_enabled=1 (peer 통신 활성, list_peers 노출).
+    db.conn().execute(
+        "INSERT INTO agent_capabilities (alias, role, description, capabilities, messenger_enabled, project_path, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6) \
+         ON CONFLICT(alias) DO UPDATE SET \
+             role = excluded.role, \
+             description = excluded.description, \
+             capabilities = excluded.capabilities, \
+             messenger_enabled = 1, \
+             project_path = COALESCE(NULLIF(agent_capabilities.project_path, ''), excluded.project_path), \
+             updated_at = excluded.updated_at",
+        rusqlite::params![alias, role, description, capabilities, project_path, now],
+    )?;
+
+    // agent_profiles — classification='special' (system/ops group), ai_type='claude', source='built_in', activated=1.
+    db.conn().execute(
+        "INSERT INTO agent_profiles (alias, ai_type, classification, execution_mode, machine, source, activated, is_public, created_at, updated_at) \
+         VALUES (?1, 'claude', 'special', 'always', ?2, 'built_in', 1, 0, ?3, ?3) \
+         ON CONFLICT(alias) DO UPDATE SET \
+             ai_type = 'claude', \
+             classification = 'special', \
+             machine = excluded.machine, \
+             updated_at = excluded.updated_at",
+        rusqlite::params![alias, machine_slug, now],
+    )?;
+
+    // display_name 컬럼은 migration 0050 으로 agent_profiles 에 추가됨 — 별도 UPDATE 로 동기화.
+    let _ = db.conn().execute(
+        "UPDATE agent_profiles SET display_name = ?2 WHERE alias = ?1 AND (display_name IS NULL OR display_name = '')",
+        rusqlite::params![alias, display_name],
+    );
+
+    Ok(alias)
 }
 
 /// rc.196 — retroactive register agents.
