@@ -1,4 +1,4 @@
-import { createSignal, createResource, createMemo, createEffect, For, Show } from "solid-js";
+import { createSignal, createResource, createMemo, createEffect, onCleanup, For, Show } from "solid-js";
 import { invoke } from "../api/client";
 import { AcpConversation, aiTypeToAdapter, type AcpPreset } from "./AcpConversation";
 import { AddAgentModal } from "./AddAgentModal";
@@ -1012,6 +1012,9 @@ function FriendPanel(props: { agent: AgentRow; isExternal: boolean; onClose: () 
   const [draft, setDraft] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [log, setLog] = createSignal<{ role: "me" | "agent" | "err"; text: string; ts: string }[]>([]);
+  // 지속 세션 — 첫 메시지에서 데몬이 반환한 sessionId 를 보관했다가 다음 메시지부터
+  // session_id 로 되돌려보낸다(멀티턴 기억·툴 상태 유지). 패널 떠날 때 close 호출.
+  const [sessionId, setSessionId] = createSignal<string | null>(null);
   const timeStr = () => new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
   // 외부 A2A: target = AgentCard URL(machine 에 저장됨). 머신 친구: target = alias(내부 라우팅).
   const target = () => (props.isExternal ? (props.agent.machine ?? "").trim() : props.agent.alias);
@@ -1052,9 +1055,17 @@ function FriendPanel(props: { agent: AgentRow; isExternal: boolean; onClose: () 
     setLog((l) => [...l, { role: "me", text, ts: timeStr() }]);
     setDraft("");
     try {
-      const r = await invoke<{ result?: { text?: string } }>("a2a_send", {
-        target: target(), task: text, from_agent: "Starian",
+      // session_id 동봉 — 살아있는 세션이면 데몬이 resume(이어 prompt), 첫 메시지면 새로 만든다.
+      const r = await invoke<{
+        sessionId?: string;
+        result?: { sessionId?: string; text?: string };
+      }>("a2a_send", {
+        target: target(), task: text, from_agent: "Starian", session_id: sessionId(),
       });
+      // 응답에서 지속 세션 id 추출 — 내부 alias 경로는 top-level sessionId,
+      // 외부 A2A 경로도 top-level sessionId(send 가 task.session_id 를 끌어올림). 둘 다 커버.
+      const sid = r?.sessionId ?? r?.result?.sessionId ?? null;
+      if (sid) setSessionId(sid);
       const ans = r?.result?.text?.trim() || "(응답 텍스트 없음)";
       setLog((l) => [...l, { role: "agent", text: ans, ts: timeStr() }]);
     } catch (e) {
@@ -1063,6 +1074,14 @@ function FriendPanel(props: { agent: AgentRow; isExternal: boolean; onClose: () 
       setBusy(false);
     }
   }
+
+  // 패널 이탈 시 지속 세션 close(누수 방지). 크로스머신이면 데몬이 forwarding/idle TTL 처리.
+  // 실패해도 무시(데몬 idle TTL reaper 안전망이 있음).
+  onCleanup(() => {
+    const sid = sessionId();
+    if (!sid) return;
+    void invoke("a2a_send", { target: target(), task: "", endpoint: `close:${sid}` }).catch(() => {});
+  });
 
   return (
     <div class="kk-talk-chat">
@@ -1077,6 +1096,15 @@ function FriendPanel(props: { agent: AgentRow; isExternal: boolean; onClose: () 
               <span style="width:5px;height:5px;border-radius:999px;background:#7c96ff;display:inline-block;"></span>
               {props.isExternal ? "외부 A2A" : (props.agent.machine || "다른 머신")}
             </span>
+            {/* 지속 세션 유지 중 — 멀티턴 기억이 이어지는 상태. 다크 채팅 테마 색 유지. */}
+            <Show when={sessionId()}>
+              <span
+                title={`지속 세션 유지 중 (${sessionId()}) — 멀티턴 기억·툴 상태가 이어집니다`}
+                style="margin-left:6px;display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:600;vertical-align:middle;background:rgba(47,93,58,0.30);color:#9fe0b0;border:1px solid rgba(47,93,58,0.55);"
+              >
+                🔗 세션 유지 중
+              </span>
+            </Show>
           </div>
           <div style="font-size:12px;color:#9aa1ad;margin-top:6px;line-height:1.5;">
             {props.isExternal

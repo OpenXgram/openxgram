@@ -206,6 +206,8 @@ pub async fn send(state: &A2aHttpState, body: SendBody) -> Result<Value, A2aHttp
         body.task
     };
 
+    // GUI 가 보낸 세션 id 보존(원격이 sessionId 미반환 시 echo fallback 용).
+    let body_session_id = body.session_id.clone();
     let task = state
         .tools
         .send_task(SendTaskArgs {
@@ -224,11 +226,19 @@ pub async fn send(state: &A2aHttpState, body: SendBody) -> Result<Value, A2aHttp
         )
     })?;
 
+    // 원격이 반환한 sessionId 를 top-level 로 끌어올린다(없으면 우리가 보낸 것 echo).
+    // GUI 는 이 sessionId 를 보관했다가 다음 메시지에 session_id 로 되돌려보내 멀티턴을 잇는다.
+    let session_id = task
+        .session_id
+        .clone()
+        .or_else(|| body_session_id.clone());
+
     Ok(json!({
         "taskId": task.id,
         "skill": skill,
         "fromAgent": body.from_agent,
         "target": body.target,
+        "sessionId": session_id,
         "task": task_value,
     }))
 }
@@ -586,35 +596,50 @@ pub mod server {
         // 호출자(A)의 요청을 'me' 로 기록 → 스레드 시작점.
         acp.record_message(&conv_key, "me", &prompt_text).await;
 
-        // Reuse the shared ACP registry: create a session (always-mode spawns the
-        // adapter now → explicit error if not installed), prompt, then close.
-        let create = daemon_gui_acp::create_session(
-            acp,
-            daemon_gui_acp::CreateSessionBody {
-                agent: adapter.to_string(),
-                cwd: cwd.to_string(),
-                mcp_servers: Vec::new(),
-                execution_mode: Some("always".to_string()),
-                // A2A 위임 = 받은 작업을 실제 수행해야 하므로 도구 실행 허용(default-deny 해제).
-                permission_mode: Some("bypassPermissions".to_string()),
-                model: None,
-                thinking: None,
-                machine: None,
-                // 가시 스레드 키 — B 의 응답·툴이 이 conv_key 로 영속된다.
-                label: Some(conv_key.clone()),
-            },
-        )
-        .await?;
-        let session_id = create
-            .get("sessionId")
-            .and_then(|s| s.as_str())
-            .ok_or_else(|| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "ACP create_session returned no sessionId".to_string(),
+        // ── 지속 세션(멀티턴 기억 유지) ───────────────────────────────────────
+        // 친구 대화는 하나의 ACP 세션을 유지해 멀티턴 기억·툴 상태가 이어지게 한다.
+        //   1) body.session_id 가 있고 그 세션이 살아있으면 → create 생략, resume(이어 prompt).
+        //   2) 없으면 create_session(label=conv_key). create_session 의 find-or-create 가
+        //      같은 conv_key 의 살아있는 세션을 자동 재사용하므로 중복 spawn 도 방지된다.
+        // 두 경로 모두 **세션을 닫지 않는다**(keep-open). idle TTL reaper 가 누수를 막는다.
+        let session_id = match body
+            .session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            Some(sid) if acp.session_alive(sid).await => sid.to_string(),
+            _ => {
+                let create = daemon_gui_acp::create_session(
+                    acp,
+                    daemon_gui_acp::CreateSessionBody {
+                        agent: adapter.to_string(),
+                        cwd: cwd.to_string(),
+                        mcp_servers: Vec::new(),
+                        execution_mode: Some("always".to_string()),
+                        // A2A 위임 = 받은 작업을 실제 수행해야 하므로 도구 실행 허용(default-deny 해제).
+                        permission_mode: Some("bypassPermissions".to_string()),
+                        model: None,
+                        thinking: None,
+                        machine: None,
+                        // 가시 스레드 키 + 세션 지속 키 — B 의 응답·툴이 이 conv_key 로 영속되고,
+                        // 같은 conv_key 의 살아있는 세션이 있으면 재사용된다.
+                        label: Some(conv_key.clone()),
+                    },
                 )
-            })?
-            .to_string();
+                .await?;
+                create
+                    .get("sessionId")
+                    .and_then(|s| s.as_str())
+                    .ok_or_else(|| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "ACP create_session returned no sessionId".to_string(),
+                        )
+                    })?
+                    .to_string()
+            }
+        };
 
         let prompt_res = daemon_gui_acp::prompt(
             acp,
@@ -625,8 +650,7 @@ pub mod server {
         )
         .await;
 
-        // Always attempt to reap the ACP session, regardless of prompt outcome.
-        let _ = daemon_gui_acp::close(acp, &session_id).await;
+        // 지속 세션 — 닫지 않는다(keep-open). 누수는 idle TTL reaper(reap_idle_a2a)가 차단.
 
         let acp_result = prompt_res?;
         let stop_reason = acp_result
@@ -664,6 +688,8 @@ pub mod server {
             "status": "completed",
             "skill": body.skill,
             "agent": meta.alias,
+            // 지속 세션 id — GUI 가 보관했다가 다음 메시지에 session_id 로 되돌려보낸다(멀티턴 기억).
+            "sessionId": session_id,
             "result": result,
         }))
     }

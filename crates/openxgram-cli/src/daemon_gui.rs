@@ -289,6 +289,19 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         });
     }
 
+    // A2A 지속 세션 idle TTL reaper — 친구 대화(label=a2a:*) 세션이 마지막 사용 후 30분 이상
+    // idle 이면 close(에이전트 reap). onClose 가 누락돼도(탭 강제종료 등) 누수되지 않게 하는 안전망.
+    {
+        let reap_state = state.clone();
+        tokio::spawn(async move {
+            let idle = std::time::Duration::from_secs(1800); // 30분
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(300)).await; // 5분마다 점검
+                reap_state.acp.reap_idle_a2a(idle).await;
+            }
+        });
+    }
+
     let app = Router::new()
         .route("/v1/gui/health", get(gui_health))
         .route("/v1/gui/status", get(gui_status))
@@ -10262,6 +10275,35 @@ async fn a2a_send(
         let t = body.target.trim();
         t.starts_with("http://") || t.starts_with("https://")
     };
+
+    // close:<sessionId> — 친구 패널 이탈(onClose) 시 지속 세션 종료(누수 방지).
+    //   - 로컬에 살아있는 세션이면 즉시 close(에이전트 reap).
+    //   - 크로스머신(원격 데몬 보유) 세션은 로컬에 없음 → no-op 보고. 원격의 idle TTL reaper 가
+    //     마지막 사용 후 N분 idle 시 자동 close 하므로 누수되지 않는다.
+    if let Some(ep) = endpoint.as_deref() {
+        if let Some(sid) = ep.strip_prefix("close:") {
+            let sid = sid.trim().to_string();
+            if sid.is_empty() {
+                return Err(bad_request("close: sessionId 비어 있음"));
+            }
+            if state.acp.session_alive(&sid).await {
+                let _ = crate::daemon_gui_acp::close(&state.acp, &sid).await;
+                return Ok(Json(serde_json::json!({
+                    "status": "closed",
+                    "endpoint": ep,
+                    "sessionId": sid,
+                    "local": true,
+                })));
+            }
+            return Ok(Json(serde_json::json!({
+                "status": "noop",
+                "endpoint": ep,
+                "sessionId": sid,
+                "local": false,
+                "note": "로컬에 없는(원격) 세션 — 원격 idle TTL reaper 가 정리한다.",
+            })));
+        }
+    }
 
     // 명시 external 또는 http target → 기존 외부 client.
     if endpoint.as_deref() == Some("external") || (endpoint.is_none() && target_is_http) {

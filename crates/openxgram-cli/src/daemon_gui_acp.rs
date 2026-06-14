@@ -85,6 +85,9 @@ struct AcpHttpSession {
     spawn_opts: openxgram_acp::SpawnOpts,
     /// Broadcast channel for relaying `session/update` to `/stream` clients.
     updates_tx: broadcast::Sender<Value>,
+    /// 마지막 사용 시각 — A2A 지속 세션 idle TTL reaper 가 읽는다. create/prompt 시 갱신.
+    /// 누수 방지 안전망(`reap_idle_a2a`)이 이 값으로 idle 초과 세션을 close 한다.
+    last_used: std::time::Instant,
 }
 
 /// Daemon-held ACP state. Lives in `GuiServerState` (Clone-cheap: all `Arc`).
@@ -170,6 +173,39 @@ impl AcpHttpState {
             .iter()
             .map(|(id, s)| (id.clone(), s.label.clone().unwrap_or_default(), s.cwd.clone()))
             .collect()
+    }
+
+    /// 세션이 현재 살아있는지(레지스트리에 존재) — A2A 지속 세션 resume 판정용.
+    /// `body.session_id` 가 살아있으면 create 생략하고 그 세션에 이어 prompt 한다.
+    pub async fn session_alive(&self, session_id: &str) -> bool {
+        self.sessions.lock().await.contains_key(session_id)
+    }
+
+    /// A2A 지속 세션 idle TTL 안전망 — label 이 `a2a:` 로 시작하는(친구 대화) 세션 중
+    /// 마지막 사용 이후 `idle` 초과한 것을 close 한다. 누수 방지 reaper 가 주기적으로 호출.
+    /// close 자체에 `self`(state)가 필요하므로 reap 대상 id 만 lock 안에서 모으고 lock 해제 후 close.
+    pub async fn reap_idle_a2a(&self, idle: std::time::Duration) {
+        let now = std::time::Instant::now();
+        let stale: Vec<String> = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .iter()
+                .filter(|(_, s)| {
+                    s.label
+                        .as_deref()
+                        .map(|l| l.starts_with("a2a:"))
+                        .unwrap_or(false)
+                        && now.duration_since(s.last_used) >= idle
+                })
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        for sid in stale {
+            match close(self, &sid).await {
+                Ok(_) => tracing::info!(target: "acp.daemon", session = %sid, "a2a idle reaper: 지속 세션 close(idle TTL 초과)"),
+                Err(e) => tracing::debug!(target: "acp.daemon", session = %sid, "a2a idle reaper close 실패(계속): {e:?}"),
+            }
+        }
     }
 }
 
@@ -414,9 +450,15 @@ pub async fn create_session(
     // 키는 반드시 에이전트 신원(label) — adapter+cwd 만으로 키잉하면 cwd 를 공유하는(빈 cwd 다수)
     // 서로 다른 에이전트가 한 세션으로 병합되는 사고가 난다. label 미지정(picker 진입)이면 재사용 안 함.
     if let Some(lbl) = body.label.as_deref().filter(|s| !s.is_empty()) {
-        let sessions = state.sessions.lock().await;
-        for (sid, s) in sessions.iter() {
-            if s.label.as_deref() == Some(lbl) {
+        let mut sessions = state.sessions.lock().await;
+        let reuse = sessions
+            .iter()
+            .find(|(_, s)| s.label.as_deref() == Some(lbl))
+            .map(|(sid, _)| sid.clone());
+        if let Some(sid) = reuse {
+            if let Some(s) = sessions.get_mut(&sid) {
+                // idle reaper 안전망 갱신 — 재사용도 활성 사용으로 본다.
+                s.last_used = std::time::Instant::now();
                 return Ok(json!({
                     "sessionId": sid,
                     "agent": s.agent,
@@ -447,6 +489,7 @@ pub async fn create_session(
         handle_id,
         spawn_opts,
         updates_tx,
+        last_used: std::time::Instant::now(),
     };
     state.sessions.lock().await.insert(session_id.clone(), sess);
 
@@ -543,6 +586,8 @@ pub async fn prompt(
                 "session has no handle after spawn".to_string(),
             )
         })?;
+        // idle TTL reaper 안전망용 — 매 prompt 마다 마지막 사용 시각 갱신.
+        sess.last_used = std::time::Instant::now();
         // label = conv_key(대화 신원). 증분 툴 기록 + 맥락 복원 대상 키. picker(label 없음)면 None.
         (hid, sess.cwd.clone(), sess.updates_tx.clone(), sess.label.clone())
     };
