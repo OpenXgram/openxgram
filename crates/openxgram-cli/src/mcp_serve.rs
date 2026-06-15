@@ -2734,6 +2734,10 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     handle.block_on(async move { tools.purchase(req).await })
                 })
                 .map_err(internal)?;
+                // 결제 확정 가시화 (commerce-monitorability gap c). 가짜 성공 절대 금지 —
+                // AutoApproved + 실제 receipt(tx_hash=온체인 / intent_id=원장 확정) 일 때만 emit.
+                // FreeTierGranted(무료·과금없음)/NeedsConfirmation(미결제)/에러 경로는 emit 안 함.
+                self.surface_payment_if_confirmed(&r);
                 serde_json::to_value(r).map_err(internal)
             }
             // 검색→연결 직결: 마켓 에이전트를 로컬 peer 디렉토리에 idempotent 등록.
@@ -2902,6 +2906,72 @@ impl OpenxgramDispatcher {
                 "데몬 POST {path} 실패 (HTTP {status}): {text}"
             ))),
             Err(e) => Err(internal(format!("데몬 POST {path} 요청 실패: {e}"))),
+        }
+    }
+
+    /// 결제 확정 가시화 (commerce-monitorability gap c) — ④ self-call 패턴.
+    /// **확정된 결제만** surface: `AutoApproved` + 실제 `receipt` 가 있을 때만.
+    /// (그 receipt 는 gateway.pay() 가 Ok 를 반환한 경우에만 존재 — OnchainPaymentGateway 는
+    ///  실제 tx_hash, LedgerPaymentGateway 는 확정된 원장 entry. 둘 다 "진짜 확정".)
+    /// FreeTierGranted(무료·과금없음)·NeedsConfirmation(미결제)·Reject(에러로 조기 반환)는
+    /// receipt 가 없으므로 절대 emit 안 됨 → 가짜/낙관적 성공 이벤트 없음.
+    /// McpServer 에는 GUI state 가 없어 surface_commerce_event 직접 호출 불가 →
+    /// 데몬 GUI 의 `/v1/gui/commerce/event` 를 self-call(XGRAM_MCP_TOKEN Bearer, ④ 동일 경로).
+    /// self-call 실패는 명시 로그(fallback 금지) — 결제는 이미 확정됐으므로 crash 시키지 않는다.
+    fn surface_payment_if_confirmed(&self, result: &openxgram_marketplace::PurchaseResult) {
+        use openxgram_marketplace::PurchaseDecision;
+        // AutoApproved + receipt 동반일 때만. 그 외 모든 decision 은 무시.
+        if !matches!(result.decision, PurchaseDecision::AutoApproved) {
+            return;
+        }
+        let receipt = match &result.receipt {
+            Some(r) => r,
+            None => {
+                // AutoApproved 인데 receipt 없음 = 불변식 위반. silent X — 로그 남기고 미발신.
+                tracing::error!(
+                    target: "mcp.commerce",
+                    "purchase AutoApproved 인데 receipt 부재 — 결제 가시화 스킵(불변식 위반 의심)"
+                );
+                return;
+            }
+        };
+        // counterparty = 마켓 에이전트(payee_address `market:{agent_id}` 에서 추출).
+        let counterparty = receipt
+            .payee_address
+            .strip_prefix("market:")
+            .unwrap_or(&receipt.payee_address)
+            .to_string();
+        let amount_usdc = format!("{:.6}", receipt.amount_usdc_micro as f64 / 1_000_000.0);
+        // tx 식별자: 온체인이면 tx_hash, 원장이면 intent_id(확정된 원장 entry).
+        let tx_ident = receipt
+            .tx_hash
+            .clone()
+            .unwrap_or_else(|| format!("ledger:{}", receipt.intent_id));
+        let tx_short = if tx_ident.len() > 14 {
+            format!("{}…", &tx_ident[..14])
+        } else {
+            tx_ident
+        };
+        let text = format!(
+            "[결제] {amount_usdc} USDC → {counterparty} (tx {tx_short}) confirmed"
+        );
+
+        // ④ self-call — daemon_post 가 XGRAM_DAEMON_GUI_URL + XGRAM_MCP_TOKEN Bearer 사용.
+        match self.daemon_post(
+            "/v1/gui/commerce/event",
+            json!({ "counterparty": counterparty, "text": text }),
+        ) {
+            Ok(_) => tracing::info!(
+                target: "mcp.commerce",
+                counterparty = %counterparty,
+                "결제 확정 → 모니터 스레드 surface(데몬 self-call OK)"
+            ),
+            Err(e) => tracing::error!(
+                target: "mcp.commerce",
+                counterparty = %counterparty,
+                error = %e.message,
+                "결제 확정 가시화 self-call 실패 — 이벤트 미반영(결제 자체는 확정됨). XGRAM_MCP_TOKEN/데몬 GUI 상태 점검 필요"
+            ),
         }
     }
 }

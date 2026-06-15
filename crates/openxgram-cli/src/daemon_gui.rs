@@ -483,6 +483,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/external/listings", post(gui_external_listing_add))
         .route("/v1/gui/external/reputation", get(gui_external_reputation))
         .route("/v1/gui/external/protocols", get(gui_external_protocols))
+        // 결제 확정 가시화 — MCP 런타임(purchase_service)에서 데몬 self-call(④ 패턴)로 호출.
+        .route("/v1/gui/commerce/event", post(gui_commerce_event))
         // UI-MESSENGER-SPEC v1.4 §20 — 오케스트레이션 워크플로 (W-1 ~ W-10)
         .route("/v1/gui/workflows", get(gui_workflows_list).post(gui_workflow_upsert))
         .route("/v1/gui/workflows/plan", post(gui_workflow_plan))
@@ -8107,6 +8109,62 @@ async fn surface_commerce_event(state: &GuiServerState, counterparty: &str, text
     state.acp.record_message(conv_key, "agent", text).await;
     crate::daemon_gui_acp::notify_conv_persisted_by_label(&state.acp, conv_key).await;
     tracing::info!(target: "acp.daemon", conv_key = %conv_key, "거래 이벤트 → messenger 스레드 기록");
+}
+
+/// `POST /v1/gui/commerce/event` 입력 — 결제 확정 가시화.
+/// `text` 가 있으면 그대로 사용, 없으면 {amount, tx_hash, summary} 로 서버측 포맷.
+#[derive(serde::Deserialize)]
+struct CommerceEventBody {
+    counterparty: String,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    amount: Option<String>,
+    #[serde(default)]
+    tx_hash: Option<String>,
+    #[serde(default)]
+    summary: Option<String>,
+}
+
+/// `POST /v1/gui/commerce/event` — 결제 확정 이벤트를 모니터 가능한 스레드에 surface.
+/// MCP 런타임(purchase_service)이 데몬 self-call(④ 패턴: XGRAM_MCP_TOKEN Bearer)로 호출한다.
+/// McpServer 에는 GUI state 가 없어 surface_commerce_event 를 직접 못 부르므로 이 라우트 경유.
+/// **실제로 확정된 결제만** 호출되도록 발신 측에서 보장(가짜 성공 절대 금지). 여기선 기록만.
+async fn gui_commerce_event(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<CommerceEventBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let counterparty = body.counterparty.trim().to_string();
+    if counterparty.is_empty() {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ErrorDto { error: "counterparty 빈 값 — 거래 이벤트 surface 불가".to_string() }),
+        ));
+    }
+    // text 우선, 없으면 구조화 필드로 포맷. 둘 다 없으면 명시 에러(빈 카드 금지).
+    let text = match body.text.filter(|t| !t.trim().is_empty()) {
+        Some(t) => t,
+        None => {
+            let amount = body.amount.unwrap_or_default();
+            let tx = body.tx_hash.unwrap_or_default();
+            let summary = body.summary.unwrap_or_default();
+            if amount.is_empty() && tx.is_empty() && summary.is_empty() {
+                return Err((
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(ErrorDto { error: "text/amount/tx_hash/summary 전부 빈 값 — 기록할 내용 없음".to_string() }),
+                ));
+            }
+            let tx_short = if tx.len() > 12 { format!("{}…", &tx[..12]) } else { tx };
+            format!(
+                "[결제] {amount} USDC → {counterparty} (tx {tx_short}) confirmed{sep}{summary}",
+                sep = if summary.is_empty() { "" } else { " — " },
+            )
+        }
+    };
+    surface_commerce_event(&state, &counterparty, &text).await;
+    Ok(Json(serde_json::json!({ "surfaced": true, "counterparty": counterparty })))
 }
 
 async fn gui_external_listings(
