@@ -515,6 +515,35 @@ enum AcpInboundOutcome {
     Unavailable,
 }
 
+/// fix① (A2A double-delivery) — 이 alias 가 **ACP 로 구동 가능한 신원**인지 판정.
+/// `load_a2a_agent_meta`(daemon_gui.rs)와 동일 기준: `agent_capabilities` 에 row 가 있고
+/// `role != 'tmux'` 이면 ACP-drivable. 이 alias 는 A2A inbound 를 ACP 세션이 **소유**하므로
+/// tmux 로는 절대 fallback 하지 않는다(이중 전달·tmux 중복 주입 방지). 순수 터미널 peer
+/// (capabilities row 없음 또는 role='tmux')만 tmux 전달 대상.
+///
+/// 동기 판정(self-call HTTP 결과·90s timeout 과 무관) — 전달 결정의 단일 진리원천.
+/// 쿼리 실패/DB 오류 시 false 반환(보수적: 잘못 ACP-drivable 로 분류해 메시지 유실하느니
+/// tmux fallback 경로를 살린다). 오류는 명시 로그(절대 규칙 1).
+fn is_acp_drivable(db: &mut openxgram_db::Db, alias: &str) -> bool {
+    let found: rusqlite::Result<i64> = db.conn().query_row(
+        "SELECT 1 FROM agent_capabilities WHERE alias = ?1 AND role IS NOT 'tmux' LIMIT 1",
+        [alias],
+        |r| r.get(0),
+    );
+    match found {
+        Ok(_) => true,
+        Err(rusqlite::Error::QueryReturnedNoRows) => false,
+        Err(e) => {
+            tracing::warn!(
+                alias = %alias,
+                error = %e,
+                "fix① is_acp_drivable 쿼리 오류 — 보수적으로 false(=tmux 경로 유지). silent X"
+            );
+            false
+        }
+    }
+}
+
 /// fix④ — peer_send inbound 를 ACP/A2A 전달 척추로 보낸다. 데몬은 자기 GUI HTTP 서버
 /// (`spawn_gui_server`, 동일 프로세스)의 `/v1/gui/a2a/send` 를 self-call 한다 → a2a_send 가
 /// **기존** spawn 머신리(load_a2a_agent_meta + handle_task, lazy ACP 세션 find-or-create)를
@@ -940,6 +969,14 @@ pub fn process_inbound(
                 .sender_alias
                 .clone()
                 .unwrap_or_else(|| sender_label.clone());
+
+            // fix① (A2A double-delivery) — 이 alias 가 ACP-drivable 신원인지 **동기** 판정.
+            // ACP-drivable 이면 그 ACP 세션이 A2A inbound 전달을 **소유**한다 → tmux 로는 절대
+            // fallback 하지 않는다. self-call 이 90s timeout 으로 Unavailable 을 돌려줘도 그건
+            // "ACP 턴이 90s 보다 길다"는 뜻일 뿐, 백그라운드 ACP 세션은 계속 돌며 답한다.
+            // 따라서 timeout==전달실패로 오판해 tmux 까지 주입하던 이중 전달을 차단한다.
+            let acp_drivable = is_acp_drivable(&mut db, &target_alias);
+
             let acp_outcome = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(try_acp_inbound_delivery(
                     &target_alias,
@@ -949,7 +986,18 @@ pub fn process_inbound(
             });
             match acp_outcome {
                 AcpInboundOutcome::Delivered => acp_delivered = true,
-                // NoEndpoint / Unavailable → tmux fallback (아래 블록 진행).
+                // fix① — ACP-drivable 인데 timeout/일시오류(Unavailable) 면 ACP 세션이 전달을
+                // 소유하므로 delivered 로 간주(option (b)). tmux suppress. ACP 턴/회신 로직은
+                // 손대지 않는다(전달-결정만 변경) — handle_task 가 백그라운드에서 회신 영속.
+                AcpInboundOutcome::Unavailable if acp_drivable => {
+                    tracing::info!(
+                        target_alias = %target_alias,
+                        sender = %acp_sender,
+                        "fix① ACP self-call Unavailable(=90s timeout/일시오류) 이나 alias 가 ACP-drivable — ACP 세션이 전달 소유, tmux fallback 차단(이중 전달 방지)"
+                    );
+                    acp_delivered = true;
+                }
+                // NoEndpoint(순수 터미널 peer) 또는 비-ACP-drivable Unavailable → tmux fallback.
                 AcpInboundOutcome::NoEndpoint | AcpInboundOutcome::Unavailable => {}
             }
             // fix④ — ACP/A2A 로 이미 전달됐으면 tmux 는 skip. tmux 는 ACP 엔드포인트가 없는
@@ -959,7 +1007,10 @@ pub fn process_inbound(
             // rc.238 — 전체 tmux inject 를 5초 timeout 으로 감쌈. tmux send-keys / list-sessions /
             // resolve_alias_to_tmux 중 하나라도 hang 하면 inbound_processor tick 전체가 멈추던
             // 근본 버그(23:47 stuck) 해결. timeout 시 이 envelope inject 만 포기 + WARN, 다음 진행.
-            tmux_injected = !acp_delivered && tokio::task::block_in_place(|| {
+            // fix① — ACP-drivable alias 는 어떤 경우에도 tmux 로 보내지 않는다(CONFIRMED RULE:
+            // A2A 는 수신자 ACP 로만, tmux 는 human-only). `!acp_delivered` 위에 `!acp_drivable`
+            // 가드를 추가해 NoEndpoint 같은 예외 경로로도 tmux 가 새지 않게 한다.
+            tmux_injected = !acp_delivered && !acp_drivable && tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async move {
                     let inject_fut = async move {
                         if let Some((session, idx)) =
