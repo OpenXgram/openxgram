@@ -1160,45 +1160,61 @@ async fn tmux_health_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
 
 /// W-5 message_trigger: workflows.message_trigger (json: {"pattern": "..."}) 가 최근 60s 메시지 body 매칭 시 workflow 자동 실행.
 async fn workflow_message_trigger_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
-    let mut db = db.lock().await;
-    let conn = db.conn();
-    let mut stmt = conn.prepare(
-        "SELECT id, yaml_body, message_trigger FROM workflows WHERE enabled=1 AND message_trigger IS NOT NULL AND message_trigger != ''"
-    )?;
-    let wfs: Vec<(String, String, String)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-        .filter_map(|r| r.ok()).collect();
-    drop(stmt);
-    if wfs.is_empty() { return Ok(()); }
-    let mut msg_stmt = conn.prepare(
-        "SELECT id, body FROM messages WHERE created_at > datetime('now', '-60 seconds') LIMIT 50"
-    )?;
-    let recent: Vec<(String, String)> = msg_stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-        .filter_map(|r| r.ok()).collect();
-    drop(msg_stmt);
-    for (wf_id, yaml, trigger_json) in &wfs {
-        let pattern = serde_json::from_str::<serde_json::Value>(trigger_json).ok()
-            .and_then(|v| v.get("pattern").and_then(|p| p.as_str().map(String::from)))
-            .unwrap_or_default();
-        if pattern.is_empty() { continue; }
-        for (msg_id, body) in &recent {
-            if body.contains(&pattern) {
-                // 이미 trigger 됐는지 확인 (msg_id + workflow_id 조합).
-                let already: i64 = conn.query_row(
-                    "SELECT COUNT(*) FROM workflow_runs WHERE workflow_id=?1 AND trigger_source LIKE 'message:%' AND trigger_source = ?2",
-                    rusqlite::params![wf_id, format!("message:{msg_id}")],
-                    |r| r.get(0),
-                ).unwrap_or(0);
-                if already > 0 { continue; }
-                let run_id = uuid::Uuid::new_v4().to_string();
-                let _ = conn.execute(
-                    "INSERT INTO workflow_runs (id, workflow_id, started_at, status, trigger_source) VALUES (?1, ?2, datetime('now'), 'pending', ?3)",
-                    rusqlite::params![run_id, wf_id, format!("message:{msg_id}")],
-                );
-                tracing::info!("W-5 message trigger: workflow {wf_id} fired by msg {msg_id} → pending run {run_id}");
-                let _ = yaml;
-                return Ok(());
+    // 1) 발화 대상 1건 수집 (락 짧게). 매칭된 첫 (workflow, message) 쌍만 fire.
+    //    yaml 도 함께 들고 나와 락 해제 후 cron 과 동일하게 run_workflow 로 실행한다.
+    let fire: Option<(String, String, String, String)> = {
+        let mut db = db.lock().await;
+        let conn = db.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, yaml_body, message_trigger FROM workflows WHERE enabled=1 AND message_trigger IS NOT NULL AND message_trigger != ''"
+        )?;
+        let wfs: Vec<(String, String, String)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .filter_map(|r| r.ok()).collect();
+        drop(stmt);
+        if wfs.is_empty() { return Ok(()); }
+        let mut msg_stmt = conn.prepare(
+            "SELECT id, body FROM messages WHERE created_at > datetime('now', '-60 seconds') LIMIT 50"
+        )?;
+        let recent: Vec<(String, String)> = msg_stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .filter_map(|r| r.ok()).collect();
+        drop(msg_stmt);
+        let mut chosen = None;
+        'outer: for (wf_id, yaml, trigger_json) in &wfs {
+            let pattern = serde_json::from_str::<serde_json::Value>(trigger_json).ok()
+                .and_then(|v| v.get("pattern").and_then(|p| p.as_str().map(String::from)))
+                .unwrap_or_default();
+            if pattern.is_empty() { continue; }
+            for (msg_id, body) in &recent {
+                if body.contains(&pattern) {
+                    // 이미 trigger 됐는지 확인 (msg_id + workflow_id 조합).
+                    let trigger_source = format!("message:{msg_id}");
+                    let already: i64 = conn.query_row(
+                        "SELECT COUNT(*) FROM workflow_runs WHERE workflow_id=?1 AND trigger_source LIKE 'message:%' AND trigger_source = ?2",
+                        rusqlite::params![wf_id, trigger_source],
+                        |r| r.get(0),
+                    ).unwrap_or(0);
+                    if already > 0 { continue; }
+                    let run_id = uuid::Uuid::new_v4().to_string();
+                    // cron 과 동일 — 'running' 으로 INSERT 후 락 밖에서 run_workflow 가 종료 상태로 갱신.
+                    if let Err(e) = conn.execute(
+                        "INSERT INTO workflow_runs (id, workflow_id, started_at, status, trigger_source) VALUES (?1, ?2, datetime('now'), 'running', ?3)",
+                        rusqlite::params![run_id, wf_id, trigger_source],
+                    ) {
+                        tracing::warn!("workflow_message insert run: {e}");
+                        continue;
+                    }
+                    chosen = Some((wf_id.clone(), yaml.clone(), run_id, msg_id.clone()));
+                    break 'outer;
+                }
             }
         }
+        chosen
+    };
+    // 2) 발화 — cron tick (run_workflow) 과 동일 인자/흐름. run 행이 종료 상태에 도달한다.
+    if let Some((wf_id, yaml, run_id, msg_id)) = fire {
+        let mut g = db.lock().await;
+        let result = crate::workflow_engine::run_workflow(&mut *g, &wf_id, &run_id, &yaml).await;
+        tracing::info!(workflow = %wf_id, run = %run_id, msg = %msg_id, status = %result.status, "W-5 message trigger 워크플로우 발화");
     }
     Ok(())
 }

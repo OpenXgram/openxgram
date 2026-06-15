@@ -181,6 +181,125 @@ fn update_daemon_env(data_dir: &Path, new: &str) -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&env_path, std::fs::Permissions::from_mode(0o600))?;
     }
+
+    // Windows: daemon.env (above) is NOT the boot-time source. install.ps1
+    // persists the keystore password in two places that survive a reboot:
+    //   (1) <data_dir>\daemon-launch.bat — `set XGRAM_KEYSTORE_PASSWORD=...`
+    //   (2) the NSSM service `OpenXgram` AppEnvironmentExtra (the actual boot
+    //       mechanism: Start SERVICE_AUTO_START)
+    // plus a User-scope env var so an interactive `xgram daemon` also picks it
+    // up. If we only rewrote daemon.env, a reboot would relaunch the daemon
+    // with the OLD password and login would break. Mirror install.ps1 here.
+    #[cfg(windows)]
+    update_windows_startup_password(data_dir, new)?;
+
+    Ok(())
+}
+
+/// Windows-only: persist the rekey'd password to the boot-time startup config,
+/// mirroring `www/public/install.ps1`. Best-effort per target, but every
+/// failure is logged explicitly (절대 규칙 1 — fallback 금지: no silent skip).
+/// Returns Err only if NONE of the persistence targets could be updated, since
+/// that would leave the next reboot using the old password.
+#[cfg(windows)]
+fn update_windows_startup_password(data_dir: &Path, new: &str) -> Result<()> {
+    let key = openxgram_core::env::PASSWORD_ENV;
+    let mut any_ok = false;
+
+    // (1) Rewrite the `set XGRAM_KEYSTORE_PASSWORD=...` line in daemon-launch.bat.
+    let bat_path = data_dir.join("daemon-launch.bat");
+    if bat_path.is_file() {
+        match std::fs::read_to_string(&bat_path) {
+            Ok(contents) => {
+                let mut lines: Vec<String> = Vec::new();
+                let mut replaced = false;
+                // bat `set` is case-insensitive on the variable name.
+                let needle = format!("set {key}=").to_ascii_lowercase();
+                for raw in contents.lines() {
+                    if raw.trim_start().to_ascii_lowercase().starts_with(&needle) {
+                        lines.push(format!("set {key}={new}"));
+                        replaced = true;
+                    } else {
+                        lines.push(raw.to_string());
+                    }
+                }
+                if !replaced {
+                    // No existing line — do not silently skip; append so boot
+                    // picks up the new password.
+                    lines.push(format!("set {key}={new}"));
+                }
+                let mut body = lines.join("\r\n");
+                body.push_str("\r\n");
+                match std::fs::write(&bat_path, body) {
+                    Ok(()) => {
+                        any_ok = true;
+                        println!("[rekey] Windows daemon-launch.bat 비번 갱신: {}", bat_path.display());
+                    }
+                    Err(e) => eprintln!(
+                        "[rekey][WARN] daemon-launch.bat 쓰기 실패 ({}): {e}",
+                        bat_path.display()
+                    ),
+                }
+            }
+            Err(e) => eprintln!(
+                "[rekey][WARN] daemon-launch.bat 읽기 실패 ({}): {e}",
+                bat_path.display()
+            ),
+        }
+    } else {
+        eprintln!(
+            "[rekey][WARN] daemon-launch.bat 없음 — skip ({})",
+            bat_path.display()
+        );
+    }
+
+    // (2) NSSM service `OpenXgram` AppEnvironmentExtra — the actual reboot
+    //     boot mechanism (Start SERVICE_AUTO_START). Re-set the env extra.
+    //     install.ps1 sets both KEYSTORE_PASSWORD and TRANSPORT_PUBLIC_URL; we
+    //     touch only the password var so the URL set at install is preserved.
+    match std::process::Command::new("nssm")
+        .args(["set", "OpenXgram", "AppEnvironmentExtra", &format!("{key}={new}")])
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            any_ok = true;
+            println!("[rekey] Windows NSSM 서비스 OpenXgram 비번 갱신");
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            eprintln!(
+                "[rekey][WARN] NSSM set 실패 (exit {:?}): {}",
+                out.status.code(),
+                stderr.trim()
+            );
+        }
+        Err(e) => eprintln!("[rekey][WARN] NSSM 실행 불가 (미설치?): {e}"),
+    }
+
+    // (3) User-scope env var so an interactive `xgram daemon` also sees the new
+    //     password. `setx` writes HKCU\Environment (persists across reboot).
+    match std::process::Command::new("setx").args([key, new]).output() {
+        Ok(out) if out.status.success() => {
+            any_ok = true;
+            println!("[rekey] Windows User-scope env {key} 갱신 (setx)");
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            eprintln!(
+                "[rekey][WARN] setx 실패 (exit {:?}): {}",
+                out.status.code(),
+                stderr.trim()
+            );
+        }
+        Err(e) => eprintln!("[rekey][WARN] setx 실행 불가: {e}"),
+    }
+
+    if !any_ok {
+        bail!(
+            "Windows 비번 영속화 전부 실패 — 재부팅 시 옛 비번 사용됨. \
+             daemon-launch.bat / NSSM / setx 모두 갱신 불가 (위 [WARN] 로그 확인)"
+        );
+    }
     Ok(())
 }
 

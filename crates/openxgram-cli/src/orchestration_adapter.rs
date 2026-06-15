@@ -366,7 +366,11 @@ mod tests {
 
     #[test]
     fn get_adapter_unknown_errors() {
-        let err = get_adapter("xmtp").unwrap_err();
+        // Box<dyn Adapter> 는 Debug 미구현 → unwrap_err() 불가. match 로 에러만 추출.
+        let err = match get_adapter("xmtp") {
+            Ok(_) => panic!("xmtp 는 지원 안 되는 adapter_type 이어야 한다"),
+            Err(e) => e,
+        };
         assert!(err.to_string().contains("지원 안 되는 adapter_type"));
     }
 

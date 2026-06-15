@@ -483,6 +483,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/external/listings", post(gui_external_listing_add))
         .route("/v1/gui/external/reputation", get(gui_external_reputation))
         .route("/v1/gui/external/protocols", get(gui_external_protocols))
+        // 결제 확정 가시화 — MCP 런타임(purchase_service)에서 데몬 self-call(④ 패턴)로 호출.
+        .route("/v1/gui/commerce/event", post(gui_commerce_event))
         // UI-MESSENGER-SPEC v1.4 §20 — 오케스트레이션 워크플로 (W-1 ~ W-10)
         .route("/v1/gui/workflows", get(gui_workflows_list).post(gui_workflow_upsert))
         .route("/v1/gui/workflows/plan", post(gui_workflow_plan))
@@ -634,6 +636,10 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/auth/check", get(auth_check))
         // 외부 LLM 직접 push — URL 안 token 으로 인증 (Bearer 없음)
         .route("/v1/webhook/memory/{token}", post(webhook_memory_ingest))
+        // inbound webhook → 모니터 가능한 에이전트 스레드. memory webhook 과 동일한
+        // URL token 인증(Bearer 없음). source 별 conv_key(`webhook:<source>`)에 record_message
+        // + conv_persisted broadcast → 사람이 messenger 대화뷰에서 inbound 를 실시간으로 본다.
+        .route("/v1/webhook/agent/{token}", post(webhook_agent_inbound))
         // Web GUI 정적 자산 — xgram 바이너리에 임베드 (PRD-OpenXgram v1.3 §4.8).
         // nginx 외부 호스팅 불필요. 외부 노출은 Tailscale Funnel 또는 reverse proxy 위임.
         .route("/gui", get(crate::ui_assets::gui_root))
@@ -2594,6 +2600,76 @@ async fn webhook_memory_ingest(
         })));
     }
     process_import_bundle(&state, bundle).await
+}
+
+/// `POST /v1/webhook/agent/:token` — inbound webhook → 모니터 가능한 에이전트 스레드.
+///
+/// memory webhook 과 동일한 URL-token 인증(Bearer 없음, `webhook_token_memory` 재사용).
+/// memory/L0 ingest 와 **별개** 추가 경로 — 기존 동작 변경 없음. 받은 페이로드를
+/// A2A 가시화와 똑같은 방식(`record_message` → `acp_messages` + `conv_persisted` SSE
+/// broadcast)으로 `webhook:<source>` conv_key 스레드에 남겨, 사람이 messenger 대화뷰에서
+/// inbound 를 실시간으로 본다. **에이전트 턴 자동 트리거는 하지 않는다**(범위 밖) — 가시화만.
+///
+/// source 우선순위: query `?source=` → body `source` → body `from` → `"unknown"`.
+/// 본문 텍스트: body `text` → body `message` → body `summary` → 전체 JSON 직렬화.
+async fn webhook_agent_inbound(
+    State(state): State<GuiServerState>,
+    Path(token): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    let expected: String = {
+        let mut db = state.db.lock().await;
+        db.conn().query_row(
+            "SELECT value FROM identity_settings WHERE key = 'webhook_token_memory'",
+            [], |r| r.get(0)
+        ).unwrap_or_default()
+    };
+    if expected.is_empty() || token != expected {
+        return Err((StatusCode::UNAUTHORIZED, Json(ErrorDto {
+            error: "invalid webhook token — generate at /v1/gui/memory/import/webhook-token".into()
+        })));
+    }
+
+    // source 식별 (query → body.source → body.from → unknown). conv_key 안전화: 공백/구분자 정리.
+    let source_raw = q
+        .get("source")
+        .map(|s| s.as_str())
+        .or_else(|| payload.get("source").and_then(|v| v.as_str()))
+        .or_else(|| payload.get("from").and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown");
+    let source = source_raw.replace(char::is_whitespace, "_");
+    let conv_key = format!("webhook:{source}");
+
+    // 본문 텍스트 — 명시 필드 우선, 없으면 페이로드 전체를 직렬화.
+    let text = payload
+        .get("text")
+        .and_then(|v| v.as_str())
+        .or_else(|| payload.get("message").and_then(|v| v.as_str()))
+        .or_else(|| payload.get("summary").and_then(|v| v.as_str()))
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            serde_json::to_string(&payload).unwrap_or_else(|e| {
+                // 절대 규칙 1 — 직렬화 실패도 조용히 넘기지 않고 명시 로그.
+                tracing::error!(target: "acp.daemon", conv_key = %conv_key, "webhook inbound 페이로드 직렬화 실패: {e}");
+                format!("[webhook:{source}] (페이로드 직렬화 실패: {e})")
+            })
+        });
+
+    // 가시화 — A2A 와 동일 경로: record_message(영속) + conv_persisted broadcast(라이브).
+    // 발신은 'me' 가 아닌 'agent'(=상대측 발화)로 기록 → 카드가 상대 메시지로 렌더.
+    state.acp.record_message(&conv_key, "agent", &text).await;
+    crate::daemon_gui_acp::notify_conv_persisted_by_label(&state.acp, &conv_key).await;
+
+    tracing::info!(target: "acp.daemon", conv_key = %conv_key, source = %source, "inbound webhook → 에이전트 스레드 기록");
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "conv_key": conv_key,
+        "source": source,
+    })))
 }
 
 /// `GET /v1/gui/memory/import/webhook-token` — 현재 token 조회 (Bearer 필요).
@@ -7962,9 +8038,21 @@ async fn gui_external_inbound_approve(
     State(state): State<GuiServerState>, headers: HeaderMap, Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    let mut db = state.db.lock().await;
-    db.conn().execute("UPDATE external_inbound_pending SET status='approved' WHERE id=?1", rusqlite::params![id])
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    let counterparty = {
+        let mut db = state.db.lock().await;
+        let cp = external_inbound_counterparty(&mut db, &id);
+        db.conn().execute("UPDATE external_inbound_pending SET status='approved' WHERE id=?1", rusqlite::params![id])
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+        cp
+    };
+    // 거래 가시화 — A2A 와 동일(conv_key = 상대 에이전트 bare alias): record_message + conv_persisted broadcast.
+    if let Some((from_agent, summary, price)) = counterparty {
+        surface_commerce_event(&state, &from_agent, &format!(
+            "[거래] {from_agent} offer 승인 — {summary}{price}",
+            summary = if summary.is_empty() { "(요약 없음)".to_string() } else { summary },
+            price = price.map(|p| format!(" ({p} USDC)")).unwrap_or_default(),
+        )).await;
+    }
     Ok(Json(serde_json::json!({"approved": id})))
 }
 
@@ -7972,10 +8060,111 @@ async fn gui_external_inbound_reject(
     State(state): State<GuiServerState>, headers: HeaderMap, Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    let mut db = state.db.lock().await;
-    db.conn().execute("UPDATE external_inbound_pending SET status='rejected' WHERE id=?1", rusqlite::params![id])
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    let counterparty = {
+        let mut db = state.db.lock().await;
+        let cp = external_inbound_counterparty(&mut db, &id);
+        db.conn().execute("UPDATE external_inbound_pending SET status='rejected' WHERE id=?1", rusqlite::params![id])
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+        cp
+    };
+    if let Some((from_agent, summary, price)) = counterparty {
+        surface_commerce_event(&state, &from_agent, &format!(
+            "[거래] {from_agent} offer 거절 — {summary}{price}",
+            summary = if summary.is_empty() { "(요약 없음)".to_string() } else { summary },
+            price = price.map(|p| format!(" ({p} USDC)")).unwrap_or_default(),
+        )).await;
+    }
     Ok(Json(serde_json::json!({"rejected": id})))
+}
+
+/// 거래(external_inbound_pending) 행의 상대 에이전트·요약·가격을 조회 — 가시화 카드용.
+/// 조회 실패(행 없음/SQL 에러)는 `None` 으로 명시 처리하되 에러는 로그(절대 규칙 1: silent swallow 금지).
+fn external_inbound_counterparty(
+    db: &mut openxgram_db::Db, id: &str,
+) -> Option<(String, String, Option<f64>)> {
+    match db.conn().query_row(
+        "SELECT from_agent, COALESCE(request_summary,''), offered_price FROM external_inbound_pending WHERE id=?1",
+        rusqlite::params![id],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<f64>>(2)?)),
+    ) {
+        Ok(t) => Some(t),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(e) => {
+            tracing::error!(target: "acp.daemon", id = %id, "external_inbound 상대 조회 실패: {e}");
+            None
+        }
+    }
+}
+
+/// 거래 lifecycle 이벤트를 모니터 가능한 스레드에 surface — A2A 와 동일 가시화 경로.
+/// conv_key = 상대 에이전트 bare alias(=A2A 와 동일). record_message(영속) +
+/// conv_persisted broadcast(라이브). 결제/온체인 로직은 건드리지 않음(가시화만 추가).
+async fn surface_commerce_event(state: &GuiServerState, counterparty: &str, text: &str) {
+    let conv_key = counterparty.trim();
+    if conv_key.is_empty() {
+        tracing::error!(target: "acp.daemon", "거래 이벤트 surface 스킵 — 상대 alias 빈 값");
+        return;
+    }
+    // 'agent' = 상대측 발화로 기록 → 카드가 상대 메시지로 렌더(A2A 응답 기록과 동일 role).
+    state.acp.record_message(conv_key, "agent", text).await;
+    crate::daemon_gui_acp::notify_conv_persisted_by_label(&state.acp, conv_key).await;
+    tracing::info!(target: "acp.daemon", conv_key = %conv_key, "거래 이벤트 → messenger 스레드 기록");
+}
+
+/// `POST /v1/gui/commerce/event` 입력 — 결제 확정 가시화.
+/// `text` 가 있으면 그대로 사용, 없으면 {amount, tx_hash, summary} 로 서버측 포맷.
+#[derive(serde::Deserialize)]
+struct CommerceEventBody {
+    counterparty: String,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    amount: Option<String>,
+    #[serde(default)]
+    tx_hash: Option<String>,
+    #[serde(default)]
+    summary: Option<String>,
+}
+
+/// `POST /v1/gui/commerce/event` — 결제 확정 이벤트를 모니터 가능한 스레드에 surface.
+/// MCP 런타임(purchase_service)이 데몬 self-call(④ 패턴: XGRAM_MCP_TOKEN Bearer)로 호출한다.
+/// McpServer 에는 GUI state 가 없어 surface_commerce_event 를 직접 못 부르므로 이 라우트 경유.
+/// **실제로 확정된 결제만** 호출되도록 발신 측에서 보장(가짜 성공 절대 금지). 여기선 기록만.
+async fn gui_commerce_event(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<CommerceEventBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let counterparty = body.counterparty.trim().to_string();
+    if counterparty.is_empty() {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ErrorDto { error: "counterparty 빈 값 — 거래 이벤트 surface 불가".to_string() }),
+        ));
+    }
+    // text 우선, 없으면 구조화 필드로 포맷. 둘 다 없으면 명시 에러(빈 카드 금지).
+    let text = match body.text.filter(|t| !t.trim().is_empty()) {
+        Some(t) => t,
+        None => {
+            let amount = body.amount.unwrap_or_default();
+            let tx = body.tx_hash.unwrap_or_default();
+            let summary = body.summary.unwrap_or_default();
+            if amount.is_empty() && tx.is_empty() && summary.is_empty() {
+                return Err((
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(ErrorDto { error: "text/amount/tx_hash/summary 전부 빈 값 — 기록할 내용 없음".to_string() }),
+                ));
+            }
+            let tx_short = if tx.len() > 12 { format!("{}…", &tx[..12]) } else { tx };
+            format!(
+                "[결제] {amount} USDC → {counterparty} (tx {tx_short}) confirmed{sep}{summary}",
+                sep = if summary.is_empty() { "" } else { " — " },
+            )
+        }
+    };
+    surface_commerce_event(&state, &counterparty, &text).await;
+    Ok(Json(serde_json::json!({ "surfaced": true, "counterparty": counterparty })))
 }
 
 async fn gui_external_listings(
@@ -10322,14 +10511,30 @@ async fn a2a_send(
     match endpoint.as_deref() {
         // ① 신규 ACP (기본). load_a2a_agent_meta + handle_task — 기존 동작 보존.
         None | Some("new_acp") => {
-            let meta = load_a2a_agent_meta(&state, &alias).await?.ok_or_else(|| {
-                (
-                    StatusCode::NOT_FOUND,
-                    Json(ErrorDto {
-                        error: format!("unknown agent: {alias}"),
-                    }),
-                )
-            })?;
+            // BUG2/3 (cross-machine A2A) — 대상이 LOCAL ACP 에이전트가 아니면(=meta None),
+            // peer-sync 로 발견된 REMOTE 에이전트(예: zalman 의 navi)인지 확인한다. 맞으면
+            // 로컬 spawn 대신 그 머신 주소로 signed peer envelope 를 send_envelope 경유
+            // 전송하되 recipient_alias=<alias> 를 명시한다. 수신측 데몬의 process_inbound(① fix)가
+            // recipient_alias 로 대상의 LOCAL ACP 를 구동한다. 회신은 ACK/inbound 로 발신
+            // 스레드(`a2a:{from}->{alias}` 또는 bare alias)에 돌아온다.
+            let meta = match load_a2a_agent_meta(&state, &alias).await? {
+                Some(m) => m,
+                None => {
+                    if let Some(resp) =
+                        try_remote_a2a_route(&state, &alias, &body).await?
+                    {
+                        return Ok(Json(resp));
+                    }
+                    return Err((
+                        StatusCode::NOT_FOUND,
+                        Json(ErrorDto {
+                            error: format!(
+                                "unknown agent: {alias} (로컬 ACP 미등록 + peer-sync 로 발견된 reachable remote 에이전트도 아님)"
+                            ),
+                        }),
+                    ));
+                }
+            };
             let task_body = crate::daemon_gui_a2a::TaskBody {
                 skill: body.skill.clone(),
                 message: if body.task.is_string() {
@@ -10396,8 +10601,9 @@ async fn a2a_send(
             a2a_tmux_inject(&session_name, &prompt_text)
                 .await
                 .map_err(|e| internal(&format!("tmux inject 실패: {e}")))?;
-            // 가시 기록 — tmux 엔드포인트도 같은 신원 스레드(conv_key=alias)에 남긴다.
-            let conv_key = format!("a2a:{alias}");
+            // 가시 기록 — tmux 엔드포인트도 같은 신원 스레드(conv_key=bare alias)에 남긴다.
+            // GUI 리더(3900/4282)가 bare alias 로 읽으므로 prefix 없는 alias 로 통합.
+            let conv_key = alias.clone();
             state.acp.record_message(&conv_key, "me", &prompt_text).await;
             Ok(Json(serde_json::json!({
                 "status": "delivered",
@@ -10459,9 +10665,13 @@ async fn a2a_send(
                 )));
             }
 
-            // 그 cwd 로 ACP 세션 생성 + prompt. conv_key = a2a:{alias}:wt:<branch>(가시).
-            let conv_key = format!("a2a:{alias}:wt:{branch}");
-            state.acp.record_message(&conv_key, "me", &prompt_text).await;
+            // 가시 기록은 수신자 bare-alias identity 스레드(persist_key)로 통합 → GUI 표시.
+            // 단, ACP 세션 label 은 워크트리 cwd 전용 유니크 키(session_label)로 둔다:
+            // 워크트리는 별도 cwd 의 1회성 세션이므로 메인 alias 세션과 find-or-create 충돌하면
+            // 안 된다(다른 cwd). 즉 영속 스레드(bare alias)와 세션 신원(wt 키)을 분리한다.
+            let persist_key = alias.clone();
+            let session_label = format!("a2a:{alias}:wt:{branch}");
+            state.acp.record_message(&persist_key, "me", &prompt_text).await;
             let create = crate::daemon_gui_acp::create_session(
                 &state.acp,
                 crate::daemon_gui_acp::CreateSessionBody {
@@ -10473,7 +10683,7 @@ async fn a2a_send(
                     model: None,
                     thinking: None,
                     machine: None,
-                    label: Some(conv_key.clone()),
+                    label: Some(session_label.clone()),
                 },
             )
             .await
@@ -10494,7 +10704,7 @@ async fn a2a_send(
             let _ = crate::daemon_gui_acp::close(&state.acp, &session_id).await;
             let acp_result = prompt_res.map_err(a2a_err)?;
             let agent_text = a2a_collect_agent_text(&acp_result);
-            state.acp.record_message(&conv_key, "agent", &agent_text).await;
+            state.acp.record_message(&persist_key, "agent", &agent_text).await;
             Ok(Json(serde_json::json!({
                 "status": "completed",
                 "endpoint": "worktree",
@@ -10502,7 +10712,8 @@ async fn a2a_send(
                 "worktree": wt_path,
                 "branch": branch,
                 "sessionId": session_id,
-                "convKey": conv_key,
+                "convKey": persist_key,
+                "sessionLabel": session_label,
                 "text": agent_text,
             })))
         }
@@ -10510,6 +10721,99 @@ async fn a2a_send(
             "a2a_send: 알 수 없는 endpoint '{other}' (new_acp|existing_acp:<id>|tmux:<name>|worktree|external)"
         ))),
     }
+}
+
+/// BUG2/3 (cross-machine A2A 송신 라우팅) — 대상 alias 가 LOCAL ACP 에이전트가 아닐 때,
+/// peer-sync 로 발견된 REMOTE 에이전트(예: zalman 의 navi)면 그 머신 주소로 signed peer
+/// envelope 를 전송한다. 전송은 새 transport 를 만들지 않고 기존 `run_peer_send_with_conv`
+/// (peer_send.rs)를 재사용한다 — master 키 서명 + tailnet 신뢰(기존 fleet peer_send 와 동일).
+///   - alias 의 peer row 가 없거나 주소가 도달 불가(localhost/unknown)면 → 원격 라우팅 불가
+///     (Ok(None) 반환 → 호출측이 unknown agent 에러로 처리).
+///   - `run_peer_send_with_conv(alias=navi)` 가 envelope.recipient_alias=navi 로 박고 navi 의
+///     peer row 주소(=zalman 머신 데몬)로 POST 한다. zalman process_inbound(① fix)가
+///     recipient_alias 로 navi 의 LOCAL ACP 를 구동한다.
+///   - 회신은 ACK/inbound 경로로 발신 스레드에 돌아온다(별도 동기 결과 없음 — accepted).
+/// 가시 스레드(`a2a:{from}->{alias}` 또는 bare alias)에 'me' 송신을 영속한다.
+///
+/// 반환:
+///   - `Ok(Some(json))`  : 원격 라우팅 수행됨(accepted).
+///   - `Ok(None)`        : 원격 에이전트로 식별 불가(로컬도 원격도 아님) — 호출측이 NOT_FOUND.
+///   - `Err(...)`        : 식별은 됐으나 전송 단계 실패(절대 규칙 1 — silent X).
+async fn try_remote_a2a_route(
+    state: &GuiServerState,
+    alias: &str,
+    body: &crate::daemon_gui_a2a::SendBody,
+) -> Result<Option<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    let data_dir = state.data_dir.as_ref().clone();
+    // peer row 조회 — peer-sync 가 navi 를 zalman 머신 주소로 merge 해 두었어야 함(GAP A).
+    let peer = {
+        let mut db = state.db.lock().await;
+        let mut store = openxgram_peer::PeerStore::new(&mut db);
+        match store.get_by_alias(alias) {
+            Ok(opt) => opt,
+            Err(e) => return Err(internal(&format!("remote a2a peer 조회 실패: {e}"))),
+        }
+    };
+    let peer = match peer {
+        Some(p) => p,
+        None => return Ok(None), // 로컬 ACP 도 아니고 알려진 peer 도 아님.
+    };
+    // 도달 불가 주소(localhost/unknown)면 cross-machine 전송 불가 — 원격 라우팅 대상 아님.
+    if openxgram_transport::tailscale::is_unreachable_address(&peer.address) {
+        tracing::warn!(
+            alias = %alias,
+            address = %peer.address,
+            "BUG2/3 remote a2a — peer 주소 도달 불가(localhost/unknown). cross-machine 라우팅 불가 → NOT_FOUND 폴백"
+        );
+        return Ok(None);
+    }
+
+    let prompt_text = a2a_prompt_text(body)?;
+    let from = body
+        .from_agent
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    // master 키 서명 — daemon env 의 XGRAM_KEYSTORE_PASSWORD(기존 peer_send 와 동일 경로).
+    let pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").map_err(|_| {
+        internal("XGRAM_KEYSTORE_PASSWORD 미설정 — cross-machine A2A 송신 서명 불가 (daemon 환경변수 필요)")
+    })?;
+
+    // 가시 스레드 영속 — 발신측에 'me' 기록(handle_task 의 conv_key 규칙과 동일).
+    let conv_key = match from.as_deref() {
+        Some(f) => format!("a2a:{f}->{alias}"),
+        None => format!("a2a:{alias}"),
+    };
+    state.acp.record_message(&conv_key, "me", &prompt_text).await;
+
+    // 기존 peer_send 재사용 — recipient_alias=alias 를 박고 peer 주소(머신 데몬)로 전송.
+    crate::peer_send::run_peer_send_with_conv(
+        &data_dir,
+        alias,
+        from.as_deref(),
+        &prompt_text,
+        &pw,
+        None,
+    )
+    .await
+    .map_err(|e| internal(&format!("cross-machine A2A peer_send 실패 ({alias}@{}): {e}", peer.address)))?;
+
+    tracing::info!(
+        target = %alias,
+        address = %peer.address,
+        from = ?from,
+        "BUG2/3 cross-machine A2A — signed envelope 전송 OK (recipient_alias={alias}). 회신은 inbound 로 발신 스레드에 도달"
+    );
+    Ok(Some(serde_json::json!({
+        "status": "accepted",
+        "endpoint": "remote_peer",
+        "agent": alias,
+        "address": peer.address,
+        "convKey": conv_key,
+        "note": "cross-machine A2A — 수신 머신의 ACP 가 비동기 실행. 회신은 inbound 로 발신 스레드에 도달(동기 결과 없음).",
+    })))
 }
 
 /// `SendBody` 의 task/skill 에서 prompt 텍스트 추출 — 평문 task 우선, 없으면 skill.
@@ -11773,6 +12077,91 @@ fn build_fs_tree(dir: &std::path::Path, depth: usize) -> serde_json::Value {
     node
 }
 
+/// Sentinel `path` value that requests the top-level filesystem roots instead
+/// of a specific directory. Empty `path` is treated the same.
+const FS_ROOTS_SENTINEL: &str = "__roots__";
+
+/// Top-level roots for the folder picker, OS-appropriate (mirrors File
+/// Explorer / Finder). Windows: each present drive letter PLUS each installed
+/// `\\wsl$\<distro>` share. Unix: `$HOME` + `/`.
+///
+/// Returns `{ "os": "windows"|"unix", "roots": [{name,path,is_dir}, ...] }`
+/// so the frontend can open the picker at the daemon-correct starting point
+/// without hardcoding a Linux path.
+fn build_fs_roots() -> serde_json::Value {
+    let mut roots: Vec<serde_json::Value> = vec![];
+
+    #[cfg(windows)]
+    let os_label = "windows";
+    #[cfg(not(windows))]
+    let os_label = "unix";
+
+    #[cfg(windows)]
+    {
+        // Drive letters: probe C:..Z: (GetLogicalDrives semantics, no winapi dep).
+        for letter in b'C'..=b'Z' {
+            let drive = format!("{}:\\", letter as char);
+            if std::path::Path::new(&drive).is_dir() {
+                roots.push(serde_json::json!({
+                    "name": format!("{}:", letter as char),
+                    "path": drive,
+                    "is_dir": true,
+                }));
+            }
+        }
+        // Also probe A:/B: in case of mapped/virtual drives.
+        for letter in [b'A', b'B'] {
+            let drive = format!("{}:\\", letter as char);
+            if std::path::Path::new(&drive).is_dir() {
+                roots.push(serde_json::json!({
+                    "name": format!("{}:", letter as char),
+                    "path": drive,
+                    "is_dir": true,
+                }));
+            }
+        }
+        // WSL distros: enumerate `\\wsl$\` (best-effort — present only when WSL
+        // installed). Each child directory is a distro root share.
+        let wsl_base = r"\\wsl$\";
+        if let Ok(entries) = std::fs::read_dir(wsl_base) {
+            for e in entries.flatten() {
+                if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    let distro = e.file_name().to_string_lossy().to_string();
+                    roots.push(serde_json::json!({
+                        "name": format!("\\\\wsl$\\{distro}"),
+                        "path": format!(r"\\wsl$\{distro}"),
+                        "is_dir": true,
+                    }));
+                }
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            if !home.is_empty() && std::path::Path::new(&home).is_dir() {
+                roots.push(serde_json::json!({
+                    "name": home.clone(),
+                    "path": home,
+                    "is_dir": true,
+                }));
+            }
+        }
+        roots.push(serde_json::json!({
+            "name": "/",
+            "path": "/",
+            "is_dir": true,
+        }));
+    }
+
+    serde_json::json!({
+        "os": os_label,
+        "is_roots": true,
+        "roots": roots,
+    })
+}
+
 /// `GET /v1/gui/fs/tree?path=<dir>&depth=<n>` — 디렉토리 JSON 트리 (read-only).
 /// depth 기본 2, 최대 5. path 미지정 시 400. 디렉토리 아님/미존재 시 명시 status.
 // 머신 라벨 → (ssh host, wsl 래퍼 여부). None = 로컬(이 데몬 머신).
@@ -11967,7 +12356,16 @@ async fn gui_fs_tree(
     Query(q): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    let path = q.get("path").map(|s| s.as_str()).ok_or((
+    // Roots mode: empty/absent `path` or the `__roots__` sentinel returns the
+    // OS-appropriate top-level roots (Windows drives + \\wsl$ shares, or
+    // $HOME + / on unix) so the folder picker opens correctly per-daemon-OS.
+    // Local only — remote (machine=) browse needs an explicit start path.
+    let machine_q = q.get("machine").map(|s| s.as_str()).unwrap_or("");
+    let path_raw = q.get("path").map(|s| s.as_str()).unwrap_or("");
+    if machine_q.is_empty() && (path_raw.is_empty() || path_raw == FS_ROOTS_SENTINEL) {
+        return Ok(Json(build_fs_roots()));
+    }
+    let path = q.get("path").map(|s| s.as_str()).filter(|s| !s.is_empty()).ok_or((
         StatusCode::BAD_REQUEST,
         Json(ErrorDto {
             error: "path 쿼리 파라미터 필요".into(),

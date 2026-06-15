@@ -391,9 +391,12 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
   const localAgents = createMemo<AgentRow[]>(() =>
     (agents() ?? []).filter((a) => isLocalAgent(a, selfMachineNames())),
   );
-  // 친구 에이전트 — 다른 머신/외부(machine 원격 OR project_path 가 다른 경로 OR classification=friend).
+  // 친구 에이전트 — opt-in ONLY (마스터 확정): classification==="friend" 인,
+  //   AddFriendModal("머신"/"외부 A2A")로 명시적으로 추가된 에이전트만.
+  //   자동 등록(register_subagent)된 원격 머신 에이전트는 친구가 아니다 — 친구 목록 기본 비어 있음.
+  //   browse/add 후보(원격 머신 로스터)는 AddFriendModal 의 friends_remote_agents 흐름에서만 노출한다.
   const friendAgents = createMemo<AgentRow[]>(() =>
-    (agents() ?? []).filter((a) => !isLocalAgent(a, selfMachineNames())),
+    (agents() ?? []).filter((a) => (a.classification ?? "") === "friend"),
   );
   // 외부 A2A 친구(localStorage) → AgentRow 형태로 어댑팅(친구 섹션에 머신 친구와 함께 표시).
   const externalFriendRows = createMemo<AgentRow[]>(() =>
