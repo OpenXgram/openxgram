@@ -88,6 +88,23 @@ struct AcpHttpSession {
     /// 마지막 사용 시각 — A2A 지속 세션 idle TTL reaper 가 읽는다. create/prompt 시 갱신.
     /// 누수 방지 안전망(`reap_idle_a2a`)이 이 값으로 idle 초과 세션을 close 한다.
     last_used: std::time::Instant,
+    /// 진행 중 턴(in-flight prompt) 가드. prompt 가 락을 풀고 unbounded streaming 을
+    /// 도는 동안 `true`. idle reaper 가 이 값이 `true` 인 세션은 close 하지 않는다
+    /// (장시간 위임 턴이 ~30분 reaper 에 의해 mid-turn 으로 죽는 것을 방지).
+    /// `Arc` 라 prompt 가 락 밖에서 핸들을 들고 다닐 수 있고, Drop 가드(InFlightGuard)가
+    /// 패닉/조기 return 에도 반드시 `false` 로 되돌린다.
+    in_flight: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// `AcpHttpSession.in_flight` 를 RAII 로 관리하는 가드. 생성 시 `true`,
+/// drop 시 `false`. prompt 턴의 어떤 경로(에러/조기 return/패닉)에서도
+/// 플래그가 stuck-busy 로 남지 않도록 보장한다(절대 규칙 1: silent leak 금지).
+struct InFlightGuard(Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 /// Daemon-held ACP state. Lives in `GuiServerState` (Clone-cheap: all `Arc`).
@@ -196,6 +213,8 @@ impl AcpHttpState {
                         .map(|l| l.starts_with("a2a:"))
                         .unwrap_or(false)
                         && now.duration_since(s.last_used) >= idle
+                        // 진행 중 턴이 있으면 close 금지 — 장시간 위임 턴 mid-turn 사망 방지.
+                        && !s.in_flight.load(std::sync::atomic::Ordering::SeqCst)
                 })
                 .map(|(id, _)| id.clone())
                 .collect()
@@ -490,6 +509,7 @@ pub async fn create_session(
         spawn_opts,
         updates_tx,
         last_used: std::time::Instant::now(),
+        in_flight: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
     state.sessions.lock().await.insert(session_id.clone(), sess);
 
@@ -570,7 +590,7 @@ pub async fn prompt(
 ) -> Result<Value, AcpHttpError> {
     // Resolve (and lazily spawn) the handle + cwd under the lock, then release
     // the lock before the (potentially long) prompt turn.
-    let (handle_id, cwd, tx, conv_key) = {
+    let (handle_id, cwd, tx, conv_key, busy) = {
         let mut sessions = state.sessions.lock().await;
         let sess = sessions
             .get_mut(session_id)
@@ -588,9 +608,20 @@ pub async fn prompt(
         })?;
         // idle TTL reaper 안전망용 — 매 prompt 마다 마지막 사용 시각 갱신.
         sess.last_used = std::time::Instant::now();
+        // in-flight 가드 — 락 풀고 도는 긴 턴 동안 reaper 가 이 세션을 close 하지 못하게 함.
+        let busy = sess.in_flight.clone();
+        busy.store(true, std::sync::atomic::Ordering::SeqCst);
         // label = conv_key(대화 신원). 증분 툴 기록 + 맥락 복원 대상 키. picker(label 없음)면 None.
-        (hid, sess.cwd.clone(), sess.updates_tx.clone(), sess.label.clone())
+        (
+            hid,
+            sess.cwd.clone(),
+            sess.updates_tx.clone(),
+            sess.label.clone(),
+            busy,
+        )
     };
+    // RAII: 어떤 경로(에러/조기 return/패닉)에서도 턴 종료 시 in_flight=false 보장.
+    let _in_flight_guard = InFlightGuard(busy);
 
     // 🔑 데몬측 맥락 복원 — 어댑터는 매 프롬프트마다 session/new(새 Claude Code 세션, 무상태)를 연다.
     // 즉 턴 간 메모리가 없다. 따라서 매 프롬프트에 그 conv_key 의 DB 기록을 prepend 해야 에이전트가
