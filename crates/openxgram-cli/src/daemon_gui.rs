@@ -634,6 +634,10 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/auth/check", get(auth_check))
         // 외부 LLM 직접 push — URL 안 token 으로 인증 (Bearer 없음)
         .route("/v1/webhook/memory/{token}", post(webhook_memory_ingest))
+        // inbound webhook → 모니터 가능한 에이전트 스레드. memory webhook 과 동일한
+        // URL token 인증(Bearer 없음). source 별 conv_key(`webhook:<source>`)에 record_message
+        // + conv_persisted broadcast → 사람이 messenger 대화뷰에서 inbound 를 실시간으로 본다.
+        .route("/v1/webhook/agent/{token}", post(webhook_agent_inbound))
         // Web GUI 정적 자산 — xgram 바이너리에 임베드 (PRD-OpenXgram v1.3 §4.8).
         // nginx 외부 호스팅 불필요. 외부 노출은 Tailscale Funnel 또는 reverse proxy 위임.
         .route("/gui", get(crate::ui_assets::gui_root))
@@ -2594,6 +2598,76 @@ async fn webhook_memory_ingest(
         })));
     }
     process_import_bundle(&state, bundle).await
+}
+
+/// `POST /v1/webhook/agent/:token` — inbound webhook → 모니터 가능한 에이전트 스레드.
+///
+/// memory webhook 과 동일한 URL-token 인증(Bearer 없음, `webhook_token_memory` 재사용).
+/// memory/L0 ingest 와 **별개** 추가 경로 — 기존 동작 변경 없음. 받은 페이로드를
+/// A2A 가시화와 똑같은 방식(`record_message` → `acp_messages` + `conv_persisted` SSE
+/// broadcast)으로 `webhook:<source>` conv_key 스레드에 남겨, 사람이 messenger 대화뷰에서
+/// inbound 를 실시간으로 본다. **에이전트 턴 자동 트리거는 하지 않는다**(범위 밖) — 가시화만.
+///
+/// source 우선순위: query `?source=` → body `source` → body `from` → `"unknown"`.
+/// 본문 텍스트: body `text` → body `message` → body `summary` → 전체 JSON 직렬화.
+async fn webhook_agent_inbound(
+    State(state): State<GuiServerState>,
+    Path(token): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    let expected: String = {
+        let mut db = state.db.lock().await;
+        db.conn().query_row(
+            "SELECT value FROM identity_settings WHERE key = 'webhook_token_memory'",
+            [], |r| r.get(0)
+        ).unwrap_or_default()
+    };
+    if expected.is_empty() || token != expected {
+        return Err((StatusCode::UNAUTHORIZED, Json(ErrorDto {
+            error: "invalid webhook token — generate at /v1/gui/memory/import/webhook-token".into()
+        })));
+    }
+
+    // source 식별 (query → body.source → body.from → unknown). conv_key 안전화: 공백/구분자 정리.
+    let source_raw = q
+        .get("source")
+        .map(|s| s.as_str())
+        .or_else(|| payload.get("source").and_then(|v| v.as_str()))
+        .or_else(|| payload.get("from").and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown");
+    let source = source_raw.replace(char::is_whitespace, "_");
+    let conv_key = format!("webhook:{source}");
+
+    // 본문 텍스트 — 명시 필드 우선, 없으면 페이로드 전체를 직렬화.
+    let text = payload
+        .get("text")
+        .and_then(|v| v.as_str())
+        .or_else(|| payload.get("message").and_then(|v| v.as_str()))
+        .or_else(|| payload.get("summary").and_then(|v| v.as_str()))
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            serde_json::to_string(&payload).unwrap_or_else(|e| {
+                // 절대 규칙 1 — 직렬화 실패도 조용히 넘기지 않고 명시 로그.
+                tracing::error!(target: "acp.daemon", conv_key = %conv_key, "webhook inbound 페이로드 직렬화 실패: {e}");
+                format!("[webhook:{source}] (페이로드 직렬화 실패: {e})")
+            })
+        });
+
+    // 가시화 — A2A 와 동일 경로: record_message(영속) + conv_persisted broadcast(라이브).
+    // 발신은 'me' 가 아닌 'agent'(=상대측 발화)로 기록 → 카드가 상대 메시지로 렌더.
+    state.acp.record_message(&conv_key, "agent", &text).await;
+    crate::daemon_gui_acp::notify_conv_persisted_by_label(&state.acp, &conv_key).await;
+
+    tracing::info!(target: "acp.daemon", conv_key = %conv_key, source = %source, "inbound webhook → 에이전트 스레드 기록");
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "conv_key": conv_key,
+        "source": source,
+    })))
 }
 
 /// `GET /v1/gui/memory/import/webhook-token` — 현재 token 조회 (Bearer 필요).

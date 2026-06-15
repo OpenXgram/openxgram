@@ -835,6 +835,27 @@ pub async fn notify_conv_persisted(state: &AcpHttpState, session_id: &str) {
     }
 }
 
+/// `notify_conv_persisted` 의 conv_key(label) 키 버전 — **session_id 가 없는** 출처
+/// (inbound webhook / 거래 lifecycle 이벤트)가 `record_message` 로 `acp_messages` 에
+/// 행을 쓴 직후 호출한다. 같은 conv_key 를 label 로 가진 **살아있는 세션이 있으면** 그
+/// broadcast 채널에 `conv_persisted` 마커를 쏴 SSE(/stream) 로 연결된 클라이언트가
+/// 권위 소스(DB)에서 재동기화(loadHistory)하게 한다. A2A 와 동일한 가시화 경로
+/// (record_message → conv_persisted) 를 세션 없는 출처에도 적용. 매칭 세션 없거나
+/// 구독자 없으면 no-op(영속은 record_message 가 이미 보장하므로 새로고침 시 보임).
+pub async fn notify_conv_persisted_by_label(state: &AcpHttpState, conv_key: &str) {
+    if conv_key.is_empty() {
+        return;
+    }
+    let sessions = state.sessions.lock().await;
+    for sess in sessions.values() {
+        if sess.label.as_deref() == Some(conv_key) {
+            let _ = sess
+                .updates_tx
+                .send(serde_json::json!({ "sessionUpdate": "conv_persisted" }));
+        }
+    }
+}
+
 /// Graceful close of **all** spawned agents — call on daemon shutdown / session
 /// sweep (§5 zombie reap). Best-effort: errors are logged, never propagated, so
 /// one stuck agent cannot block the rest of the sweep.
