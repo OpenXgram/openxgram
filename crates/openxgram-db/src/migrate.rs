@@ -339,6 +339,15 @@ const MIGRATIONS: &[Migration] = &[
         name: "room_participants",
         sql: include_str!("../migrations/0061_room_participants.sql"),
     },
+    // rc.334 — 방(대화) 단위 공유 보안 스코프 (GUI P6: 보안 공유방).
+    // 멤버만 복호화·열람, 비멤버 차단. 실제 비밀 본문은 vault crate(vault_entries)가 암호화 보관 —
+    // 이 테이블은 METADATA(이름표·kind·sensitive·vault_key·created_by)만. 평문 비밀 없음.
+    // 퇴장 시 키회전은 자동 X — room_vault_rotation_flag 로 marker 만(사람 결정).
+    Migration {
+        version: 62,
+        name: "room_vault",
+        sql: include_str!("../migrations/0062_room_vault.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

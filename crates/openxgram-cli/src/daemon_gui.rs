@@ -505,6 +505,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/room/{key}/invite", post(gui_room_invite))
         .route("/v1/gui/room/{key}/eject", post(gui_room_eject))
         .route("/v1/gui/room/{key}/members", get(gui_room_members))
+        // P6 — 보안 공유방 (방 단위 vault: 멤버만 열람, 비멤버 403, 민감키=마스터 승인).
+        .route("/v1/gui/room/{key}/vault", get(gui_room_vault_list).post(gui_room_vault_put))
+        .route("/v1/gui/room/{key}/vault/{item}/reveal", post(gui_room_vault_reveal))
         // P4c (rc.332) — 오케스트레이션 RUNNER. 방의 orchestration_json 단계를 데몬이
         // 순서대로 실제 실행(각 단계 = grant-turn/handle_task 재사용). start=kick, status=진행상태,
         // approve/advance=사람-승인 pause 통과, cancel=중단.
@@ -7882,6 +7885,34 @@ async fn gui_room_eject(
     // ACP 분리(best-effort) — 그 member 의 alias 스레드 세션 라벨로 close 시도. 없으면 무시.
     let detached = crate::daemon_gui_acp::close_by_label(&state.acp, &member).await;
 
+    // P6 보안방 키 회전 FLAG — 이 방에 공유 보안 항목이 있으면, 퇴장 멤버가 이미 본 비밀의
+    // 노출 위험을 marker 로 기록. ⚠️ 자동 재암호화/회전은 무겁고 위험 → 하지 않는다(사람 결정).
+    let rotation_flagged = {
+        let mut db = state.db.lock().await;
+        let item_count: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM room_vault_item WHERE room_key=?1",
+                rusqlite::params![key],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if item_count > 0 {
+            let now = chrono::Local::now().to_rfc3339();
+            let id = uuid::Uuid::new_v4().to_string();
+            db.conn()
+                .execute(
+                    "INSERT INTO room_vault_rotation_flag(id, room_key, reason, flagged_at, resolved) \
+                     VALUES(?1,?2,?3,?4,0)",
+                    rusqlite::params![id, key, format!("eject:{member}"), now],
+                )
+                .ok();
+            true
+        } else {
+            false
+        }
+    };
+
     let note = format!("[내보냄: {member}] 수신 중단 — 더 이상 발언권/턴 대상이 아닙니다.");
     state.acp.record_message(&key, "agent", &note).await;
     crate::daemon_gui_acp::notify_conv_persisted_by_label(&state.acp, &key).await;
@@ -7893,6 +7924,8 @@ async fn gui_room_eject(
         "active": false,
         "removed_rows": affected,
         "acp_detached": detached,
+        // P6: 이 방에 공유 보안 항목이 있어 회전이 필요할 수 있음을 사람에게 알림(자동 회전 X).
+        "vault_rotation_flagged": rotation_flagged,
     })))
 }
 
@@ -7940,6 +7973,289 @@ async fn gui_room_members(
         "room_key": key,
         "members": rows,
         "note": note,
+    })))
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// P6 — 보안 공유방 (방 단위 공유 vault: 멤버만 키/파일 복호화·열람, 비멤버 차단).
+//
+// 스펙 항목 5: 방 단위 공유 보안 스코프(vault ACL/파일). 초대=접근 부여 / 퇴장=회수.
+//   암호화+감사로그 필수, 민감키는 마스터 승인정책(confirm/mfa). 파일은 아티팩트 패널 연결.
+//
+// ⚠️ 보안 설계(사람 검토 필수 — 새 crypto 도입 X, 기존 vault crate 전면 재사용):
+//  - 실제 비밀/파일 본문은 기존 openxgram-vault crate(vault_entries)에 ENCRYPTED-AT-REST 로 저장.
+//    vault key 형식 = "room:<room_key>:<item_key>". room_vault_item 에는 METADATA 만(평문 비밀 X).
+//  - 접근 경계 = room 멤버십. requester 가 active 멤버가 아니면 비멤버 → 403(room_member_blocked 재사용).
+//    사람(require_auth=="self"/None, MASTER)은 고권한 참가자(spec 9) → 항상 통과.
+//  - 감사로그: 모든 get/put/list 는 vault crate 의 log_audit(또는 get_as/set_as 내부 audit)을 거친다.
+//  - 민감(sensitive=1) 항목: vault ACL policy(confirm/mfa) 경유 — set_as_authed/get_as_authed 가
+//    ensure_policy 로 마스터 승인/MFA 를 강제. 이 경로를 우회하지 않는다.
+//  - 키 회전(eject): 전체 재암호화는 무겁고 위험 → 자동 회전 안 함. room_vault_rotation_flag 로
+//    "퇴장 멤버 노출 — 회전 필요" marker 만 기록(사람 결정). gui_room_eject 가 flag 를 남긴다.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// 보안방 항목의 실제 vault 키. 본문은 vault crate 가 암호화 보관(이 형식의 key 로).
+fn room_vault_key(room_key: &str, item_key: &str) -> String {
+    format!("room:{room_key}:{item_key}")
+}
+
+/// requester 가 이 방의 보안 스코프에 접근 가능한가?
+/// 사람(MASTER, require_auth=None/"self")은 고권한 → 허용. 에이전트면 active 멤버여야 함.
+/// 반환 (allowed, requester_label). requester_label 은 감사/vault agent 식별자.
+async fn room_vault_access(
+    state: &GuiServerState,
+    room_key: &str,
+    requester: &Option<String>,
+) -> (bool, String) {
+    match requester.as_deref() {
+        // 사람(웹 GUI unlock=self) 또는 무인증 모드(None) → 고권한 참가자(spec 9).
+        None | Some("self") => (true, openxgram_vault::MASTER_AGENT.to_string()),
+        Some(agent) => {
+            let blocked = room_member_blocked(state, room_key, agent).await;
+            (!blocked, agent.to_string())
+        }
+    }
+}
+
+fn forbidden(msg: &str) -> (StatusCode, Json<ErrorDto>) {
+    (StatusCode::FORBIDDEN, Json(ErrorDto { error: msg.into() }))
+}
+
+/// `GET /v1/gui/room/{key}/vault` — 방 보안 스코프의 공유 항목 목록(이름/kind/sensitive 만, 값 마스킹).
+/// 비멤버 → 403. 멤버/사람만 목록을 본다. 값은 절대 응답에 넣지 않음(reveal 은 별도 get).
+async fn gui_room_vault_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    let requester = require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let (allowed, requester_label) = room_vault_access(&state, &key, &requester).await;
+    if !allowed {
+        return Err(forbidden("비멤버 — 이 방의 보안 스코프에 접근할 수 없습니다."));
+    }
+    let mut db = state.db.lock().await;
+    // 감사: list 접근도 기록(spec 필수). vault crate 의 audit 테이블 재사용.
+    {
+        let decision = openxgram_vault::AclDecision {
+            allowed: true,
+            policy: openxgram_vault::AclPolicy::Auto,
+            reason: Some(format!("room-vault list room={key}")),
+            matched_acl_id: None,
+            daily_used: 0,
+        };
+        let _ = VaultStore::new(&mut db).log_audit(
+            &format!("room:{key}:*"),
+            &requester_label,
+            openxgram_vault::AclAction::Get,
+            &decision,
+        );
+    }
+    let items: Vec<serde_json::Value> = {
+        let mut stmt = db
+            .conn()
+            .prepare(
+                "SELECT item_key, kind, sensitive, file_hash, created_by, created_at \
+                 FROM room_vault_item WHERE room_key=?1 ORDER BY created_at",
+            )
+            .map_err(|e| internal(&format!("room vault list prep: {e}")))?;
+        let collected: Vec<serde_json::Value> = stmt
+            .query_map(rusqlite::params![key], |r| {
+                let item_key: String = r.get(0)?;
+                let kind: String = r.get(1)?;
+                let sensitive: i64 = r.get(2)?;
+                let file_hash: Option<String> = r.get(3)?;
+                let created_by: String = r.get(4)?;
+                let created_at: String = r.get(5)?;
+                Ok(serde_json::json!({
+                    "item_key": item_key,
+                    "kind": kind,
+                    "sensitive": sensitive != 0,
+                    // 값은 항상 마스킹 — 평문 비밀은 응답에 절대 넣지 않음.
+                    "value_masked": "••••••••",
+                    "file_hash": file_hash,
+                    "created_by": created_by,
+                    "created_at": created_at,
+                }))
+            })
+            .map_err(|e| internal(&format!("room vault list query: {e}")))?
+            .filter_map(|r| r.ok())
+            .collect();
+        collected
+    };
+    // 회전 필요 flag(미해결) 노출 — 사람이 보안방 UI 에서 경고를 본다.
+    let rotation_pending: i64 = db
+        .conn()
+        .query_row(
+            "SELECT COUNT(*) FROM room_vault_rotation_flag WHERE room_key=?1 AND resolved=0",
+            rusqlite::params![key],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    Ok(Json(serde_json::json!({
+        "room_key": key,
+        "items": items,
+        "rotation_needed": rotation_pending > 0,
+    })))
+}
+
+/// `POST /v1/gui/room/{key}/vault` body `{item_key, value?, kind?, sensitive?, file_hash?}` —
+/// 방 보안 스코프에 공유 항목 추가/갱신. 본문(value)은 vault crate 가 암호화 보관.
+/// 비멤버 → 403. 민감 항목은 vault ACL policy(confirm/mfa) 경유(에이전트 호출 시).
+async fn gui_room_vault_put(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    let requester = require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let (allowed, requester_label) = room_vault_access(&state, &key, &requester).await;
+    if !allowed {
+        return Err(forbidden("비멤버 — 이 방의 보안 스코프에 항목을 추가할 수 없습니다."));
+    }
+    let item_key = body
+        .get("item_key")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| bad_request("item_key 필수"))?
+        .to_string();
+    let kind = body
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .filter(|s| *s == "secret" || *s == "file")
+        .unwrap_or("secret")
+        .to_string();
+    let sensitive = body.get("sensitive").and_then(|v| v.as_bool()).unwrap_or(false);
+    let file_hash = body
+        .get("file_hash")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    // value 는 평문 비밀 — vault crate 로 암호화 저장. file 항목은 file_hash 만으로도 가능(value 선택).
+    let value = body
+        .get("value")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    if kind == "secret" && value.as_deref().map(str::is_empty).unwrap_or(true) {
+        return Err(bad_request("secret kind 는 value 필수"));
+    }
+    let mfa_code = body.get("mfa_code").and_then(|v| v.as_str());
+    let vkey = room_vault_key(&key, &item_key);
+    let now = chrono::Local::now().to_rfc3339();
+
+    // daemon env 의 keystore password 로 vault 암호화(기존 패턴 재사용).
+    let pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").map_err(|_| {
+        internal("XGRAM_KEYSTORE_PASSWORD 미설정 — daemon 환경 변수 필요")
+    })?;
+
+    let mut db = state.db.lock().await;
+    // 1) 실제 비밀 본문 → vault crate 암호화 저장(있을 때만). set_as_authed 가 ACL/audit/policy 강제.
+    if let Some(plain) = value.as_deref() {
+        if !plain.is_empty() {
+            let mut store = VaultStore::new(&mut db);
+            // 민감 항목은 vault ACL 에 confirm 정책을 보장(없으면 생성) — 마스터 승인 경유.
+            if sensitive {
+                let _ = store.upsert_acl(
+                    &vkey,
+                    &requester_label,
+                    &[
+                        openxgram_vault::AclAction::Get,
+                        openxgram_vault::AclAction::Set,
+                    ],
+                    0,
+                    openxgram_vault::AclPolicy::Confirm,
+                );
+            }
+            store
+                .set_as_authed(
+                    &vkey,
+                    plain.as_bytes(),
+                    &pw,
+                    &[format!("room:{key}")],
+                    &requester_label,
+                    mfa_code,
+                )
+                .map_err(|e| {
+                    // 평문 비밀은 절대 로그/응답에 넣지 않음 — vault 에러 메시지만.
+                    forbidden(&format!("vault set 거부/대기: {e}"))
+                })?;
+        }
+    }
+    // 2) METADATA upsert(평문 비밀 없음).
+    db.conn()
+        .execute(
+            "INSERT INTO room_vault_item(room_key, item_key, kind, sensitive, vault_key, file_hash, created_by, created_at) \
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8) \
+             ON CONFLICT(room_key, item_key) DO UPDATE SET \
+                kind=excluded.kind, sensitive=excluded.sensitive, file_hash=excluded.file_hash",
+            rusqlite::params![
+                key,
+                item_key,
+                kind,
+                if sensitive { 1 } else { 0 },
+                vkey,
+                file_hash,
+                requester_label,
+                now
+            ],
+        )
+        .map_err(|e| internal(&format!("room vault meta upsert: {e}")))?;
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "room_key": key,
+        "item_key": item_key,
+        "kind": kind,
+        "sensitive": sensitive,
+    })))
+}
+
+/// `POST /v1/gui/room/{key}/vault/{item}/reveal` body `{mfa_code?}` — 한 항목의 평문 값 복호화.
+/// 비멤버 → 403. 민감 항목은 vault ACL policy(confirm/mfa)를 통과해야 값 반환(아니면 승인 대기 메시지).
+/// ⚠️ 이 endpoint 만 평문을 반환한다(명시적 reveal). 목록/기타는 항상 마스킹.
+async fn gui_room_vault_reveal(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path((key, item)): Path<(String, String)>,
+    body: Option<Json<serde_json::Value>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    let requester = require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let (allowed, requester_label) = room_vault_access(&state, &key, &requester).await;
+    if !allowed {
+        return Err(forbidden("비멤버 — 이 방의 보안 스코프 값을 열람할 수 없습니다."));
+    }
+    let mfa_code = body
+        .as_ref()
+        .and_then(|b| b.get("mfa_code"))
+        .and_then(|v| v.as_str());
+    let vkey = room_vault_key(&key, &item);
+    let pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").map_err(|_| {
+        internal("XGRAM_KEYSTORE_PASSWORD 미설정 — daemon 환경 변수 필요")
+    })?;
+    let mut db = state.db.lock().await;
+    // 메타 존재 확인.
+    let exists: i64 = db
+        .conn()
+        .query_row(
+            "SELECT COUNT(*) FROM room_vault_item WHERE room_key=?1 AND item_key=?2",
+            rusqlite::params![key, item],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if exists == 0 {
+        return Err(bad_request("항목 없음"));
+    }
+    // get_as_authed 가 ACL/audit/policy(confirm/mfa) 강제 — 민감 항목은 여기서 마스터 승인 검사.
+    let plain = VaultStore::new(&mut db)
+        .get_as_authed(&vkey, &pw, &requester_label, mfa_code)
+        .map_err(|e| forbidden(&format!("vault get 거부/대기: {e}")))?;
+    let value = String::from_utf8_lossy(&plain).to_string();
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "room_key": key,
+        "item_key": item,
+        "value": value,
     })))
 }
 

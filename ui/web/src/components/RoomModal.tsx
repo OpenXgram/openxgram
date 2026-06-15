@@ -11,22 +11,7 @@ import { invoke } from "@/api/client";
 // 전역 기본 하네스(⚙️)는 RuntimeTab + /v1/gui/runtime/config (alias 미지정) 재사용.
 // 이 모달의 하네스 섹션은 그 위에 얹는 방-스코프 오버라이드. harness=null 이면 전역 상속.
 
-// ── 스타일 (RuntimeTab.tsx 와 동일 토큰 재사용: --kk-line/--kk-ink/--kk-sub) ──
-const overlay = "position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:70; display:flex; align-items:center; justify-content:center;";
-const card = "background:var(--kk-card,#fff); color:var(--kk-ink); width:min(560px,94vw); max-height:90vh; overflow:auto; border-radius:14px; padding:0; box-shadow:0 10px 40px rgba(0,0,0,0.3);";
-const head = "display:flex; align-items:center; gap:8px; padding:14px 18px; border-bottom:1px solid var(--kk-line); position:sticky; top:0; background:var(--kk-card,#fff); z-index:1;";
-const body = "padding:14px 18px; display:flex; flex-direction:column; gap:18px;";
-const sect = "border:1px solid var(--kk-line); border-radius:10px; padding:13px 15px;";
-const sh = "font-weight:700; font-size:14px; margin:0 0 10px; color:var(--kk-ink);";
-const ctl = "padding:6px 8px; background:#f7f8fa; color:var(--kk-ink); border:1px solid var(--kk-line); border-radius:6px; font-size:13px;";
-const row = "display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:8px;";
-const lbl = "min-width:96px; color:var(--kk-ink); font-size:13px;";
-const hint = "color:var(--kk-sub); font-size:11.5px;";
-const tog = "font-size:12px; padding:4px 11px; border:1px solid var(--kk-line); border-radius:14px; background:#f1f3f6; color:#54607a; cursor:pointer;";
-const togOn = "font-size:12px; padding:4px 11px; border:1px solid #3a6ff0; border-radius:14px; background:#e7efff; color:#2452c8; cursor:pointer; font-weight:600;";
-const btn = "font-size:12.5px; padding:5px 12px; border:1px solid var(--kk-line); border-radius:8px; background:#f7f8fa; color:var(--kk-ink); cursor:pointer;";
-const btnPri = "font-size:13px; padding:7px 16px; border:1px solid #2452c8; border-radius:8px; background:#3a6ff0; color:#fff; cursor:pointer; font-weight:600;";
-const ta = "width:100%; min-height:64px; padding:8px; background:#f7f8fa; color:var(--kk-ink); border:1px solid var(--kk-line); border-radius:8px; font-size:13px; resize:vertical; box-sizing:border-box; font-family:inherit;";
+// 스타일은 mockup.css(.oxg-ovl .mset …) 정본 목업 verbatim 포팅으로 대체됨.
 
 // ── 타입 ──
 type Harness = {
@@ -101,6 +86,8 @@ const PERMS = ["bypassPermissions", "acceptEdits", "plan", "default"];
 const EXECS = ["interactive", "headless"];
 const VAULT_SCOPES = ["none", "read", "read-write"];
 const MCP_OPTS = ["openxgram", "context-mode", "token-savior", "playwright", "github"];
+// 정본 목업 ORCH flow 원형 숫자.
+const CIRC = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"];
 
 export function RoomModal(props: { roomKey: string; roomLabel?: string; onClose: () => void }) {
   const [cfg, setCfg] = createSignal<RoomConfig>(EMPTY);
@@ -214,205 +201,173 @@ export function RoomModal(props: { roomKey: string; roomLabel?: string; onClose:
     } finally { setBusy(false); }
   }
 
+  // 정본 목업 toggle idiom — 켜짐(default tone) / .off(꺼짐).
+  const togCls = (on: boolean) => (on ? "tog" : "tog off");
+
   return (
-    <div style={overlay} onClick={props.onClose}>
-      <div style={card} onClick={(e) => e.stopPropagation()}>
-        <div style={head}>
-          <span style="font-size:18px">⚙️</span>
-          <b style="font-size:15px">방 설정 — {props.roomLabel || props.roomKey}</b>
-          <button style={`${btn}; margin-left:auto`} onClick={props.onClose}>✕</button>
+    <div class="oxg-ovl show" onClick={props.onClose}>
+      <div class="modal" onClick={(e) => e.stopPropagation()}>
+        <div class="mhead">
+          <span class="ttl">⚙️ 방 설정 — {props.roomLabel || props.roomKey}</span>
+          <span class="x" onClick={props.onClose}>✕</span>
         </div>
 
-        {/* 정직성 배너 — P4a/P4c 배선 완료, 이벤트 트리거만 후속 */}
-        <div style="margin:12px 18px 0; padding:8px 12px; background:#fff7e6; border:1px solid #f0c674; border-radius:8px; font-size:12px; color:#8a6d1a;">
-          ⓘ 이 설정은 <b>저장</b>되며 <b>적용</b>됩니다. 프롬프트 레이어링·턴 제어(P4a)와 오케스트레이션 실행(P4c)은 <b>배선·강제 완료</b>. 이벤트 트리거(이벤트 규칙)만 후속 단계로 남아 있습니다.
-        </div>
-
-        <div style={body}>
-          {/* ── 하네스 ── */}
-          <div style={sect}>
-            <h4 style={sh}>🧠 하네스 (방 오버라이드)</h4>
-            <div style={hint}>전역 기본 하네스는 설정 ▸ 런타임 탭(⚙️)에서. 이 방만 다르게 하려면 오버라이드를 켜세요. 끄면 전역 상속.</div>
-            <div style={row}>
-              <button style={harnessOn() ? togOn : tog} onClick={() => enableHarnessOverride(!harnessOn())}>
-                {harnessOn() ? "방 오버라이드 켜짐" : "전역 상속 (오버라이드 꺼짐)"}
-              </button>
-            </div>
-            <Show when={harnessOn()}>
-              <div style={row}>
-                <span style={lbl}>런타임</span>
-                <For each={RUNTIMES}>{(r) => (
-                  <button style={harness().runtime === r ? togOn : tog} onClick={() => setHarness("runtime", r)}>{r}</button>
-                )}</For>
-              </div>
-              <div style={row}>
-                <span style={lbl}>모델</span>
-                <For each={MODELS}>{(m) => (
-                  <button style={harness().model === m ? togOn : tog} onClick={() => setHarness("model", m)}>{m}</button>
-                )}</For>
-              </div>
-              <div style={row}>
-                <span style={lbl}>권한 모드</span>
-                <For each={PERMS}>{(p) => (
-                  <button style={harness().perm_mode === p ? togOn : tog} onClick={() => setHarness("perm_mode", p)}>{p}</button>
-                )}</For>
-              </div>
-              <div style={row}>
-                <span style={lbl}>실행 모드</span>
-                <For each={EXECS}>{(x) => (
-                  <button style={harness().exec_mode === x ? togOn : tog} onClick={() => setHarness("exec_mode", x)}>{x}</button>
-                )}</For>
-              </div>
-              <div style={row}>
-                <span style={lbl}>작업 디렉토리</span>
-                <input style={`${ctl}; flex:1; min-width:180px`} value={harness().cwd}
-                  placeholder="예: /home/llm/projects/…" onInput={(e) => setHarness("cwd", e.currentTarget.value)} />
-              </div>
-              <div style={row}>
-                <button style={harness().worktree ? togOn : tog} onClick={() => setHarness("worktree", !harness().worktree)}>
-                  worktree {harness().worktree ? "ON" : "OFF"}
-                </button>
-                <button style={harness().isolation ? togOn : tog} onClick={() => setHarness("isolation", !harness().isolation)}>
-                  격리(isolation) {harness().isolation ? "ON" : "OFF"}
-                </button>
-              </div>
-              <div style={row}>
-                <span style={lbl}>MCP</span>
-                <For each={MCP_OPTS}>{(m) => (
-                  <button style={(harness().mcp ?? []).includes(m) ? togOn : tog} onClick={() => toggleMcp(m)}>{m}</button>
-                )}</For>
-              </div>
-              <div style={row}>
-                <span style={lbl}>vault 범위</span>
-                <For each={VAULT_SCOPES}>{(v) => (
-                  <button style={harness().vault_scope === v ? togOn : tog} onClick={() => setHarness("vault_scope", v)}>{v}</button>
-                )}</For>
-              </div>
-              {/* P4a — 턴 모드. auto=받으면 즉시 응답(기본) / gated=맥락만 누적, 발언권/@/조건으로만 발언(관찰자). */}
-              <div style={row}>
-                <span style={lbl}>턴 모드</span>
-                <button style={harness().turn_mode === "auto" ? togOn : tog} onClick={() => setHarness("turn_mode", "auto")}>auto (즉시 응답)</button>
-                <button style={harness().turn_mode === "gated" ? togOn : tog} onClick={() => setHarness("turn_mode", "gated")}>gated (관찰자 · 발언권 필요)</button>
-              </div>
-            </Show>
+        {/* 정본 .mset — 방 설정 뷰(하네스/시스템프롬프트/역할정의/역할배정/순서/이벤트규칙) */}
+        <div class="mset show">
+          <div class="layhint" style="background:#fff7e6;border-color:#f0c674;color:#8a6d1a">
+            ⓘ 이 설정은 <b>저장</b>되며 <b>적용</b>됩니다. 프롬프트 레이어링·턴 제어(P4a)·오케스트레이션 실행(P4c) <b>배선 완료</b>. 이벤트 트리거만 후속.
           </div>
 
-          {/* ── 역할 정의 (인라인 아코디언) ── */}
-          <div style={sect}>
-            <h4 style={sh}>🎭 역할 정의 (이름 + 지침)</h4>
-            <div style={hint}>📚 지침 레이어링: 방 시스템 프롬프트 + 역할 지침 + 에이전트 base = 방 내 행동.</div>
-            <For each={cfg().roles.defs}>{(d, i) => (
-              <div style="margin-top:8px; border:1px solid var(--kk-line); border-radius:8px; overflow:hidden;">
-                <div style="display:flex; align-items:center; gap:8px; padding:8px 10px; background:#f7f8fa; cursor:pointer;"
-                  onClick={() => (editRole() === i() ? setEditRole(null) : openRoleEd(i()))}>
-                  <b style="font-size:13px">{d.name}</b>
-                  <span style={hint}>{editRole() === i() ? "▾" : "▸"} 클릭하면 편집</span>
-                  <button style={`${btn}; margin-left:auto; padding:2px 8px`} onClick={(e) => { e.stopPropagation(); delRoleDef(i()); }}>🗑</button>
-                </div>
-                <Show when={editRole() === i()}>
-                  <div style="padding:10px; display:flex; flex-direction:column; gap:6px;">
-                    <input style={ctl} value={reName()} onInput={(e) => setReName(e.currentTarget.value)} placeholder="역할명" />
-                    <textarea style={ta} value={reInst()} onInput={(e) => setReInst(e.currentTarget.value)}
-                      placeholder="지침 (role-level 시스템 프롬프트). 예: 테스트만 돌리고 통과/실패 보고. 코드 수정 금지." />
-                    <div style="display:flex; gap:8px;">
-                      <button style={btnPri} onClick={saveRoleDef}>💾 역할 저장</button>
-                      <button style={btn} onClick={() => setEditRole(null)}>취소</button>
-                    </div>
-                  </div>
-                </Show>
+          {/* 🧩 런타임 하네스 (방 오버라이드) */}
+          <h5>🧩 런타임 하네스 <span style="font-weight:600;color:var(--muted);font-size:11px">— 편집 후 저장 시 이 방에 적용</span></h5>
+          <div class="fld">
+            <span class={togCls(harnessOn())} onClick={() => enableHarnessOverride(!harnessOn())}>
+              {harnessOn() ? "방 오버라이드 켜짐" : "전역 상속 (꺼짐)"}
+            </span>
+          </div>
+          <Show when={harnessOn()}>
+            <div class="fld" style="margin-top:8px">
+              <select class="sel" value={harness().runtime} onChange={(e) => setHarness("runtime", e.currentTarget.value)}>
+                <For each={RUNTIMES}>{(r) => <option value={r} selected={r === harness().runtime}>런타임 · {r}</option>}</For>
+              </select>
+              <select class="sel" value={harness().model} onChange={(e) => setHarness("model", e.currentTarget.value)}>
+                <For each={MODELS}>{(m) => <option value={m} selected={m === harness().model}>모델 · {m}</option>}</For>
+              </select>
+              <select class="sel" value={harness().perm_mode} onChange={(e) => setHarness("perm_mode", e.currentTarget.value)}>
+                <For each={PERMS}>{(p) => <option value={p} selected={p === harness().perm_mode}>권한 · {p}</option>}</For>
+              </select>
+              <span class={togCls(harness().worktree)} onClick={() => setHarness("worktree", !harness().worktree)}>🌳 worktree</span>
+              <span class={togCls(harness().isolation)} onClick={() => setHarness("isolation", !harness().isolation)}>🔒 격리</span>
+              <select class="sel" value={harness().exec_mode} onChange={(e) => setHarness("exec_mode", e.currentTarget.value)}>
+                <For each={EXECS}>{(x) => <option value={x} selected={x === harness().exec_mode}>실행 · {x}</option>}</For>
+              </select>
+              <select class="sel" value={harness().vault_scope} onChange={(e) => setHarness("vault_scope", e.currentTarget.value)}>
+                <For each={VAULT_SCOPES}>{(v) => <option value={v} selected={v === harness().vault_scope}>🔐 vault · {v}</option>}</For>
+              </select>
+            </div>
+            <div class="fld" style="margin-top:8px">
+              <span style="font-size:11.5px;color:var(--muted)">MCP</span>
+              <For each={MCP_OPTS}>{(m) => <span class={togCls((harness().mcp ?? []).includes(m))} onClick={() => toggleMcp(m)}>🔌 {m}</span>}</For>
+            </div>
+            <div class="fld" style="margin-top:8px">
+              <span style="font-size:11.5px;color:var(--muted)">턴 모드</span>
+              <span class={togCls(harness().turn_mode === "auto")} onClick={() => setHarness("turn_mode", "auto")}>auto (즉시 응답)</span>
+              <span class={togCls(harness().turn_mode === "gated")} onClick={() => setHarness("turn_mode", "gated")}>gated (발언권 필요)</span>
+            </div>
+            <div class="fld" style="margin-top:8px">
+              <span style="font-size:11.5px;color:var(--muted)">cwd</span>
+              <input class="rname" style="flex:1;min-width:180px;margin-bottom:0" value={harness().cwd}
+                placeholder="📁 /home/llm/projects/…" onInput={(e) => setHarness("cwd", e.currentTarget.value)} />
+            </div>
+          </Show>
+
+          {/* 📝 방 시스템 프롬프트 */}
+          <h5>📝 방 시스템 프롬프트 (이 방 전용)</h5>
+          <textarea class="ta-edit" value={cfg().system_prompt}
+            onInput={(e) => patch({ system_prompt: e.currentTarget.value })}
+            placeholder="예: 이 방은 환불 정책 논의방. 결정 전 반드시 근거를 제시할 것." />
+
+          {/* 🎭 역할 정의 (인라인 아코디언) */}
+          <h5>🎭 역할 정의 (이름 + 지침) <span style="font-weight:600;color:var(--muted);font-size:11px">— 클릭하면 역할명·지침 편집</span></h5>
+          <div class="layhint">📚 <b>지침 레이어링</b>: 방 시스템 프롬프트(방 전체) + <b>역할 지침</b>(배정 역할별) + 에이전트 base → 방 내 행동 = 셋의 합.</div>
+          <For each={cfg().roles.defs}>{(d, i) => (
+            <div class="roleitem" classList={{ open: editRole() === i() }}>
+              <div class="defrole" onClick={() => (editRole() === i() ? setEditRole(null) : openRoleEd(i()))}>
+                <span class="dn">🎭 {d.name}</span>
+                <span class="dd">— {roleInst(d)}</span>
+                <span class="edt">편집</span>
               </div>
-            )}</For>
-            <Show when={editRole() === -1}>
-              <div style="margin-top:8px; padding:10px; border:1px dashed var(--kk-line); border-radius:8px; display:flex; flex-direction:column; gap:6px;">
-                <input style={ctl} value={reName()} onInput={(e) => setReName(e.currentTarget.value)} placeholder="예: 검증자" />
-                <textarea style={ta} value={reInst()} onInput={(e) => setReInst(e.currentTarget.value)} placeholder="지침 (role-level 시스템 프롬프트)" />
-                <div style="display:flex; gap:8px;">
-                  <button style={btnPri} onClick={saveRoleDef}>💾 역할 저장</button>
-                  <button style={btn} onClick={() => setEditRole(null)}>취소</button>
+              <div class="roleed">
+                <label>역할명</label>
+                <input class="rname" value={reName()} onInput={(e) => setReName(e.currentTarget.value)} />
+                <label>지침 (role-level 시스템 프롬프트)</label>
+                <textarea class="rinst" value={reInst()} onInput={(e) => setReInst(e.currentTarget.value)} />
+                <div class="rerow">
+                  <button class="rsave" onClick={saveRoleDef}>💾 역할 저장</button>
+                  <button class="rcancel" onClick={() => setEditRole(null)}>취소</button>
+                  <button class="rcancel" onClick={() => delRoleDef(i())}>🗑 삭제</button>
                 </div>
               </div>
+            </div>
+          )}</For>
+          <div class="roleed standalone" classList={{ show: editRole() === -1 }}>
+            <label>역할명</label>
+            <input class="rname" value={reName()} onInput={(e) => setReName(e.currentTarget.value)} placeholder="예: 검증자" />
+            <label>지침 (role-level 시스템 프롬프트)</label>
+            <textarea class="rinst" value={reInst()} onInput={(e) => setReInst(e.currentTarget.value)} placeholder="예: 테스트만 돌리고 통과/실패 보고. 코드 수정 금지." />
+            <div class="rerow">
+              <button class="rsave" onClick={saveRoleDef}>💾 역할 저장</button>
+              <button class="rcancel" onClick={() => setEditRole(null)}>취소</button>
+            </div>
+          </div>
+          <button class="addrole" onClick={() => openRoleEd(-1)}>＋ 새 역할 정의 (커스텀: 이름 + 지침)</button>
+
+          {/* 👤 역할 배정 (역할 → 에이전트) */}
+          <h5>👤 역할 배정 (역할 → 어떤 에이전트가 맡는지)</h5>
+          <div style="font-size:11px;color:var(--muted);margin:0 0 6px">각 행 = <b>역할 → 담당 에이전트</b>. 배정한 역할의 <b>지침</b>이 그 에이전트에게 함께 적용됩니다.</div>
+          <For each={cfg().roles.assignments}>{(a, i) => (
+            <div class="role">
+              <input class="rname" style="width:auto;flex:1;min-width:110px;margin-bottom:0" value={a.role} placeholder="역할명"
+                onInput={(e) => setAssign(i(), "role", e.currentTarget.value)} />
+              <span class="arr" style="color:#5a7fb0;font-weight:700">→</span>
+              <select class="rsel" value={a.agent} onChange={(e) => setAssign(i(), "agent", e.currentTarget.value)}>
+                <For each={agentNames()}>{(n) => <option value={n} selected={n === a.agent}>{n}</option>}</For>
+              </select>
+              <button class="rb" style="border:0;cursor:pointer" onClick={() => delAssign(i())}>🗑</button>
+            </div>
+          )}</For>
+          <button class="addrole" onClick={addAssign}>＋ 역할 배정 — 역할 → 에이전트 지정</button>
+
+          {/* 🔢 순서 (오케스트레이션) */}
+          <h5>🔢 순서 (오케스트레이션) <span style="font-weight:600;color:var(--muted);font-size:11px">— 단계 추가·재정렬·삭제 가능</span></h5>
+          <div class="orchflow fld">
+            <Show when={cfg().orchestration.length > 0} fallback={<span style="color:var(--muted);font-size:11px">단계 없음 — ＋ 단계 추가</span>}>
+              <For each={cfg().orchestration}>{(s, i) => (
+                <>
+                  <span class="pill">{CIRC[i()] || i() + 1} {s.label}{s.agent && s.agent !== "— 미지정" ? ` ${s.agent}` : ""}</span>
+                  <Show when={i() < cfg().orchestration.length - 1}><span class="arr" style="color:#5a7fb0;font-weight:700">→</span></Show>
+                </>
+              )}</For>
             </Show>
-            <div style={row}>
-              <button style={btn} onClick={() => openRoleEd(-1)}>＋ 새 역할 정의 (커스텀: 이름 + 지침)</button>
-            </div>
-
-            <h4 style={`${sh}; margin-top:14px`}>👤 역할 배정 (역할 → 에이전트)</h4>
-            <div style={hint}>각 행 = 역할 → 담당 에이전트. 배정한 역할의 지침이 그 에이전트에게 함께 적용(P4).</div>
-            <For each={cfg().roles.assignments}>{(a, i) => (
-              <div style={row}>
-                <input style={`${ctl}; flex:1; min-width:120px`} value={a.role} placeholder="역할명"
-                  onInput={(e) => setAssign(i(), "role", e.currentTarget.value)} />
-                <span>→</span>
-                <select style={`${ctl}; min-width:130px`} value={a.agent} onChange={(e) => setAssign(i(), "agent", e.currentTarget.value)}>
-                  <For each={agentNames()}>{(n) => <option value={n} selected={n === a.agent}>{n}</option>}</For>
-                </select>
-                <button style={`${btn}; padding:2px 8px`} onClick={() => delAssign(i())}>🗑</button>
-              </div>
-            )}</For>
-            <div style={row}>
-              <button style={btn} onClick={addAssign}>＋ 역할 배정 추가</button>
-            </div>
           </div>
-
-          {/* ── 오케스트레이션 단계 ── */}
-          <div style={sect}>
-            <h4 style={sh}>🔀 오케스트레이션 단계 (순서)</h4>
-            <div style={hint}>순서대로 실행될 단계 — 라벨 + 담당 에이전트 + 역할/액션. (실행 엔진은 P4)</div>
-            <For each={cfg().orchestration}>{(s, i) => (
-              <div style={`${row}; align-items:flex-start`}>
-                <span style="min-width:18px; color:var(--kk-sub); font-size:13px; margin-top:6px;">{i() + 1}.</span>
-                <input style={`${ctl}; flex:1; min-width:100px`} value={s.label} placeholder="단계 라벨"
-                  onInput={(e) => setStep(i(), "label", e.currentTarget.value)} />
-                <select style={`${ctl}; min-width:120px`} value={s.agent} onChange={(e) => setStep(i(), "agent", e.currentTarget.value)}>
-                  <For each={agentNames()}>{(n) => <option value={n} selected={n === s.agent}>{n}</option>}</For>
-                </select>
-                <input style={`${ctl}; width:90px`} value={s.role} placeholder="역할/액션"
-                  onInput={(e) => setStep(i(), "role", e.currentTarget.value)} />
-                <button style={`${btn}; padding:2px 7px`} title="위로" onClick={() => moveStep(i(), -1)}>▲</button>
-                <button style={`${btn}; padding:2px 7px`} title="아래로" onClick={() => moveStep(i(), 1)}>▼</button>
-                <button style={`${btn}; padding:2px 7px`} title="삭제" onClick={() => delStep(i())}>🗑</button>
-              </div>
-            )}</For>
-            <div style={row}>
-              <button style={btn} onClick={addStep}>＋ 단계 추가</button>
+          <For each={cfg().orchestration}>{(s, i) => (
+            <div class="orchstep">
+              <span class="num">{CIRC[i()] || i() + 1}</span>
+              <input class="slbl" value={s.label} onInput={(e) => setStep(i(), "label", e.currentTarget.value)} />
+              <select class="ssel" value={s.agent} onChange={(e) => setStep(i(), "agent", e.currentTarget.value)}>
+                <For each={agentNames()}>{(n) => <option value={n} selected={n === s.agent}>{n}</option>}</For>
+              </select>
+              <input class="ssel" style="width:80px" value={s.role} onInput={(e) => setStep(i(), "role", e.currentTarget.value)} />
+              <span class="sp" />
+              <button class="ob" title="위로" onClick={() => moveStep(i(), -1)}>▲</button>
+              <button class="ob" title="아래로" onClick={() => moveStep(i(), 1)}>▼</button>
+              <button class="ob del" title="삭제" onClick={() => delStep(i())}>🗑</button>
             </div>
-          </div>
+          )}</For>
+          <button class="addrole" onClick={addStep}>＋ 단계 추가</button>
 
-          {/* ── 방 시스템 프롬프트 ── */}
-          <div style={sect}>
-            <h4 style={sh}>📝 방 시스템 프롬프트</h4>
-            <div style={hint}>이 방의 모든 참가자에게 공통으로 얹히는 지침(레이어링 최상위).</div>
-            <textarea style={`${ta}; min-height:80px; margin-top:8px`} value={cfg().system_prompt}
-              onInput={(e) => patch({ system_prompt: e.currentTarget.value })}
-              placeholder="예: 이 방은 환불 정책 논의방. 결정 전 반드시 근거를 제시할 것." />
-          </div>
-
-          {/* ── 이벤트 규칙 ── */}
-          <div style={sect}>
-            <h4 style={sh}>⚡ 이벤트 규칙</h4>
-            <div style={hint}>트리거 → 액션 규칙. (트리거 엔진은 P4)</div>
-            <For each={cfg().event_rules}>{(r, i) => (
-              <div style={row}>
-                <input style={`${ctl}; flex:1; min-width:120px`} value={r.trigger} placeholder="트리거 (예: @mention, idle, conclusion)"
-                  onInput={(e) => setEvent(i(), "trigger", e.currentTarget.value)} />
-                <span>→</span>
-                <input style={`${ctl}; flex:1; min-width:120px`} value={r.action} placeholder="액션 (예: grant-turn, summarize)"
-                  onInput={(e) => setEvent(i(), "action", e.currentTarget.value)} />
-                <button style={`${btn}; padding:2px 8px`} onClick={() => delEvent(i())}>🗑</button>
-              </div>
-            )}</For>
-            <div style={row}>
-              <button style={btn} onClick={addEvent}>＋ 이벤트 규칙 추가</button>
+          {/* 🔀 워크플로우 / 이벤트 규칙 */}
+          <h5>🔀 워크플로우 / 이벤트 규칙 (이 방 적용)</h5>
+          <For each={cfg().event_rules}>{(r, i) => (
+            <div class="ev" style="display:flex;gap:7px;align-items:center">
+              <input class="slbl" style="width:auto;flex:1" value={r.trigger} placeholder="트리거 (예: @mention, idle)"
+                onInput={(e) => setEvent(i(), "trigger", e.currentTarget.value)} />
+              <span class="arr">→</span>
+              <input class="slbl" style="width:auto;flex:1" value={r.action} placeholder="액션 (예: grant-turn, summarize)"
+                onInput={(e) => setEvent(i(), "action", e.currentTarget.value)} />
+              <button class="ob del" onClick={() => delEvent(i())}>🗑</button>
             </div>
-          </div>
-        </div>
+          )}</For>
+          <button class="addrole" onClick={addEvent}>＋ 이벤트 규칙 추가</button>
+          <div style="font-size:11px;color:var(--muted);margin-top:8px">OpenXgram 워크플로우 엔진(cron/메시지/이벤트) 연결</div>
 
-        {/* 푸터 — 저장 */}
-        <div style="display:flex; align-items:center; gap:12px; padding:14px 18px; border-top:1px solid var(--kk-line); position:sticky; bottom:0; background:var(--kk-card,#fff);">
-          <Show when={saved()}><span style="color:#1a8a3a; font-size:12.5px;">{saved()}</span></Show>
-          <Show when={err()}><span style="color:#c0392b; font-size:12.5px;">{err()}</span></Show>
-          <button style={`${btnPri}; margin-left:auto`} disabled={busy()} onClick={save}>{busy() ? "저장 중…" : "💾 방 설정 저장"}</button>
-          <button style={btn} onClick={props.onClose}>닫기</button>
+          <Show when={err()}><div class="errln">{err()}</div></Show>
+          <div class="savedhint" classList={{ show: !!saved() }}>✓ {saved()}</div>
+
+          <div class="msetfoot">
+            <button class="save" disabled={busy()} onClick={save}>{busy() ? "저장 중…" : "💾 저장"}</button>
+            <button class="cancel" onClick={props.onClose}>취소</button>
+          </div>
         </div>
       </div>
     </div>

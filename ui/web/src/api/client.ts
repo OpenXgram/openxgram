@@ -155,6 +155,11 @@ const ROUTES: Record<string, Route> = {
  room_invite: { method: "POST", path: "/room/{key}/invite", body: true},
  room_eject: { method: "POST", path: "/room/{key}/eject", body: true},
  room_members: { method: "GET", path: "/room/{key}/members"},
+ // P6 (rc.334) — 보안 공유방(방 단위 vault). list=항목 목록(값 마스킹), put=항목 추가(본문은 vault 암호화),
+ // reveal=한 항목 평문 복호화(민감키는 마스터 승인/MFA 경유). 비멤버 → 403.
+ room_vault_list: { method: "GET", path: "/room/{key}/vault", emptyAs: { items: [] }},
+ room_vault_put: { method: "POST", path: "/room/{key}/vault", body: true},
+ room_vault_reveal: { method: "POST", path: "/room/{key}/vault/{item}/reveal", body: true},
  // rc.245 — 결정적 세션 매핑 사용자 override (PATCH; body.session_identifier = string|null)
  peer_set_session: { method: "PATCH", path: "/peers/{alias}/session", body: true},
 

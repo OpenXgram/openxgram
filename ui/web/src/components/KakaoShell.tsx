@@ -1,110 +1,449 @@
-import { createSignal, Show } from "solid-js";
-import "./kakao.css";
-import { TalkTab } from "./TalkTab";
-import { WikiTab } from "./WikiTab";
-import { ConfigTab } from "./ConfigTab";
-import { AgentsTab } from "./AgentsTab";
+import { createSignal, createResource, createMemo, createEffect, For, Show } from "solid-js";
+import { invoke } from "../api/client";
+import "./mockup.css";
+import { AcpConversation, aiTypeToAdapter, type AcpPreset } from "./AcpConversation";
+import { A2AMiniPanel } from "./A2AMiniPanel";
+import { RoomModal } from "./RoomModal";
+import { AddAgentModal } from "./AddAgentModal";
 import { FlowTab } from "./FlowTab";
 import { MarketTab } from "./MarketTab";
+import { ConfigTab } from "./ConfigTab";
 import { RuntimeTab } from "./RuntimeTab";
-import { HomeDashboard, type CardId } from "./HomeDashboard";
+import { WikiTab } from "./WikiTab";
 
-// Phase 1 — 카카오톡 셸. 정본 디자인: _mockups/kakao-mockup.html + openxgram-conversation-model-mockup.html
-// 바텀 나브 = 주요 콘텐츠(대화·에이전트·현황·워크플로우·마켓). 설정은 헤더 기어(⚙️)로 진입하며
-// 그 안에 일반/런타임/위키 서브탭. (설정·런타임·위키는 바텀 나브에서 제외 — 마스터 지시)
+// ──────────────────────────────────────────────────────────────────────────
+// OpenXgram 대화 모델 셸 — 정본 목업 VERBATIM 이식.
+//   정본: _mockups/openxgram-conversation-model-mockup.html
+//   목업 markup(.app/.rail/.list/.room/.chat/.chead/.mini/.comp/.side/.dash/.me-pane)을
+//   그대로 JSX 로 옮기고, 목업이 하드코딩하던 샘플 배열(DATA/ROOMS/STUB/friends)을
+//   라이브 데이터·엔드포인트로 치환한다. CSS 는 mockup.css(verbatim 포팅).
 //
-// P1 — 랜딩 = 대화(chat). 현황(dashboard)은 별도 선택 탭(랜딩 아님) — 정본 목업의 📊현황 레일 항목.
-type KkTab = "chat" | "agents" | "dash" | "flow" | "market" | "settings";
+//   라이브 데이터: agents_list(명부·분류·ai_type) · peers_list(online) ·
+//     messages_recent(미리보기/시각). 대화 본문은 AcpConversation(ACP SSE 스트림) 임베드.
+//   협업 곁뷰(.side)=A2AMiniPanel(P4a 발언권/P4c 오케스트레이션/P5 멤버/P6 보안방).
+//   방 설정 모달=RoomModal(room_config get/set). 모두 verbatim 목업 구조 안에 배선.
+// ──────────────────────────────────────────────────────────────────────────
 
-// 정본 목업 레일 순서: 💬채팅(랜딩) · 📊현황 · 🔀워크플로우 · 🛒마켓. 에이전트(친구 관리)도 노출.
-const TABS: { id: KkTab; ic: string; label: string }[] = [
-  { id: "chat", ic: "💬", label: "대화" },
-  { id: "agents", ic: "🙂", label: "에이전트" },
-  { id: "dash", ic: "📊", label: "현황" },
-  { id: "flow", ic: "🔀", label: "워크플로우" },
-  { id: "market", ic: "🌐", label: "마켓" },
-];
+interface AgentRow {
+  alias: string;
+  role?: string | null;
+  description?: string | null;
+  ai_type?: string | null;
+  classification?: string | null;
+  project_path?: string | null;
+  machine?: string | null;
+  display_name?: string | null;
+  is_public?: boolean | null;
+  perm_mode?: string | null;
+  model?: string | null;
+  thinking?: string | null;
+  execution_mode?: string | null;
+  unread?: number | null;
+}
+interface PeerDto { alias: string; last_seen?: string; machine?: string }
+interface MessageDto { id: string; sender: string; body: string; timestamp: string; conversation_id: string }
 
+const agentName = (a: { display_name?: string | null; alias: string }) =>
+  (a.display_name && a.display_name.trim()) || a.alias;
+
+// ai_type → 목업 .av 배경(목업의 하드코딩 색을 라이브 ai_type 으로 매핑).
+const AI_BG: Record<string, string> = {
+  claude: "#d97757", codex: "#10a37f", gemini: "#4285f4", ollama: "#5b5b66", hermes: "#7c5cff",
+};
+function avatarBg(a: AgentRow, isPrimary: boolean): string {
+  if (isPrimary) return "linear-gradient(135deg,#ffd84d,#ff9e2c)";
+  return (a.ai_type && AI_BG[a.ai_type.toLowerCase()]) || "#7c8ba1";
+}
+
+function isOnline(lastSeen?: string): boolean {
+  if (!lastSeen) return false;
+  const t = Date.parse(lastSeen);
+  return !Number.isNaN(t) && Date.now() - t < 60 * 60 * 1000;
+}
+function fmtClock(iso: string): string {
+  try { const d = new Date(iso); if (Number.isNaN(d.getTime())) return "";
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  } catch { return ""; }
+}
+function fmtPreviewTime(iso: string): string {
+  try {
+    const d = new Date(iso); if (Number.isNaN(d.getTime())) return "";
+    const now = new Date();
+    if (d.toDateString() === now.toDateString()) return fmtClock(iso);
+    const y = new Date(now); y.setDate(now.getDate() - 1);
+    if (d.toDateString() === y.toDateString()) return "어제";
+    return `${d.getMonth() + 1}/${d.getDate()}`;
+  } catch { return ""; }
+}
+
+type Tab = "chat" | "dash" | "flow" | "market" | "art" | "me" | "settings";
 type SettingsSub = "general" | "runtime" | "wiki";
-const SETTINGS_SUB: { id: SettingsSub; ic: string; label: string }[] = [
-  { id: "general", ic: "⚙️", label: "일반" },
-  { id: "runtime", ic: "🧠", label: "하네스" },
-  { id: "wiki", ic: "📚", label: "위키" },
-];
 
 export function KakaoShell(props: { onLogout?: () => void }) {
-  // P1 — 랜딩은 대화(chat). 대시보드(현황)는 명시 선택 시에만 — 절대 랜딩 아님.
-  const [tab, setTab] = createSignal<KkTab>("chat");
+  const [tab, setTab] = createSignal<Tab>("chat");
   const [sub, setSub] = createSignal<SettingsSub>("general");
-  // 대화방(전체화면) 열림 — 카톡처럼 대화방에선 하단 네비를 숨긴다(루트에 kk-room-open 클래스).
-  const [roomOpen, setRoomOpen] = createSignal(false);
 
-  // 현황 대시보드 카드 클릭 → 셸 탭으로 매핑(레거시 카드 페이지는 셸에 없음).
-  // 메신저→대화, 그 외 토대 카드→설정. 가짜 라우트 없이 셸 안에서 의미 있게 연결.
-  function openDashCard(id: CardId) {
-    if (id === "messenger") setTab("chat");
-    else setTab("settings");
+  const [agents, { refetch: refetchAgents, mutate: mutateAgents }] = createResource<AgentRow[]>(() => invoke("agents_list"));
+  const [peers] = createResource<PeerDto[]>(() => invoke("peers_list"), { initialValue: [] });
+  const [recent] = createResource<MessageDto[]>(() => invoke("messages_recent", { limit: 100 }), { initialValue: [] });
+
+  const [selected, setSelected] = createSignal<string | null>(null);
+  const [search, setSearch] = createSignal("");
+  // 곁뷰: a2a(협업) / tmux(작업환경) — 상호배타. 목업 .side 두 패널.
+  const [sideA2A, setSideA2A] = createSignal(false);
+  const [sideTmux, setSideTmux] = createSignal(false);
+  const [roomCfgOpen, setRoomCfgOpen] = createSignal(false);
+  const [addOpen, setAddOpen] = createSignal(false);
+
+  const peerMap = createMemo(() => {
+    const m = new Map<string, PeerDto>();
+    for (const p of peers() ?? []) m.set(p.alias.toLowerCase(), p);
+    return m;
+  });
+  const lastMsgByAlias = createMemo(() => {
+    const map = new Map<string, MessageDto>();
+    const aliases = (agents() ?? []).map((a) => a.alias);
+    for (const m of recent() ?? []) {
+      const s = (m.sender || "").toLowerCase();
+      const cid = (m.conversation_id || "").toLowerCase();
+      for (const a of aliases) {
+        const al = a.toLowerCase();
+        if (s === al || s === `peer:${al}` || cid.includes(al)) {
+          const cur = map.get(al);
+          if (!cur || Date.parse(m.timestamp) > Date.parse(cur.timestamp)) map.set(al, m);
+        }
+      }
+    }
+    return map;
+  });
+
+  const isPrimary = (a: AgentRow) => (a.classification ?? "") === "primary";
+
+  const rooms = createMemo<AgentRow[]>(() => {
+    const q = search().trim().toLowerCase();
+    const list = (agents() ?? []).filter((a) => {
+      if (!q) return true;
+      return [a.alias, a.display_name, a.role, a.machine, a.ai_type].some((f) => (f ?? "").toLowerCase().includes(q));
+    });
+    // 프라이머리 먼저, 그다음 마지막 메시지 최신순.
+    const ts = (a: AgentRow) => { const m = lastMsgByAlias().get(a.alias.toLowerCase()); return m ? Date.parse(m.timestamp) : 0; };
+    return [...list].sort((x, y) => {
+      if (isPrimary(x) !== isPrimary(y)) return isPrimary(x) ? -1 : 1;
+      return ts(y) - ts(x);
+    });
+  });
+
+  const selAgent = createMemo(() => {
+    const sel = selected(); if (!sel) return null;
+    return (agents() ?? []).find((a) => a.alias === sel) ?? null;
+  });
+
+  const acpPreset = createMemo<AcpPreset | null>(() => {
+    const a = selAgent(); if (!a) return null;
+    return {
+      adapter: aiTypeToAdapter(a.ai_type),
+      cwd: a.project_path ?? null,
+      execMode: a.execution_mode ?? null,
+      label: a.alias,
+      displayName: agentName(a),
+      classification: a.classification ?? null,
+      machine: a.machine ?? null,
+      permMode: a.perm_mode ?? null,
+      model: a.model ?? null,
+      thinking: a.thinking ?? null,
+    };
+  });
+
+  // 에이전트 전환 시 곁뷰 닫기.
+  createEffect(() => { selected(); setSideA2A(false); setSideTmux(false); });
+
+  // 로드 시 프라이머리(👑/⭐) 자동 선택 — 목업처럼 대화가 바로 보이게.
+  //   프라이머리가 없으면 placeholder 유지(자동 선택 안 함).
+  let autoPicked = false;
+  createEffect(() => {
+    if (autoPicked || selected()) return;
+    const list = agents();
+    if (!list || list.length === 0) return;
+    const prim = list.find(isPrimary);
+    if (prim) { autoPicked = true; pick(prim.alias); }
+  });
+
+  function pick(alias: string) {
+    setSelected(alias);
+    void invoke("acp_conv_read", { key: alias }).catch(() => {});
+    mutateAgents((prev) => (prev ?? []).map((a) => (a.alias === alias ? { ...a, unread: 0 } : a)));
   }
 
+  function preview(a: AgentRow): string {
+    const m = lastMsgByAlias().get(a.alias.toLowerCase());
+    if (m && m.body) return m.body.replace(/\n+/g, " ").trim();
+    return a.role || a.description || a.machine || "—";
+  }
+  function previewTime(a: AgentRow): string {
+    const m = lastMsgByAlias().get(a.alias.toLowerCase());
+    return m ? fmtPreviewTime(m.timestamp) : "";
+  }
+
+  const onlineFor = (a: AgentRow) => isOnline(peerMap().get(a.alias.toLowerCase())?.last_seen);
+  const friends = createMemo<AgentRow[]>(() => (agents() ?? []));
+
+  // 현황 카드 집계 — 라이브.
+  const onlineCount = createMemo(() => (agents() ?? []).filter(onlineFor).length);
+  const primaryAgent = createMemo(() => (agents() ?? []).find(isPrimary) ?? null);
+
+  function openTab(t: Tab) {
+    setTab(t);
+  }
+
+  const SETTINGS_SUB: { id: SettingsSub; ic: string; label: string }[] = [
+    { id: "general", ic: "⚙️", label: "일반" },
+    { id: "runtime", ic: "🧠", label: "하네스" },
+    { id: "wiki", ic: "📚", label: "위키" },
+  ];
+
   return (
-    <div class="kk" classList={{ [`kk-tab-${tab()}`]: true, "kk-room-open": roomOpen() && tab() === "chat" }}>
-      <div class="kk-appbar">
-        <span class="brand">OpenXgram</span>
-        <span class="ver">v{__APP_VERSION__}</span>
-        <span class="sp" />
-        <button type="button" title="설정 (일반·런타임·위키)" classList={{ "kk-gear-on": tab() === "settings" }} onClick={() => setTab("settings")}>⚙️ 설정</button>
+    <div class="oxg-app app">
+      {/* ── 레일 ── (정본 .rail) */}
+      <div class="rail">
+        <button class="me" classList={{ on: tab() === "me" }} title="내 프로필 · 친구(에이전트) 관리" onClick={() => openTab("me")}>나</button>
+        <button classList={{ on: tab() === "chat" }} title="채팅" onClick={() => openTab("chat")}>💬</button>
+        <button classList={{ on: tab() === "dash" }} title="현황" onClick={() => openTab("dash")}><span class="dot" />📊</button>
+        <button classList={{ on: tab() === "flow" }} title="워크플로우" onClick={() => openTab("flow")}>🔀</button>
+        <button classList={{ on: tab() === "market" }} title="마켓" onClick={() => openTab("market")}>🛒</button>
+        <button classList={{ on: tab() === "art" }} title="아티팩트" onClick={() => openTab("art")}>📎</button>
+        <div class="sp" />
+        <button classList={{ on: tab() === "settings" }} title="설정" onClick={() => openTab("settings")}>⚙️</button>
         <Show when={props.onLogout}>
-          <button type="button" onClick={() => props.onLogout!()}>잠금</button>
+          <button title="잠금" onClick={() => props.onLogout!()}>🔒</button>
         </Show>
       </div>
-      <div class="kk-cols">
-      <div class="kk-main">
-        <div class="kk-body">
-          <Show when={tab() === "chat"}>
-            <div class="kk-embed"><TalkTab onJumpToSettings={() => setTab("settings")} onRoomChange={setRoomOpen} /></div>
-          </Show>
-          <Show when={tab() === "agents"}>
-            <div class="kk-embed"><AgentsTab onGotoChat={() => setTab("chat")} /></div>
-          </Show>
-          {/* 현황 — 별도 선택 탭(랜딩 아님). 기존 HomeDashboard 8카드 재사용. */}
-          <Show when={tab() === "dash"}>
-            <div class="kk-embed" style="overflow:auto; height:100%;"><HomeDashboard onOpen={openDashCard} /></div>
-          </Show>
-          <Show when={tab() === "flow"}>
-            <FlowTab />
-          </Show>
-          <Show when={tab() === "market"}>
-            <div class="kk-embed"><MarketTab /></div>
-          </Show>
-          {/* 설정 — 헤더 기어로 진입. 안에 일반/런타임/위키 서브탭. */}
-          <Show when={tab() === "settings"}>
-            <div class="kk-embed" style="display:flex; flex-direction:column; height:100%;">
-              <div class="kk-subtabs" style="display:flex; gap:4px; padding:8px 12px; border-bottom:1px solid var(--border); flex:0 0 auto;">
-                {SETTINGS_SUB.map((s) => (
-                  <div
-                    onClick={() => setSub(s.id)}
-                    style={`cursor:pointer; padding:6px 14px; border-radius:8px; font-size:13px; ${sub() === s.id ? "background:var(--accent); color:var(--accent-fg);" : "color:var(--text-3);"}`}
-                  >{s.ic} {s.label}</div>
-                ))}
-              </div>
-              <div style="flex:1 1 auto; min-height:0; overflow:auto;">
-                <Show when={sub() === "general"}><ConfigTab /></Show>
-                <Show when={sub() === "runtime"}><RuntimeTab /></Show>
-                <Show when={sub() === "wiki"}><WikiTab /></Show>
-              </div>
+
+      {/* ── 채팅 목록 ── (정본 .list / .rooms / .room) */}
+      <div class="list" classList={{ hide: tab() !== "chat" }}>
+        <h2>채팅</h2>
+        <input class="search" type="text" value={search()} onInput={(e) => setSearch(e.currentTarget.value)} placeholder="🔍  에이전트·대화방 검색" />
+        <div class="rooms">
+          <Show when={!agents.loading} fallback={<div style="padding:16px;color:var(--muted);font-size:13px">불러오는 중…</div>}>
+            <For each={rooms()}>
+              {(a) => {
+                const primary = isPrimary(a);
+                return (
+                  <div class="room" classList={{ on: selected() === a.alias }} onClick={() => pick(a.alias)}>
+                    <div class="av" style={`background:${avatarBg(a, primary)}`}>{primary ? "⭐" : agentName(a).slice(0, 1).toUpperCase()}</div>
+                    <div class="meta">
+                      <div class="nm">
+                        {agentName(a)}
+                        <Show when={primary}><span class="tag pri">프라이머리</span></Show>
+                        <Show when={(a.classification ?? "") === "security"}><span class="tag lock">🔒 보안</span></Show>
+                        <Show when={(a.classification ?? "") === "group"}><span class="tag grp">그룹</span></Show>
+                      </div>
+                      <div class="ms">
+                        <Show when={onlineFor(a)}><span style="color:var(--green)">● </span></Show>
+                        {preview(a)}
+                      </div>
+                    </div>
+                    <div class="rt">
+                      <div class="tm">{previewTime(a)}</div>
+                      <Show when={(a.unread ?? 0) > 0}><div class="badge">{(a.unread ?? 0) > 99 ? "99+" : a.unread}</div></Show>
+                    </div>
+                  </div>
+                );
+              }}
+            </For>
+            <div class="room" onClick={() => setAddOpen(true)} title="에이전트 추가">
+              <div class="av grp">＋</div>
+              <div class="meta"><div class="nm">에이전트 추가</div><div class="ms">머신 · 외부 A2A · 새 ACP</div></div>
             </div>
           </Show>
         </div>
-        <div class="kk-tabs">
-          {TABS.map((tb) => (
-            <div class={`kk-tab${tab() === tb.id ? " sel" : ""}`} onClick={() => setTab(tb.id)}>
-              <span class="ic">{tb.ic}</span>
-              {tb.label}
+      </div>
+
+      {/* ── 대화창 ── (정본 .chat / .chead / .mini / .comp / .side) */}
+      <div class="chat" classList={{ hide: tab() !== "chat" }} style="position:relative">
+        <Show
+          when={selAgent()}
+          fallback={
+            <div style="flex:1;display:flex;align-items:center;justify-content:center;color:#3c5266;font-size:14px">
+              좌측에서 대화할 에이전트를 선택하세요.
             </div>
-          ))}
+          }
+        >
+          {(a) => (
+            <>
+              <div class="chead">
+                <div class="av" style={`width:34px;height:34px;border-radius:12px;background:${avatarBg(a(), isPrimary(a()))};font-size:14px`}>
+                  {isPrimary(a()) ? "⭐" : agentName(a()).slice(0, 1).toUpperCase()}
+                </div>
+                <div>
+                  <div class="nm">{agentName(a())}</div>
+                  <div class="role">{a().role || a().description || "ACP"}</div>
+                </div>
+                <div class="sp" />
+                <button class="vbtn" classList={{ on: sideTmux() }} onClick={() => { setSideA2A(false); setSideTmux((v) => !v); }}>🖥 작업환경</button>
+                <button class="vbtn" classList={{ on: sideA2A() }} onClick={() => { setSideTmux(false); setSideA2A((v) => !v); }}>🔗 협업</button>
+                <button class="vbtn" title="방 설정 (하네스·역할·오케스트레이션)" onClick={() => setRoomCfgOpen(true)}>⚙️ 방 설정</button>
+              </div>
+
+              {/* A2A 실시간 미니패널(정본 .mini) + 협업 곁뷰(.side) — A2AMiniPanel 이 둘 다 렌더. */}
+              <A2AMiniPanel
+                selfAlias={agentName(a())}
+                open={sideA2A}
+                onOpen={() => { setSideTmux(false); setSideA2A(true); }}
+                onClose={() => setSideA2A(false)}
+              />
+
+              {/* 대화 본문 — 라이브 ACP 세션(SSE 스트림). 목업 .msgs 영역을 ACP 엔진으로 구동. */}
+              <div class="oxg-acp-slot">
+                <Show when={selected()} keyed>
+                  {(_k) => (
+                    <AcpConversation
+                      preset={acpPreset()}
+                      popoutAlias={a().alias}
+                      status={() => ({
+                        folder: a().project_path ?? null,
+                        role: a().role ?? null,
+                        isPublic: !!a().is_public,
+                        workflows: 0,
+                      })}
+                      onClose={() => setSelected(null)}
+                    />
+                  )}
+                </Show>
+              </div>
+
+              {/* 작업환경(tmux) 곁뷰 — 정본 .side#sideTmux */}
+              <div class="side" classList={{ show: sideTmux() }}>
+                <h3>🖥 {agentName(a())} 작업환경 (tmux · 사람 전용)
+                  <span class="x" onClick={() => setSideTmux(false)}>✕</span>
+                </h3>
+                <div class="term">
+                  <span class="c"># {a().alias} — 사람이 직접 모는 터미널 (A2A 주입 안 됨)</span>{"\n"}
+                  <span class="p">{a().alias}@seoul</span>:~$ <span style="color:#9fe6b0">▋</span>{"\n\n"}
+                  <span class="c"># 작업환경(tmux)은 사람 전용 — 에이전트간 A2A 대화는 ACP 채널(상단 🔗 협업)로.</span>
+                </div>
+              </div>
+
+              {/* 방 설정 모달 — 정본 modal(.mset). room_config get/set 배선. */}
+              <Show when={roomCfgOpen()}>
+                <RoomModal roomKey={a().alias} roomLabel={agentName(a())} onClose={() => setRoomCfgOpen(false)} />
+              </Show>
+            </>
+          )}
+        </Show>
+      </div>
+
+      {/* ── 현황 대시보드 ── (정본 .dash) */}
+      <div class="dash" classList={{ show: tab() === "dash" }}>
+        <h2>현황</h2>
+        <div class="sub">전체 에이전트 · 활성 대화 · 보안방 — 사람이 한눈에 보고 제어</div>
+        <div class="cards">
+          <div class="card">
+            <div class="t">🟢 온라인 에이전트</div>
+            <div class="big">{onlineCount()}</div>
+            <For each={(agents() ?? []).filter(onlineFor).slice(0, 3)}>
+              {(a) => <div class="li"><span class="live" /> {agentName(a)}{a.role ? ` · ${a.role}` : ""}</div>}
+            </For>
+            <Show when={onlineCount() === 0}><div class="li" style="color:var(--muted)">온라인 에이전트 없음</div></Show>
+          </div>
+          <div class="card">
+            <div class="t">👥 에이전트</div>
+            <div class="big">{(agents() ?? []).length}</div>
+            <Show when={primaryAgent()}><div class="li">⭐ {agentName(primaryAgent()!)} (프라이머리)</div></Show>
+            <For each={(agents() ?? []).filter((a) => !isPrimary(a)).slice(0, 2)}>
+              {(a) => <div class="li">🔵 {agentName(a)}</div>}
+            </For>
+            <div class="li" style="color:var(--muted)">사람 = 고권한 참가자</div>
+          </div>
+          <div class="card">
+            <div class="t">🔒 보안 공유방</div>
+            <div class="big" style="font-size:19px">방별 vault</div>
+            <div class="li">대화 곁뷰 ▸ 🔒 보안방에서 키/파일 공유</div>
+            <div class="li">멤버만 복호화 · 모든 접근 감사 기록</div>
+            <div class="li" style="color:var(--amber)">⚠ 멤버 퇴장 시 키 회전</div>
+          </div>
+          <div class="card">
+            <div class="t">⚙️ 기본 하네스</div>
+            <div class="big" style="font-size:19px">claude-agent-acp</div>
+            <div class="li">🌳 worktree · 🔒 격리 — 방별 override</div>
+            <div class="li">새 A2A → 새 ACP 생성 시 적용</div>
+            <div class="li" style="color:var(--muted)">설정 ▸ 하네스에서 전역 기본 변경</div>
+          </div>
         </div>
       </div>
+
+      {/* ── 나 — 프로필 / 친구(에이전트) 관리 ── (정본 .me-pane) */}
+      <div class="me-pane" classList={{ show: tab() === "me" }}>
+        <div class="me-prof">
+          <div class="ava">나</div>
+          <div>
+            <div class="pn">나 <span class="tag pri">고권한 참가자</span></div>
+            <div class="pa">
+              {primaryAgent() ? `프라이머리 ACP: ${agentName(primaryAgent()!)}` : "프라이머리 ACP 미지정"}
+            </div>
+          </div>
+          <button class="ed" onClick={() => openTab("settings")}>프로필 편집</button>
+        </div>
+        <div style="padding:12px 24px 0;font-size:12px;color:var(--muted)">왼쪽 채팅 목록 = 대화방 · 여기 = 내 프로필 + 친구(에이전트) 목록</div>
+        <div class="me-sec">
+          <h3>친구 (에이전트) <span style="color:var(--muted);font-weight:600;font-size:13px">{friends().length}</span></h3>
+          <button class="add" onClick={() => setAddOpen(true)}>＋ 친구(에이전트) 추가</button>
+        </div>
+        <div class="friends">
+          <For each={friends()}>
+            {(a) => {
+              const primary = isPrimary(a);
+              return (
+                <div class="friend">
+                  <div class="av" style={`background:${avatarBg(a, primary)}`}>{primary ? "⭐" : agentName(a).slice(0, 1).toUpperCase()}</div>
+                  <div>
+                    <div class="fn">{agentName(a)}<Show when={primary}><span class="tag pri">프라이머리</span></Show></div>
+                    <div class="fr">{a.role || a.description || "ACP"}{a.machine ? ` · ${a.machine}` : ""}</div>
+                  </div>
+                  <button class="mng" onClick={() => { pick(a.alias); openTab("chat"); }}>관리</button>
+                </div>
+              );
+            }}
+          </For>
+        </div>
       </div>
+
+      {/* ── 임베드 탭 (워크플로우/마켓/아티팩트/설정) — 목업 dash 영역에 기존 컴포넌트 ── */}
+      <div class="embed-pane" classList={{ show: tab() === "flow" }}><Show when={tab() === "flow"}><FlowTab /></Show></div>
+      <div class="embed-pane" classList={{ show: tab() === "market" }}><Show when={tab() === "market"}><MarketTab /></Show></div>
+      <div class="embed-pane" classList={{ show: tab() === "art" }}>
+        <Show when={tab() === "art"}>
+          <div style="padding:24px;color:var(--muted);font-size:13px">📎 아티팩트 — 대화 곁뷰의 아티팩트 패널에서 파일·이미지를 보기·읽기·편집할 수 있습니다.</div>
+        </Show>
+      </div>
+      <div class="embed-pane" classList={{ show: tab() === "settings" }}>
+        <Show when={tab() === "settings"}>
+          <div style="display:flex;gap:6px;padding:14px 18px 0">
+            <For each={SETTINGS_SUB}>
+              {(s) => (
+                <div onClick={() => setSub(s.id)}
+                  style={`cursor:pointer;padding:6px 14px;border-radius:8px;font-size:13px;${sub() === s.id ? "background:#eaf0f6;color:#16242f;font-weight:700;" : "color:var(--muted);"}`}>
+                  {s.ic} {s.label}
+                </div>
+              )}
+            </For>
+          </div>
+          <div style="padding:8px 0">
+            <Show when={sub() === "general"}><ConfigTab /></Show>
+            <Show when={sub() === "runtime"}><RuntimeTab /></Show>
+            <Show when={sub() === "wiki"}><WikiTab /></Show>
+          </div>
+        </Show>
+      </div>
+
+      {/* 에이전트 추가 모달 */}
+      <Show when={addOpen()}>
+        <AddAgentModal
+          onClose={() => setAddOpen(false)}
+          onCreated={(alias) => { setAddOpen(false); void refetchAgents(); setSelected(alias); setTab("chat"); }}
+        />
+      </Show>
+
+      <div class="note">OpenXgram 대화 모델: A2A=ACP · tmux=사람전용 · 사람=고권한 참가자 · 카카오톡 스타일</div>
     </div>
   );
 }
