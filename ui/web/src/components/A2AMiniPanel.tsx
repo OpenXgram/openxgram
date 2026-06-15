@@ -1,4 +1,4 @@
-import { createResource, createSignal, createMemo, onCleanup, For, Show } from "solid-js";
+import { createResource, createSignal, createMemo, createEffect, onCleanup, For, Show } from "solid-js";
 import { invoke } from "../api/client";
 import "./flow-extra.css";
 
@@ -74,6 +74,8 @@ export function A2AMiniPanel(props: {
   }
   const orchTimer = setInterval(() => { if (props.open()) void refreshOrch(); }, 3000);
   onCleanup(() => clearInterval(orchTimer));
+  // 곁뷰가 열리는 순간 즉시 1회 상태 조회(3초 틱 대기 없이). 닫히면 폴링은 위 틱에서 자동 정지.
+  createEffect(() => { if (props.open() && props.selfAlias) void refreshOrch(); });
   async function startOrch() {
     const room = props.selfAlias;
     if (!room) { setOrchMsg("방(현재 대화)을 먼저 선택하세요."); return; }
@@ -199,8 +201,63 @@ export function A2AMiniPanel(props: {
           <Show when={grantMsg()}>
             <div class="a2a-grant-msg">{grantMsg()}</div>
           </Show>
+
+          {/* ── P4c — 오케스트레이션 실행 러너 (방 단계를 순서대로 실제 실행). ── */}
+          <div class="a2a-orch">
+            <div class="a2a-orch-hd">
+              <b>🔢 오케스트레이션</b>
+              <Show when={orch() && (orch()!.total_steps ?? 0) > 0}>
+                <span class={`a2a-orch-st ${orch()!.status}`}>
+                  {orch()!.status === "running" ? "🟢 실행중"
+                    : orch()!.status === "paused_for_approval" ? "⏸ 승인대기"
+                    : orch()!.status === "done" ? "✓ 완료"
+                    : orch()!.status === "failed" ? "✗ 실패"
+                    : orch()!.status === "cancelled" ? "취소됨"
+                    : orch()!.status}
+                </span>
+              </Show>
+            </div>
+            <Show
+              when={orch() && (orch()!.total_steps ?? 0) > 0}
+              fallback={
+                <div class="a2a-orch-empty">
+                  이 방에 실행할 단계가 없습니다. <b>방 설정</b>에서 순서(작업→검증→승인)를 먼저 구성하세요.
+                </div>
+              }
+            >
+              <div class="a2a-orch-steps">
+                <For each={orch()!.steps}>
+                  {(s, i) => (
+                    <div class={`a2a-orch-step${i() === orch()!.current_step && orchRunning() ? " cur" : ""}`}>
+                      <span class="a2a-orch-icon">{stepIcon(s.state)}</span>
+                      <span class="a2a-orch-lbl">{s.label || `단계 ${i() + 1}`}</span>
+                      <span class="a2a-orch-ag">↔ {s.agent || "—"}</span>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
+            <div class="a2a-orch-btns">
+              <button
+                class="a2a-orch-run"
+                disabled={orchBusy() || orchRunning() || !props.selfAlias}
+                title="방의 단계를 순서대로 실제 실행합니다"
+                onClick={() => void startOrch()}
+              >▶ 오케스트레이션 실행</button>
+              <Show when={orch()?.status === "paused_for_approval"}>
+                <button class="a2a-orch-approve" disabled={orchBusy()} onClick={() => void approveOrch()}>승인</button>
+              </Show>
+              <Show when={orchRunning()}>
+                <button class="a2a-orch-cancel" onClick={() => void cancelOrch()}>취소</button>
+              </Show>
+            </div>
+            <Show when={orchMsg()}>
+              <div class="a2a-orch-msg">{orchMsg()}</div>
+            </Show>
+          </div>
+
           <div class="a2a-side-hint">
-            ↑ 협업 위임·실행은 <b>워크플로우</b> 탭의 A2A 위임에서 (이 곁뷰는 현황 요약).
+            ↑ 협업 위임·실행은 <b>워크플로우</b> 탭의 A2A 위임에서도 가능 (이 곁뷰는 현황 요약 + 실행).
           </div>
         </div>
 
