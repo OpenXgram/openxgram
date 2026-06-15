@@ -151,6 +151,10 @@ const ROUTES: Record<string, Route> = {
  room_orchestrate_status: { method: "GET", path: "/room/{key}/orchestrate/status"},
  room_orchestrate_approve: { method: "POST", path: "/room/{key}/orchestrate/approve"},
  room_orchestrate_cancel: { method: "POST", path: "/room/{key}/orchestrate/cancel"},
+ // P5 (rc.333) — 방 동적 멤버십. invite=참가자 추가+맥락 인계, eject=제거+수신중단, members=활성 멤버 목록.
+ room_invite: { method: "POST", path: "/room/{key}/invite", body: true},
+ room_eject: { method: "POST", path: "/room/{key}/eject", body: true},
+ room_members: { method: "GET", path: "/room/{key}/members"},
  // rc.245 — 결정적 세션 매핑 사용자 override (PATCH; body.session_identifier = string|null)
  peer_set_session: { method: "PATCH", path: "/peers/{alias}/session", body: true},
 

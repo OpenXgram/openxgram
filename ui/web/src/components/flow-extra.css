@@ -818,4 +818,20 @@
 .a2a-orch-approve { color: #b07d12 !important; border-color: #e6cf94 !important; }
 .a2a-orch-cancel { color: #d35 !important; border-color: #f0c0c0 !important; }
 .a2a-orch-msg { font-size: 11px; color: #6b7785; margin-top: 7px; line-height: 1.5; }
+/* P5 — 방 멤버 목록(카톡 단톡방식) + 초대 피커 */
+.a2a-members { background: #fff; border: 1px solid #e2e8ef; border-radius: 11px; padding: 10px 12px; margin: 8px 14px 0; }
+.a2a-members-h { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 700; color: #37424d; margin-bottom: 7px; }
+.a2a-members-n { font-size: 11px; font-weight: 700; color: #5a7fb0; background: #eef4fa; border-radius: 20px; padding: 1px 8px; }
+.a2a-members-empty { font-size: 11.5px; color: #8a96a2; line-height: 1.5; padding: 2px 0; }
+.a2a-member { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 12px; }
+.a2a-member-av { width: 26px; height: 26px; border-radius: 9px; background: #eef4fa; color: #5a7fb0; display: grid; place-items: center; font-size: 12px; font-weight: 700; flex: none; }
+.a2a-member-nm { font-weight: 600; color: #37424d; }
+.a2a-member-role { margin-left: auto; font-size: 10.5px; color: #6b7785; background: #f1f4f7; border-radius: 6px; padding: 1px 7px; }
+.a2a-member-eject { border: 1px solid #f0c0c0; background: #fff; border-radius: 7px; padding: 3px 7px; font-size: 11px; cursor: pointer; color: #d35; }
+.a2a-member-eject:hover { background: #fde8e8; }
+.a2a-invite-pick { margin-top: 8px; border-top: 1px dashed #e2e8ef; padding-top: 8px; }
+.a2a-invite-h { font-size: 11.5px; font-weight: 700; color: #2c3a47; margin-bottom: 6px; }
+.a2a-invite-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; }
+.a2a-invite-go { margin-left: auto; border: 1px solid #add9bb; background: #eef9f1; border-radius: 7px; padding: 3px 10px; font-size: 11px; font-weight: 700; cursor: pointer; color: #238636; }
+.a2a-invite-go:hover { background: #d8f0e1; }
 

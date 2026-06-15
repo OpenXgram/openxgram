@@ -129,6 +129,56 @@ export function A2AMiniPanel(props: {
     }
   }
 
+  // P5 — 방 동적 멤버십(초대/내보내기/멤버 목록). 카톡 단톡방 멤버 리스트처럼 단순하게.
+  // 방 키 = selfAlias(현재 대화 에이전트). 멤버 목록은 곁뷰 열림 시 + 변경 후 폴링.
+  interface RoomMember { alias: string; role?: string | null; joined_at: string; is_human: boolean; }
+  interface MembersResp { room_key: string; members: RoomMember[]; note?: string | null; }
+  const [members, setMembers] = createSignal<RoomMember[]>([]);
+  const [membersNote, setMembersNote] = createSignal<string | null>(null);
+  const [memberMsg, setMemberMsg] = createSignal<string>("");
+  const [showInvite, setShowInvite] = createSignal(false);
+  async function refreshMembers() {
+    const room = props.selfAlias;
+    if (!room) return;
+    try {
+      const r = await invoke<MembersResp>("room_members", { key: room });
+      setMembers(r.members ?? []);
+      setMembersNote(r.note ?? null);
+    } catch { /* 없으면 빈 목록 */ }
+  }
+  createEffect(() => { if (props.open() && props.selfAlias) void refreshMembers(); });
+  // 초대 후보 = a2a_agents 중 아직 활성 멤버가 아닌 에이전트(자기 자신 제외).
+  const memberAliases = createMemo(() => new Set(members().map((m) => m.alias)));
+  const inviteCandidates = createMemo(() =>
+    agents().filter((a) => a.alias !== props.selfAlias && !memberAliases().has(a.alias)),
+  );
+  async function inviteMember(member: string) {
+    const room = props.selfAlias;
+    if (!room) { setMemberMsg("방(현재 대화)을 먼저 선택하세요."); return; }
+    setMemberMsg(`＋ ${member} 초대 중… (맥락 인계)`);
+    try {
+      await invoke("room_invite", { key: room, member });
+      setMemberMsg(`✓ ${member} 초대됨 — 방 맥락이 인계되고 전달이 시작됩니다.`);
+      setShowInvite(false);
+      void refreshMembers();
+    } catch (e) {
+      setMemberMsg(`초대 실패: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  async function ejectMember(member: string) {
+    const room = props.selfAlias;
+    if (!room) return;
+    if (!confirm(`'${member}' 를 이 방에서 내보낼까요? (수신 중단 · ACP 분리)`)) return;
+    setMemberMsg(`🚪 ${member} 내보내는 중…`);
+    try {
+      await invoke("room_eject", { key: room, member });
+      setMemberMsg(`✓ ${member} 내보냄 — 더 이상 발언권/턴 대상이 아닙니다.`);
+      void refreshMembers();
+    } catch (e) {
+      setMemberMsg(`내보내기 실패: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   return (
     <>
       {/* ── A2A 실시간 미니패널 (정본 .mini) — 대화 헤더 바로 아래 한 줄 요약 ── */}
@@ -256,15 +306,65 @@ export function A2AMiniPanel(props: {
             </Show>
           </div>
 
+          {/* ── P5 — 방 멤버 목록 (카톡 단톡방 멤버 리스트식). 사람=👑 고권한. ── */}
+          <div class="a2a-members">
+            <div class="a2a-members-h">👥 참가자 <span class="a2a-members-n">{members().length}</span></div>
+            <Show
+              when={members().length > 0}
+              fallback={<div class="a2a-members-empty">{membersNote() ?? "1:1 — 사람 + 이 에이전트. 초대 시 그룹으로 승격."}</div>}
+            >
+              <For each={members()}>
+                {(m) => (
+                  <div class="a2a-member">
+                    <span class="a2a-member-av">{m.is_human ? "👑" : m.alias.slice(0, 1).toUpperCase()}</span>
+                    <span class="a2a-member-nm">{m.is_human ? "나 (고권한)" : m.alias}</span>
+                    <span class="a2a-member-role">{m.role ?? "참가자"}</span>
+                    <Show when={!m.is_human}>
+                      <button class="a2a-member-eject" title="이 멤버 내보내기 (수신 중단)" onClick={() => void ejectMember(m.alias)}>🚪</button>
+                    </Show>
+                  </div>
+                )}
+              </For>
+            </Show>
+            {/* 초대 피커 — a2a_agents 후보에서 선택 */}
+            <Show when={showInvite()}>
+              <div class="a2a-invite-pick">
+                <div class="a2a-invite-h">＋ 누구를 초대할까요?</div>
+                <Show when={inviteCandidates().length > 0} fallback={<div class="a2a-members-empty">초대 가능한 에이전트가 없습니다.</div>}>
+                  <For each={inviteCandidates()}>
+                    {(a) => (
+                      <div class="a2a-invite-row">
+                        <span class="a2a-member-av">{a.alias.slice(0, 1).toUpperCase()}</span>
+                        <span class="a2a-member-nm">{a.alias}</span>
+                        <button class="a2a-invite-go" onClick={() => void inviteMember(a.alias)}>초대</button>
+                      </div>
+                    )}
+                  </For>
+                </Show>
+              </div>
+            </Show>
+            <Show when={memberMsg()}>
+              <div class="a2a-grant-msg">{memberMsg()}</div>
+            </Show>
+          </div>
+
           <div class="a2a-side-hint">
             ↑ 협업 위임·실행은 <b>워크플로우</b> 탭의 A2A 위임에서도 가능 (이 곁뷰는 현황 요약 + 실행).
           </div>
         </div>
 
-        {/* ── 제어 버튼 — 발언권(P4a) 활성. 멤버십/보안방은 P5/P6 미구축(비활성 셸). ── */}
+        {/* ── 제어 버튼 — 발언권(P4a)+멤버십(P5) 활성. 보안방은 P6 미구축(비활성 셸). ── */}
         <div class="a2a-ctrl">
-          <button disabled title="P5 — 멤버십/맥락 인계 백엔드 미구축">＋ 에이전트 초대</button>
-          <button disabled title="P5 — 멤버십/키 회전 백엔드 미구축">🚪 내보내기</button>
+          <button
+            disabled={!props.selfAlias}
+            title="이 방에 에이전트 추가 (방 맥락 인계 + 전달 시작)"
+            onClick={() => { setShowInvite((v) => !v); void refreshMembers(); }}
+          >＋ 에이전트 초대</button>
+          <button
+            disabled={!props.selfAlias || members().filter((m) => !m.is_human).length === 0}
+            title="멤버 목록에서 🚪 버튼으로 내보냅니다 (수신 중단 · ACP 분리)"
+            onClick={() => void refreshMembers()}
+          >🚪 내보내기</button>
           <button
             disabled={granting() !== null || !props.selfAlias}
             title="현재 대화 에이전트에게 발언권을 줘 한 번 발언시킵니다 (누적 맥락 + 방/역할 지침)"
@@ -273,7 +373,7 @@ export function A2AMiniPanel(props: {
           <button disabled title="P6 — 보안 공유방(vault scope) 백엔드 미구축">🔒 보안방 만들기</button>
         </div>
         <div class="a2a-ctrl-note">
-          🎙 발언권 주기는 동작합니다(P4a) — 관찰자(턴 모드 gated) 에이전트에게 차례를 줍니다. 초대/보안방은 다음 단계(P5/P6).
+          🎙 발언권(P4a) · ＋초대/🚪내보내기(P5) 동작합니다 — 초대 시 방 맥락 인계, 내보내기 시 수신 중단. 보안방은 다음 단계(P6).
         </div>
       </div>
     </>

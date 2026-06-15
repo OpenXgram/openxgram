@@ -332,6 +332,13 @@ const MIGRATIONS: &[Migration] = &[
         name: "orchestration_run",
         sql: include_str!("../migrations/0060_orchestration_run.sql"),
     },
+    // rc.333 — 방(대화) 동적 멤버십 (GUI P5). 방의 활성 참가자 목록(초대/내보내기).
+    // 1:1 방은 row 없음 → 멤버십 gate 통과(무회귀). 그룹 방은 active 참가자만 전달/턴 대상.
+    Migration {
+        version: 61,
+        name: "room_participants",
+        sql: include_str!("../migrations/0061_room_participants.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

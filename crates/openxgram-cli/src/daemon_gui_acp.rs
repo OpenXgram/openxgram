@@ -815,6 +815,32 @@ pub async fn close(state: &AcpHttpState, session_id: &str) -> Result<Value, AcpH
     }
 }
 
+/// P5 — label(conv_key=대화 신원=alias) 기준 세션 종료(best-effort). 방 멤버 내보내기 시
+/// 그 멤버의 alias 스레드 세션을 ACP 에서 분리한다. 같은 label 의 살아있는 세션이 없으면
+/// `false`(분리 대상 없음). 에러는 로그만 — 멤버십 제거(상위 gate)가 권위이므로 전파하지 않는다.
+pub async fn close_by_label(state: &AcpHttpState, label: &str) -> bool {
+    if label.is_empty() {
+        return false;
+    }
+    let sid: Option<String> = {
+        let sessions = state.sessions.lock().await;
+        sessions
+            .iter()
+            .find(|(_, s)| s.label.as_deref() == Some(label))
+            .map(|(id, _)| id.clone())
+    };
+    match sid {
+        Some(id) => match close(state, &id).await {
+            Ok(_) => true,
+            Err((_, e)) => {
+                tracing::debug!(target: "acp.daemon", label = %label, "close_by_label: {e}");
+                false
+            }
+        },
+        None => false,
+    }
+}
+
 /// Subscribe to a session's `session/update` broadcast for SSE relay. Returns
 /// the receiver; `daemon_gui.rs` adapts it into an `axum::response::sse::Sse`.
 pub async fn subscribe(

@@ -500,6 +500,11 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // P4a — "발언권 주기"(턴 부여). body {agent, note?}. 그 에이전트 ACP 에 누적 맥락+방/역할
         // 지침으로 한 번 턴 발화. @호명·조건 트리거도 이 메커니즘 재사용.
         .route("/v1/gui/room/{key}/grant-turn", post(gui_room_grant_turn))
+        // P5 (rc.333) — 방 동적 멤버십. invite=참가자 추가+맥락 인계+전달 시작, eject=제거+수신 중단+ACP 분리,
+        // members=현재 활성 참가자 목록(UI). 1:1(참가자 row 없음)은 무회귀. body {member, role?}.
+        .route("/v1/gui/room/{key}/invite", post(gui_room_invite))
+        .route("/v1/gui/room/{key}/eject", post(gui_room_eject))
+        .route("/v1/gui/room/{key}/members", get(gui_room_members))
         // P4c (rc.332) — 오케스트레이션 RUNNER. 방의 orchestration_json 단계를 데몬이
         // 순서대로 실제 실행(각 단계 = grant-turn/handle_task 재사용). start=kick, status=진행상태,
         // approve/advance=사람-승인 pause 통과, cancel=중단.
@@ -7680,6 +7685,17 @@ async fn gui_room_grant_turn(
         None => "[발언권 부여] 진행자가 너에게 발언권을 주었다. 지금까지의 대화 맥락을 토대로 한 번 발언하라.".to_string(),
     };
 
+    // P5 멤버십 gate — 방에 참가자 목록이 있으면(=그룹 방), 비활성/비멤버에게는 턴을 주지 않는다.
+    // 1:1(참가자 row 없음)은 통과 = 종전 동작 무회귀.
+    if room_member_blocked(&state, &key, &agent).await {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorDto {
+                error: format!("'{agent}' 는 방 '{key}' 의 활성 멤버가 아닙니다 (내보내짐/미초대) — 발언권 거부"),
+            }),
+        ));
+    }
+
     let task_body = crate::daemon_gui_a2a::TaskBody {
         skill: Some("grant-turn".to_string()),
         message: serde_json::Value::Null,
@@ -7698,6 +7714,232 @@ async fn gui_room_grant_turn(
         "room_key": key,
         "agent": agent,
         "result": result,
+    })))
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// P5 — 방(대화) 동적 멤버십 (초대 / 내보내기 / 멤버 목록).
+//
+// 스펙 항목 1(방={참가자목록+메시지스레드}) + 항목 4(동적 멤버십). 방의 누적 메시지 스레드는
+// acp_messages(conv_key=room_key)에 이미 쌓이고, build_resume_preamble 이 그것을 다음 턴에
+// 다시 앞에 붙인다 → 초대된 에이전트는 입장 시 방 맥락을 그대로 인계받는다(맥락 인계 = 스레드 공유).
+// 이 모듈은 "누가 멤버인가"만 영속(room_participants)하고, 전달 spine(handle_task/grant-turn)을 재사용한다.
+//
+// 무회귀: room_participants 에 row 가 없는 방(=1:1)은 gate 통과 — 종전 단일-alias 동작 그대로.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// 멤버십 gate. 방에 참가자 row 가 **하나라도** 있으면(=그룹 방), `member` 가 active 멤버가 아닐 때
+/// `true`(차단)를 반환. row 가 전혀 없으면(=1:1/미설정 방) 항상 `false`(통과) → 무회귀.
+async fn room_member_blocked(state: &GuiServerState, room_key: &str, member: &str) -> bool {
+    let mut db = state.db.lock().await;
+    let total: i64 = db
+        .conn()
+        .query_row(
+            "SELECT COUNT(*) FROM room_participants WHERE room_key=?1",
+            rusqlite::params![room_key],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if total == 0 {
+        return false; // 참가자 목록 미설정 방 = 1:1 종전 동작, gate 통과.
+    }
+    let active: i64 = db
+        .conn()
+        .query_row(
+            "SELECT COUNT(*) FROM room_participants WHERE room_key=?1 AND member_alias=?2 AND active=1",
+            rusqlite::params![room_key, member],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    active == 0
+}
+
+/// `POST /v1/gui/room/{key}/invite` body `{member, role?}` — 방에 참가자 추가 + 맥락 인계.
+///
+/// 1) room_participants 에 (room_key, member, active=1) upsert. role 미지정이면 '참가자'.
+/// 2) 방을 처음 그룹화하는 경우(기존 row 0개) — 방장(사람, 고권한)을 암묵 멤버(role='human')로 시드 +
+///    방 키 자신(=프라이머리/대화 상대 에이전트)도 멤버로 시드해, 기존 1:1 대화가 그룹으로 자연 승격되게 한다.
+/// 3) 맥락 인계: 방 스레드(acp_messages conv_key=room_key)에 "[초대됨] 맥락 인계" 시스템 노트를 'agent' 로 기록.
+///    이 스레드가 곧 누적 맥락이고 build_resume_preamble 이 초대된 에이전트의 다음 턴에 다시 앞에 붙인다.
+/// 4) 전달 시작: 초대된 에이전트는 이제 grant-turn/orchestrate 대상이 된다(gate 통과).
+async fn gui_room_invite(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let member = body
+        .get("member")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(ErrorDto { error: "member 필수".into() }),
+            )
+        })?
+        .to_string();
+    let role = body
+        .get("role")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("참가자")
+        .to_string();
+    let now = chrono::Local::now().to_rfc3339();
+
+    {
+        let mut db = state.db.lock().await;
+        // 처음 그룹화: 기존 멤버 row 가 없으면 방장(사람)+방 키 에이전트를 암묵 시드.
+        let existing: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM room_participants WHERE room_key=?1",
+                rusqlite::params![key],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if existing == 0 {
+            // 사람 = 고권한 참가자(spec 항목 9). alias 'me' 로 표기(GUI 'me' role 과 정합).
+            db.conn()
+                .execute(
+                    "INSERT OR IGNORE INTO room_participants(room_key, member_alias, role, joined_at, active) \
+                     VALUES(?1,'me','human',?2,1)",
+                    rusqlite::params![key, now],
+                )
+                .map_err(|e| internal(&format!("invite seed human: {e}")))?;
+            db.conn()
+                .execute(
+                    "INSERT OR IGNORE INTO room_participants(room_key, member_alias, role, joined_at, active) \
+                     VALUES(?1,?2,'참가자',?3,1)",
+                    rusqlite::params![key, key, now],
+                )
+                .map_err(|e| internal(&format!("invite seed room agent: {e}")))?;
+        }
+        db.conn()
+            .execute(
+                "INSERT INTO room_participants(room_key, member_alias, role, joined_at, active) \
+                 VALUES(?1,?2,?3,?4,1) \
+                 ON CONFLICT(room_key, member_alias) DO UPDATE SET active=1, role=excluded.role",
+                rusqlite::params![key, member, role, now],
+            )
+            .map_err(|e| internal(&format!("invite upsert: {e}")))?;
+    }
+
+    // 맥락 인계 노트 — 방 스레드(=누적 맥락)에 기록. record_message 가 acp_messages(conv_key=room_key)에 쌓는다.
+    let note = format!("[초대됨: {member}] 맥락 인계 — 이 방의 지금까지 대화 맥락이 다음 발언권 부여 시 전달됩니다. (역할: {role})");
+    state.acp.record_message(&key, "agent", &note).await;
+    crate::daemon_gui_acp::notify_conv_persisted_by_label(&state.acp, &key).await;
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "room_key": key,
+        "member": member,
+        "role": role,
+        "active": true,
+    })))
+}
+
+/// `POST /v1/gui/room/{key}/eject` body `{member}` — 방에서 참가자 제거 + 수신 중단 + ACP 분리 시도.
+///
+/// 1) room_participants 의 그 member 를 active=0 (이력 보존). 이후 grant-turn/orchestrate gate 가 차단(수신 중단).
+/// 2) ACP 분리: 방 키 = 그 member 의 bare-alias 스레드일 때(1:1 또는 그 에이전트가 방 키인 경우) 라벨 기반 세션
+///    종료를 시도(best-effort, 실패해도 멤버십 제거는 유효). 그룹 방의 멤버는 자기 alias 스레드 세션을 보유하나
+///    방-별 세션 분리는 라벨=alias 단위라 여기서 정밀 detach 는 제한적 — gate 차단으로 전달은 확실히 중단된다.
+/// 3) 내보내기 노트를 방 스레드에 기록.
+async fn gui_room_eject(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let member = body
+        .get("member")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(ErrorDto { error: "member 필수".into() }),
+            )
+        })?
+        .to_string();
+
+    let affected = {
+        let mut db = state.db.lock().await;
+        db.conn()
+            .execute(
+                "UPDATE room_participants SET active=0 WHERE room_key=?1 AND member_alias=?2",
+                rusqlite::params![key, member],
+            )
+            .map_err(|e| internal(&format!("eject update: {e}")))?
+    };
+
+    // ACP 분리(best-effort) — 그 member 의 alias 스레드 세션 라벨로 close 시도. 없으면 무시.
+    let detached = crate::daemon_gui_acp::close_by_label(&state.acp, &member).await;
+
+    let note = format!("[내보냄: {member}] 수신 중단 — 더 이상 발언권/턴 대상이 아닙니다.");
+    state.acp.record_message(&key, "agent", &note).await;
+    crate::daemon_gui_acp::notify_conv_persisted_by_label(&state.acp, &key).await;
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "room_key": key,
+        "member": member,
+        "active": false,
+        "removed_rows": affected,
+        "acp_detached": detached,
+    })))
+}
+
+/// `GET /v1/gui/room/{key}/members` — 방의 현재 활성 참가자 목록(UI 멤버 리스트용).
+/// 응답: { room_key, members: [{alias, role, joined_at, is_human}], note? }.
+/// 참가자 row 가 없는 1:1 방은 빈 목록 + note(=암묵 2자: 사람 + 방 키 에이전트).
+async fn gui_room_members(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let mut db = state.db.lock().await;
+    let mut stmt = db
+        .conn()
+        .prepare(
+            "SELECT member_alias, role, joined_at FROM room_participants \
+             WHERE room_key=?1 AND active=1 ORDER BY joined_at",
+        )
+        .map_err(|e| internal(&format!("members prep: {e}")))?;
+    let rows: Vec<serde_json::Value> = stmt
+        .query_map(rusqlite::params![key], |r| {
+            let alias: String = r.get(0)?;
+            let role: Option<String> = r.get(1)?;
+            let joined_at: String = r.get(2)?;
+            let is_human = alias == "me" || role.as_deref() == Some("human");
+            Ok(serde_json::json!({
+                "alias": alias,
+                "role": role,
+                "joined_at": joined_at,
+                "is_human": is_human,
+            }))
+        })
+        .map_err(|e| internal(&format!("members query: {e}")))?
+        .filter_map(|r| r.ok())
+        .collect();
+    let note = if rows.is_empty() {
+        Some(serde_json::Value::String(
+            "1:1 (참가자 목록 미설정) — 사람(고권한) + 이 에이전트. 초대 시 그룹으로 승격됩니다.".into(),
+        ))
+    } else {
+        None
+    };
+    Ok(Json(serde_json::json!({
+        "room_key": key,
+        "members": rows,
+        "note": note,
     })))
 }
 
@@ -7853,6 +8095,17 @@ async fn orch_run_loop(state: GuiServerState, run_id: String, room_key: String, 
                 return;
             }
         };
+
+        // P5 멤버십 gate — 방에 참가자 목록이 있고 이 단계 에이전트가 비활성/비멤버면 단계를 skip.
+        // 1:1/미설정 방은 통과(무회귀). 내보내진 멤버에게는 턴을 주지 않는다(전달 차단).
+        if room_member_blocked(&state, &room_key, &alias).await {
+            let reason = format!("단계 {} — '{alias}' 는 방의 활성 멤버가 아님(내보내짐/미초대) → 건너뜀", i + 1);
+            steps[i].state = "skipped".to_string();
+            steps[i].error = Some(reason.clone());
+            orch_persist(&db, &run_id, i as i64, "running", &steps, None).await;
+            tracing::info!(target: "acp.orchestrate", run_id = %run_id, "{reason}");
+            continue;
+        }
 
         // running 표시.
         steps[i].state = "running".to_string();
