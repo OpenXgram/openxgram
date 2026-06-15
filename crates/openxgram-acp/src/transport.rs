@@ -31,6 +31,60 @@ pub struct ChildPipes {
     pub stdout: ChildStdout,
 }
 
+/// Windows-only: resolve a bare/extensionless command to a `cmd /c <shim>`
+/// invocation when PATH resolves it **only** to a `.cmd`/`.bat` shim.
+///
+/// Why (§6, no-fallback): on Windows `CreateProcess` (which Rust's `Command`
+/// uses) does **not** honor `PATHEXT`, so `Command::new("claude-agent-acp")`
+/// fails to find the npm-installed `.cmd`/`.bat` shim and the ACP session
+/// errors out (502). npm on Windows installs CLI bins as `<name>.cmd`/`.ps1`
+/// shims, never as a bare executable — so a native adapter is unspawnable
+/// without this. We re-exec the resolved shim through `cmd /c` so the shell
+/// interprets the batch shim.
+///
+/// Returns `Some(Command)` only when the input is a bare name (no path
+/// separator, no extension) that resolves on PATH to a `.cmd`/`.bat`. Real
+/// `.exe`s, absolute/relative paths, and names with extensions return `None`
+/// (caller uses them as-is — zero behavior change for native binaries).
+#[cfg(windows)]
+fn resolve_windows_command(command: &str) -> Option<Command> {
+    use std::path::Path;
+
+    // Only intervene for bare, extensionless names. A path separator or an
+    // explicit extension means the caller already knows exactly what to run.
+    if command.contains('/') || command.contains('\\') {
+        return None;
+    }
+    if Path::new(command).extension().is_some() {
+        return None;
+    }
+
+    let path_var = std::env::var_os("PATH")?;
+    // Probe the shim extensions that need a shell to execute. We deliberately
+    // do NOT probe `.exe`/`.com` here: if a real executable exists we want the
+    // caller to spawn it directly (None), matching native behavior.
+    for dir in std::env::split_paths(&path_var) {
+        for ext in ["cmd", "bat"] {
+            let candidate = dir.join(format!("{command}.{ext}"));
+            if candidate.is_file() {
+                let mut cmd = Command::new("cmd");
+                // /c runs the shim then terminates; pass the fully-resolved
+                // path so cmd does not re-resolve (and to avoid PATH ambiguity).
+                cmd.arg("/c").arg(&candidate);
+                return Some(cmd);
+            }
+        }
+    }
+    None
+}
+
+/// Non-Windows: never rewrites the command (zero behavior change). PATHEXT /
+/// `.cmd` shims do not exist on Linux/macOS.
+#[cfg(not(windows))]
+fn resolve_windows_command(_command: &str) -> Option<Command> {
+    None
+}
+
 /// Spawn the agent process with piped stdio and `kill_on_drop`.
 ///
 /// stderr is piped and forwarded to `tracing` by [`spawn_stderr_logger`].
@@ -40,7 +94,13 @@ pub fn spawn_agent(
     env: &[(String, String)],
     cwd: Option<&str>,
 ) -> Result<ChildPipes> {
-    let mut cmd = Command::new(command);
+    // On Windows, a bare `claude-agent-acp` (npm `.cmd`/`.bat` shim) must be
+    // run via `cmd /c <shim>` because CreateProcess ignores PATHEXT. On every
+    // other platform this is always `None` (see `resolve_windows_command`).
+    let mut cmd = match resolve_windows_command(command) {
+        Some(c) => c,
+        None => Command::new(command),
+    };
     cmd.args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
