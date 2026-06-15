@@ -33,7 +33,9 @@ type Harness = {
   runtime: string; model: string; perm_mode: string; exec_mode: string;
   cwd: string; worktree: boolean; isolation: boolean; mcp: string[]; vault_scope: string;
 };
-type RoleDef = { name: string; inst: string };
+// 역할 정의: 정본 영속 필드명은 `instructions` (P4 레이어링 consumer 가 읽을 의미명).
+// 레거시 데이터는 `inst` 로 저장돼 있을 수 있어 read 시 둘 다 수용(instructions ?? inst), write 는 instructions.
+type RoleDef = { name: string; instructions?: string; inst?: string };
 type RoleAssign = { role: string; agent: string };
 type OrchStep = { label: string; agent: string; role: string };
 type EventRule = { trigger: string; action: string };
@@ -52,6 +54,42 @@ const HARNESS_DEF: Harness = {
 const EMPTY: RoomConfig = {
   harness: null, roles: { defs: [], assignments: [] }, orchestration: [], system_prompt: "", event_rules: [],
 };
+
+// 역할 지침 read 헬퍼: 정본 instructions 우선, 레거시 inst 폴백.
+function roleInst(d: RoleDef | undefined): string {
+  return (d?.instructions ?? d?.inst ?? "") as string;
+}
+
+// 서버 GET 응답 → 안전한 RoomConfig 로 정규화.
+// - 누락 섹션 기본값 보강 (EMPTY 와 병합)
+// - harness 가 객체면 HARNESS_DEF 와 병합해 모든 키 보장 (mcp 누락 → .includes 크래시 방지)
+// - 역할 defs 의 instructions/inst 표준화 (instructions 로 통일)
+function normalizeConfig(raw: unknown): RoomConfig {
+  const c = { ...EMPTY, ...(raw && typeof raw === "object" ? (raw as Partial<RoomConfig>) : {}) };
+  // harness: null 이면 전역 상속, 객체면 모든 키 보장
+  if (c.harness && typeof c.harness === "object") {
+    const h = c.harness as Partial<Harness>;
+    c.harness = {
+      ...HARNESS_DEF,
+      ...h,
+      mcp: Array.isArray(h.mcp) ? h.mcp : [],
+    };
+  } else {
+    c.harness = null;
+  }
+  // roles
+  const roles = (c.roles && typeof c.roles === "object" ? c.roles : {}) as Partial<RoomConfig["roles"]>;
+  c.roles = {
+    defs: Array.isArray(roles.defs)
+      ? roles.defs.map((d) => ({ name: (d?.name ?? "") as string, instructions: roleInst(d as RoleDef) }))
+      : [],
+    assignments: Array.isArray(roles.assignments) ? roles.assignments : [],
+  };
+  c.orchestration = Array.isArray(c.orchestration) ? c.orchestration : [];
+  c.event_rules = Array.isArray(c.event_rules) ? c.event_rules : [];
+  c.system_prompt = typeof c.system_prompt === "string" ? c.system_prompt : "";
+  return c;
+}
 
 // 토글 그룹 옵션 (목업 toggleSet idiom)
 const RUNTIMES = ["claude-code", "codex", "gemini-cli", "cursor", "aider"];
@@ -81,7 +119,7 @@ export function RoomModal(props: { roomKey: string; roomLabel?: string; onClose:
   onMount(async () => {
     try {
       const r = await invoke<{ config: RoomConfig }>("room_config_get", { key: props.roomKey });
-      if (r?.config) setCfg({ ...EMPTY, ...r.config });
+      if (r?.config) setCfg(normalizeConfig(r.config));
     } catch (e: any) {
       setErr(`로드 실패: ${e?.message || e}`);
     }
@@ -97,7 +135,7 @@ export function RoomModal(props: { roomKey: string; roomLabel?: string; onClose:
     patch({ harness: { ...harness(), [k]: v } });
   }
   function toggleMcp(m: string) {
-    const list = harness().mcp;
+    const list = Array.isArray(harness().mcp) ? harness().mcp : [];
     setHarness("mcp", list.includes(m) ? list.filter((x) => x !== m) : [...list, m]);
   }
   function enableHarnessOverride(on: boolean) {
@@ -108,14 +146,14 @@ export function RoomModal(props: { roomKey: string; roomLabel?: string; onClose:
   function openRoleEd(i: number) {
     setEditRole(i);
     if (i === -1) { setReName(""); setReInst(""); }
-    else { const d = cfg().roles.defs[i]; setReName(d?.name || ""); setReInst(d?.inst || ""); }
+    else { const d = cfg().roles.defs[i]; setReName(d?.name || ""); setReInst(roleInst(d)); }
   }
   function saveRoleDef() {
     const nm = reName().trim(); if (!nm) return;
     const defs = [...cfg().roles.defs];
     const i = editRole();
-    if (i === -1 || i == null) defs.push({ name: nm, inst: reInst() });
-    else defs[i] = { name: nm, inst: reInst() };
+    if (i === -1 || i == null) defs.push({ name: nm, instructions: reInst() });
+    else defs[i] = { name: nm, instructions: reInst() };
     patch({ roles: { ...cfg().roles, defs } });
     setEditRole(null);
   }
@@ -238,7 +276,7 @@ export function RoomModal(props: { roomKey: string; roomLabel?: string; onClose:
               <div style={row}>
                 <span style={lbl}>MCP</span>
                 <For each={MCP_OPTS}>{(m) => (
-                  <button style={harness().mcp.includes(m) ? togOn : tog} onClick={() => toggleMcp(m)}>{m}</button>
+                  <button style={(harness().mcp ?? []).includes(m) ? togOn : tog} onClick={() => toggleMcp(m)}>{m}</button>
                 )}</For>
               </div>
               <div style={row}>
