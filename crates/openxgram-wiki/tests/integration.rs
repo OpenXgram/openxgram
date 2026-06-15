@@ -40,7 +40,7 @@ async fn end_to_end_flow() {
     assert!(r2.created);
 
     // 2) 검색
-    let hits = tools.search("Alice", Some(5)).unwrap();
+    let hits = tools.search("Alice", Some(5), None).unwrap();
     assert!(!hits.is_empty());
 
     // 3) 링크
