@@ -50,7 +50,17 @@ function TreeNode(p: {
 // POST agents_register → agent_capabilities + agent_profiles 둘 다 기록(이게 있어야 로스터에 노출).
 // 만들면 바로 대화방. onCreated(alias) 로 부모가 새로고침 + 선택.
 
-const AI_TYPES = ["claude", "codex", "gemini", "ollama", "hermes"];
+// AI 종류 = 데몬이 검증하는 ai_type enum 과 정확히 일치해야 한다.
+//   register/profile 저장 시 validate_profile_enums 가 claude|codex|gemini 만 허용하고
+//   (daemon_gui.rs validate_profile_enums / mcp_serve.rs), 세션 생성 시 이 값이
+//   레지스트리 어댑터로 매핑된다(daemon_gui.rs: claude→claude-agent-acp,
+//   codex→codex-acp, gemini→gemini). 과거 'ollama'/'hermes' 는 어느 레이어에도
+//   존재하지 않아 등록이 항상 실패했다 → 제거(드리프트 방지).
+const AI_TYPES: { v: string; label: string }[] = [
+  { v: "claude", label: "claude" },
+  { v: "codex", label: "codex" },
+  { v: "gemini", label: "gemini" },
+];
 const CLASS_OPTS = [
   { v: "project", label: "📁 프로젝트 에이전트" },
   { v: "special", label: "⚙️ 특수 기능 에이전트" },
@@ -168,7 +178,7 @@ export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: s
           <div class="fld">
             <label>3 · AI 종류</label>
             <select class="ctl" value={aiType()} onChange={(e) => setAiType(e.currentTarget.value)}>
-              {AI_TYPES.map((t) => <option value={t}>{t}</option>)}
+              {AI_TYPES.map((t) => <option value={t.v}>{t.label}</option>)}
             </select>
           </div>
         </div>
