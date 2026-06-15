@@ -586,15 +586,19 @@ pub mod server {
 
         let prompt_text = extract_prompt(&body)?;
 
-        // 갭#1 — A2A 위임 교환을 사용자 가시 스레드로 영속화한다. conv_key = `a2a:{from}->{B}`
-        // (호출자 alias 를 알면), 외부 호출이면 `a2a:{B}`. label 로도 부여 → 세션의 툴 호출이
-        // prompt() 증분 기록(record_stream_tool)을 통해 같은 스레드에 실시간 영속된다.
-        let conv_key = match body.from.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            Some(from) => format!("a2a:{from}->{}", meta.alias),
-            None => format!("a2a:{}", meta.alias),
+        // conv_key 통합 — 에이전트간 위임 교환을 **수신자(B)의 bare-alias identity 스레드**에
+        // 영속한다. GUI 리더(daemon_gui.rs:3900 복원 / 4282 unread)가 `conv_key = ac.alias`(bare)
+        // 로 읽으므로, 종전 `a2a:{from}->{B}`/`a2a:{B}` prefix 키에 쌓이던 행은 GUI 에 안 보였다.
+        // bare alias 로 통합 → 수신자 스레드에 표시 + unread 뱃지 증가. label 로도 부여 →
+        // 세션의 툴 호출이 prompt() 증분 기록(record_stream_tool)을 통해 같은 스레드에 실시간 영속.
+        let conv_key = meta.alias.clone();
+        // 호출자(A)의 요청을 'me' 로 기록 → 스레드 시작점. 발신자 신원은 본문 prefix 로 보존
+        // (acp_messages 에 sender 컬럼이 없으므로). 외부 호출(from 없음)은 prefix 생략.
+        let me_text = match body.from.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(from) => format!("[from {from}] {prompt_text}"),
+            None => prompt_text.clone(),
         };
-        // 호출자(A)의 요청을 'me' 로 기록 → 스레드 시작점.
-        acp.record_message(&conv_key, "me", &prompt_text).await;
+        acp.record_message(&conv_key, "me", &me_text).await;
 
         // ── 지속 세션(멀티턴 기억 유지) ───────────────────────────────────────
         // 친구 대화는 하나의 ACP 세션을 유지해 멀티턴 기억·툴 상태가 이어지게 한다.

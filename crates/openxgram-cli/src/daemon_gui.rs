@@ -10396,8 +10396,9 @@ async fn a2a_send(
             a2a_tmux_inject(&session_name, &prompt_text)
                 .await
                 .map_err(|e| internal(&format!("tmux inject 실패: {e}")))?;
-            // 가시 기록 — tmux 엔드포인트도 같은 신원 스레드(conv_key=alias)에 남긴다.
-            let conv_key = format!("a2a:{alias}");
+            // 가시 기록 — tmux 엔드포인트도 같은 신원 스레드(conv_key=bare alias)에 남긴다.
+            // GUI 리더(3900/4282)가 bare alias 로 읽으므로 prefix 없는 alias 로 통합.
+            let conv_key = alias.clone();
             state.acp.record_message(&conv_key, "me", &prompt_text).await;
             Ok(Json(serde_json::json!({
                 "status": "delivered",
@@ -10459,9 +10460,13 @@ async fn a2a_send(
                 )));
             }
 
-            // 그 cwd 로 ACP 세션 생성 + prompt. conv_key = a2a:{alias}:wt:<branch>(가시).
-            let conv_key = format!("a2a:{alias}:wt:{branch}");
-            state.acp.record_message(&conv_key, "me", &prompt_text).await;
+            // 가시 기록은 수신자 bare-alias identity 스레드(persist_key)로 통합 → GUI 표시.
+            // 단, ACP 세션 label 은 워크트리 cwd 전용 유니크 키(session_label)로 둔다:
+            // 워크트리는 별도 cwd 의 1회성 세션이므로 메인 alias 세션과 find-or-create 충돌하면
+            // 안 된다(다른 cwd). 즉 영속 스레드(bare alias)와 세션 신원(wt 키)을 분리한다.
+            let persist_key = alias.clone();
+            let session_label = format!("a2a:{alias}:wt:{branch}");
+            state.acp.record_message(&persist_key, "me", &prompt_text).await;
             let create = crate::daemon_gui_acp::create_session(
                 &state.acp,
                 crate::daemon_gui_acp::CreateSessionBody {
@@ -10473,7 +10478,7 @@ async fn a2a_send(
                     model: None,
                     thinking: None,
                     machine: None,
-                    label: Some(conv_key.clone()),
+                    label: Some(session_label.clone()),
                 },
             )
             .await
@@ -10494,7 +10499,7 @@ async fn a2a_send(
             let _ = crate::daemon_gui_acp::close(&state.acp, &session_id).await;
             let acp_result = prompt_res.map_err(a2a_err)?;
             let agent_text = a2a_collect_agent_text(&acp_result);
-            state.acp.record_message(&conv_key, "agent", &agent_text).await;
+            state.acp.record_message(&persist_key, "agent", &agent_text).await;
             Ok(Json(serde_json::json!({
                 "status": "completed",
                 "endpoint": "worktree",
@@ -10502,7 +10507,8 @@ async fn a2a_send(
                 "worktree": wt_path,
                 "branch": branch,
                 "sessionId": session_id,
-                "convKey": conv_key,
+                "convKey": persist_key,
+                "sessionLabel": session_label,
                 "text": agent_text,
             })))
         }

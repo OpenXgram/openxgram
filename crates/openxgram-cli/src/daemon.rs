@@ -596,10 +596,11 @@ async fn try_acp_inbound_delivery(
 }
 
 /// fix④ — ACP 도 tmux 도 전달 못한 envelope 을 **조용히 버리지 않는다(절대 규칙 1)**.
-/// 통합 스레드 `a2a:{alias}` 에 undelivered 마커를 영속(데몬 GUI self-call) + 명시 로그.
+/// 수신자 bare-alias identity 스레드(GUI 리더 daemon_gui.rs:3900/4282 가 읽는 키)에
+/// undelivered 마커를 영속(데몬 GUI self-call) + 명시 로그.
 /// 사용자/에이전트가 그 스레드에서 미전달 사실을 보고 후속 처리할 수 있게 한다.
 async fn record_inbound_undelivered(target_alias: &str, sender_alias: &str, body: &str) {
-    let conv_key = format!("a2a:{target_alias}");
+    let conv_key = target_alias.to_string();
     let marker = format!(
         "⚠️ [미전달] {sender_alias} → {target_alias}: ACP 엔드포인트 없음 + tmux 화면 없음으로 즉시 전달 실패. 원문: {body}"
     );
@@ -627,7 +628,7 @@ async fn record_inbound_undelivered(target_alias: &str, sender_alias: &str, body
                 tracing::warn!(
                     conv_key = %conv_key,
                     sender = %sender_alias,
-                    "fix④ inbound 미전달 — 통합 스레드 a2a:{} 에 undelivered 마커 영속(후속 처리 가능)",
+                    "fix④ inbound 미전달 — 수신자 identity 스레드 '{}'(bare alias)에 undelivered 마커 영속(후속 처리 가능)",
                     target_alias
                 );
                 return;
