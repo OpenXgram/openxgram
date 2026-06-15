@@ -8036,9 +8036,21 @@ async fn gui_external_inbound_approve(
     State(state): State<GuiServerState>, headers: HeaderMap, Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    let mut db = state.db.lock().await;
-    db.conn().execute("UPDATE external_inbound_pending SET status='approved' WHERE id=?1", rusqlite::params![id])
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    let counterparty = {
+        let mut db = state.db.lock().await;
+        let cp = external_inbound_counterparty(&mut db, &id);
+        db.conn().execute("UPDATE external_inbound_pending SET status='approved' WHERE id=?1", rusqlite::params![id])
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+        cp
+    };
+    // 거래 가시화 — A2A 와 동일(conv_key = 상대 에이전트 bare alias): record_message + conv_persisted broadcast.
+    if let Some((from_agent, summary, price)) = counterparty {
+        surface_commerce_event(&state, &from_agent, &format!(
+            "[거래] {from_agent} offer 승인 — {summary}{price}",
+            summary = if summary.is_empty() { "(요약 없음)".to_string() } else { summary },
+            price = price.map(|p| format!(" ({p} USDC)")).unwrap_or_default(),
+        )).await;
+    }
     Ok(Json(serde_json::json!({"approved": id})))
 }
 
@@ -8046,10 +8058,55 @@ async fn gui_external_inbound_reject(
     State(state): State<GuiServerState>, headers: HeaderMap, Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    let mut db = state.db.lock().await;
-    db.conn().execute("UPDATE external_inbound_pending SET status='rejected' WHERE id=?1", rusqlite::params![id])
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+    let counterparty = {
+        let mut db = state.db.lock().await;
+        let cp = external_inbound_counterparty(&mut db, &id);
+        db.conn().execute("UPDATE external_inbound_pending SET status='rejected' WHERE id=?1", rusqlite::params![id])
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: e.to_string()})))?;
+        cp
+    };
+    if let Some((from_agent, summary, price)) = counterparty {
+        surface_commerce_event(&state, &from_agent, &format!(
+            "[거래] {from_agent} offer 거절 — {summary}{price}",
+            summary = if summary.is_empty() { "(요약 없음)".to_string() } else { summary },
+            price = price.map(|p| format!(" ({p} USDC)")).unwrap_or_default(),
+        )).await;
+    }
     Ok(Json(serde_json::json!({"rejected": id})))
+}
+
+/// 거래(external_inbound_pending) 행의 상대 에이전트·요약·가격을 조회 — 가시화 카드용.
+/// 조회 실패(행 없음/SQL 에러)는 `None` 으로 명시 처리하되 에러는 로그(절대 규칙 1: silent swallow 금지).
+fn external_inbound_counterparty(
+    db: &mut openxgram_db::Db, id: &str,
+) -> Option<(String, String, Option<f64>)> {
+    match db.conn().query_row(
+        "SELECT from_agent, COALESCE(request_summary,''), offered_price FROM external_inbound_pending WHERE id=?1",
+        rusqlite::params![id],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<f64>>(2)?)),
+    ) {
+        Ok(t) => Some(t),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(e) => {
+            tracing::error!(target: "acp.daemon", id = %id, "external_inbound 상대 조회 실패: {e}");
+            None
+        }
+    }
+}
+
+/// 거래 lifecycle 이벤트를 모니터 가능한 스레드에 surface — A2A 와 동일 가시화 경로.
+/// conv_key = 상대 에이전트 bare alias(=A2A 와 동일). record_message(영속) +
+/// conv_persisted broadcast(라이브). 결제/온체인 로직은 건드리지 않음(가시화만 추가).
+async fn surface_commerce_event(state: &GuiServerState, counterparty: &str, text: &str) {
+    let conv_key = counterparty.trim();
+    if conv_key.is_empty() {
+        tracing::error!(target: "acp.daemon", "거래 이벤트 surface 스킵 — 상대 alias 빈 값");
+        return;
+    }
+    // 'agent' = 상대측 발화로 기록 → 카드가 상대 메시지로 렌더(A2A 응답 기록과 동일 role).
+    state.acp.record_message(conv_key, "agent", text).await;
+    crate::daemon_gui_acp::notify_conv_persisted_by_label(&state.acp, conv_key).await;
+    tracing::info!(target: "acp.daemon", conv_key = %conv_key, "거래 이벤트 → messenger 스레드 기록");
 }
 
 async fn gui_external_listings(
