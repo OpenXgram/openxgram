@@ -495,6 +495,157 @@ fn gather_db_metrics(data_dir: &std::path::Path) -> String {
     out
 }
 
+/// 데몬 자신의 GUI HTTP base URL. `XGRAM_DAEMON_GUI_URL` 우선, 없으면 loopback 기본.
+/// (mcp_serve.rs::daemon_gui_url 과 동일 규약 — 데몬 ACP 레지스트리 self-call 용.)
+fn self_gui_url() -> String {
+    std::env::var("XGRAM_DAEMON_GUI_URL")
+        .unwrap_or_else(|_| format!("http://{DEFAULT_GUI_BIND}"))
+}
+
+/// fix④ Option A — peer_send inbound 의 ACP-우선 전달 결과.
+///   - Delivered  : ACP 엔드포인트(=ai_type→adapter 보유 내부 에이전트)로 전달 + 영속 완료.
+///                  (a2a_send → load_a2a_agent_meta → handle_task 가 conv_key `a2a:{from}->{alias}`
+///                   에 me/agent 양측 기록까지 수행 — 기존 spawn 머신리 그대로 재사용.)
+///   - NoEndpoint : 그 alias 는 ACP 로 구동 불가(순수 터미널 peer 또는 미등록) → tmux fallback.
+///   - Unavailable: ACP 경로 자체를 시도할 수 없음(데몬 토큰 부재·GUI 미응답 등). 명시 로그 후
+///                  tmux fallback. **silent X (절대 규칙 1).**
+enum AcpInboundOutcome {
+    Delivered,
+    NoEndpoint,
+    Unavailable,
+}
+
+/// fix④ — peer_send inbound 를 ACP/A2A 전달 척추로 보낸다. 데몬은 자기 GUI HTTP 서버
+/// (`spawn_gui_server`, 동일 프로세스)의 `/v1/gui/a2a/send` 를 self-call 한다 → a2a_send 가
+/// **기존** spawn 머신리(load_a2a_agent_meta + handle_task, lazy ACP 세션 find-or-create)를
+/// 그대로 구동하고, 통합 conv_key `a2a:{from}->{alias}` 로 양측 메시지를 영속한다.
+/// 새 spawner 를 만들지 않는다 — endpoint="new_acp" 분기만 재사용.
+async fn try_acp_inbound_delivery(
+    target_alias: &str,
+    sender_alias: &str,
+    body: &str,
+) -> AcpInboundOutcome {
+    // 데몬 self-call 토큰. 부재 시 ACP 경로 불가 — bypass 금지(절대 규칙 1) → tmux fallback.
+    let token = match std::env::var("XGRAM_MCP_TOKEN") {
+        Ok(t) if !t.trim().is_empty() => t,
+        _ => {
+            tracing::warn!(
+                target_alias = %target_alias,
+                "fix④ ACP 전달 불가 — XGRAM_MCP_TOKEN 부재(데몬 self-call 인증 필요). tmux fallback 으로 진행"
+            );
+            return AcpInboundOutcome::Unavailable;
+        }
+    };
+    let url = format!("{}/v1/gui/a2a/send", self_gui_url().trim_end_matches('/'));
+    // a2a_send 의 SendBody — endpoint="new_acp"(기본) 내부 alias 경로.
+    let payload = serde_json::json!({
+        "target": target_alias,
+        "from_agent": sender_alias,
+        "task": body,
+        "endpoint": "new_acp",
+    });
+    let client = reqwest::Client::new();
+    let send_fut = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send();
+    // ACP 턴은 길 수 있으나 inbound tick 을 무한정 막으면 안 됨 — 90초 상한.
+    let resp = match tokio::time::timeout(std::time::Duration::from_secs(90), send_fut).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, target_alias = %target_alias, "fix④ ACP self-call 요청 실패 — tmux fallback");
+            return AcpInboundOutcome::Unavailable;
+        }
+        Err(_elapsed) => {
+            tracing::warn!(target_alias = %target_alias, "fix④ ACP self-call TIMEOUT(90s) — tmux fallback");
+            return AcpInboundOutcome::Unavailable;
+        }
+    };
+    let status = resp.status();
+    if status.is_success() {
+        tracing::info!(
+            target_alias = %target_alias,
+            sender = %sender_alias,
+            "fix④ inbound → ACP/A2A 전달 OK (conv_key a2a:{}->{} 영속)",
+            sender_alias, target_alias
+        );
+        return AcpInboundOutcome::Delivered;
+    }
+    // 404/422 = 그 alias 는 ACP 로 구동 불가(role=tmux 또는 ai_type/adapter 없음) → tmux fallback.
+    if status == reqwest::StatusCode::NOT_FOUND
+        || status == reqwest::StatusCode::UNPROCESSABLE_ENTITY
+    {
+        tracing::info!(
+            target_alias = %target_alias,
+            http_status = %status,
+            "fix④ ACP 엔드포인트 없음(순수 터미널 peer 추정) — tmux fallback 으로 진행"
+        );
+        return AcpInboundOutcome::NoEndpoint;
+    }
+    // 그 외 HTTP 오류 — 명시 로그(절대 규칙 1) 후 tmux fallback.
+    let txt = resp.text().await.unwrap_or_default();
+    tracing::warn!(
+        target_alias = %target_alias,
+        http_status = %status,
+        body = %txt,
+        "fix④ ACP self-call 비-2xx — tmux fallback 으로 진행"
+    );
+    AcpInboundOutcome::Unavailable
+}
+
+/// fix④ — ACP 도 tmux 도 전달 못한 envelope 을 **조용히 버리지 않는다(절대 규칙 1)**.
+/// 통합 스레드 `a2a:{alias}` 에 undelivered 마커를 영속(데몬 GUI self-call) + 명시 로그.
+/// 사용자/에이전트가 그 스레드에서 미전달 사실을 보고 후속 처리할 수 있게 한다.
+async fn record_inbound_undelivered(target_alias: &str, sender_alias: &str, body: &str) {
+    let conv_key = format!("a2a:{target_alias}");
+    let marker = format!(
+        "⚠️ [미전달] {sender_alias} → {target_alias}: ACP 엔드포인트 없음 + tmux 화면 없음으로 즉시 전달 실패. 원문: {body}"
+    );
+    let token = match std::env::var("XGRAM_MCP_TOKEN") {
+        Ok(t) if !t.trim().is_empty() => Some(t),
+        _ => None,
+    };
+    // self-call 로 acp_messages 스레드에 기록(POST /v1/gui/acp/conversations/{key}/messages).
+    if let Some(token) = token {
+        let url = format!(
+            "{}/v1/gui/acp/conversations/{}/messages",
+            self_gui_url().trim_end_matches('/'),
+            urlencoding::encode(&conv_key)
+        );
+        let payload = serde_json::json!({ "role": "system", "text": marker });
+        let client = reqwest::Client::new();
+        let fut = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send();
+        match tokio::time::timeout(std::time::Duration::from_secs(5), fut).await {
+            Ok(Ok(r)) if r.status().is_success() => {
+                tracing::warn!(
+                    conv_key = %conv_key,
+                    sender = %sender_alias,
+                    "fix④ inbound 미전달 — 통합 스레드 a2a:{} 에 undelivered 마커 영속(후속 처리 가능)",
+                    target_alias
+                );
+                return;
+            }
+            Ok(Ok(r)) => tracing::error!(conv_key = %conv_key, http_status = %r.status(), "fix④ undelivered 마커 영속 실패(비-2xx)"),
+            Ok(Err(e)) => tracing::error!(error = %e, conv_key = %conv_key, "fix④ undelivered 마커 영속 요청 실패"),
+            Err(_) => tracing::error!(conv_key = %conv_key, "fix④ undelivered 마커 영속 TIMEOUT(5s)"),
+        }
+    }
+    // 영속까지 실패해도 절대 silent X — 최소한 ERROR 로그로 미전달 사실을 남긴다.
+    tracing::error!(
+        target_alias = %target_alias,
+        sender = %sender_alias,
+        conv_key = %conv_key,
+        "fix④ inbound 미전달 + 스레드 영속도 실패 — 메시지 유실 위험. (XGRAM_MCP_TOKEN/GUI 상태 점검 필요)"
+    );
+}
+
 /// drain 된 envelope 들을 한 번의 DB open 으로 처리.
 /// 각 envelope: peer 조회 → 서명 검증 → L0 message insert → peer.touch (성공 시).
 /// 검증 실패·미등록 peer 는 silent drop + WARN (PRD-2.0.1 / 2.0.2 / 2.0.3).
@@ -755,6 +906,8 @@ pub fn process_inbound(
 
         // rc.219 — tmux inject 결과를 mutable variable 로 캡쳐 → ACK envelope 의 ack_status 결정.
         let mut tmux_injected = false;
+        // fix④ Option A — ACP/A2A 가 정본 전달 척추. 아래에서 ACP 우선 시도 → 전달되면 tmux skip.
+        let mut acp_delivered = false;
 
         if let Some(target_alias) = recv_alias {
             // rc.207 본질 fix — inject 형식에 conversation_id 의 앞 8자 포함.
@@ -771,12 +924,41 @@ pub fn process_inbound(
             let injected = format!("[INBOX from {}{}] {}", sender_label, conv_suffix, body);
             let target_clone = target_alias.clone();
             let injected_clone = injected.clone();
+            // fix④ — tmux 클로저가 target_alias 를 move 하므로 undelivered 기록용 사본 확보.
+            let target_for_undelivered = target_alias.clone();
+
+            // ── fix④ Option A — ACP/A2A 우선 전달 ──────────────────────────────
+            // OLD(tmux send-keys)는 라이브 tmux pane 이 없는 ACP/GUI 전용 에이전트에게
+            // 메시지를 유실시켰다. 이제 alias → ACP 세션/엔드포인트를 **먼저** 해석한다:
+            //   - ACP 엔드포인트 존재(또는 a2a_send 의 lazy spawn 으로 생성 가능) →
+            //     기존 spawn 머신리(a2a_send → handle_task)로 전달 + 통합 conv_key
+            //     `a2a:{from}->{alias}` 영속.
+            //   - ACP 불가(순수 터미널 peer) → 아래 tmux send-keys 로 fallback.
+            // (sender_alias hint 없으면 sender_label 을 발신자 표기로 사용.)
+            let acp_sender = env
+                .sender_alias
+                .clone()
+                .unwrap_or_else(|| sender_label.clone());
+            let acp_outcome = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(try_acp_inbound_delivery(
+                    &target_alias,
+                    &acp_sender,
+                    &body,
+                ))
+            });
+            match acp_outcome {
+                AcpInboundOutcome::Delivered => acp_delivered = true,
+                // NoEndpoint / Unavailable → tmux fallback (아래 블록 진행).
+                AcpInboundOutcome::NoEndpoint | AcpInboundOutcome::Unavailable => {}
+            }
+            // fix④ — ACP/A2A 로 이미 전달됐으면 tmux 는 skip. tmux 는 ACP 엔드포인트가 없는
+            // 순수 터미널 peer 전용 fallback 으로 강등(절대 제거 X — 라이브 fleet 회귀 방지).
             // process_inbound 는 sync — block_in_place + block_on 으로 async tmux send-keys 호출
             // rc.219 — return bool 로 tmux inject 성공/실패 명시 (silent debug 제거).
             // rc.238 — 전체 tmux inject 를 5초 timeout 으로 감쌈. tmux send-keys / list-sessions /
             // resolve_alias_to_tmux 중 하나라도 hang 하면 inbound_processor tick 전체가 멈추던
             // 근본 버그(23:47 stuck) 해결. timeout 시 이 envelope inject 만 포기 + WARN, 다음 진행.
-            tmux_injected = tokio::task::block_in_place(|| {
+            tmux_injected = !acp_delivered && tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(async move {
                     let inject_fut = async move {
                         if let Some((session, idx)) =
@@ -836,6 +1018,18 @@ pub fn process_inbound(
                     }
                 })
             });
+
+            // fix④ — ACP 도 tmux 도 전달 실패 → 조용히 버리지 않는다(절대 규칙 1).
+            // 통합 스레드 a2a:{alias} 에 undelivered 마커 영속 + 명시 로그.
+            if !acp_delivered && !tmux_injected {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(record_inbound_undelivered(
+                        &target_for_undelivered,
+                        &acp_sender,
+                        &body,
+                    ))
+                });
+            }
         } else {
             tracing::warn!(
                 envelope_to_pubkey_prefix = %env_to_short,
@@ -845,13 +1039,19 @@ pub fn process_inbound(
 
         // rc.219 — ACK envelope 송신. sender 측 outbound_queue.ack_at UPDATE 가능하도록.
         // ack_status: inbox_stored 는 항상 (위에서 insert 성공 후 도달).
-        // tmux_injected 면 tmux_injected 로 격상.
+        // fix④ — acp_delivered 면 acp_delivered, 아니면 tmux_injected 면 tmux_injected 로 격상.
         // nonce 는 envelope 의 것 (== outbound_queue.msg_ulid 와 다른 sender 측 generator. envelope.nonce 가 msg_ulid 매칭 키).
         // sender 측 outbound_queue.msg_ulid 는 sender 가 record 한 ulid. envelope.nonce 와 별개.
         // → 따라서 sender 가 outbound_queue INSERT 시 사용한 ulid 를 envelope 의 어떤 필드로 운반해야 매칭 가능.
         // 본 envelope 의 nonce 를 ulid 로 활용 (sender 가 record_outbox 시 동일 값 사용).
         let ack_for_ulid = env.nonce.clone();
-        let ack_status_val = if tmux_injected { "tmux_injected" } else { "inbox_stored" };
+        let ack_status_val = if acp_delivered {
+            "acp_delivered"
+        } else if tmux_injected {
+            "tmux_injected"
+        } else {
+            "inbox_stored"
+        };
         if let Some(ack_ulid) = ack_for_ulid.as_ref() {
             // sender hint — env.sender_transport_url 우선, 없으면 peer table 의 address.
             let sender_url = env.sender_transport_url.clone().or_else(|| {
