@@ -3,6 +3,9 @@ import { invoke } from "@/api/client";
 
 // fs/tree 노드 — 디렉토리 트리 선택용.
 type FsNode = { name: string; path: string; is_dir?: boolean; children?: FsNode[] };
+// fs/tree roots 모드 응답 (path 빈값/__roots__) — OS 별 최상위 루트.
+// windows: 드라이브 + \\wsl$\ 공유, unix: $HOME + /.
+type FsRoots = { os: "windows" | "unix"; is_roots: true; roots: FsNode[] };
 
 // 재귀 트리 노드 — 디렉토리만 표시. 이름 클릭=선택, ▸/▾=펼침.
 function TreeNode(p: {
@@ -99,16 +102,37 @@ export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: s
   const [err, setErr] = createSignal<string | null>(null);
 
   // 폴더 트리 선택기 — 해당 머신(데몬)의 디렉토리 트리에서 프로젝트 폴더 선택.
+  // 시작 루트는 데몬 OS 에 맞게 roots 모드(path 빈값)로 동적 해석 — Linux 경로
+  //   하드코딩 금지(Windows 데몬에서 /home/llm 은 존재하지 않아 picker 가 빈다).
   const [treeOpen, setTreeOpen] = createSignal(false);
-  const [treeRoot, setTreeRoot] = createSignal("/home/llm");
+  const [treeRoot, setTreeRoot] = createSignal("");
   const [tree, setTree] = createSignal<FsNode | null>(null);
   const [treeErr, setTreeErr] = createSignal<string | null>(null);
   const [expanded, setExpanded] = createSignal<Set<string>>(new Set());
+  // roots 모드로 데몬 OS 의 최상위 루트들을 받아 첫 루트를 시작점으로 반환.
+  //   여러 루트(Windows 드라이브 등)면 첫 루트로 진입하고, 사용자는 상단 입력바로
+  //   다른 루트(예: D:\ 또는 \\wsl$\Ubuntu)로 이동 가능.
+  async function resolveStartRoot(): Promise<string | null> {
+    const r = await invoke<FsRoots | FsNode>("fs_tree", { path: "", depth: 1, machine: machine() });
+    if (r && (r as FsRoots).is_roots) {
+      const roots = (r as FsRoots).roots ?? [];
+      return roots.length ? roots[0].path : null;
+    }
+    // 원격 머신 등 roots 미지원 응답이면 그 노드 path 를 시작점으로.
+    return (r as FsNode)?.path ?? null;
+  }
   async function loadTree(root: string) {
     setTreeErr(null);
     try {
+      // root 가 비면 데몬 OS 의 시작 루트를 동적 해석(하드코딩 제거).
+      const start = root && root.trim() ? root : await resolveStartRoot();
+      if (!start) {
+        setTreeErr("데몬에서 시작 폴더(루트)를 찾지 못했습니다.");
+        setTree(null);
+        return;
+      }
       // 선택 머신 전달 — 원격 머신이면 데몬이 SSH 로 그 머신 디렉토리를 조회.
-      const t = await invoke<FsNode>("fs_tree", { path: root, depth: 4, machine: machine() });
+      const t = await invoke<FsNode>("fs_tree", { path: start, depth: 4, machine: machine() });
       setTree(t);
       setTreeRoot(t.path); // 원격 HOME fallback 등으로 root 가 바뀌면 입력에도 반영.
       setExpanded(new Set([t.path])); // 루트 펼침.

@@ -11968,6 +11968,91 @@ fn build_fs_tree(dir: &std::path::Path, depth: usize) -> serde_json::Value {
     node
 }
 
+/// Sentinel `path` value that requests the top-level filesystem roots instead
+/// of a specific directory. Empty `path` is treated the same.
+const FS_ROOTS_SENTINEL: &str = "__roots__";
+
+/// Top-level roots for the folder picker, OS-appropriate (mirrors File
+/// Explorer / Finder). Windows: each present drive letter PLUS each installed
+/// `\\wsl$\<distro>` share. Unix: `$HOME` + `/`.
+///
+/// Returns `{ "os": "windows"|"unix", "roots": [{name,path,is_dir}, ...] }`
+/// so the frontend can open the picker at the daemon-correct starting point
+/// without hardcoding a Linux path.
+fn build_fs_roots() -> serde_json::Value {
+    let mut roots: Vec<serde_json::Value> = vec![];
+
+    #[cfg(windows)]
+    let os_label = "windows";
+    #[cfg(not(windows))]
+    let os_label = "unix";
+
+    #[cfg(windows)]
+    {
+        // Drive letters: probe C:..Z: (GetLogicalDrives semantics, no winapi dep).
+        for letter in b'C'..=b'Z' {
+            let drive = format!("{}:\\", letter as char);
+            if std::path::Path::new(&drive).is_dir() {
+                roots.push(serde_json::json!({
+                    "name": format!("{}:", letter as char),
+                    "path": drive,
+                    "is_dir": true,
+                }));
+            }
+        }
+        // Also probe A:/B: in case of mapped/virtual drives.
+        for letter in [b'A', b'B'] {
+            let drive = format!("{}:\\", letter as char);
+            if std::path::Path::new(&drive).is_dir() {
+                roots.push(serde_json::json!({
+                    "name": format!("{}:", letter as char),
+                    "path": drive,
+                    "is_dir": true,
+                }));
+            }
+        }
+        // WSL distros: enumerate `\\wsl$\` (best-effort — present only when WSL
+        // installed). Each child directory is a distro root share.
+        let wsl_base = r"\\wsl$\";
+        if let Ok(entries) = std::fs::read_dir(wsl_base) {
+            for e in entries.flatten() {
+                if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    let distro = e.file_name().to_string_lossy().to_string();
+                    roots.push(serde_json::json!({
+                        "name": format!("\\\\wsl$\\{distro}"),
+                        "path": format!(r"\\wsl$\{distro}"),
+                        "is_dir": true,
+                    }));
+                }
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            if !home.is_empty() && std::path::Path::new(&home).is_dir() {
+                roots.push(serde_json::json!({
+                    "name": home.clone(),
+                    "path": home,
+                    "is_dir": true,
+                }));
+            }
+        }
+        roots.push(serde_json::json!({
+            "name": "/",
+            "path": "/",
+            "is_dir": true,
+        }));
+    }
+
+    serde_json::json!({
+        "os": os_label,
+        "is_roots": true,
+        "roots": roots,
+    })
+}
+
 /// `GET /v1/gui/fs/tree?path=<dir>&depth=<n>` — 디렉토리 JSON 트리 (read-only).
 /// depth 기본 2, 최대 5. path 미지정 시 400. 디렉토리 아님/미존재 시 명시 status.
 // 머신 라벨 → (ssh host, wsl 래퍼 여부). None = 로컬(이 데몬 머신).
@@ -12162,7 +12247,16 @@ async fn gui_fs_tree(
     Query(q): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    let path = q.get("path").map(|s| s.as_str()).ok_or((
+    // Roots mode: empty/absent `path` or the `__roots__` sentinel returns the
+    // OS-appropriate top-level roots (Windows drives + \\wsl$ shares, or
+    // $HOME + / on unix) so the folder picker opens correctly per-daemon-OS.
+    // Local only — remote (machine=) browse needs an explicit start path.
+    let machine_q = q.get("machine").map(|s| s.as_str()).unwrap_or("");
+    let path_raw = q.get("path").map(|s| s.as_str()).unwrap_or("");
+    if machine_q.is_empty() && (path_raw.is_empty() || path_raw == FS_ROOTS_SENTINEL) {
+        return Ok(Json(build_fs_roots()));
+    }
+    let path = q.get("path").map(|s| s.as_str()).filter(|s| !s.is_empty()).ok_or((
         StatusCode::BAD_REQUEST,
         Json(ErrorDto {
             error: "path 쿼리 파라미터 필요".into(),
