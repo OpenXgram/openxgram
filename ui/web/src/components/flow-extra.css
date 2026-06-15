@@ -631,3 +631,155 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ── P2 — A2A 실시간 미니패널 + 협업 곁뷰 (A2AMiniPanel.tsx) ──
+   정본: _mockups/openxgram-conversation-model-mockup.html (.mini / .side#sideA2A).
+   마운트 래퍼 — 대화창(AcpConversation, 절대배치) 위에 겹쳐 미니패널을 헤더 아래에 띄운다.
+   포인터 이벤트는 미니패널 strip 과 곁뷰에만(나머지 영역은 대화에 통과). */
+.kk-a2a-mount {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 25;
+}
+.kk-a2a-mount .a2a-mini {
+  pointer-events: auto;
+  position: absolute;
+  top: 52px;
+  left: 0;
+  right: 0;
+  z-index: 26;
+}
+.kk-a2a-mount .a2a-side { pointer-events: auto; }
+.a2a-mini {
+  background: rgba(255, 255, 255, 0.72);
+  margin: 8px 14px 0;
+  border-radius: 10px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12.5px;
+  color: #2c3a47;
+  cursor: pointer;
+  border: 1px solid rgba(90, 127, 176, 0.25);
+}
+.a2a-mini b { font-weight: 700; }
+.a2a-mini-st {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #fff;
+  border-radius: 20px;
+  padding: 2px 9px;
+  font-size: 11.5px;
+}
+.a2a-mini-sp { flex: 1; }
+.a2a-mini-more { color: #5a7fb0; font-weight: 700; font-size: 11.5px; }
+.a2a-mini-badge {
+  background: #ff5b5b;
+  color: #fff;
+  border-radius: 11px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  min-width: 19px;
+  text-align: center;
+}
+.a2a-mini-dot { width: 7px; height: 7px; border-radius: 50%; }
+.a2a-mini-dot.live {
+  background: #21c45d;
+  box-shadow: 0 0 0 0 rgba(33, 196, 93, 0.5);
+  animation: a2aPulse 1.6s infinite;
+}
+.a2a-mini-dot.idle { background: #b9c2cc; }
+@keyframes a2aPulse {
+  0% { box-shadow: 0 0 0 0 rgba(33, 196, 93, 0.5); }
+  70% { box-shadow: 0 0 0 7px rgba(33, 196, 93, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(33, 196, 93, 0); }
+}
+
+/* 협업 곁뷰 — 우측 슬라이드 패널 (정본 .side). 작업환경(info) 패널과 같은 위치. */
+.a2a-side {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: min(560px, 92%);
+  height: 100%;
+  background: #f7f9fb;
+  border-left: 1px solid #d9e1ea;
+  display: none;
+  flex-direction: column;
+  box-shadow: -12px 0 30px rgba(40, 52, 70, 0.12);
+  z-index: 30;
+}
+.a2a-side.show { display: flex; }
+.a2a-side h3 {
+  padding: 15px 18px;
+  font-size: 14px;
+  font-weight: 700;
+  border-bottom: 1px solid #d9e1ea;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.a2a-side-x { margin-left: auto; cursor: pointer; color: #7c8ba1; font-weight: 400; }
+.a2a-side-body { padding: 10px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.a2a-side-empty { padding: 18px 6px; font-size: 12.5px; color: #6b7785; line-height: 1.6; }
+.a2a-side-empty .sub { color: #9aa6b2; font-size: 11.5px; }
+.a2a-side-hint { font-size: 11px; color: #8a96a2; padding: 4px 2px; }
+.a2a-conv {
+  background: #fff;
+  border: 1px solid #d9e1ea;
+  border-radius: 11px;
+  padding: 11px 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.a2a-conv-av {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: #4a90d9;
+  color: #fff;
+  font-weight: 700;
+}
+.a2a-conv-av.off { background: #b9c2cc; }
+.a2a-conv-nm { font-weight: 600; font-size: 13.5px; }
+.a2a-conv-lt { font-size: 12px; color: #6b7785; margin-top: 2px; }
+.a2a-conv-meta { flex: 1; }
+.a2a-conv-stt {
+  margin-left: auto;
+  font-size: 11.5px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: #f1f4f7;
+  border-radius: 20px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+.a2a-ctrl {
+  display: flex;
+  gap: 6px;
+  padding: 10px 14px;
+  border-top: 1px solid #d9e1ea;
+  flex-wrap: wrap;
+}
+.a2a-ctrl button {
+  border: 1px solid #d9e1ea;
+  background: #fff;
+  border-radius: 8px;
+  padding: 7px 11px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #37424d;
+  font-weight: 600;
+}
+.a2a-ctrl button:disabled { opacity: 0.5; cursor: not-allowed; }
+.a2a-ctrl-note { font-size: 10.5px; color: #9aa6b2; padding: 4px 14px 12px; line-height: 1.5; }
+

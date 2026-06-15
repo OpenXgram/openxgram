@@ -7,15 +7,20 @@ import { AgentsTab } from "./AgentsTab";
 import { FlowTab } from "./FlowTab";
 import { MarketTab } from "./MarketTab";
 import { RuntimeTab } from "./RuntimeTab";
+import { HomeDashboard, type CardId } from "./HomeDashboard";
 
-// Phase 1 — 카카오톡 셸. 정본 디자인: _mockups/kakao-mockup.html
-// 바텀 나브 = 주요 콘텐츠(에이전트·대화·워크플로우·마켓). 설정은 헤더 기어(⚙️)로 진입하며
+// Phase 1 — 카카오톡 셸. 정본 디자인: _mockups/kakao-mockup.html + openxgram-conversation-model-mockup.html
+// 바텀 나브 = 주요 콘텐츠(대화·에이전트·현황·워크플로우·마켓). 설정은 헤더 기어(⚙️)로 진입하며
 // 그 안에 일반/런타임/위키 서브탭. (설정·런타임·위키는 바텀 나브에서 제외 — 마스터 지시)
-type KkTab = "agents" | "chat" | "flow" | "market" | "settings";
+//
+// P1 — 랜딩 = 대화(chat). 현황(dashboard)은 별도 선택 탭(랜딩 아님) — 정본 목업의 📊현황 레일 항목.
+type KkTab = "chat" | "agents" | "dash" | "flow" | "market" | "settings";
 
+// 정본 목업 레일 순서: 💬채팅(랜딩) · 📊현황 · 🔀워크플로우 · 🛒마켓. 에이전트(친구 관리)도 노출.
 const TABS: { id: KkTab; ic: string; label: string }[] = [
-  { id: "agents", ic: "🙂", label: "에이전트" },
   { id: "chat", ic: "💬", label: "대화" },
+  { id: "agents", ic: "🙂", label: "에이전트" },
+  { id: "dash", ic: "📊", label: "현황" },
   { id: "flow", ic: "🔀", label: "워크플로우" },
   { id: "market", ic: "🌐", label: "마켓" },
 ];
@@ -28,10 +33,18 @@ const SETTINGS_SUB: { id: SettingsSub; ic: string; label: string }[] = [
 ];
 
 export function KakaoShell(props: { onLogout?: () => void }) {
+  // P1 — 랜딩은 대화(chat). 대시보드(현황)는 명시 선택 시에만 — 절대 랜딩 아님.
   const [tab, setTab] = createSignal<KkTab>("chat");
   const [sub, setSub] = createSignal<SettingsSub>("general");
   // 대화방(전체화면) 열림 — 카톡처럼 대화방에선 하단 네비를 숨긴다(루트에 kk-room-open 클래스).
   const [roomOpen, setRoomOpen] = createSignal(false);
+
+  // 현황 대시보드 카드 클릭 → 셸 탭으로 매핑(레거시 카드 페이지는 셸에 없음).
+  // 메신저→대화, 그 외 토대 카드→설정. 가짜 라우트 없이 셸 안에서 의미 있게 연결.
+  function openDashCard(id: CardId) {
+    if (id === "messenger") setTab("chat");
+    else setTab("settings");
+  }
 
   return (
     <div class="kk" classList={{ [`kk-tab-${tab()}`]: true, "kk-room-open": roomOpen() && tab() === "chat" }}>
@@ -52,6 +65,10 @@ export function KakaoShell(props: { onLogout?: () => void }) {
           </Show>
           <Show when={tab() === "agents"}>
             <div class="kk-embed"><AgentsTab onGotoChat={() => setTab("chat")} /></div>
+          </Show>
+          {/* 현황 — 별도 선택 탭(랜딩 아님). 기존 HomeDashboard 8카드 재사용. */}
+          <Show when={tab() === "dash"}>
+            <div class="kk-embed" style="overflow:auto; height:100%;"><HomeDashboard onOpen={openDashCard} /></div>
           </Show>
           <Show when={tab() === "flow"}>
             <FlowTab />

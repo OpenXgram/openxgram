@@ -1,6 +1,7 @@
 import { createSignal, createResource, createMemo, createEffect, onCleanup, For, Show } from "solid-js";
 import { invoke } from "../api/client";
 import { AcpConversation, aiTypeToAdapter, type AcpPreset } from "./AcpConversation";
+import { A2AMiniPanel } from "./A2AMiniPanel";
 import { AddAgentModal } from "./AddAgentModal";
 import { AddFriendModal, loadExternalFriends, type ExternalFriend } from "./AddFriendModal";
 import { ProviderLogo, providerKey } from "./ProviderLogo";
@@ -313,6 +314,8 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
   const [acpMode, setAcpMode] = createSignal(false);
   // 정보 사이드 패널(폴더·tmux·워크트리·워크플로우) 열림. tmux/worktree pill 클릭 → 토글, ✕ → 닫힘.
   const [infoOpen, setInfoOpen] = createSignal(false);
+  // P2 — 협업(A2A) 곁뷰 열림. 작업환경(infoOpen)과 상호배타로 토글.
+  const [collabOpen, setCollabOpen] = createSignal(false);
 
   // peers_list → alias 별 last_seen / machine 조회용 맵.
   const peerMap = createMemo(() => {
@@ -662,6 +665,10 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
                     <Show when={(grouped()[g.key] ?? []).length > 0}>
                       <div class="group-title">
                         {g.title} <span class="gt-sub">({grouped()[g.key].length})</span>
+                        {/* P1 — 사람(나)=고권한 참가자. 프라이머리 ACP 그룹에 신원 배지 노출(정본 목업 '고권한 참가자'). */}
+                        <Show when={g.key === "primary"}>
+                          <span class="kk-me-priv" title="나(사람) = 고권한 참가자 — 모든 대화·제어의 주인">👤 나 · 고권한</span>
+                        </Show>
                       </div>
                       <For each={grouped()[g.key]}>
                         {(a) => {
@@ -815,14 +822,35 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
               onClose={() => setMobileChat(false)}
               // ⌗ 상태 토글을 ACP 헤더 pill 행(.meta-r) 왼쪽에 인라인 배치 →
               // 스트리밍/⚡ACP/✕닫기 pill 과 겹치지 않음(절대 배치 제거).
+              // P2 — 정본 목업의 두 곁뷰 버튼: 작업환경(tmux) + 협업(A2A). 상호배타 토글.
               headerExtra={() => (
-                <span class="pill clk" onClick={() => setInfoOpen((v) => !v)}>
-                  ⌗ 작업환경{selSessions().length + selWorktrees().length > 0 ? ` ${selSessions().length + selWorktrees().length}` : ""}
-                </span>
+                <>
+                  <span class="pill clk" classList={{ active: infoOpen() }} onClick={() => { setCollabOpen(false); setInfoOpen((v) => !v); }}>
+                    🖥 작업환경{selSessions().length + selWorktrees().length > 0 ? ` ${selSessions().length + selWorktrees().length}` : ""}
+                  </span>
+                  <span class="pill clk" classList={{ active: collabOpen() }} onClick={() => { setInfoOpen(false); setCollabOpen((v) => !v); }}>
+                    🔗 협업
+                  </span>
+                </>
               )}
             />
           )}
         </Show>
+      </Show>
+      {/* P2 — A2A 실시간 미니패널 + 협업 곁뷰. 로컬 ACP 대화(친구 아님)에서만 노출.
+          미니패널은 대화 헤더 아래 한 줄 요약(.a2a-mini), 곁뷰는 우측 슬라이드(.a2a-side).
+          기존 a2a_agents 엔드포인트만 사용 — 새 백엔드 없음. */}
+      <Show when={!acpMode() && !selIsFriend() && acpPreset() && selAgent()}>
+        {(a) => (
+          <div class="kk-a2a-mount">
+            <A2AMiniPanel
+              selfAlias={agentName(a())}
+              open={collabOpen}
+              onOpen={() => { setInfoOpen(false); setCollabOpen(true); }}
+              onClose={() => setCollabOpen(false)}
+            />
+          </div>
+        )}
       </Show>
       {/* 친구(원격·외부) 선택 — 로컬 ACP/파일트리 시도 금지. A2A 로 통신. */}
       <Show when={!acpMode() && selIsFriend() && selAgent()}>
