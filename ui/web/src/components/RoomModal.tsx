@@ -32,6 +32,8 @@ const ta = "width:100%; min-height:64px; padding:8px; background:#f7f8fa; color:
 type Harness = {
   runtime: string; model: string; perm_mode: string; exec_mode: string;
   cwd: string; worktree: boolean; isolation: boolean; mcp: string[]; vault_scope: string;
+  // P4a — 턴 모드. "auto"=inbound 즉시 턴(기본, 1:1 무회귀) / "gated"=맥락 누적만, 발언권/@호명/조건으로만 턴.
+  turn_mode: string;
 };
 // 역할 정의: 정본 영속 필드명은 `instructions` (P4 레이어링 consumer 가 읽을 의미명).
 // 레거시 데이터는 `inst` 로 저장돼 있을 수 있어 read 시 둘 다 수용(instructions ?? inst), write 는 instructions.
@@ -50,6 +52,7 @@ type RoomConfig = {
 const HARNESS_DEF: Harness = {
   runtime: "claude-code", model: "default", perm_mode: "bypassPermissions",
   exec_mode: "interactive", cwd: "", worktree: false, isolation: false, mcp: [], vault_scope: "none",
+  turn_mode: "auto",
 };
 const EMPTY: RoomConfig = {
   harness: null, roles: { defs: [], assignments: [] }, orchestration: [], system_prompt: "", event_rules: [],
@@ -220,9 +223,9 @@ export function RoomModal(props: { roomKey: string; roomLabel?: string; onClose:
           <button style={`${btn}; margin-left:auto`} onClick={props.onClose}>✕</button>
         </div>
 
-        {/* P3 정직성 배너 — 저장만, 강제는 P4 */}
+        {/* 정직성 배너 — P4a/P4c 배선 완료, 이벤트 트리거만 후속 */}
         <div style="margin:12px 18px 0; padding:8px 12px; background:#fff7e6; border:1px solid #f0c674; border-radius:8px; font-size:12px; color:#8a6d1a;">
-          ⓘ 이 설정은 <b>저장</b>됩니다. 턴 시점 강제 적용(프롬프트 레이어링·오케스트레이션 실행·이벤트 트리거)은 <b>P4</b>에서 배선됩니다.
+          ⓘ 이 설정은 <b>저장</b>되며 <b>적용</b>됩니다. 프롬프트 레이어링·턴 제어(P4a)와 오케스트레이션 실행(P4c)은 <b>배선·강제 완료</b>. 이벤트 트리거(이벤트 규칙)만 후속 단계로 남아 있습니다.
         </div>
 
         <div style={body}>
@@ -284,6 +287,12 @@ export function RoomModal(props: { roomKey: string; roomLabel?: string; onClose:
                 <For each={VAULT_SCOPES}>{(v) => (
                   <button style={harness().vault_scope === v ? togOn : tog} onClick={() => setHarness("vault_scope", v)}>{v}</button>
                 )}</For>
+              </div>
+              {/* P4a — 턴 모드. auto=받으면 즉시 응답(기본) / gated=맥락만 누적, 발언권/@/조건으로만 발언(관찰자). */}
+              <div style={row}>
+                <span style={lbl}>턴 모드</span>
+                <button style={harness().turn_mode === "auto" ? togOn : tog} onClick={() => setHarness("turn_mode", "auto")}>auto (즉시 응답)</button>
+                <button style={harness().turn_mode === "gated" ? togOn : tog} onClick={() => setHarness("turn_mode", "gated")}>gated (관찰자 · 발언권 필요)</button>
               </div>
             </Show>
           </div>

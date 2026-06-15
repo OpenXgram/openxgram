@@ -144,6 +144,13 @@ const ROUTES: Record<string, Route> = {
  // rc.330 (GUI P3) — 방(대화) 단위 설정 로드/저장. 하네스·역할·오케스트레이션·시스템프롬프트·이벤트규칙. 강제는 P4.
  room_config_get: { method: "GET", path: "/room/{key}/config"},
  room_config_set: { method: "PUT", path: "/room/{key}/config", body: true},
+ // P4a (rc.331) — 발언권 주기(턴 부여). body {agent, note?} → 그 에이전트 ACP 에 누적 맥락+방/역할 지침으로 한 번 턴 발화.
+ room_grant_turn: { method: "POST", path: "/room/{key}/grant-turn", body: true},
+ // P4c (rc.332) — 오케스트레이션 runner. 방의 orchestration_json 단계를 순서대로 실제 실행.
+ room_orchestrate_start: { method: "POST", path: "/room/{key}/orchestrate/start"},
+ room_orchestrate_status: { method: "GET", path: "/room/{key}/orchestrate/status"},
+ room_orchestrate_approve: { method: "POST", path: "/room/{key}/orchestrate/approve"},
+ room_orchestrate_cancel: { method: "POST", path: "/room/{key}/orchestrate/cancel"},
  // rc.245 — 결정적 세션 매핑 사용자 override (PATCH; body.session_identifier = string|null)
  peer_set_session: { method: "PATCH", path: "/peers/{alias}/session", body: true},
 

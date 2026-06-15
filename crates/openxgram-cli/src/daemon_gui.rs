@@ -497,6 +497,17 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // rc.330 (GUI P3) — 방(대화) 단위 설정 저장/로드. 하네스·역할·오케스트레이션·
         // 시스템 프롬프트·이벤트 규칙. GET=로드(없으면 기본값) / PUT=저장. 강제는 P4.
         .route("/v1/gui/room/{key}/config", get(gui_room_config_get).put(gui_room_config_set))
+        // P4a — "발언권 주기"(턴 부여). body {agent, note?}. 그 에이전트 ACP 에 누적 맥락+방/역할
+        // 지침으로 한 번 턴 발화. @호명·조건 트리거도 이 메커니즘 재사용.
+        .route("/v1/gui/room/{key}/grant-turn", post(gui_room_grant_turn))
+        // P4c (rc.332) — 오케스트레이션 RUNNER. 방의 orchestration_json 단계를 데몬이
+        // 순서대로 실제 실행(각 단계 = grant-turn/handle_task 재사용). start=kick, status=진행상태,
+        // approve/advance=사람-승인 pause 통과, cancel=중단.
+        .route("/v1/gui/room/{key}/orchestrate/start", post(gui_room_orchestrate_start))
+        .route("/v1/gui/room/{key}/orchestrate/status", get(gui_room_orchestrate_status))
+        .route("/v1/gui/room/{key}/orchestrate/approve", post(gui_room_orchestrate_approve))
+        .route("/v1/gui/room/{key}/orchestrate/advance", post(gui_room_orchestrate_approve))
+        .route("/v1/gui/room/{key}/orchestrate/cancel", post(gui_room_orchestrate_cancel))
         .route("/v1/gui/workflows/{id}", get(gui_workflow_get).post(gui_workflow_delete))
         .route("/v1/gui/workflows/{id}/run", post(gui_workflow_run))
         .route("/v1/gui/workflows/{id}/runs", get(gui_workflow_runs))
@@ -7620,6 +7631,517 @@ async fn gui_room_config_set(
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto { error: format!("save: {e}") })))?;
     Ok(Json(serde_json::json!({ "ok": true, "room_key": key, "updated_at": now })))
+}
+
+/// `POST /v1/gui/room/{key}/grant-turn` body `{agent}` — P4a "발언권 주기".
+///
+/// 스펙 항목 3: 관찰(맥락만 쌓던) 에이전트에게 **지금 턴 부여** → 데몬이 그 ACP 에 **현재 누적 맥락**으로
+/// 한 번 턴을 발화한다. 새 inbound 가 없어도 발화한다. @호명·조건 트리거도 같은 메커니즘을 쓴다.
+///
+/// 구현: 기존 A2A 전달 척추(handle_task) 재사용 — 새 spawner 안 만듦. 합성 task("발언권 부여…")를
+/// 그 에이전트(agent) ACP 세션에 prompt 한다. handle_task 가 build_resume_preamble 로 누적 맥락을
+/// 앞에 붙이고, compose_room_prompt_prefix 로 방+역할 지침을 레이어링한다(턴 시점 주입). 따라서
+/// 최종 프롬프트 = [누적 맥락] + [방+역할 지침] + [발언권 합성 지시]. 응답은 그 alias 스레드에 영속.
+async fn gui_room_grant_turn(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    // 턴을 부여할 대상 에이전트 alias. 미지정이면 방 키 자체(1:1 에서는 동일).
+    let agent = body
+        .get("agent")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(key.trim())
+        .to_string();
+
+    let meta = load_a2a_agent_meta(&state, &agent).await?.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorDto {
+                error: format!("unknown / non-ACP agent: {agent}"),
+            }),
+        )
+    })?;
+
+    // 합성 발언권 지시 — 누적 맥락 + 방/역할 지침은 handle_task 가 자동 레이어링한다.
+    // 사용자(진행자)가 명시 메모를 보내면 그것을 발언권 본문으로 사용.
+    let note = body
+        .get("note")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let turn_text = match note {
+        Some(n) => format!("[발언권 부여] 진행자가 너에게 발언권을 주었다. 지금까지의 대화 맥락을 토대로 한 번 발언하라. 진행자 메모: {n}"),
+        None => "[발언권 부여] 진행자가 너에게 발언권을 주었다. 지금까지의 대화 맥락을 토대로 한 번 발언하라.".to_string(),
+    };
+
+    let task_body = crate::daemon_gui_a2a::TaskBody {
+        skill: Some("grant-turn".to_string()),
+        message: serde_json::Value::Null,
+        task: Some(turn_text),
+        text: None,
+        session_id: None,
+        from: None, // 진행자(사람) 발화 — A2A 친구 정책 대상 아님.
+    };
+
+    let result = crate::daemon_gui_a2a::handle_task(&state.acp, &state.served_a2a, &meta, task_body)
+        .await
+        .map_err(|(code, msg)| (code, Json(ErrorDto { error: msg })))?;
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "room_key": key,
+        "agent": agent,
+        "result": result,
+    })))
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// P4c — 오케스트레이션 RUNNER (방의 orchestration_json 단계를 순서대로 실제 실행).
+//
+// 스펙 항목 11(오케스트레이션·진행자): 방 = "설정된 협업 공간". 각 단계는
+//   { label, agent, role, action? } — `작업(navi) → 검증(Qua) → 정리 → 승인(⭐나)`.
+// runner 는 단계를 순서대로:
+//   1) 사람-승인 단계면 → status=paused_for_approval 로 멈춤(자동 승인 안 함, 스펙 9·고권한).
+//   2) 아니면 → 그 단계의 agent 해석 → handle_task(P4a) 로 턴 발화 + 완료 await.
+//      handle_task 가 compose_room_prompt_prefix(P4a)로 [방+역할 지침]을 자동 주입한다(재사용).
+//   3) 단계 결과를 steps_json 에 기록 + current_step 전진 + orchestration_run 갱신.
+//   4) 실패 시 status=failed + 단계 index/사유(절대 규칙 1 — 조용한 skip 금지).
+//
+// 비동기/락: runner 는 tokio::spawn 으로 분리(데몬 블로킹 금지). 각 단계의 turn 은
+//   handle_task 의 await 가 완료 신호(=종전 grant-turn 과 동일 경로). DB 락은 await 를
+//   넘겨 보유하지 않는다 — 매 단계 짧게 lock→update→drop, handle_task 호출 시엔 미보유.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// 한 오케스트레이션 단계(snapshot + 실행 결과). steps_json 안에 배열로 영속.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OrchStep {
+    #[serde(default)]
+    label: String,
+    /// 단계가 배정된 에이전트 표시값(이모지 prefix 포함 가능, 예 "🟠 navi (zalman)").
+    #[serde(default)]
+    agent: String,
+    #[serde(default)]
+    role: String,
+    /// 이 단계에서 그 에이전트가 할 일(없으면 label 을 task 로 사용).
+    #[serde(default)]
+    action: Option<String>,
+    /// 실행 상태: pending | running | done | paused_for_approval | failed | skipped.
+    #[serde(default)]
+    state: String,
+    /// 에이전트 응답 텍스트(있으면).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    result: Option<String>,
+    /// 이 단계 실패 사유(있으면).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+/// 단계의 agent 표시값에서 실제 alias 를 해석한다. 이모지/공백 prefix 제거 +
+/// 괄호 머신 표기(" (zalman)") 제거 → "navi". 미지정("— 미지정"/"")은 None.
+fn orch_resolve_alias(agent: &str) -> Option<String> {
+    let mut s = agent.trim();
+    if s.is_empty() || s.contains("미지정") {
+        return None;
+    }
+    // 선두 비-식별자 문자(이모지·기호·공백) 제거.
+    while let Some(c) = s.chars().next() {
+        if c.is_alphanumeric() || c == '_' || c == '-' {
+            break;
+        }
+        s = &s[c.len_utf8()..];
+    }
+    // 괄호 머신 표기 제거.
+    let s = s.split('(').next().unwrap_or(s).trim();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
+}
+
+/// 이 단계가 사람-승인(고권한) pause 지점인가? agent 가 "나/⭐" 거나
+/// role/label 이 "승인"을 가리키면 true. (스펙 9 — 사람=고권한 참가자, 자동 승인 안 함.)
+fn orch_is_human_approval(step: &OrchStep) -> bool {
+    let a = step.agent.trim();
+    if a.contains("나") || a.contains('⭐') {
+        return true;
+    }
+    let r = step.role.trim();
+    let l = step.label.trim();
+    r.contains("승인") || l.contains("승인")
+}
+
+/// run row 를 KST timestamp 로 갱신(current_step/status/steps/error). 짧은 lock.
+async fn orch_persist(
+    db: &Arc<Mutex<Db>>,
+    run_id: &str,
+    current_step: i64,
+    status: &str,
+    steps: &[OrchStep],
+    error: Option<&str>,
+) {
+    let steps_json = serde_json::to_string(steps).unwrap_or_else(|_| "[]".to_string());
+    let now = chrono::Local::now().to_rfc3339();
+    let mut g = db.lock().await;
+    if let Err(e) = g.conn().execute(
+        "UPDATE orchestration_run SET current_step=?2, status=?3, steps_json=?4, error=?5, updated_at=?6 WHERE run_id=?1",
+        rusqlite::params![run_id, current_step, status, steps_json, error, now],
+    ) {
+        // 절대 규칙 1 — 조용히 넘기지 않고 명시 로그.
+        tracing::error!(target: "acp.orchestrate", run_id = %run_id, "run 상태 영속 실패: {e}");
+    }
+}
+
+/// 백그라운드 runner — run 의 단계를 순서대로 실행. tokio::spawn 으로 호출.
+/// `from_step` 부터 실행(start=0, advance/approve=중단점 다음).
+async fn orch_run_loop(state: GuiServerState, run_id: String, room_key: String, mut steps: Vec<OrchStep>, from_step: usize) {
+    let db = state.db.clone();
+    let total = steps.len();
+    let mut i = from_step;
+    while i < total {
+        // 취소 확인 — 다른 핸들러가 status=cancelled 로 바꿨으면 즉시 중단.
+        {
+            use rusqlite::OptionalExtension;
+            let cur: Option<String> = {
+                let mut g = db.lock().await;
+                g.conn()
+                    .query_row(
+                        "SELECT status FROM orchestration_run WHERE run_id=?1",
+                        rusqlite::params![run_id],
+                        |r| r.get(0),
+                    )
+                    .optional()
+                    .ok()
+                    .flatten()
+            };
+            if cur.as_deref() == Some("cancelled") {
+                tracing::info!(target: "acp.orchestrate", run_id = %run_id, "run 취소 감지 — 중단");
+                return;
+            }
+        }
+        // 사람-승인 단계 → pause(자동 승인 안 함). 사람이 /approve 로 재개.
+        if orch_is_human_approval(&steps[i]) {
+            steps[i].state = "paused_for_approval".to_string();
+            orch_persist(&db, &run_id, i as i64, "paused_for_approval", &steps, None).await;
+            // 가시화 — 방 스레드에 승인 대기 안내(사람이 메신저 대화뷰에서 본다).
+            let msg = format!(
+                "⏸ 오케스트레이션 — 단계 {}/{} 「{}」 승인 대기 (사람=고권한). 승인하면 다음 단계로 진행합니다.",
+                i + 1,
+                total,
+                steps[i].label
+            );
+            state.acp.record_message(&room_key, "agent", &msg).await;
+            crate::daemon_gui_acp::notify_conv_persisted_by_label(&state.acp, &room_key).await;
+            return;
+        }
+
+        // 실행 단계 — agent 해석.
+        let alias = match orch_resolve_alias(&steps[i].agent) {
+            Some(a) => a,
+            None => {
+                let reason = format!("단계 {} 「{}」 에 배정된 에이전트가 없습니다(미지정).", i + 1, steps[i].label);
+                steps[i].state = "failed".to_string();
+                steps[i].error = Some(reason.clone());
+                orch_persist(&db, &run_id, i as i64, "failed", &steps, Some(&reason)).await;
+                tracing::warn!(target: "acp.orchestrate", run_id = %run_id, "{reason}");
+                return;
+            }
+        };
+
+        // running 표시.
+        steps[i].state = "running".to_string();
+        orch_persist(&db, &run_id, i as i64, "running", &steps, None).await;
+
+        // 에이전트 meta 로드(handle_task 가 요구). load_a2a_agent_meta 는 GuiServerState 기반.
+        let meta = match load_a2a_agent_meta(&state, &alias).await {
+            Ok(Some(m)) => m,
+            Ok(None) => {
+                let reason = format!("단계 {} — 알 수 없는/비-ACP 에이전트: {alias}", i + 1);
+                steps[i].state = "failed".to_string();
+                steps[i].error = Some(reason.clone());
+                orch_persist(&db, &run_id, i as i64, "failed", &steps, Some(&reason)).await;
+                tracing::warn!(target: "acp.orchestrate", run_id = %run_id, "{reason}");
+                return;
+            }
+            Err((_code, dto)) => {
+                let reason = format!("단계 {} — 에이전트 meta 로드 실패: {}", i + 1, dto.0.error);
+                steps[i].state = "failed".to_string();
+                steps[i].error = Some(reason.clone());
+                orch_persist(&db, &run_id, i as i64, "failed", &steps, Some(&reason)).await;
+                return;
+            }
+        };
+
+        // task 본문 — action 우선, 없으면 label. [방+역할 지침]은 handle_task 가 자동 주입(P4a).
+        let action = steps[i]
+            .action
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| steps[i].label.clone());
+        let turn_text = format!(
+            "[오케스트레이션 단계 {}/{} — 「{}」] {}",
+            i + 1,
+            total,
+            steps[i].label,
+            action
+        );
+        let task_body = crate::daemon_gui_a2a::TaskBody {
+            skill: Some("orchestrate".to_string()),
+            message: serde_json::Value::Null,
+            task: Some(turn_text),
+            text: None,
+            session_id: None,
+            from: None, // 진행자(데몬 orchestrator) 발화 — A2A 친구정책 대상 아님.
+        };
+
+        // ── 단계 turn 발화 + 완료 await — DB 락 미보유 상태에서. (재사용: P4a handle_task) ──
+        match crate::daemon_gui_a2a::handle_task(&state.acp, &state.served_a2a, &meta, task_body).await {
+            Ok(res) => {
+                let text = res
+                    .get("result")
+                    .and_then(|r| r.get("text"))
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                steps[i].state = "done".to_string();
+                steps[i].result = Some(text);
+                orch_persist(&db, &run_id, (i + 1) as i64, "running", &steps, None).await;
+            }
+            Err((code, msg)) => {
+                let reason = format!("단계 {} 「{}」 실행 실패 ({}): {}", i + 1, steps[i].label, code, msg);
+                steps[i].state = "failed".to_string();
+                steps[i].error = Some(reason.clone());
+                orch_persist(&db, &run_id, i as i64, "failed", &steps, Some(&reason)).await;
+                tracing::warn!(target: "acp.orchestrate", run_id = %run_id, "{reason}");
+                return;
+            }
+        }
+        i += 1;
+    }
+
+    // 모든 단계 완료.
+    orch_persist(&db, &run_id, total as i64, "done", &steps, None).await;
+    let msg = format!("✅ 오케스트레이션 완료 — {total}개 단계 순서대로 실행되었습니다.");
+    state.acp.record_message(&room_key, "agent", &msg).await;
+    crate::daemon_gui_acp::notify_conv_persisted_by_label(&state.acp, &room_key).await;
+}
+
+/// 가장 최근 run row 를 읽어 (run_id, current_step, status, steps, error) 반환.
+async fn orch_latest_run(
+    db: &Arc<Mutex<Db>>,
+    room_key: &str,
+) -> Option<(String, i64, String, Vec<OrchStep>, Option<String>)> {
+    use rusqlite::OptionalExtension;
+    let mut g = db.lock().await;
+    let row: Option<(String, i64, String, String, Option<String>)> = g
+        .conn()
+        .query_row(
+            "SELECT run_id, current_step, status, steps_json, error FROM orchestration_run \
+             WHERE room_key=?1 ORDER BY updated_at DESC LIMIT 1",
+            rusqlite::params![room_key],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    row.map(|(rid, cs, st, sj, err)| {
+        let steps: Vec<OrchStep> = serde_json::from_str(&sj).unwrap_or_default();
+        (rid, cs, st, steps, err)
+    })
+}
+
+/// `POST /v1/gui/room/{key}/orchestrate/start` — 방의 orchestration_json 을 snapshot 해
+/// 새 run 을 만들고 백그라운드 runner 를 kick. body 없음.
+async fn gui_room_orchestrate_start(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use rusqlite::OptionalExtension;
+
+    // 방 설정의 orchestration_json 로드 → 단계 snapshot.
+    let orch_raw: Option<String> = {
+        let mut db = state.db.lock().await;
+        db.conn()
+            .query_row(
+                "SELECT orchestration_json FROM room_config WHERE room_key=?1",
+                rusqlite::params![key],
+                |r| r.get(0),
+            )
+            .optional()
+            .ok()
+            .flatten()
+    };
+    let arr: Vec<serde_json::Value> = orch_raw
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<Vec<serde_json::Value>>(s).ok())
+        .unwrap_or_default();
+    if arr.is_empty() {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ErrorDto {
+                error: "이 방에는 오케스트레이션 단계가 없습니다(방 설정에서 단계를 먼저 추가하세요).".into(),
+            }),
+        ));
+    }
+    let mut steps: Vec<OrchStep> = arr
+        .into_iter()
+        .map(|v| {
+            let mut s: OrchStep = serde_json::from_value(v).unwrap_or(OrchStep {
+                label: String::new(),
+                agent: String::new(),
+                role: String::new(),
+                action: None,
+                state: String::new(),
+                result: None,
+                error: None,
+            });
+            s.state = "pending".to_string();
+            s.result = None;
+            s.error = None;
+            s
+        })
+        .collect();
+
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Local::now().to_rfc3339();
+    let steps_json = serde_json::to_string(&steps).unwrap_or_else(|_| "[]".to_string());
+    {
+        let mut db = state.db.lock().await;
+        db.conn()
+            .execute(
+                "INSERT INTO orchestration_run(run_id, room_key, current_step, status, steps_json, error, started_at, updated_at) \
+                 VALUES(?1,?2,0,'running',?3,NULL,?4,?4)",
+                rusqlite::params![run_id, key, steps_json, now],
+            )
+            .map_err(|e| internal(&format!("run insert: {e}")))?;
+    }
+
+    // 가시화 — 방 스레드에 시작 안내.
+    let total = steps.len();
+    let msg = format!("▶ 오케스트레이션 시작 — {total}개 단계를 순서대로 실행합니다.");
+    state.acp.record_message(&key, "agent", &msg).await;
+    crate::daemon_gui_acp::notify_conv_persisted_by_label(&state.acp, &key).await;
+
+    // 백그라운드 runner kick — 데몬 블로킹 금지.
+    {
+        let state2 = state.clone();
+        let run_id2 = run_id.clone();
+        let key2 = key.clone();
+        let steps2 = std::mem::take(&mut steps);
+        tokio::spawn(async move {
+            orch_run_loop(state2, run_id2, key2, steps2, 0).await;
+        });
+    }
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "run_id": run_id,
+        "room_key": key,
+        "total_steps": total,
+        "status": "running",
+    })))
+}
+
+/// `GET /v1/gui/room/{key}/orchestrate/status` — 현재 run 의 단계/상태.
+async fn gui_room_orchestrate_status(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    match orch_latest_run(&state.db, &key).await {
+        Some((run_id, current_step, status, steps, error)) => Ok(Json(serde_json::json!({
+            "room_key": key,
+            "run_id": run_id,
+            "current_step": current_step,
+            "total_steps": steps.len(),
+            "status": status,
+            "error": error,
+            "steps": steps,
+        }))),
+        None => Ok(Json(serde_json::json!({
+            "room_key": key,
+            "run_id": serde_json::Value::Null,
+            "current_step": 0,
+            "total_steps": 0,
+            "status": "none",
+            "steps": [],
+        }))),
+    }
+}
+
+/// `POST /v1/gui/room/{key}/orchestrate/approve` — 사람-승인 pause 를 통과시켜 다음 단계부터 재개.
+/// (`advance` 도 동일 동작의 별칭 라우트.)
+async fn gui_room_orchestrate_approve(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let (run_id, current_step, status, mut steps, _err) =
+        orch_latest_run(&state.db, &key).await.ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorDto { error: "이 방에 실행 중인 오케스트레이션 run 이 없습니다.".into() }),
+            )
+        })?;
+    if status != "paused_for_approval" {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ErrorDto {
+                error: format!("승인 가능한 상태가 아닙니다(현재: {status}). 승인은 paused_for_approval 일 때만."),
+            }),
+        ));
+    }
+    let idx = current_step.max(0) as usize;
+    // 현재 승인 단계 done 표시 + 다음 단계부터 재개.
+    if idx < steps.len() {
+        steps[idx].state = "done".to_string();
+        steps[idx].result = Some("승인됨(사람=고권한)".to_string());
+    }
+    orch_persist(&state.db, &run_id, (idx + 1) as i64, "running", &steps, None).await;
+
+    let msg = format!("✓ 단계 {}/{} 승인됨 — 다음 단계로 진행합니다.", idx + 1, steps.len());
+    state.acp.record_message(&key, "agent", &msg).await;
+    crate::daemon_gui_acp::notify_conv_persisted_by_label(&state.acp, &key).await;
+
+    let state2 = state.clone();
+    let run_id2 = run_id.clone();
+    let key2 = key.clone();
+    let from = idx + 1;
+    tokio::spawn(async move {
+        orch_run_loop(state2, run_id2, key2, steps, from).await;
+    });
+
+    Ok(Json(serde_json::json!({ "ok": true, "run_id": run_id, "room_key": key, "status": "running", "resumed_from": from })))
+}
+
+/// `POST /v1/gui/room/{key}/orchestrate/cancel` — 현재 run 을 취소(cancelled).
+async fn gui_room_orchestrate_cancel(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let (run_id, current_step, _status, steps, _err) =
+        orch_latest_run(&state.db, &key).await.ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorDto { error: "취소할 run 이 없습니다.".into() }),
+            )
+        })?;
+    orch_persist(&state.db, &run_id, current_step, "cancelled", &steps, None).await;
+    Ok(Json(serde_json::json!({ "ok": true, "run_id": run_id, "room_key": key, "status": "cancelled" })))
 }
 
 /// `GET /v1/gui/runtime/context?count=N` — 주입·관찰용 L2 메모리 + 위키 제목(토큰예산=count).

@@ -144,6 +144,12 @@ impl AcpHttpState {
         self
     }
 
+    /// P4a — 주입된 DB 핸들(Option) 접근자. handle_task 가 room_config(방 시스템 프롬프트·역할
+    /// 지침)을 턴 시점에 조회해 프롬프트 레이어링에 쓰기 위함. None 이면 방 설정 주입 skip(회귀 없음).
+    pub fn db_handle(&self) -> Option<&Arc<Mutex<openxgram_db::Db>>> {
+        self.db.as_ref()
+    }
+
     /// 임의 메시지를 `acp_messages` 에 기록 — ACP HTTP 핸들러(acp_session_prompt) 밖에서 생성된
     /// 대화(예: A2A 위임 교환)를 사용자 가시 스레드로 영속화한다. db 미주입(None)이면 no-op.
     pub async fn record_message(&self, conv_key: &str, role: &str, text: &str) {

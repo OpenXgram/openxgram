@@ -50,6 +50,83 @@ export function A2AMiniPanel(props: {
   const live = createMemo(() => agents().filter((a) => a.reachable));
   const idle = createMemo(() => agents().filter((a) => !a.reachable));
 
+  // P4a — 발언권 주기(턴 부여). 진행자(사람)가 특정 에이전트에게 "지금 발언하라"를 누른다.
+  // 방 키 = 현재 대화 중인 사람↔ACP 에이전트 alias(selfAlias). 누적 맥락 + 방/역할 지침으로 한 번 턴 발화.
+  const [granting, setGranting] = createSignal<string | null>(null);
+  const [grantMsg, setGrantMsg] = createSignal<string>("");
+
+  // P4c — 오케스트레이션 실행. 방의 단계(orchestration_json)를 데몬이 순서대로 실제 실행.
+  // status 폴링(3초)으로 현재 단계/상태를 실시간 표시. 곁뷰가 열려 있을 때만 폴링.
+  interface OrchStep { label: string; agent: string; role: string; action?: string | null; state: string; result?: string | null; error?: string | null; }
+  interface OrchStatus { run_id: string | null; current_step: number; total_steps: number; status: string; error?: string | null; steps: OrchStep[]; }
+  const [orch, setOrch] = createSignal<OrchStatus | null>(null);
+  const [orchBusy, setOrchBusy] = createSignal(false);
+  const [orchMsg, setOrchMsg] = createSignal<string>("");
+  async function refreshOrch() {
+    const room = props.selfAlias;
+    if (!room) return;
+    try {
+      const s = await invoke<OrchStatus>("room_orchestrate_status", { key: room });
+      setOrch(s);
+    } catch {
+      /* 상태 없음 — 조용히 무시(시작 전). */
+    }
+  }
+  const orchTimer = setInterval(() => { if (props.open()) void refreshOrch(); }, 3000);
+  onCleanup(() => clearInterval(orchTimer));
+  async function startOrch() {
+    const room = props.selfAlias;
+    if (!room) { setOrchMsg("방(현재 대화)을 먼저 선택하세요."); return; }
+    setOrchBusy(true);
+    setOrchMsg("▶ 오케스트레이션 시작…");
+    try {
+      await invoke("room_orchestrate_start", { key: room });
+      setOrchMsg("실행 중 — 단계별 진행을 표시합니다.");
+      void refreshOrch();
+    } catch (e) {
+      setOrchMsg(`시작 실패: ${e instanceof Error ? e.message : String(e)}`);
+    } finally { setOrchBusy(false); }
+  }
+  async function approveOrch() {
+    const room = props.selfAlias;
+    if (!room) return;
+    setOrchBusy(true);
+    try {
+      await invoke("room_orchestrate_approve", { key: room });
+      setOrchMsg("✓ 승인 — 다음 단계로 진행합니다.");
+      void refreshOrch();
+    } catch (e) {
+      setOrchMsg(`승인 실패: ${e instanceof Error ? e.message : String(e)}`);
+    } finally { setOrchBusy(false); }
+  }
+  async function cancelOrch() {
+    const room = props.selfAlias;
+    if (!room) return;
+    try { await invoke("room_orchestrate_cancel", { key: room }); setOrchMsg("실행을 취소했습니다."); void refreshOrch(); }
+    catch (e) { setOrchMsg(`취소 실패: ${e instanceof Error ? e.message : String(e)}`); }
+  }
+  const stepIcon = (st: string) =>
+    st === "done" ? "✓" : st === "running" ? "🟢" : st === "paused_for_approval" ? "⏸" : st === "failed" ? "✗" : "○";
+  const orchRunning = createMemo(() => { const s = orch()?.status; return s === "running" || s === "paused_for_approval"; });
+  async function grantTurn(agent: string) {
+    const room = props.selfAlias;
+    if (!room) {
+      setGrantMsg("방(현재 대화)을 먼저 선택하세요.");
+      return;
+    }
+    setGranting(agent);
+    setGrantMsg(`🎙 ${agent} 에게 발언권 부여 중… (턴 진행)`);
+    try {
+      await invoke("room_grant_turn", { key: room, agent });
+      setGrantMsg(`🟢 ${agent} 발언 완료 — 대화 스레드에 영속되었습니다.`);
+      void refetch();
+    } catch (e) {
+      setGrantMsg(`발언권 부여 실패: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setGranting(null);
+    }
+  }
+
   return (
     <>
       {/* ── A2A 실시간 미니패널 (정본 .mini) — 대화 헤더 바로 아래 한 줄 요약 ── */}
@@ -106,26 +183,40 @@ export function A2AMiniPanel(props: {
                     <div class="a2a-conv-lt">{a.reachable ? "도달 가능 — A2A 위임 가능" : "미도달 — 대기"}</div>
                   </div>
                   <div class={`a2a-conv-stt${a.reachable ? " live" : ""}`}>
-                    {a.reachable ? "🟢 진행 가능" : "⚪ 대기"}
+                    {granting() === a.alias ? "🟢 턴 진행중" : a.reachable ? "🟢 진행 가능" : "⚪ 대기"}
                   </div>
+                  {/* P4a — 발언권 주기: 이 에이전트에게 지금 턴 부여. */}
+                  <button
+                    class="a2a-grant-btn"
+                    disabled={granting() !== null}
+                    title="이 에이전트에게 발언권을 줘 한 번 발언시킵니다 (누적 맥락 + 방/역할 지침)"
+                    onClick={() => void grantTurn(a.alias)}
+                  >🎙</button>
                 </div>
               )}
             </For>
+          </Show>
+          <Show when={grantMsg()}>
+            <div class="a2a-grant-msg">{grantMsg()}</div>
           </Show>
           <div class="a2a-side-hint">
             ↑ 협업 위임·실행은 <b>워크플로우</b> 탭의 A2A 위임에서 (이 곁뷰는 현황 요약).
           </div>
         </div>
 
-        {/* ── 제어 버튼 — P3+ 백엔드(턴 제어·멤버십·보안방) 미구축. 비활성 셸로만 노출. ── */}
+        {/* ── 제어 버튼 — 발언권(P4a) 활성. 멤버십/보안방은 P5/P6 미구축(비활성 셸). ── */}
         <div class="a2a-ctrl">
-          <button disabled title="P3+ — 멤버십/맥락 인계 백엔드 미구축">＋ 에이전트 초대</button>
-          <button disabled title="P3+ — 멤버십/키 회전 백엔드 미구축">🚪 내보내기</button>
-          <button disabled title="P3+ — 발언권(턴 제어) 백엔드 미구축">🎙 발언권 주기</button>
-          <button disabled title="P3+ — 보안 공유방(vault scope) 백엔드 미구축">🔒 보안방 만들기</button>
+          <button disabled title="P5 — 멤버십/맥락 인계 백엔드 미구축">＋ 에이전트 초대</button>
+          <button disabled title="P5 — 멤버십/키 회전 백엔드 미구축">🚪 내보내기</button>
+          <button
+            disabled={granting() !== null || !props.selfAlias}
+            title="현재 대화 에이전트에게 발언권을 줘 한 번 발언시킵니다 (누적 맥락 + 방/역할 지침)"
+            onClick={() => props.selfAlias && void grantTurn(props.selfAlias)}
+          >🎙 발언권 주기</button>
+          <button disabled title="P6 — 보안 공유방(vault scope) 백엔드 미구축">🔒 보안방 만들기</button>
         </div>
         <div class="a2a-ctrl-note">
-          제어(턴 부여·초대·보안방)는 다음 단계(P3+)에서 동작합니다 — 현재는 UI 셸.
+          🎙 발언권 주기는 동작합니다(P4a) — 관찰자(턴 모드 gated) 에이전트에게 차례를 줍니다. 초대/보안방은 다음 단계(P5/P6).
         </div>
       </div>
     </>

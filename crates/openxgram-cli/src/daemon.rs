@@ -977,13 +977,51 @@ pub fn process_inbound(
             // 따라서 timeout==전달실패로 오판해 tmux 까지 주입하던 이중 전달을 차단한다.
             let acp_drivable = is_acp_drivable(&mut db, &target_alias);
 
-            let acp_outcome = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(try_acp_inbound_delivery(
-                    &target_alias,
-                    &acp_sender,
-                    &body,
-                ))
-            });
+            // ── P4a — 턴 모드 게이트 (맥락 누적 ≠ 강제 응답 분리) ──────────────────
+            // 스펙 항목 3: 들어오면 무조건 턴=응답이 문제. 방 turn_mode=gated 면 inbound 는
+            // 수신자 스레드에 **누적만** 하고 ACP 턴을 자동 발화하지 않는다(관찰자). 그 에이전트는
+            // 나중에 "발언권 주기"(grant-turn) / @호명 / 조건으로만 누적 맥락 위에 한 번 발언한다.
+            // 기본 turn_mode=auto(row 없음/미설정 포함) = 종전 동작 → 1:1 무회귀.
+            // gated 는 ACP-drivable 신원에만 의미(tmux peer 는 게이트 대상 아님 — 종전 fallback).
+            let turn_mode = crate::daemon_gui_a2a::server::room_turn_mode(&mut db, &target_alias);
+            if acp_drivable && turn_mode == "gated" {
+                // 누적 — 발신자 prefix 보존(grant-turn 시 맥락으로 읽힘). 동일 in-process DB 연결로
+                // acp_messages 에 직접 기록(self-call HTTP 불필요). 빈 본문은 skip.
+                let accrue_text = format!("[from {acp_sender}] {body}");
+                if !body.trim().is_empty() {
+                    let now = chrono::Utc::now().to_rfc3339();
+                    match db.conn().execute(
+                        "INSERT INTO acp_messages (conv_key, role, text, created_at) VALUES (?1,?2,?3,?4)",
+                        rusqlite::params![target_alias, "me", accrue_text, now],
+                    ) {
+                        Ok(_) => tracing::info!(
+                            target_alias = %target_alias,
+                            sender = %acp_sender,
+                            "P4a turn_mode=gated — inbound 맥락 누적만(턴 미발화). grant-turn/@호명/조건 대기. tmux 차단(관찰자)."
+                        ),
+                        Err(e) => tracing::error!(
+                            target_alias = %target_alias,
+                            error = %e,
+                            "P4a gated 누적 기록 실패(silent X) — 회귀 방지 위해 ACP 자동전달로 폴백하지 않고 누적 의도만 로그"
+                        ),
+                    }
+                }
+                // 게이트됨 = ACP 세션이 전달을 소유(관찰자 모드). tmux fallback 차단.
+                acp_delivered = true;
+            }
+
+            let acp_outcome = if acp_delivered {
+                // gated 로 이미 처리됨 — 자동 턴 발화(try_acp_inbound_delivery) skip. 종전 auto 경로 불변.
+                AcpInboundOutcome::Delivered
+            } else {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(try_acp_inbound_delivery(
+                        &target_alias,
+                        &acp_sender,
+                        &body,
+                    ))
+                })
+            };
             match acp_outcome {
                 AcpInboundOutcome::Delivered => acp_delivered = true,
                 // fix① — ACP-drivable 인데 timeout/일시오류(Unavailable) 면 ACP 세션이 전달을

@@ -513,6 +513,126 @@ pub mod server {
         ))
     }
 
+    /// P4a — 방(room) 설정에서 **턴 시점 프롬프트 레이어** 를 합성한다.
+    ///
+    /// 스펙 항목 11(지침 레이어링): 방 내 행동 = [방 시스템 프롬프트] + [배정 역할 지침] + 에이전트 base.
+    /// 이 함수는 앞의 두 레이어(방 + 역할)를 합쳐 prefix 문자열로 반환한다(에이전트 base 는 어댑터가
+    /// 자체 보유). `room_config` 에 row 가 없거나 두 필드 모두 비면 `None` → **주입 없음 = 종전 동작**
+    /// (1:1 기본 무회귀). room_key 는 수신자 bare-alias(= handle_task 의 conv_key).
+    ///
+    /// 역할 지침 선택: roles_json = `{ defs:[{name,inst}], assignments:[{role,agent}] }`.
+    /// `agent_alias` 에 배정된 역할명을 assignments 에서 찾고, 그 역할의 inst 를 defs 에서 꺼낸다.
+    /// 배정이 없으면 역할 레이어는 생략(방 시스템 프롬프트만).
+    ///
+    /// 절대 규칙 1 — DB/JSON 파싱 실패는 조용히 무시하지 않고, prefix 없음(None)으로 보수 처리하되
+    /// 경로별 의미가 분명하다(row 없음 vs 파싱 실패는 동일하게 "주입 안 함"이 안전한 기본).
+    pub async fn compose_room_prompt_prefix(
+        db: &std::sync::Arc<tokio::sync::Mutex<openxgram_db::Db>>,
+        room_key: &str,
+        agent_alias: &str,
+    ) -> Option<String> {
+        use rusqlite::OptionalExtension;
+        let (system_prompt, roles_json): (String, Option<String>) = {
+            let mut g = db.lock().await;
+            let row: Option<(Option<String>, Option<String>)> = g
+                .conn()
+                .query_row(
+                    "SELECT system_prompt, roles_json FROM room_config WHERE room_key=?1",
+                    rusqlite::params![room_key],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()
+                .ok()
+                .flatten();
+            match row {
+                Some((sp, rj)) => (sp.unwrap_or_default(), rj),
+                None => return None, // row 없음 = 종전 동작(주입 없음)
+            }
+        };
+
+        let mut layers: Vec<String> = Vec::new();
+        let sp_trim = system_prompt.trim();
+        if !sp_trim.is_empty() {
+            layers.push(format!("[방 지침 — 이 대화방 전체에 적용된다]\n{sp_trim}"));
+        }
+
+        // 역할 지침 — 이 에이전트에 배정된 역할의 inst.
+        if let Some(rj) = roles_json {
+            if let Ok(roles) = serde_json::from_str::<Value>(&rj) {
+                let assigned_role: Option<String> = roles
+                    .get("assignments")
+                    .and_then(|a| a.as_array())
+                    .and_then(|arr| {
+                        arr.iter()
+                            .find(|x| {
+                                x.get("agent").and_then(|v| v.as_str()).map(str::trim)
+                                    == Some(agent_alias.trim())
+                            })
+                            .and_then(|x| x.get("role").and_then(|v| v.as_str()))
+                            .map(|s| s.to_string())
+                    });
+                if let Some(role_name) = assigned_role {
+                    // 역할 지침 필드명: 정본 `instructions`(프론트 write) 우선, 레거시 `inst` 폴백.
+                    let inst: Option<String> = roles
+                        .get("defs")
+                        .and_then(|d| d.as_array())
+                        .and_then(|arr| {
+                            arr.iter()
+                                .find(|x| {
+                                    x.get("name").and_then(|v| v.as_str()).map(str::trim)
+                                        == Some(role_name.trim())
+                                })
+                                .and_then(|x| {
+                                    x.get("instructions")
+                                        .and_then(|v| v.as_str())
+                                        .or_else(|| x.get("inst").and_then(|v| v.as_str()))
+                                })
+                                .map(|s| s.to_string())
+                        });
+                    if let Some(inst) = inst {
+                        let inst_trim = inst.trim();
+                        if !inst_trim.is_empty() {
+                            layers.push(format!(
+                                "[너의 역할: {} — 이 역할 지침을 지켜라]\n{}",
+                                role_name.trim(),
+                                inst_trim
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        if layers.is_empty() {
+            return None;
+        }
+        Some(format!("{}\n\n", layers.join("\n\n")))
+    }
+
+    /// P4a — 방의 턴 모드를 읽는다. `harness_json.turn_mode` ∈ {"auto","gated"}.
+    /// row 없음 / 필드 없음 / 파싱 실패 → "auto"(종전 동작, 1:1 무회귀). 동기 헬퍼(데몬 inbound 경로용).
+    pub fn room_turn_mode(db: &mut openxgram_db::Db, room_key: &str) -> String {
+        use rusqlite::OptionalExtension;
+        let harness: Option<String> = db
+            .conn()
+            .query_row(
+                "SELECT harness_json FROM room_config WHERE room_key=?1",
+                rusqlite::params![room_key],
+                |r| r.get(0),
+            )
+            .optional()
+            .ok()
+            .flatten();
+        let Some(hj) = harness else {
+            return "auto".to_string();
+        };
+        serde_json::from_str::<Value>(&hj)
+            .ok()
+            .and_then(|v| v.get("turn_mode").and_then(|t| t.as_str()).map(|s| s.to_string()))
+            .map(|m| if m == "gated" { "gated".to_string() } else { "auto".to_string() })
+            .unwrap_or_else(|| "auto".to_string())
+    }
+
     /// Collect the agent's reply text from the ACP `{stopReason, updates}` value:
     /// concatenate every `agent_message_chunk` text block, in order.
     fn collect_agent_text(acp_result: &Value) -> String {
@@ -645,11 +765,27 @@ pub mod server {
             }
         };
 
+        // ── P4a — 방 설정 프롬프트 레이어링(턴 시점 주입) ──────────────────────
+        // 스펙 항목 11: 방 내 행동 = [방 시스템 프롬프트] + [배정 역할 지침] + 에이전트 base.
+        // room_config 에 row 가 없으면 prefix=None → prompt_text 그대로(=종전 동작, 1:1 무회귀).
+        // build_resume_preamble(daemon_gui_acp::prompt 내부)이 누적 맥락을 다시 앞에 붙이므로
+        // 최종 ACP 프롬프트 = [누적 맥락] + [방+역할 prefix] + [현재 task]. prefix 는 매 턴 주입되어
+        // 어댑터가 새 stateless 세션을 열어도 방/역할 규칙이 유지된다.
+        // 주의: 가시 스레드의 'me' 기록(위)은 raw prompt_text 만 — prefix 는 에이전트 내부 지침이라
+        // 사용자 대화에 노이즈로 보이지 않게 한다.
+        let layered_text: String = match acp.db_handle() {
+            Some(db) => match compose_room_prompt_prefix(db, &conv_key, &meta.alias).await {
+                Some(prefix) => format!("{prefix}{prompt_text}"),
+                None => prompt_text.clone(),
+            },
+            None => prompt_text.clone(),
+        };
+
         let prompt_res = daemon_gui_acp::prompt(
             acp,
             &session_id,
             daemon_gui_acp::PromptBody {
-                text: prompt_text.clone(),
+                text: layered_text,
             },
         )
         .await;

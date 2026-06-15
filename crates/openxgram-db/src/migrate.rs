@@ -325,6 +325,13 @@ const MIGRATIONS: &[Migration] = &[
         name: "room_config",
         sql: include_str!("../migrations/0059_room_config.sql"),
     },
+    // rc.332 — 오케스트레이션 RUN 상태 (GUI P4c). 방의 orchestration_json 단계를
+    // 데몬이 순서대로 실행하는 runner 의 진행 상태(current_step/status/steps_json) 영속.
+    Migration {
+        version: 60,
+        name: "orchestration_run",
+        sql: include_str!("../migrations/0060_orchestration_run.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

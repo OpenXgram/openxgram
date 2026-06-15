@@ -782,4 +782,16 @@
 }
 .a2a-ctrl button:disabled { opacity: 0.5; cursor: not-allowed; }
 .a2a-ctrl-note { font-size: 10.5px; color: #9aa6b2; padding: 4px 14px 12px; line-height: 1.5; }
+/* P4a — 발언권 주기 버튼(에이전트 행) + 결과 메시지 */
+.a2a-grant-btn {
+  margin-left: 6px;
+  border: 1px solid #d9e1ea;
+  background: #fff;
+  border-radius: 8px;
+  padding: 3px 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.a2a-grant-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.a2a-grant-msg { font-size: 11.5px; color: #37424d; padding: 6px 14px; line-height: 1.5; background: #f1f4f7; border-radius: 8px; margin: 4px 14px; }
 
