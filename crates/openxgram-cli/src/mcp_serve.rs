@@ -2631,10 +2631,21 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     .get("sessionId")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
+                // 호출자(나) 신원을 from_agent 로 채운다 → a2a_send SendBody.from_agent →
+                // handle_task body.from. 발신자가 수신자 identity 스레드 행에 기록되고
+                // (없으면 None-sender 분기로 발신자 신원이 유실됐다). peer_send 와 동일 패턴.
+                let from_alias = {
+                    use openxgram_manifest::InstallManifest;
+                    let manifest_path = openxgram_core::paths::manifest_path(&self.data_dir);
+                    InstallManifest::read(&manifest_path)
+                        .map(|m| m.machine.alias.clone())
+                        .unwrap_or_else(|_| "anon".to_string())
+                };
                 // a2a_send 데몬 핸들러는 평문 task 를 prompt 본문으로 라우팅한다.
                 let mut payload = json!({
                     "target": alias,
                     "task": body_text,
+                    "from_agent": from_alias,
                 });
                 if let Some(ep) = endpoint {
                     payload["endpoint"] = json!(ep);
