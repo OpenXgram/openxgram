@@ -3,6 +3,7 @@ import { invoke } from "../api/client";
 import { AcpConversation, aiTypeToAdapter, type AcpPreset } from "./AcpConversation";
 import { A2AMiniPanel } from "./A2AMiniPanel";
 import { AddAgentModal } from "./AddAgentModal";
+import { RoomModal } from "./RoomModal";
 import { AddFriendModal, loadExternalFriends, type ExternalFriend } from "./AddFriendModal";
 import { ProviderLogo, providerKey } from "./ProviderLogo";
 import {
@@ -316,6 +317,8 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
   const [infoOpen, setInfoOpen] = createSignal(false);
   // P2 — 협업(A2A) 곁뷰 열림. 작업환경(infoOpen)과 상호배타로 토글.
   const [collabOpen, setCollabOpen] = createSignal(false);
+  // P3 — 방(대화) 설정 모달 열림. 헤더 ⚙️ 에서 진입. 저장만(persistence), 강제는 P4.
+  const [roomCfgOpen, setRoomCfgOpen] = createSignal(false);
 
   // peers_list → alias 별 last_seen / machine 조회용 맵.
   const peerMap = createMemo(() => {
@@ -834,6 +837,10 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
                   <span class="pill clk" classList={{ active: collabOpen() }} onClick={() => { setInfoOpen(false); setCollabOpen((v) => !v); }}>
                     🔗 협업
                   </span>
+                  {/* P3 — 방 설정 모달 진입(하네스·역할·오케스트레이션·시스템프롬프트·이벤트규칙). */}
+                  <span class="pill clk" title="방 설정 (하네스·역할·오케스트레이션)" onClick={() => setRoomCfgOpen(true)}>
+                    ⚙️ 방 설정
+                  </span>
                 </>
               )}
             />
@@ -854,6 +861,14 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
             />
           </div>
         )}
+      </Show>
+      {/* P3 — 방(대화) 설정 모달. room_key = 선택된 대화 alias. 저장만, 강제는 P4. */}
+      <Show when={roomCfgOpen() && selected()}>
+        <RoomModal
+          roomKey={selected()!}
+          roomLabel={selAgent() ? agentName(selAgent()!) : (selected() || undefined)}
+          onClose={() => setRoomCfgOpen(false)}
+        />
       </Show>
       {/* 친구(원격·외부) 선택 — 로컬 ACP/파일트리 시도 금지. A2A 로 통신. */}
       <Show when={!acpMode() && selIsFriend() && selAgent()}>

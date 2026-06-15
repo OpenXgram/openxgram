@@ -494,6 +494,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // 큐레이션된 주입 항목(규칙·원칙) CRUD — 전역(scope=*)+에이전트별.
         .route("/v1/gui/runtime/injections", get(gui_runtime_injections_list).post(gui_runtime_injection_upsert))
         .route("/v1/gui/runtime/injections/{id}", axum::routing::delete(gui_runtime_injection_delete))
+        // rc.330 (GUI P3) — 방(대화) 단위 설정 저장/로드. 하네스·역할·오케스트레이션·
+        // 시스템 프롬프트·이벤트 규칙. GET=로드(없으면 기본값) / PUT=저장. 강제는 P4.
+        .route("/v1/gui/room/{key}/config", get(gui_room_config_get).put(gui_room_config_set))
         .route("/v1/gui/workflows/{id}", get(gui_workflow_get).post(gui_workflow_delete))
         .route("/v1/gui/workflows/{id}/run", post(gui_workflow_run))
         .route("/v1/gui/workflows/{id}/runs", get(gui_workflow_runs))
@@ -7523,6 +7526,100 @@ async fn gui_runtime_config_set(
         rusqlite::params![key, s, now],
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("save: {e}")})))?;
     Ok(Json(serde_json::json!({ "ok": true, "config": body.config, "alias": body.alias })))
+}
+
+// ── 방(대화) 단위 설정 — room_config 테이블 (GUI P3, rc.330) ──
+// 하네스·역할·오케스트레이션·시스템 프롬프트·이벤트 규칙을 방별 JSON 으로 보관.
+// 전역 기본 하네스(⚙️)는 /v1/gui/runtime/config (alias 미지정) 재사용 — 여기는 방 오버라이드.
+// ⚠️ 저장만(persistence). 턴 시점 강제 적용(prompt 레이어링·orch 실행)은 P4.
+
+/// 방 설정 기본값 — 저장된 row 가 없을 때 반환. harness 는 전역 runtime_config 를 상속(빈 객체로 두면 UI 가 전역 ⚙️ 사용).
+fn room_config_default() -> serde_json::Value {
+    serde_json::json!({
+        "harness": serde_json::Value::Null,        // null = 전역 기본 하네스 상속
+        "roles": { "defs": [], "assignments": [] },
+        "orchestration": [],
+        "system_prompt": "",
+        "event_rules": [],
+    })
+}
+
+/// `GET /v1/gui/room/{key}/config` — 방 설정 로드. 없으면 기본값.
+async fn gui_room_config_get(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    use rusqlite::OptionalExtension;
+    let mut db = state.db.lock().await;
+    let row: Option<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)> = db
+        .conn()
+        .query_row(
+            "SELECT harness_json, roles_json, orchestration_json, system_prompt, event_rules_json, updated_at \
+             FROM room_config WHERE room_key=?1",
+            rusqlite::params![key],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    let parse = |s: Option<String>| -> Option<serde_json::Value> {
+        s.and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok())
+    };
+    let config = match row {
+        Some((h, ro, orch, sp, ev, _ts)) => serde_json::json!({
+            "harness": parse(h).unwrap_or(serde_json::Value::Null),
+            "roles": parse(ro).unwrap_or_else(|| serde_json::json!({ "defs": [], "assignments": [] })),
+            "orchestration": parse(orch).unwrap_or_else(|| serde_json::json!([])),
+            "system_prompt": sp.unwrap_or_default(),
+            "event_rules": parse(ev).unwrap_or_else(|| serde_json::json!([])),
+        }),
+        None => room_config_default(),
+    };
+    Ok(Json(serde_json::json!({ "room_key": key, "config": config })))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RoomConfigBody {
+    #[serde(default)]
+    harness: serde_json::Value,
+    #[serde(default)]
+    roles: serde_json::Value,
+    #[serde(default)]
+    orchestration: serde_json::Value,
+    #[serde(default)]
+    system_prompt: String,
+    #[serde(default)]
+    event_rules: serde_json::Value,
+}
+
+/// `PUT /v1/gui/room/{key}/config` — 방 설정 저장(upsert). JSON 컬럼.
+async fn gui_room_config_set(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(key): Path<String>,
+    Json(body): Json<RoomConfigBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let harness_s = if body.harness.is_null() { None } else { Some(body.harness.to_string()) };
+    let roles_s = body.roles.to_string();
+    let orch_s = body.orchestration.to_string();
+    let ev_s = body.event_rules.to_string();
+    let mut db = state.db.lock().await;
+    db.conn()
+        .execute(
+            "INSERT INTO room_config(room_key, harness_json, roles_json, orchestration_json, system_prompt, event_rules_json, updated_at) \
+             VALUES(?1,?2,?3,?4,?5,?6,?7) \
+             ON CONFLICT(room_key) DO UPDATE SET \
+               harness_json=excluded.harness_json, roles_json=excluded.roles_json, \
+               orchestration_json=excluded.orchestration_json, system_prompt=excluded.system_prompt, \
+               event_rules_json=excluded.event_rules_json, updated_at=excluded.updated_at",
+            rusqlite::params![key, harness_s, roles_s, orch_s, body.system_prompt, ev_s, now],
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto { error: format!("save: {e}") })))?;
+    Ok(Json(serde_json::json!({ "ok": true, "room_key": key, "updated_at": now })))
 }
 
 /// `GET /v1/gui/runtime/context?count=N` — 주입·관찰용 L2 메모리 + 위키 제목(토큰예산=count).

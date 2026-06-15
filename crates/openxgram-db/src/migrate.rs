@@ -318,6 +318,13 @@ const MIGRATIONS: &[Migration] = &[
         name: "friend_policy",
         sql: include_str!("../migrations/0058_friend_policy.sql"),
     },
+    // rc.330 — 방(대화) 단위 설정 저장 (GUI P3). 하네스·역할·오케스트레이션·
+    // 시스템 프롬프트·이벤트 규칙을 JSON 컬럼으로 방별 보관. 저장만, 강제는 P4.
+    Migration {
+        version: 59,
+        name: "room_config",
+        sql: include_str!("../migrations/0059_room_config.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

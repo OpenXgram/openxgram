@@ -141,6 +141,9 @@ const ROUTES: Record<string, Route> = {
  runtime_injections_list: { method: "GET", path: "/runtime/injections"},
  runtime_injection_upsert: { method: "POST", path: "/runtime/injections", body: true},
  runtime_injection_delete: { method: "DELETE", path: "/runtime/injections/{id}"},
+ // rc.330 (GUI P3) — 방(대화) 단위 설정 로드/저장. 하네스·역할·오케스트레이션·시스템프롬프트·이벤트규칙. 강제는 P4.
+ room_config_get: { method: "GET", path: "/room/{key}/config"},
+ room_config_set: { method: "PUT", path: "/room/{key}/config", body: true},
  // rc.245 — 결정적 세션 매핑 사용자 override (PATCH; body.session_identifier = string|null)
  peer_set_session: { method: "PATCH", path: "/peers/{alias}/session", body: true},
 
