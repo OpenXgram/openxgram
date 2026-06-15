@@ -10511,14 +10511,30 @@ async fn a2a_send(
     match endpoint.as_deref() {
         // ① 신규 ACP (기본). load_a2a_agent_meta + handle_task — 기존 동작 보존.
         None | Some("new_acp") => {
-            let meta = load_a2a_agent_meta(&state, &alias).await?.ok_or_else(|| {
-                (
-                    StatusCode::NOT_FOUND,
-                    Json(ErrorDto {
-                        error: format!("unknown agent: {alias}"),
-                    }),
-                )
-            })?;
+            // BUG2/3 (cross-machine A2A) — 대상이 LOCAL ACP 에이전트가 아니면(=meta None),
+            // peer-sync 로 발견된 REMOTE 에이전트(예: zalman 의 navi)인지 확인한다. 맞으면
+            // 로컬 spawn 대신 그 머신 주소로 signed peer envelope 를 send_envelope 경유
+            // 전송하되 recipient_alias=<alias> 를 명시한다. 수신측 데몬의 process_inbound(① fix)가
+            // recipient_alias 로 대상의 LOCAL ACP 를 구동한다. 회신은 ACK/inbound 로 발신
+            // 스레드(`a2a:{from}->{alias}` 또는 bare alias)에 돌아온다.
+            let meta = match load_a2a_agent_meta(&state, &alias).await? {
+                Some(m) => m,
+                None => {
+                    if let Some(resp) =
+                        try_remote_a2a_route(&state, &alias, &body).await?
+                    {
+                        return Ok(Json(resp));
+                    }
+                    return Err((
+                        StatusCode::NOT_FOUND,
+                        Json(ErrorDto {
+                            error: format!(
+                                "unknown agent: {alias} (로컬 ACP 미등록 + peer-sync 로 발견된 reachable remote 에이전트도 아님)"
+                            ),
+                        }),
+                    ));
+                }
+            };
             let task_body = crate::daemon_gui_a2a::TaskBody {
                 skill: body.skill.clone(),
                 message: if body.task.is_string() {
@@ -10705,6 +10721,99 @@ async fn a2a_send(
             "a2a_send: 알 수 없는 endpoint '{other}' (new_acp|existing_acp:<id>|tmux:<name>|worktree|external)"
         ))),
     }
+}
+
+/// BUG2/3 (cross-machine A2A 송신 라우팅) — 대상 alias 가 LOCAL ACP 에이전트가 아닐 때,
+/// peer-sync 로 발견된 REMOTE 에이전트(예: zalman 의 navi)면 그 머신 주소로 signed peer
+/// envelope 를 전송한다. 전송은 새 transport 를 만들지 않고 기존 `run_peer_send_with_conv`
+/// (peer_send.rs)를 재사용한다 — master 키 서명 + tailnet 신뢰(기존 fleet peer_send 와 동일).
+///   - alias 의 peer row 가 없거나 주소가 도달 불가(localhost/unknown)면 → 원격 라우팅 불가
+///     (Ok(None) 반환 → 호출측이 unknown agent 에러로 처리).
+///   - `run_peer_send_with_conv(alias=navi)` 가 envelope.recipient_alias=navi 로 박고 navi 의
+///     peer row 주소(=zalman 머신 데몬)로 POST 한다. zalman process_inbound(① fix)가
+///     recipient_alias 로 navi 의 LOCAL ACP 를 구동한다.
+///   - 회신은 ACK/inbound 경로로 발신 스레드에 돌아온다(별도 동기 결과 없음 — accepted).
+/// 가시 스레드(`a2a:{from}->{alias}` 또는 bare alias)에 'me' 송신을 영속한다.
+///
+/// 반환:
+///   - `Ok(Some(json))`  : 원격 라우팅 수행됨(accepted).
+///   - `Ok(None)`        : 원격 에이전트로 식별 불가(로컬도 원격도 아님) — 호출측이 NOT_FOUND.
+///   - `Err(...)`        : 식별은 됐으나 전송 단계 실패(절대 규칙 1 — silent X).
+async fn try_remote_a2a_route(
+    state: &GuiServerState,
+    alias: &str,
+    body: &crate::daemon_gui_a2a::SendBody,
+) -> Result<Option<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    let data_dir = state.data_dir.as_ref().clone();
+    // peer row 조회 — peer-sync 가 navi 를 zalman 머신 주소로 merge 해 두었어야 함(GAP A).
+    let peer = {
+        let mut db = state.db.lock().await;
+        let mut store = openxgram_peer::PeerStore::new(&mut db);
+        match store.get_by_alias(alias) {
+            Ok(opt) => opt,
+            Err(e) => return Err(internal(&format!("remote a2a peer 조회 실패: {e}"))),
+        }
+    };
+    let peer = match peer {
+        Some(p) => p,
+        None => return Ok(None), // 로컬 ACP 도 아니고 알려진 peer 도 아님.
+    };
+    // 도달 불가 주소(localhost/unknown)면 cross-machine 전송 불가 — 원격 라우팅 대상 아님.
+    if openxgram_transport::tailscale::is_unreachable_address(&peer.address) {
+        tracing::warn!(
+            alias = %alias,
+            address = %peer.address,
+            "BUG2/3 remote a2a — peer 주소 도달 불가(localhost/unknown). cross-machine 라우팅 불가 → NOT_FOUND 폴백"
+        );
+        return Ok(None);
+    }
+
+    let prompt_text = a2a_prompt_text(body)?;
+    let from = body
+        .from_agent
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    // master 키 서명 — daemon env 의 XGRAM_KEYSTORE_PASSWORD(기존 peer_send 와 동일 경로).
+    let pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").map_err(|_| {
+        internal("XGRAM_KEYSTORE_PASSWORD 미설정 — cross-machine A2A 송신 서명 불가 (daemon 환경변수 필요)")
+    })?;
+
+    // 가시 스레드 영속 — 발신측에 'me' 기록(handle_task 의 conv_key 규칙과 동일).
+    let conv_key = match from.as_deref() {
+        Some(f) => format!("a2a:{f}->{alias}"),
+        None => format!("a2a:{alias}"),
+    };
+    state.acp.record_message(&conv_key, "me", &prompt_text).await;
+
+    // 기존 peer_send 재사용 — recipient_alias=alias 를 박고 peer 주소(머신 데몬)로 전송.
+    crate::peer_send::run_peer_send_with_conv(
+        &data_dir,
+        alias,
+        from.as_deref(),
+        &prompt_text,
+        &pw,
+        None,
+    )
+    .await
+    .map_err(|e| internal(&format!("cross-machine A2A peer_send 실패 ({alias}@{}): {e}", peer.address)))?;
+
+    tracing::info!(
+        target = %alias,
+        address = %peer.address,
+        from = ?from,
+        "BUG2/3 cross-machine A2A — signed envelope 전송 OK (recipient_alias={alias}). 회신은 inbound 로 발신 스레드에 도달"
+    );
+    Ok(Some(serde_json::json!({
+        "status": "accepted",
+        "endpoint": "remote_peer",
+        "agent": alias,
+        "address": peer.address,
+        "convKey": conv_key,
+        "note": "cross-machine A2A — 수신 머신의 ACP 가 비동기 실행. 회신은 inbound 로 발신 스레드에 도달(동기 결과 없음).",
+    })))
 }
 
 /// `SendBody` 의 task/skill 에서 prompt 텍스트 추출 — 평문 task 우선, 없으면 skill.

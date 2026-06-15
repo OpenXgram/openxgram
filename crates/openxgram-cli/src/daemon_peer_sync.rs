@@ -186,10 +186,50 @@ pub fn reachable_remote_peers(data_dir: &Path) -> anyhow::Result<Vec<RemotePeer>
     let live = crate::daemon::local_live_tmux_agent_idents();
     let self_eth = self_eth_address(data_dir);
 
+    // BUG2/3 (cross-machine A2A discovery) — 자기 머신의 LOCAL ACP-drivable 에이전트 alias 집합.
+    // `agent_capabilities` 에 row 가 있고 role != 'tmux' 이면 그 alias 는 이 머신의 데몬이
+    // 로컬 ACP(`is_acp_drivable`/`load_a2a_agent_meta` 와 동일 기준)로 구동 가능한 신원이다.
+    // 이런 에이전트(예: zalman 의 navi)는 라이브 tmux pane 이 없어 sid_map 에 'tmux:*' 가
+    // 없을 수 있다 → 기존 rc.273 필터의 `_ => return None` 에 걸려 광고에서 누락됐다.
+    //   결과: seoul 이 "navi 가 zalman 에 산다"를 영영 알 수 없었다(=BUG2/3 discovery 갭).
+    // 이 집합으로 LOCAL ACP 에이전트를 추가 광고 대상에 포함한다. 원격 병합 peer 는
+    // 이 머신의 agent_capabilities 에 row 가 없으므로 여전히 재광고되지 않는다(소유권 보존).
+    let local_acp_aliases: std::collections::HashSet<String> = {
+        let mut set = std::collections::HashSet::new();
+        if let Ok(mut stmt) = db.conn().prepare(
+            "SELECT alias FROM agent_capabilities WHERE role IS NOT 'tmux' AND alias IS NOT NULL AND alias != ''",
+        ) {
+            if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+                for a in rows.flatten() {
+                    set.insert(a);
+                }
+            }
+        }
+        set
+    };
+
     let mut store = PeerStore::new(&mut db);
     let peers = store.list()?;
+
+    // BUG2/3 — 이 머신 데몬의 reachable transport 주소(=self peer 의 address). LOCAL ACP
+    // 에이전트(navi)는 자기 sub-bot 포트가 아니라 **머신 데몬**으로 envelope 가 와야 한다
+    // (process_inbound + ① fix 가 거기서 돌며 recipient_alias=navi → navi 의 로컬 ACP 구동).
+    // self peer row(eth==self_eth)의 reachable address 를 ACP 에이전트 광고 주소로 덮어쓴다.
+    // self 주소 검출 실패 시(예: self row 없음) ACP 에이전트는 자기 등록 address 를 그대로 쓴다
+    // (localhost 면 merge 측 is_unreachable 가드가 거른다 — silent 오염 없음).
+    let self_machine_addr: Option<String> = self_eth.as_deref().and_then(|me| {
+        peers.iter().find_map(|p| {
+            let eth = p.eth_address.as_deref()?;
+            if me.eq_ignore_ascii_case(eth.trim()) && !is_unreachable_address(&p.address) {
+                Some(p.address.clone())
+            } else {
+                None
+            }
+        })
+    });
+
     Ok(peers
-        .into_iter()
+        .iter()
         .filter(|p| !is_unreachable_address(&p.address))
         .filter_map(|p| {
             let eth = p.eth_address.clone()?;
@@ -201,6 +241,8 @@ pub fn reachable_remote_peers(data_dir: &Path) -> anyhow::Result<Vec<RemotePeer>
                 .as_deref()
                 .map(|me| me.eq_ignore_ascii_case(eth.trim()))
                 .unwrap_or(false);
+            // BUG2/3 — LOCAL ACP-drivable 에이전트면 머신 데몬 주소로 광고(아래에서 override).
+            let mut is_local_acp_agent = false;
             if !is_self {
                 match sid_map.get(&p.alias) {
                     // LOCAL tmux peer — 살아있는 세션 집합에 있을 때만 광고.
@@ -209,16 +251,28 @@ pub fn reachable_remote_peers(data_dir: &Path) -> anyhow::Result<Vec<RemotePeer>
                             return None; // 죽은 tmux LOCAL peer — 광고 제외.
                         }
                     }
+                    // BUG2/3 — LOCAL ACP-drivable 에이전트(tmux pane 없음)는 광고 대상에 포함.
+                    //   seoul 이 alias→machine 매핑으로 cross-machine A2A 라우팅을 할 수 있게 한다.
+                    //   수신측 process_inbound(① fix)가 recipient_alias 로 navi 의 로컬 ACP 를 구동한다.
+                    _ if local_acp_aliases.contains(&p.alias) => {
+                        is_local_acp_agent = true;
+                    }
                     // session_identifier 없음 = 원격 병합 peer (또는 비-tmux LOCAL) — 자기 것만 광고하므로 제외.
                     _ => return None,
                 }
             }
+            // ACP 에이전트는 머신 데몬 주소로 광고(있으면). 그래야 envelope 가 머신 데몬에 도달.
+            let address = if is_local_acp_agent {
+                self_machine_addr.clone().unwrap_or_else(|| p.address.clone())
+            } else {
+                p.address.clone()
+            };
             Some(RemotePeer {
-                alias: p.alias,
-                public_key_hex: p.public_key_hex,
+                alias: p.alias.clone(),
+                public_key_hex: p.public_key_hex.clone(),
                 eth_address: eth,
-                gui_address: derive_gui_url(&p.address),
-                address: p.address,
+                gui_address: derive_gui_url(&address),
+                address,
                 role: p.role.as_str().to_string(),
             })
         })
