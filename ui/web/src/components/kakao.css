@@ -327,9 +327,11 @@
 .kk-talk-chat .agent .body p{margin:0 0 8px; white-space:pre-wrap; word-break:break-word;}
 .kk-talk-chat .agent .body p:last-child{margin-bottom:0;}
 .kk-talk-chat .agent .body strong{color:#111;}
-.kk-talk-chat .toolcall{display:flex; align-items:center; gap:8px; background:#eef1f5; border:1px solid #e3e7ee; border-radius:9px; padding:7px 11px; font-size:12px; color:#5b6678; margin:0 0 9px; font-family:ui-monospace,Menlo,monospace;}
-.kk-talk-chat .toolcall .ok{color:var(--kk-online); font-weight:700;}
-.kk-talk-chat .toolcall .cmd{color:#39414d;}
+.kk-talk-chat .toolcall{display:flex; align-items:center; gap:8px; background:#eef1f5; border:1px solid #e3e7ee; border-radius:9px; padding:7px 11px; font-size:12px; color:#5b6678; margin:0 0 9px; font-family:ui-monospace,Menlo,monospace; max-width:100%; min-width:0;}
+.kk-talk-chat .toolcall .ok{color:var(--kk-online); font-weight:700; flex:none;}
+/* cmd 는 좁은 폭에서 줄여서 말줄임 — toolcall 행이 컨테이너를 가로로 넘쳐 화면 밖으로 나가지 않게. */
+.kk-talk-chat .toolcall .cmd{color:#39414d; flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.kk-talk-chat .toolcall .kk-acp-tstat{flex:none;}
 .kk-talk-chat pre.code{background:#1b1f27; color:#d6dde8; border-radius:10px; padding:12px 14px; font-size:12.5px; line-height:1.55; font-family:ui-monospace,Menlo,monospace; overflow-x:auto; margin:0 0 9px; white-space:pre;}
 
 /* ---------- 컴포저 (정본 .composer-wrap / .composer / .bar / .mode / .usage / .send, Claude Code 다크) ---------- */
@@ -546,12 +548,18 @@
    카카오톡 패턴: 좁은 폭 → 명부 전체화면 / 행 탭 시 대화방이 우→좌 슬라이드인 전체화면 + ← 뒤로.
    정본의 .side(전체화면)·.chat(translateX 슬라이드)·.app.mchat·.back·.composer 규칙을 kk-talk 네임스페이스로. */
 @media (max-width:900px){
+  /* ⚠ 모바일 슬라이드(roster↔chat) 규칙은 두 칸짜리 .kk-talk 분할 레이아웃 전용으로 한정한다.
+     과거엔 `.kk-talk-chat{position:absolute; transform:translateX(100%)}` 가 전역으로 걸려서,
+     단독 대화뷰(팝업 .kk-popup-root · 인앱 모달 .a2a-inapp-modal)에서도 .kk-talk-chat 이
+     화면 밖 오른쪽(translateX(100%))으로 밀려 사라지고 컴포저가 안 보였다(스크롤도 불가).
+     → .kk-talk 조상이 있을 때만(=실제 roster/chat 분할) 적용되도록 스코프. */
   .kk-talk{position:relative; overflow:hidden;}
-  .kk-talk-roster{position:absolute; inset:0; width:100%; max-width:none; border-right:none; z-index:10;}
-  .kk-talk-chat{position:absolute; inset:0; width:100%; z-index:20; transform:translateX(100%); transition:transform .24s ease;}
+  .kk-talk .kk-talk-roster{position:absolute; inset:0; width:100%; max-width:none; border-right:none; z-index:10;}
+  .kk-talk .kk-talk-chat{position:absolute; inset:0; width:100%; z-index:20; transform:translateX(100%); transition:transform .24s ease;}
   .kk-talk.mchat .kk-talk-chat{transform:translateX(0);}
   /* 모바일만 정보패널 = 우측 absolute 오버레이 (정본 #info @media L359). 데스크탑은 flex 컬럼. */
   .kk-talk .info{position:absolute; right:0; top:0; bottom:0; left:auto; width:84%; max-width:300px; z-index:35; box-shadow:-2px 0 22px rgba(0,0,0,.18);}
+  /* 컴포저 반응형 — 좁은 폭이면 칩 줄바꿈/축소 (단독 대화뷰·분할뷰 공통). */
   .kk-talk-chat .back{display:inline-flex;}
   .kk-talk-chat .composer{padding:12px 12px 8px;}
   .kk-talk-chat .composer .ph-input{padding-bottom:11px; font-size:13px;}
@@ -564,6 +572,35 @@
   .kk-talk-chat .msgs{padding:16px 14px;}
   .kk-talk-chat .chat-top .meta-r{gap:5px;}
 }
+
+/* ===========================================================
+   단독 대화뷰(팝업/인앱 모달) 좁은 폭 반응형 — rc.340
+   .kk-popup-root(?chat 팝업) · .a2a-inapp-modal(인앱 A2A 모달)은 viewport 가 넓어도
+   컨테이너 자체가 좁다(480px 등). viewport 기준 @media 가 안 먹으므로 컨테이너 기준으로 직접 강제.
+   목표: (1) 가로 오버플로 0 (min-width:0 + max-width:100% 사슬), (2) 컴포저 항상 보임(칩 줄바꿈),
+        (3) 메시지 세로 스크롤. 좁혀도 대화+입력이 항상 보이고 사용 가능해야 한다.
+   =========================================================== */
+/* 단독 대화뷰에서는 .kk-talk-chat 이 컨테이너를 100% 채우고 절대 width 초과 금지(전역 슬라이드 무력화). */
+.kk-popup-root .kk-talk-chat,
+.a2a-inapp-modal .kk-talk-chat{
+  position:relative; inset:auto; transform:none !important;
+  width:100%; max-width:100%; min-width:0; flex:1 1 auto; overflow:hidden;
+}
+/* 컴포저 칩 행은 항상 줄바꿈 — 좁은 폭에서 Bypass/Default/High 칩이 가로로 넘쳐 화면 밖으로 나가지 않게. */
+.kk-popup-root .kk-talk-chat .composer .bar,
+.a2a-inapp-modal .kk-talk-chat .composer .bar{flex-wrap:wrap; gap:6px;}
+.kk-popup-root .kk-talk-chat .composer .bar-l,
+.a2a-inapp-modal .kk-talk-chat .composer .bar-l{flex-wrap:wrap; min-width:0;}
+.kk-popup-root .kk-talk-chat .composer .send,
+.a2a-inapp-modal .kk-talk-chat .composer .send{margin-left:auto;}
+/* 헤더 캡션이 부모를 넘기지 않게(좁은 폭 가로 오버플로 유발 요소). */
+.kk-popup-root .kk-talk-chat .chat-top,
+.a2a-inapp-modal .kk-talk-chat .chat-top{min-width:0; max-width:100%;}
+.kk-popup-root .kk-talk-chat .chat-cap,
+.a2a-inapp-modal .kk-talk-chat .chat-cap{max-width:100%; min-width:0;}
+/* 메시지 영역 세로 스크롤 보장(가로 오버플로는 클립). */
+.kk-popup-root .kk-talk-chat .msgs,
+.a2a-inapp-modal .kk-talk-chat .msgs{overflow-y:auto; overflow-x:hidden; min-width:0;}
 
 /* ===========================================================
    공용 보드(.board/.bh/.bb) — 위키·설정·흐름 탭 공유 (TalkTab 충실도 기준)
