@@ -178,6 +178,8 @@ const ROUTES: Record<string, Route> = {
  // Messenger v1.3 §4.3 (S5) — 세션 라이브 터미널 출력
  session_screen: { method: "GET", path: "/sessions/{identifier}/screen"},
  session_input: { method: "POST", path: "/sessions/{identifier}/input", body: true},
+ // rc.338 — 현황 탭 tmux 세션 종료(파괴적). 로컬 tmux 만, 데몬이 존재 검증 + injection 방지.
+ session_kill: { method: "POST", path: "/sessions/{identifier}/kill", body: true},
  session_aliases: { method: "GET", path: "/sessions/aliases"},
  memory_l0_list: { method: "GET", path: "/memory/l0"},
  memory_l0_save: { method: "POST", path: "/memory/l0", body: true},

@@ -332,6 +332,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         //   세션을 가져와 머신의 개별 에이전트를 각각 peer 카드로 노출.
         .route("/v1/gui/public/sessions", get(gui_public_sessions))
         .route("/v1/gui/sessions/{identifier}/input", post(gui_session_input))
+        // rc.338 — 현황 탭에서 tmux 세션 종료(파괴적). 로컬 tmux 세션만, 존재 검증 + injection 방지.
+        .route("/v1/gui/sessions/{identifier}/kill", post(gui_session_kill))
         .route("/v1/gui/sessions/{identifier}/dropfile", post(gui_session_dropfile))
         .route("/v1/gui/public/sessions/{identifier}/input", post(gui_public_session_input))
         // UI-MEMORY-SPEC v1.1 §K7 / §1.2 — L0 raw API + 5층 stats
@@ -2109,6 +2111,49 @@ async fn do_local_session_input(
         "ok": true,
         "bytes_sent": data.len()
     }))
+}
+
+/// `POST /v1/gui/sessions/{identifier}/kill` (rc.338) — 로컬 tmux 세션 종료(파괴적).
+///
+/// identifier 형식: `tmux:<name>` (현황 탭 tmux 목록의 식별자) 또는 bare `<name>`.
+/// 범위: 로컬 tmux 세션만. ACP 세션·원격(peer:)·portal:/aoe: 은 거부(별도 관리·범위 외).
+/// 안전: `kill_tmux_session` 이 입력 정제(영숫자·_-. 만) + 존재 검증(`has-session -t =name`)
+///   + injection 방지(Command args, 셸 보간 X) + 감사 로그(tracing::warn) 수행.
+async fn gui_session_kill(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(identifier): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    // 범위 게이트 — tmux 세션만. peer/portal/aoe/claude/proc 은 거부(파괴 범위 명확화).
+    if identifier.starts_with("peer:")
+        || identifier.starts_with("portal:")
+        || identifier.starts_with("aoe:")
+        || identifier.starts_with("claude:")
+        || identifier.starts_with("proc:")
+    {
+        return Err(bad_request(
+            "kill 은 로컬 tmux 세션만 지원합니다 (peer/portal/aoe/claude/proc 미지원)",
+        ));
+    }
+    // tmux:<name> → <name>. bare 도 허용.
+    let name = identifier
+        .strip_prefix("tmux:")
+        .unwrap_or(&identifier)
+        // tmux:<name>:<window> 형태면 세션명만(window 단위 kill 아님 — 세션 전체).
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_string();
+    let name_for_resp = name.clone();
+    tokio::task::spawn_blocking(move || crate::daemon_gui_sessions::kill_tmux_session(&name))
+        .await
+        .map_err(|e| internal(&format!("spawn: {e}")))?
+        .map_err(|e| bad_request(&e))?;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "killed": format!("tmux:{name_for_resp}"),
+    })))
 }
 
 /// rc.269 gap#5 — binding alias → 실제 tmux session 명 해석.

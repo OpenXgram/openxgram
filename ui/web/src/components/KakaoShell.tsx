@@ -90,7 +90,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
   const [peers] = createResource<PeerDto[]>(() => invoke("peers_list"), { initialValue: [] });
   const [recent] = createResource<MessageDto[]>(() => invoke("messages_recent", { limit: 100 }), { initialValue: [] });
   // 작업환경(tmux) 곁뷰 + 로컬/원격 머신 판정 데이터 소스 — sessions 라우트(이 머신 tmux+워크트리·machine 정보). 동적 only.
-  const [sessions] = createResource<SessionsDto | null>(() => invoke("sessions"), { initialValue: null });
+  const [sessions, { refetch: refetchSessions }] = createResource<SessionsDto | null>(() => invoke("sessions"), { initialValue: null });
 
   const [selected, setSelected] = createSignal<string | null>(null);
   const [search, setSearch] = createSignal("");
@@ -461,6 +461,51 @@ export function KakaoShell(props: { onLogout?: () => void }) {
   const onlineCount = createMemo(() => (agents() ?? []).filter(onlineFor).length);
   const primaryAgent = createMemo(() => (agents() ?? []).find(isPrimary) ?? null);
 
+  // ── rc.338 현황 탭 — 머신별 TMUX·ACP 세션 기스트 + tmux 종료(kill) ──────────────
+  //   요청(마스터): "매 머신에 있는 TMUX·ACP 의 기스트 + TMUX 종료". 깔끔한 목록(표 X).
+  //   재사용: sessions()(tmux, machine 포함) + agents()(등록 ACP 에이전트=대화 신원).
+  //   머신 그룹핑은 로스터와 동일 로직(isLocalMachine / 머신 라벨). 현재 실세션은 이 머신만.
+  const localMachineName = createMemo(() =>
+    sessions()?.machine?.alias || sessions()?.machine?.hostname || "이 머신",
+  );
+  // 로컬 tmux 세션(window 단위 entry 제외 — 세션 root 만; identifier 에 ':' 2개 미만).
+  const localTmuxSessions = createMemo<DetectedSession[]>(() =>
+    (sessions()?.sessions ?? []).filter(
+      (s) => s.kind === "tmux" && s.identifier.split(":").length <= 2,
+    ),
+  );
+  // 머신별 ACP 세션 기스트 = 등록 에이전트(=ACP 대화 신원). 로컬/원격 머신 분류.
+  //   read-only(ACP kill 은 범위 외). 각 그룹: { machine, agents }.
+  const acpByMachine = createMemo(() => {
+    const local: AgentRow[] = [];
+    const remote = new Map<string, AgentRow[]>();
+    for (const a of agents() ?? []) {
+      if (isLocalMachine(a.machine)) {
+        local.push(a);
+      } else {
+        const m = (a.machine ?? "").trim() || "알 수 없는 머신";
+        if (!remote.has(m)) remote.set(m, []);
+        remote.get(m)!.push(a);
+      }
+    }
+    return { local, remote: [...remote.entries()].map(([machine, agents]) => ({ machine, agents })) };
+  });
+  // tmux 세션 종료 — confirm → POST kill → 성공 시 sessions refetch.
+  const [killing, setKilling] = createSignal<string | null>(null);
+  async function killTmux(s: DetectedSession) {
+    const label = s.display || s.identifier;
+    if (!window.confirm(`이 tmux 세션을 종료하시겠습니까?\n\n${label}\n\n(되돌릴 수 없습니다)`)) return;
+    setKilling(s.identifier);
+    try {
+      await invoke("session_kill", { identifier: s.identifier });
+      await refetchSessions();
+    } catch (e) {
+      window.alert(`tmux 종료 실패: ${(e as Error).message}`);
+    } finally {
+      setKilling(null);
+    }
+  }
+
   function openTab(t: Tab) {
     setTab(t);
   }
@@ -773,6 +818,74 @@ export function KakaoShell(props: { onLogout?: () => void }) {
             <div class="li">새 A2A → 새 ACP 생성 시 적용</div>
             <div class="li" style="color:var(--muted)">설정 ▸ 하네스에서 전역 기본 변경</div>
           </div>
+        </div>
+
+        {/* ── rc.338 머신별 TMUX·ACP 세션 기스트 (TMUX 종료 가능) ── */}
+        <div class="kk-sess-gist" style="margin-top:22px">
+          <h3 style="font-size:14px;margin:0 0 4px;color:var(--fg,#dce6ef)">🖥 머신별 세션</h3>
+          <div class="sub" style="margin-bottom:10px">각 머신의 TMUX·ACP 세션 기스트 — TMUX 는 종료(🗑) 가능, ACP 는 읽기 전용</div>
+
+          {/* 이 머신(로컬) — 실제 세션 보유 */}
+          <div class="kk-machine-block" style="margin-bottom:14px">
+            <div style="font-weight:700;font-size:13px;margin-bottom:6px">🖥 {localMachineName()} <span style="color:var(--muted);font-weight:600">(이 머신)</span></div>
+
+            {/* TMUX 목록 + 종료 */}
+            <div style="font-size:12px;color:var(--muted);margin:4px 0 2px">TMUX 세션 <span>({localTmuxSessions().length})</span></div>
+            <Show when={localTmuxSessions().length > 0} fallback={<div class="li" style="color:var(--muted);font-size:12px">tmux 세션 없음</div>}>
+              <For each={localTmuxSessions()}>
+                {(s) => (
+                  <div class="kk-sess-row" style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line,#1f2c38)">
+                    <span class="live" style={`width:7px;height:7px;border-radius:50%;flex:none;background:${s.attached ? "var(--green,#3fb950)" : "var(--muted,#6b7c8c)"}`} />
+                    <span style="font-size:13px;font-weight:600">{s.display}</span>
+                    <Show when={s.cwd}><span style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">{s.cwd}</span></Show>
+                    <span style="font-size:11px;color:var(--muted);margin-left:auto">{s.attached ? "attached" : "detached"}</span>
+                    <button
+                      title={`tmux 세션 종료: ${s.display}`}
+                      disabled={killing() === s.identifier}
+                      onClick={() => killTmux(s)}
+                      style="flex:none;background:none;border:1px solid var(--line,#2a3a48);border-radius:6px;padding:2px 8px;font-size:12px;color:#f85149;cursor:pointer"
+                    >
+                      {killing() === s.identifier ? "종료 중…" : "🗑 종료"}
+                    </button>
+                  </div>
+                )}
+              </For>
+            </Show>
+
+            {/* ACP 목록 (read-only) */}
+            <div style="font-size:12px;color:var(--muted);margin:10px 0 2px">ACP 세션 <span>({acpByMachine().local.length})</span></div>
+            <Show when={acpByMachine().local.length > 0} fallback={<div class="li" style="color:var(--muted);font-size:12px">ACP 세션 없음</div>}>
+              <For each={acpByMachine().local}>
+                {(a) => (
+                  <div class="kk-sess-row" style="display:flex;align-items:center;gap:8px;padding:4px 0">
+                    <span style="font-size:13px">{isPrimary(a) ? "⭐" : "🔵"}</span>
+                    <span style="font-size:13px;font-weight:600">{agentName(a)}</span>
+                    <span style="font-size:11px;color:var(--muted)">{a.role || a.ai_type || "ACP"}</span>
+                    <Show when={onlineFor(a)}><span style="font-size:11px;color:var(--green,#3fb950);margin-left:auto">● 온라인</span></Show>
+                  </div>
+                )}
+              </For>
+            </Show>
+          </div>
+
+          {/* 원격 머신 — ACP 기스트만(원격 tmux 실세션은 미수집). 연결된 머신만 표시. */}
+          <For each={acpByMachine().remote.filter((g) => isRemoteMachineConnected(g.machine))}>
+            {(g) => (
+              <div class="kk-machine-block" style="margin-bottom:14px">
+                <div style="font-weight:700;font-size:13px;margin-bottom:6px">🖥 {g.machine} <span style="color:var(--muted);font-weight:600">(원격)</span></div>
+                <div style="font-size:12px;color:var(--muted);margin:4px 0 2px">ACP 세션 <span>({g.agents.length})</span></div>
+                <For each={g.agents}>
+                  {(a) => (
+                    <div class="kk-sess-row" style="display:flex;align-items:center;gap:8px;padding:4px 0">
+                      <span style="font-size:13px">{isPrimary(a) ? "⭐" : "🔵"}</span>
+                      <span style="font-size:13px;font-weight:600">{agentName(a)}</span>
+                      <span style="font-size:11px;color:var(--muted)">{a.role || a.ai_type || "ACP"}</span>
+                    </div>
+                  )}
+                </For>
+              </div>
+            )}
+          </For>
         </div>
       </div>
 

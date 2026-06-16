@@ -176,6 +176,50 @@ fn git_worktrees(project_path: &str) -> Vec<Worktree> {
     worktrees
 }
 
+/// rc.338 — 로컬 tmux 세션 종료(`tmux kill-session -t <name>`). 파괴적 작업이므로 엄격 검증.
+///
+/// 안전장치:
+///   1. 입력 정제 — session_name 은 영숫자·`_`·`-`·`.` 만 허용(셸 메타·공백·`:` 거부).
+///      command injection 불가 — `std::process::Command` 에 인자로 직접 전달(셸 보간 X).
+///   2. 존재 검증 — `tmux has-session -t =<name>` 으로 실제 존재하는 세션만 kill(`=` 정확매칭).
+///   3. 임의/빈/패턴 입력 거부 → 에러 반환(절대 규칙 1: 조용한 폴백 금지, 명시 에러).
+/// 반환: Ok(()) on 성공, Err(사유) on 실패/거부. ACP 세션 kill 은 별도(범위 외).
+pub fn kill_tmux_session(session_name: &str) -> Result<(), String> {
+    let name = session_name.trim();
+    if name.is_empty() {
+        return Err("빈 세션 이름".into());
+    }
+    if name.len() > 128 {
+        return Err("세션 이름이 너무 김 (>128)".into());
+    }
+    // 허용 문자만 — tmux 세션 이름 규칙 + injection 방지. 공백·';'·'|'·'$'·'`'·'&'·'/'·':' 등 거부.
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')) {
+        return Err(format!("허용되지 않는 문자 포함 (영숫자·_-. 만 허용): {name}"));
+    }
+    // 존재 검증 — `=` prefix 로 정확매칭(부분일치·패턴 kill 방지).
+    let target = format!("={name}");
+    let exists = Command::new("tmux")
+        .args(["has-session", "-t", &target])
+        .output()
+        .map_err(|e| format!("tmux 실행 실패 (미설치?): {e}"))?;
+    if !exists.status.success() {
+        return Err(format!("존재하지 않는 tmux 세션: {name}"));
+    }
+    // 감사 로그 — 파괴적 작업 기록 (절대 규칙: 모든 kill 명시 기록).
+    tracing::warn!(session = %name, "tmux kill-session 실행 (사용자 요청, 파괴적)");
+    let out = Command::new("tmux")
+        .args(["kill-session", "-t", &target])
+        .output()
+        .map_err(|e| format!("tmux kill-session 실행 실패: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(format!("tmux kill-session 실패: {err}"));
+    }
+    // 캐시 무효화 — 다음 collect 시 갱신되지만, 즉시 stale entry 제거를 위해 background warming 에 의존.
+    tracing::info!(session = %name, "tmux 세션 종료 완료");
+    Ok(())
+}
+
 /// 로컬 tmux 세션을 `(session_name, cwd)` 로 반환 — A2A `tmux` 엔드포인트 조회
 /// (`list_agent_endpoints`)가 에이전트 project_path 하위 세션을 고르는 데 쓴다.
 /// `detect_tmux()` 결과를 재사용한다(중복 tmux 호출·로직 분기 방지).
