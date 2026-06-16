@@ -6,6 +6,7 @@ import { A2AMiniPanel } from "./A2AMiniPanel";
 import { RoomModal } from "./RoomModal";
 import { AddAgentModal } from "./AddAgentModal";
 import { AddFriendModal } from "./AddFriendModal";
+import { AgentRequestsInbox } from "./AgentRequestsInbox";
 import { FlowTab } from "./FlowTab";
 import { MarketTab } from "./MarketTab";
 import { ConfigTab } from "./ConfigTab";
@@ -119,6 +120,20 @@ export function KakaoShell(props: { onLogout?: () => void }) {
   // rc.334 Phase 4a — 친구 추가 choice 모달(🖥 머신 추가 한쪽 / 🤝 에이전트 추가 상호 / 🌐 외부 A2A).
   //   addOpen(로컬 에이전트 신규 등록 = AddAgentModal)과 별개. friendOpen 은 AddFriendModal.
   const [friendOpen, setFriendOpen] = createSignal(false);
+  // 🤝 4b — 에이전트 사용 요청 inbox(소유자 받은 요청 수락·가격책정 / 내가 보낸 요청 상태).
+  const [reqInboxOpen, setReqInboxOpen] = createSignal(false);
+  // 받은 요청(소유자) 중 pending 개수 → 버튼 배지. 라이브 폴링 없이 가벼운 단발 조회.
+  const [reqPending, { refetch: refetchReqPending }] = createResource<number>(
+    async () => {
+      try {
+        const r = await invoke<{ requests?: { status?: string }[] }>("agent_requests_list", { role: "incoming" });
+        return (r?.requests ?? []).filter((x) => x.status === "pending").length;
+      } catch {
+        return 0;
+      }
+    },
+    { initialValue: 0 },
+  );
 
   const peerMap = createMemo(() => {
     const m = new Map<string, PeerDto>();
@@ -410,7 +425,23 @@ export function KakaoShell(props: { onLogout?: () => void }) {
 
       {/* ── 채팅 목록 ── (정본 .list / .rooms / .room) */}
       <div class="list" classList={{ hide: tab() !== "chat" }}>
-        <h2>채팅</h2>
+        {/* 🤝 4b — 채팅 목록 헤더에 "사용 요청" inbox 진입점. 받은 요청(소유자) pending 개수 배지. */}
+        <h2 style="display:flex;align-items:center;justify-content:space-between">
+          <span>채팅</span>
+          <button
+            class="kk-reqinbox-btn"
+            title="🤝 에이전트 사용 요청 (받은 요청 수락·가격책정 / 보낸 요청 상태)"
+            style="position:relative;background:none;border:1px solid var(--line,#2a3a48);border-radius:8px;padding:3px 8px;font-size:12px;color:var(--muted,#9bb0c0);cursor:pointer;display:inline-flex;align-items:center;gap:4px"
+            onClick={() => setReqInboxOpen(true)}
+          >
+            🤝 사용 요청
+            <Show when={(reqPending() ?? 0) > 0}>
+              <span style="position:absolute;top:-6px;right:-6px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:#f85149;color:#fff;font-size:10px;line-height:16px;text-align:center;font-weight:700">
+                {(reqPending() ?? 0) > 99 ? "99+" : reqPending()}
+              </span>
+            </Show>
+          </button>
+        </h2>
         <input class="search" type="text" value={search()} onInput={(e) => setSearch(e.currentTarget.value)} placeholder="🔍  에이전트·대화방 검색" />
         <div class="rooms">
           <Show when={!agents.loading} fallback={<div style="padding:16px;color:var(--muted);font-size:13px">불러오는 중…</div>}>
@@ -756,6 +787,11 @@ export function KakaoShell(props: { onLogout?: () => void }) {
             if (kind === "machine" || kind === "agent") { void refetchAgents(); setSelected(alias); setTab("chat"); }
           }}
         />
+      </Show>
+
+      {/* 🤝 4b — 에이전트 사용 요청 inbox (소유자 수락+가격책정 / 요청자 상태). 닫을 때 명부+배지 새로고침. */}
+      <Show when={reqInboxOpen()}>
+        <AgentRequestsInbox onClose={() => { setReqInboxOpen(false); void refetchAgents(); void refetchReqPending(); }} />
       </Show>
 
       {/* 옛 하단 고정 캡션바(.note) 제거 — 대화 모델 캡션은 .chat-top 헤더 제목 아래 .chat-cap 로 이전. */}
