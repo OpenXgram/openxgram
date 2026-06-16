@@ -52,6 +52,12 @@
 .oxg-app .search{margin:0 14px 8px;background:#eef1f4;border-radius:9px;padding:8px 12px;color:var(--muted);font-size:13px}
 .oxg-app input.search{border:0;outline:none;width:auto;font-family:var(--sans)}
 .oxg-app .rooms{overflow-y:auto;flex:1}
+/* 로스터 그룹 헤더 — 머신 구분(이 머신 / 다른 머신명) + 그 아래 분류 서브헤더(프라이머리/프로젝트/특수/미지정). */
+.oxg-app .group-title{font-size:11.5px;font-weight:700;color:var(--muted);padding:11px 18px 4px}
+.oxg-app .group-title.machine{font-size:12px;font-weight:800;color:#16242f;letter-spacing:-.01em;padding:15px 18px 4px;margin-top:3px;border-top:1px solid var(--line);display:flex;align-items:center;gap:6px}
+.oxg-app .rooms > .group-title.machine:first-child{border-top:none;margin-top:0}
+.oxg-app .group-title.sub{padding-left:28px;font-weight:600;color:#7e8a96}
+.oxg-app .group-title .gt-sub{font-weight:500;color:#b3bcc6;margin-left:3px}
 .oxg-app .room{display:flex;gap:11px;padding:11px 16px;cursor:pointer;border-left:3px solid transparent;align-items:center}
 .oxg-app .room:hover{background:#f1f4f7}
 .oxg-app .room.on{background:#eaf0f6;border-left-color:#5a7fb0}

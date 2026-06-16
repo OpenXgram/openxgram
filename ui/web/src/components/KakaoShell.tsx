@@ -87,6 +87,8 @@ export function KakaoShell(props: { onLogout?: () => void }) {
   const [agents, { refetch: refetchAgents, mutate: mutateAgents }] = createResource<AgentRow[]>(() => invoke("agents_list"));
   const [peers] = createResource<PeerDto[]>(() => invoke("peers_list"), { initialValue: [] });
   const [recent] = createResource<MessageDto[]>(() => invoke("messages_recent", { limit: 100 }), { initialValue: [] });
+  // 작업환경(tmux) 곁뷰 + 로컬/원격 머신 판정 데이터 소스 — sessions 라우트(이 머신 tmux+워크트리·machine 정보). 동적 only.
+  const [sessions] = createResource<SessionsDto | null>(() => invoke("sessions"), { initialValue: null });
 
   const [selected, setSelected] = createSignal<string | null>(null);
   const [search, setSearch] = createSignal("");
@@ -120,19 +122,82 @@ export function KakaoShell(props: { onLogout?: () => void }) {
 
   const isPrimary = (a: AgentRow) => (a.classification ?? "") === "primary";
 
-  const rooms = createMemo<AgentRow[]>(() => {
+  // 검색 필터(대화명·이름·역할·머신·ai_type).
+  const matchSearch = (a: AgentRow): boolean => {
     const q = search().trim().toLowerCase();
-    const list = (agents() ?? []).filter((a) => {
-      if (!q) return true;
-      return [a.alias, a.display_name, a.role, a.machine, a.ai_type].some((f) => (f ?? "").toLowerCase().includes(q));
-    });
-    // 프라이머리 먼저, 그다음 마지막 메시지 최신순.
-    const ts = (a: AgentRow) => { const m = lastMsgByAlias().get(a.alias.toLowerCase()); return m ? Date.parse(m.timestamp) : 0; };
-    return [...list].sort((x, y) => {
-      if (isPrimary(x) !== isPrimary(y)) return isPrimary(x) ? -1 : 1;
-      return ts(y) - ts(x);
-    });
+    if (!q) return true;
+    return [a.alias, a.display_name, a.role, a.machine, a.ai_type].some((f) => (f ?? "").toLowerCase().includes(q));
+  };
+
+  // ── 로컬/원격(머신) 판정 ────────────────────────────────────────────────
+  // 이 머신(데몬이 도는 머신) = 로컬. machine 필드가 비었거나 이 머신을 가리키면 로컬.
+  //   현재 머신 후보: "seoul"/"서울"/"local" + sessions().machine.alias/hostname.
+  //   머신 값이 다르면 REMOTE — 그 머신명으로 그룹화(마스터 피드백: 평평한 목록 X).
+  const selfMachineNames = createMemo<string[]>(() => {
+    const m = sessions()?.machine;
+    const names = ["seoul", "서울", "local", "server-seoul"];
+    if (m?.alias) names.push(m.alias.toLowerCase());
+    if (m?.hostname) names.push(m.hostname.toLowerCase());
+    return [...new Set(names.filter(Boolean).map((n) => n.toLowerCase()))];
   });
+  const isLocalMachine = (machine: string | null | undefined): boolean => {
+    const mm = (machine ?? "").trim().toLowerCase();
+    if (!mm) return true; // machine 미설정 = 로컬(기존 로컬 에이전트).
+    return selfMachineNames().some((n) => n && (mm === n || mm.includes(n) || n.includes(mm)));
+  };
+
+  // 분류 키(👑 primary / 📁 project / ⚙️ special / 📁 분류 미지정).
+  //   classification 이 명시되면 그대로. null/미상이면 role 로 약하게 추정, 그래도 모르면 "unknown"(미지정).
+  //   primary/special 을 날조하지 않는다(데이터 sparse 정직 반영).
+  type ClsKey = "primary" | "project" | "special" | "unknown";
+  const classKey = (a: AgentRow): ClsKey => {
+    const c = (a.classification ?? "").toLowerCase();
+    if (c === "primary") return "primary";
+    if (c === "special") return "special";
+    if (c === "project") return "project";
+    const role = (a.role ?? "").toLowerCase();
+    if (/primary|프라이머리|통합관리|orchestrat/.test(role)) return "primary";
+    if (/special|특수|시스템|system/.test(role)) return "special";
+    return "unknown";
+  };
+  const CLS_GROUPS: { key: ClsKey; title: string }[] = [
+    { key: "primary", title: "👑 프라이머리" },
+    { key: "project", title: "📁 프로젝트 에이전트" },
+    { key: "special", title: "⚙️ 특수 에이전트" },
+    { key: "unknown", title: "📁 분류 미지정" },
+  ];
+  const tsOf = (a: AgentRow) => { const m = lastMsgByAlias().get(a.alias.toLowerCase()); return m ? Date.parse(m.timestamp) : 0; };
+  const sortRows = (rows: AgentRow[]) => [...rows].sort((x, y) => tsOf(y) - tsOf(x));
+  const bucketByClass = (rows: AgentRow[]): Record<ClsKey, AgentRow[]> => {
+    const by: Record<ClsKey, AgentRow[]> = { primary: [], project: [], special: [], unknown: [] };
+    for (const a of rows) by[classKey(a)].push(a);
+    (Object.keys(by) as ClsKey[]).forEach((k) => { by[k] = sortRows(by[k]); });
+    return by;
+  };
+
+  // 로컬 머신 그룹 — 분류별 버킷.
+  const localGroups = createMemo<Record<ClsKey, AgentRow[]>>(() =>
+    bucketByClass((agents() ?? []).filter((a) => matchSearch(a) && isLocalMachine(a.machine))),
+  );
+  // 원격 머신 그룹 — [{ machine, byClass, hasPrimary }]. 프라이머리 보유 머신 먼저, 그다음 이름순.
+  const remoteGroups = createMemo(() => {
+    const buckets = new Map<string, AgentRow[]>();
+    for (const a of (agents() ?? []).filter((a) => matchSearch(a) && !isLocalMachine(a.machine))) {
+      const mach = (a.machine ?? "").trim() || "알 수 없는 머신";
+      if (!buckets.has(mach)) buckets.set(mach, []);
+      buckets.get(mach)!.push(a);
+    }
+    const groups = [...buckets.entries()].map(([machine, rows]) => {
+      const byClass = bucketByClass(rows);
+      return { machine, byClass, hasPrimary: byClass.primary.length > 0 };
+    });
+    groups.sort((a, b) => {
+      if (a.hasPrimary !== b.hasPrimary) return a.hasPrimary ? -1 : 1;
+      return a.machine.localeCompare(b.machine);
+    });
+    return groups;
+  });
+  const localCount = createMemo(() => (Object.values(localGroups()) as AgentRow[][]).reduce((n, arr) => n + arr.length, 0));
 
   const selAgent = createMemo(() => {
     const sel = selected(); if (!sel) return null;
@@ -155,9 +220,6 @@ export function KakaoShell(props: { onLogout?: () => void }) {
     };
   });
 
-  // ── 작업환경(tmux) 곁뷰 데이터 소스 — sessions 라우트(이 머신 tmux+워크트리). 동적 only.
-  //   TalkTab 정보 패널과 동일 contract: 선택 에이전트의 cwd(project_path) 매칭 + alias 보조.
-  const [sessions] = createResource<SessionsDto | null>(() => invoke("sessions"), { initialValue: null });
 
   // 등록 에이전트들의 project_path 집합 — descendant 세션의 longest-prefix 귀속 판정용.
   const registeredCwds = createMemo<Set<string>>(() => {
@@ -267,6 +329,32 @@ export function KakaoShell(props: { onLogout?: () => void }) {
   const onlineFor = (a: AgentRow) => isOnline(peerMap().get(a.alias.toLowerCase())?.last_seen);
   const friends = createMemo<AgentRow[]>(() => (agents() ?? []));
 
+  // 명부 row — 로컬/원격 양쪽 그룹에서 공유. primaryHint = primary 서브그룹에서 렌더되는지(아바타 ⭐).
+  const roomRow = (a: AgentRow, primaryHint: boolean) => {
+    const primary = primaryHint || isPrimary(a);
+    return (
+      <div class="room" classList={{ on: selected() === a.alias }} onClick={() => pick(a.alias)}>
+        <div class="av" style={`background:${avatarBg(a, primary)}`}>{primary ? "⭐" : agentName(a).slice(0, 1).toUpperCase()}</div>
+        <div class="meta">
+          <div class="nm">
+            {agentName(a)}
+            <Show when={primary}><span class="tag pri">프라이머리</span></Show>
+            <Show when={(a.classification ?? "") === "security"}><span class="tag lock">🔒 보안</span></Show>
+            <Show when={(a.classification ?? "") === "group"}><span class="tag grp">그룹</span></Show>
+          </div>
+          <div class="ms">
+            <Show when={onlineFor(a)}><span style="color:var(--green)">● </span></Show>
+            {preview(a)}
+          </div>
+        </div>
+        <div class="rt">
+          <div class="tm">{previewTime(a)}</div>
+          <Show when={(a.unread ?? 0) > 0}><div class="badge">{(a.unread ?? 0) > 99 ? "99+" : a.unread}</div></Show>
+        </div>
+      </div>
+    );
+  };
+
   // 현황 카드 집계 — 라이브.
   const onlineCount = createMemo(() => (agents() ?? []).filter(onlineFor).length);
   const primaryAgent = createMemo(() => (agents() ?? []).find(isPrimary) ?? null);
@@ -304,32 +392,36 @@ export function KakaoShell(props: { onLogout?: () => void }) {
         <input class="search" type="text" value={search()} onInput={(e) => setSearch(e.currentTarget.value)} placeholder="🔍  에이전트·대화방 검색" />
         <div class="rooms">
           <Show when={!agents.loading} fallback={<div style="padding:16px;color:var(--muted);font-size:13px">불러오는 중…</div>}>
-            <For each={rooms()}>
-              {(a) => {
-                const primary = isPrimary(a);
-                return (
-                  <div class="room" classList={{ on: selected() === a.alias }} onClick={() => pick(a.alias)}>
-                    <div class="av" style={`background:${avatarBg(a, primary)}`}>{primary ? "⭐" : agentName(a).slice(0, 1).toUpperCase()}</div>
-                    <div class="meta">
-                      <div class="nm">
-                        {agentName(a)}
-                        <Show when={primary}><span class="tag pri">프라이머리</span></Show>
-                        <Show when={(a.classification ?? "") === "security"}><span class="tag lock">🔒 보안</span></Show>
-                        <Show when={(a.classification ?? "") === "group"}><span class="tag grp">그룹</span></Show>
-                      </div>
-                      <div class="ms">
-                        <Show when={onlineFor(a)}><span style="color:var(--green)">● </span></Show>
-                        {preview(a)}
-                      </div>
-                    </div>
-                    <div class="rt">
-                      <div class="tm">{previewTime(a)}</div>
-                      <Show when={(a.unread ?? 0) > 0}><div class="badge">{(a.unread ?? 0) > 99 ? "99+" : a.unread}</div></Show>
-                    </div>
-                  </div>
-                );
-              }}
+            {/* ── 이 머신 (로컬) — 데몬이 도는 머신. 👑 프라이머리 / 📁 프로젝트 / ⚙️ 특수 / 미지정. ── */}
+            <Show when={localCount() > 0}>
+              <div class="group-title machine">🖥 이 머신 (로컬)</div>
+            </Show>
+            <For each={CLS_GROUPS}>
+              {(g) => (
+                <Show when={(localGroups()[g.key] ?? []).length > 0}>
+                  <div class="group-title sub">{g.title} <span class="gt-sub">({localGroups()[g.key].length})</span></div>
+                  <For each={localGroups()[g.key]}>{(a) => roomRow(a, g.key === "primary")}</For>
+                </Show>
+              )}
             </For>
+
+            {/* ── 다른 머신 (원격) — 머신별 그룹. 각 머신 안에서 프라이머리→프로젝트→특수→미지정. ── */}
+            <For each={remoteGroups()}>
+              {(mg) => (
+                <>
+                  <div class="group-title machine">🖥 {mg.machine} <span class="gt-sub">(다른 머신)</span></div>
+                  <For each={CLS_GROUPS}>
+                    {(g) => (
+                      <Show when={(mg.byClass[g.key] ?? []).length > 0}>
+                        <div class="group-title sub">{g.title} <span class="gt-sub">({mg.byClass[g.key].length})</span></div>
+                        <For each={mg.byClass[g.key]}>{(a) => roomRow(a, g.key === "primary")}</For>
+                      </Show>
+                    )}
+                  </For>
+                </>
+              )}
+            </For>
+
             <div class="room" onClick={() => setAddOpen(true)} title="에이전트 추가">
               <div class="av grp">＋</div>
               <div class="meta"><div class="nm">에이전트 추가</div><div class="ms">머신 · 외부 A2A · 새 ACP</div></div>
