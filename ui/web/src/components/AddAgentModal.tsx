@@ -197,7 +197,7 @@ export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: s
           <div class="fld">
             <label>1 · 머신</label>
             {/* rc.322 — 로컬 추가는 현재 머신 전용. 선택 불가(read-only). */}
-            <input class="ctl" value={machine()} readonly disabled title="로컬 에이전트는 현재 머신에만 추가됩니다" />
+            <input class="ctl" value={machine()} readonly disabled title={`${machine()} — 로컬 에이전트는 현재 머신에만 추가됩니다`} />
           </div>
           <div class="fld">
             <label>3 · AI 종류</label>
