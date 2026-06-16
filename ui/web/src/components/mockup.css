@@ -141,22 +141,29 @@
 .oxg-app .term .c{color:#5b6b7a}.oxg-app .term .p{color:#7cc7ff}
 
 /* 작업환경(tmux) 곁뷰 — 라이브 세션/워크트리 + pane 캡처. 빈 상태는 light(검은 void 금지). */
-.oxg-app .kk-workenv{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;background:#f7f9fb}
-.oxg-app .kk-we-sec{padding:11px 16px 4px}
-.oxg-app .kk-we-sec-term{flex:1;display:flex;flex-direction:column;min-height:120px;padding-bottom:0}
-.oxg-app .kk-we-sech{font-size:12px;font-weight:700;color:#2c3a47;padding-bottom:7px}
+/* 작업환경 패널 = 자체 경계 스크롤 컨테이너. min-height:0(flex 체인)로 실제 스크롤,
+   overscroll-behavior:contain 으로 배경(원 대화) 스크롤 체이닝 차단. */
+.oxg-app .kk-workenv{flex:1;display:flex;flex-direction:column;min-height:0;overflow-y:auto;overscroll-behavior:contain;background:#f7f9fb}
+.oxg-app .kk-we-sec{padding:11px 16px 4px;flex:none}
+/* 라이브 화면을 맨 위·크게 — 프롬프트 흐름 안에서 가장 두드러지게. */
+.oxg-app .kk-we-sec-term{display:flex;flex-direction:column;min-height:300px;padding-bottom:0}
+.oxg-app .kk-we-sech{font-size:12px;font-weight:700;color:#2c3a47;padding-bottom:7px;display:flex;align-items:center;gap:8px}
+.oxg-app .kk-we-pop{margin-left:auto;border:1px solid #cdd9e4;background:#eef4fa;border-radius:7px;padding:4px 10px;font-size:11px;font-weight:700;color:#5a7fb0;cursor:pointer;font-family:var(--sans)}
+.oxg-app .kk-we-pop:hover{background:#e0ebf6}
 .oxg-app .kk-we-sub{font-weight:500;color:#8a93a0;font-size:11px}
 .oxg-app .kk-we-sess{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:9px;padding:8px 11px;font-size:12.5px;margin-bottom:5px;cursor:pointer}
 .oxg-app .kk-we-sess:hover{background:#eef4fa}
 .oxg-app .kk-we-sess .dot{width:8px;height:8px;border-radius:50%;background:var(--green,#2faa5e);flex:none}
 .oxg-app .kk-we-sess .nm{font-weight:600;color:#1f2a36}
-.oxg-app .kk-we-sess .sx{margin-left:auto;font-size:11px;color:#8a93a0;font-family:ui-monospace,Menlo,monospace;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.oxg-app .kk-we-sess .sx{margin-left:auto;font-size:11px;color:#8a93a0;font-family:ui-monospace,Menlo,monospace;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.oxg-app .kk-we-sess .po{flex:none;font-size:12px;opacity:.6;margin-left:8px}
+.oxg-app .kk-we-sess:hover .po{opacity:1}
 .oxg-app .kk-we-wt{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:9px;padding:7px 11px;font-size:12px;margin-bottom:5px;color:#37424d}
 .oxg-app .kk-we-wt .b{margin-left:auto;font-size:10.5px;color:#5a7fb0;background:#eef4fa;border-radius:6px;padding:2px 8px;font-family:ui-monospace,Menlo,monospace}
-.oxg-app .kk-we-sec-term .term{margin:0 16px 0;border-radius:10px}
+.oxg-app .kk-we-sec-term .term{flex:1;margin:0 16px 0;border-radius:10px;min-height:240px;overscroll-behavior:contain}
 .oxg-app .kk-we-note{font-size:10.5px;color:#8a93a0;padding:6px 16px 10px;font-family:ui-monospace,Menlo,monospace}
 /* ACP-only 빈 상태 — 읽기 쉬운 light 카드(검은 화면 아님). */
-.oxg-app .kk-workenv-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;text-align:center;padding:40px 26px;background:#f7f9fb;overflow-y:auto}
+.oxg-app .kk-workenv-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;text-align:center;padding:40px 26px;background:#f7f9fb;overflow-y:auto;overscroll-behavior:contain}
 .oxg-app .kk-we-icon{font-size:38px;opacity:.55;margin-bottom:10px}
 .oxg-app .kk-we-title{font-size:15px;font-weight:700;color:#2c3a47;margin-bottom:8px}
 .oxg-app .kk-workenv-empty .kk-we-body{font-size:12.5px;line-height:1.7;color:#566472;max-width:380px;margin:0 0 16px}

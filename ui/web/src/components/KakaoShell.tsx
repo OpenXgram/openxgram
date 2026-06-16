@@ -330,7 +330,8 @@ export function KakaoShell(props: { onLogout?: () => void }) {
     const w = window.open("", `oxgtmux_${identifier}`, "width=820,height=620");
     if (!w) { location.href = url; return; }
     w.location.href = url;
-    w.focus();
+    // A2A 자동 팝업과 동일한 예의 — 새 창을 열되 opener 포커스를 되돌려준다(포커스 가로채기 금지).
+    try { window.focus(); } catch { /* noop */ }
   }
 
   // 에이전트 전환 시 곁뷰 닫기.
@@ -603,7 +604,34 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                   }
                 >
                   <div class="kk-workenv">
-                    {/* 세션 목록 — 클릭 시 라이브 화면 새 창. */}
+                    {/* 라이브 pane — 가장 위·가장 크게. capture-pane(다크 .term) + 새 창 버튼. */}
+                    <div class="kk-we-sec kk-we-sec-term">
+                      <div class="kk-we-sech">
+                        라이브 화면 <span class="kk-we-sub">{captureTarget() ? captureTarget()!.display || captureTarget()!.identifier : ""}</span>
+                        <Show when={captureTarget()}>
+                          <button
+                            class="kk-we-pop"
+                            title="이 세션 라이브 화면을 새 창에서 크게 보기"
+                            onClick={() => openTmuxPopout(captureTarget()!.identifier, captureTarget()!.display || captureTarget()!.identifier)}
+                          >🔳 새 창에서 보기</button>
+                        </Show>
+                      </div>
+                      <div class="term">
+                        <Show
+                          when={paneScreen()?.content}
+                          fallback={
+                            <span class="c">{paneScreen.loading ? "# 화면 불러오는 중…" : "# 캡처할 화면이 없습니다 (세션이 비어있거나 접근 불가)."}</span>
+                          }
+                        >
+                          {paneScreen()!.content}
+                        </Show>
+                      </div>
+                      <Show when={paneScreen()?.source_note}>
+                        <div class="kk-we-note">{paneScreen()!.source_note}{paneScreen()?.lines ? ` · ${paneScreen()!.lines}줄` : ""}</div>
+                      </Show>
+                    </div>
+
+                    {/* 세션 목록 — 클릭 시 라이브 화면 새 창. 여러 세션이면 보고 싶은 세션 선택. */}
                     <div class="kk-we-sec">
                       <div class="kk-we-sech">실행 중 tmux · {selSessions().length} <span class="kk-we-sub">(클릭 → 라이브 새 창)</span></div>
                       <For each={selSessions()}>
@@ -612,6 +640,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                             <span class="dot" />
                             <span class="nm">{s.display || s.identifier}</span>
                             <span class="sx">{s.kind}{(s.cwd ? ` · ${baseName(s.cwd)}` : "")}</span>
+                            <span class="po" title="새 창에서 보기">🔳</span>
                           </div>
                         )}
                       </For>
@@ -631,26 +660,6 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                         </For>
                       </div>
                     </Show>
-
-                    {/* 라이브 pane — capture-pane(다크 .term). 실제 터미널 내용이 있을 때만 다크. */}
-                    <div class="kk-we-sec kk-we-sec-term">
-                      <div class="kk-we-sech">
-                        라이브 화면 <span class="kk-we-sub">{captureTarget() ? captureTarget()!.display || captureTarget()!.identifier : ""}</span>
-                      </div>
-                      <div class="term">
-                        <Show
-                          when={paneScreen()?.content}
-                          fallback={
-                            <span class="c">{paneScreen.loading ? "# 화면 불러오는 중…" : "# 캡처할 화면이 없습니다 (세션이 비어있거나 접근 불가)."}</span>
-                          }
-                        >
-                          {paneScreen()!.content}
-                        </Show>
-                      </div>
-                      <Show when={paneScreen()?.source_note}>
-                        <div class="kk-we-note">{paneScreen()!.source_note}{paneScreen()?.lines ? ` · ${paneScreen()!.lines}줄` : ""}</div>
-                      </Show>
-                    </div>
                   </div>
                 </Show>
               </div>
