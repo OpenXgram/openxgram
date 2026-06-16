@@ -124,15 +124,23 @@ function AppInner() {
 
   return (
     <>
+      {/* 팝업(?chat=/?tmux=) 인증 로딩·게이트 — 흰 빈 화면 금지. 항상 다크 + 가시 스피너.
+          팝업은 부모 창과 토큰을 공유하므로 곧 authed()===true 로 수렴한다(흰 플래시 없음). */}
+      <Show when={ANY_POPUP && (authed.loading || authed() !== true)}>
+        <div class="kk-popup-root">
+          <div class="kk-popup-loading">대화 불러오는 중…</div>
+        </div>
+      </Show>
+
       {/* 인증 로딩 — 다크 크롬 없이 라이트 게이트(카드 배경과 동일) */}
-      <Show when={authed.loading}>
+      <Show when={!ANY_POPUP && authed.loading}>
         <div class="kk-login">
           <p style="color:#8a94a6; font-size:14px; margin:0;">{t("common.loading")}</p>
         </div>
       </Show>
 
       {/* 로그인 게이트 — 앱 크롬(다크 헤더/탭) 밖 독립 풀스크린 라이트 카드 */}
-      <Show when={!authed.loading && authed() !== true}>
+      <Show when={!ANY_POPUP && !authed.loading && authed() !== true}>
         <LoginView onUnlock={() => refetchAuth()} />
       </Show>
 

@@ -748,6 +748,7 @@ input:focus-visible {
    ───────────────────────────────────────────────────────────────────── */
 
 :root {
+  --surface: #0b0f1a;            /* 앱 기본 다크 표면(=대화 배경). bare --surface 정의: 팝업 흰배경 폴백 방지 */
   --surface-1: #15181f;          /* 카드/패널 기본 */
   --surface-2: #1c1f26;          /* 한 단계 어두운 표면 */
   --surface-3: #22262e;          /* 헤더 표시 */
@@ -767,6 +768,7 @@ input:focus-visible {
     --bg-soft: #1a1d24;
     --border: #2a2d33;
     --border-strong: #3a3d43;
+    --surface: #0f1115;
     --surface-1: #15181f;
     --surface-2: #1c1f26;
     --surface-3: #22262e;
