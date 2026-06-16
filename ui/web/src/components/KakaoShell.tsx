@@ -58,6 +58,103 @@ function avatarBg(a: AgentRow, isPrimary: boolean): string {
   return (a.ai_type && AI_BG[a.ai_type.toLowerCase()]) || "#7c8ba1";
 }
 
+// ── 라이브 term ANSI 렌더러 (FIX 2) ──
+//   tmux capture-pane -e 출력의 SGR(\x1b[...m) 색 코드를 실제 색 span 으로 변환.
+//   그 외 escape(커서이동·OSC·기타 CSI)는 화면에 garbage 로 보이지 않게 strip.
+//   다크 term 배경(#0c1116)에 잘 보이는 팔레트로 매핑.
+const ANSI_16: string[] = [
+  "#1c1f24", "#f0726a", "#5fd07a", "#e6c668", "#6fb3ff", "#c98ff0", "#5fd0c8", "#c9d4de", // 0-7 normal
+  "#5b6b7a", "#ff857c", "#74e890", "#f4dd86", "#8fc6ff", "#dba6ff", "#74e8e0", "#eef3f8", // 8-15 bright
+];
+// xterm 256 -> hex (16-231 색 큐브, 232-255 grayscale)
+function ansi256(n: number): string {
+  if (n < 16) return ANSI_16[n];
+  if (n >= 232) { const v = 8 + (n - 232) * 10; return `rgb(${v},${v},${v})`; }
+  const i = n - 16;
+  const r = Math.floor(i / 36), g = Math.floor((i % 36) / 6), b = i % 6;
+  const c = (x: number) => (x === 0 ? 0 : 55 + x * 40);
+  return `rgb(${c(r)},${c(g)},${c(b)})`;
+}
+interface AnsiStyle { fg?: string; bg?: string; bold?: boolean; dim?: boolean; italic?: boolean; underline?: boolean }
+interface AnsiSeg { text: string; style: AnsiStyle }
+// SGR 파라미터 배열을 현재 style 에 적용.
+function applySgr(st: AnsiStyle, params: number[]): AnsiStyle {
+  const ns = { ...st };
+  for (let i = 0; i < params.length; i++) {
+    const p = params[i];
+    if (p === 0) { return {}; }                       // reset
+    else if (p === 1) ns.bold = true;
+    else if (p === 2) ns.dim = true;
+    else if (p === 3) ns.italic = true;
+    else if (p === 4) ns.underline = true;
+    else if (p === 22) { ns.bold = false; ns.dim = false; }
+    else if (p === 23) ns.italic = false;
+    else if (p === 24) ns.underline = false;
+    else if (p >= 30 && p <= 37) ns.fg = ansi256(p - 30);
+    else if (p >= 90 && p <= 97) ns.fg = ansi256(p - 90 + 8);
+    else if (p >= 40 && p <= 47) ns.bg = ansi256(p - 40);
+    else if (p >= 100 && p <= 107) ns.bg = ansi256(p - 100 + 8);
+    else if (p === 39) ns.fg = undefined;
+    else if (p === 49) ns.bg = undefined;
+    else if (p === 38 || p === 48) {
+      const isFg = p === 38;
+      if (params[i + 1] === 5) { const col = ansi256(params[i + 2] ?? 0); if (isFg) ns.fg = col; else ns.bg = col; i += 2; }
+      else if (params[i + 1] === 2) { const col = `rgb(${params[i + 2] ?? 0},${params[i + 3] ?? 0},${params[i + 4] ?? 0})`; if (isFg) ns.fg = col; else ns.bg = col; i += 4; }
+    }
+  }
+  return ns;
+}
+// 원시 ANSI 문자열 -> 스타일 세그먼트 배열. SGR 만 해석, 나머지 escape 는 제거.
+function parseAnsi(raw: string): AnsiSeg[] {
+  const segs: AnsiSeg[] = [];
+  let style: AnsiStyle = {};
+  let buf = "";
+  const flush = () => { if (buf) { segs.push({ text: buf, style }); buf = ""; } };
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (ch === "\x1b") {
+      const next = raw[i + 1];
+      if (next === "[") {
+        // CSI ... final-byte
+        let j = i + 2;
+        while (j < raw.length && !/[A-Za-z]/.test(raw[j])) j++;
+        const final = raw[j];
+        const body = raw.slice(i + 2, j);
+        if (final === "m") { flush(); const params = body === "" ? [0] : body.split(";").map((s) => parseInt(s, 10) || 0); style = applySgr(style, params); }
+        // 그 외 CSI(커서이동·지우기 등) 는 무시(strip)
+        i = j;
+      } else if (next === "]") {
+        // OSC ... BEL(\x07) 또는 ST(\x1b\\) 까지 strip
+        let j = i + 2;
+        while (j < raw.length && raw[j] !== "\x07" && !(raw[j] === "\x1b" && raw[j + 1] === "\\")) j++;
+        if (raw[j] === "\x1b") j++;
+        i = j;
+      } else {
+        // 단독 escape — strip 1바이트
+        i += 1;
+      }
+    } else {
+      buf += ch;
+    }
+  }
+  flush();
+  return segs;
+}
+function segCss(s: AnsiStyle): string {
+  const parts: string[] = [];
+  if (s.fg) parts.push(`color:${s.fg}`);
+  if (s.bg) parts.push(`background:${s.bg}`);
+  return parts.join(";");
+}
+function segClass(s: AnsiStyle): string {
+  const c: string[] = [];
+  if (s.bold) c.push("ansi-b");
+  if (s.dim) c.push("ansi-dim");
+  if (s.italic) c.push("ansi-i");
+  if (s.underline) c.push("ansi-u");
+  return c.join(" ");
+}
+
 function isOnline(lastSeen?: string): boolean {
   if (!lastSeen) return false;
   const t = Date.parse(lastSeen);
@@ -732,7 +829,10 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                             <span class="c">{paneScreen.loading ? "# 화면 불러오는 중…" : "# 캡처할 화면이 없습니다 (세션이 비어있거나 접근 불가)."}</span>
                           }
                         >
-                          {paneScreen()!.content}
+                          {/* ANSI SGR 색 코드를 실제 색 span 으로 렌더 — raw escape garbage 제거 (FIX 2) */}
+                          <For each={parseAnsi(paneScreen()!.content!)}>
+                            {(seg) => <span class={segClass(seg.style)} style={segCss(seg.style)}>{seg.text}</span>}
+                          </For>
                         </Show>
                       </div>
                       <Show when={paneScreen()?.source_note}>
@@ -820,30 +920,29 @@ export function KakaoShell(props: { onLogout?: () => void }) {
           </div>
         </div>
 
-        {/* ── rc.338 머신별 TMUX·ACP 세션 기스트 (TMUX 종료 가능) ── */}
-        <div class="kk-sess-gist" style="margin-top:22px">
-          <h3 style="font-size:14px;margin:0 0 4px;color:var(--fg,#dce6ef)">🖥 머신별 세션</h3>
-          <div class="sub" style="margin-bottom:10px">각 머신의 TMUX·ACP 세션 기스트 — TMUX 는 종료(🗑) 가능, ACP 는 읽기 전용</div>
-
+        {/* ── rc.338 머신별 TMUX·ACP 세션 기스트 (TMUX 종료 가능) — 대시보드 카드와 통일 (FIX 1) ── */}
+        <h2 style="padding-top:4px">🖥 머신별 세션</h2>
+        <div class="sub">각 머신의 TMUX·ACP 세션 기스트 — TMUX 는 종료(🗑) 가능, ACP 는 읽기 전용</div>
+        <div class="mach-cards">
           {/* 이 머신(로컬) — 실제 세션 보유 */}
-          <div class="kk-machine-block" style="margin-bottom:14px">
-            <div style="font-weight:700;font-size:13px;margin-bottom:6px">🖥 {localMachineName()} <span style="color:var(--muted);font-weight:600">(이 머신)</span></div>
+          <div class="mach-card">
+            <div class="t">🖥 {localMachineName()} <span class="tag">이 머신</span></div>
 
             {/* TMUX 목록 + 종료 */}
-            <div style="font-size:12px;color:var(--muted);margin:4px 0 2px">TMUX 세션 <span>({localTmuxSessions().length})</span></div>
-            <Show when={localTmuxSessions().length > 0} fallback={<div class="li" style="color:var(--muted);font-size:12px">tmux 세션 없음</div>}>
+            <div class="seclab">TMUX 세션 ({localTmuxSessions().length})</div>
+            <Show when={localTmuxSessions().length > 0} fallback={<div class="mach-row"><span class="empty">tmux 세션 없음</span></div>}>
               <For each={localTmuxSessions()}>
                 {(s) => (
-                  <div class="kk-sess-row" style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line,#1f2c38)">
-                    <span class="live" style={`width:7px;height:7px;border-radius:50%;flex:none;background:${s.attached ? "var(--green,#3fb950)" : "var(--muted,#6b7c8c)"}`} />
-                    <span style="font-size:13px;font-weight:600">{s.display}</span>
-                    <Show when={s.cwd}><span style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">{s.cwd}</span></Show>
-                    <span style="font-size:11px;color:var(--muted);margin-left:auto">{s.attached ? "attached" : "detached"}</span>
+                  <div class="mach-row">
+                    <span class="dot" style={`background:${s.attached ? "var(--green)" : "var(--muted)"}`} />
+                    <span class="nm">{s.display}</span>
+                    <Show when={s.cwd}><span class="sx">{s.cwd}</span></Show>
+                    <span class="meta">{s.attached ? "attached" : "detached"}</span>
                     <button
+                      class="killbtn"
                       title={`tmux 세션 종료: ${s.display}`}
                       disabled={killing() === s.identifier}
                       onClick={() => killTmux(s)}
-                      style="flex:none;background:none;border:1px solid var(--line,#2a3a48);border-radius:6px;padding:2px 8px;font-size:12px;color:#f85149;cursor:pointer"
                     >
                       {killing() === s.identifier ? "종료 중…" : "🗑 종료"}
                     </button>
@@ -853,33 +952,33 @@ export function KakaoShell(props: { onLogout?: () => void }) {
             </Show>
 
             {/* ACP 목록 (read-only) */}
-            <div style="font-size:12px;color:var(--muted);margin:10px 0 2px">ACP 세션 <span>({acpByMachine().local.length})</span></div>
-            <Show when={acpByMachine().local.length > 0} fallback={<div class="li" style="color:var(--muted);font-size:12px">ACP 세션 없음</div>}>
+            <div class="seclab">ACP 세션 ({acpByMachine().local.length})</div>
+            <Show when={acpByMachine().local.length > 0} fallback={<div class="mach-row"><span class="empty">ACP 세션 없음</span></div>}>
               <For each={acpByMachine().local}>
                 {(a) => (
-                  <div class="kk-sess-row" style="display:flex;align-items:center;gap:8px;padding:4px 0">
-                    <span style="font-size:13px">{isPrimary(a) ? "⭐" : "🔵"}</span>
-                    <span style="font-size:13px;font-weight:600">{agentName(a)}</span>
-                    <span style="font-size:11px;color:var(--muted)">{a.role || a.ai_type || "ACP"}</span>
-                    <Show when={onlineFor(a)}><span style="font-size:11px;color:var(--green,#3fb950);margin-left:auto">● 온라인</span></Show>
+                  <div class="mach-row">
+                    <span>{isPrimary(a) ? "⭐" : "🔵"}</span>
+                    <span class="nm">{agentName(a)}</span>
+                    <span class="sx">{a.role || a.ai_type || "ACP"}</span>
+                    <Show when={onlineFor(a)}><span class="meta" style="color:var(--green)">● 온라인</span></Show>
                   </div>
                 )}
               </For>
             </Show>
           </div>
 
-          {/* 원격 머신 — ACP 기스트만(원격 tmux 실세션은 미수집). 연결된 머신만 표시. */}
+          {/* 원격 머신 — ACP 기스트만(원격 tmux 실세션은 미수집). 연결된 머신만 표시. 머신당 카드. */}
           <For each={acpByMachine().remote.filter((g) => isRemoteMachineConnected(g.machine))}>
             {(g) => (
-              <div class="kk-machine-block" style="margin-bottom:14px">
-                <div style="font-weight:700;font-size:13px;margin-bottom:6px">🖥 {g.machine} <span style="color:var(--muted);font-weight:600">(원격)</span></div>
-                <div style="font-size:12px;color:var(--muted);margin:4px 0 2px">ACP 세션 <span>({g.agents.length})</span></div>
+              <div class="mach-card">
+                <div class="t">🖥 {g.machine} <span class="tag">원격</span></div>
+                <div class="seclab">ACP 세션 ({g.agents.length})</div>
                 <For each={g.agents}>
                   {(a) => (
-                    <div class="kk-sess-row" style="display:flex;align-items:center;gap:8px;padding:4px 0">
-                      <span style="font-size:13px">{isPrimary(a) ? "⭐" : "🔵"}</span>
-                      <span style="font-size:13px;font-weight:600">{agentName(a)}</span>
-                      <span style="font-size:11px;color:var(--muted)">{a.role || a.ai_type || "ACP"}</span>
+                    <div class="mach-row">
+                      <span>{isPrimary(a) ? "⭐" : "🔵"}</span>
+                      <span class="nm">{agentName(a)}</span>
+                      <span class="sx">{a.role || a.ai_type || "ACP"}</span>
                     </div>
                   )}
                 </For>
