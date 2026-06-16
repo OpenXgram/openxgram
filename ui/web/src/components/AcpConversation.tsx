@@ -187,6 +187,11 @@ export function AcpConversation(props: {
   const [sessionId, setSessionId] = createSignal<string | null>(null);
   const [activeAgent, setActiveAgent] = createSignal<string | null>(null);
   const [spawnErr, setSpawnErr] = createSignal<string | null>(null);
+  // 세션 부팅(POST /sessions)이 지연/실패해도 기록은 표시한다 — booting=구동 시도 중,
+  // bootTimedOut=8초 내 sessionId 미수신(원격 always 에이전트 SSH spawn hang 등). 둘 다 기록을
+  // 가리지 않는다(아래 렌더 게이트가 bubbles().length 로도 통과). cold-case(라이브 세션 없음) 핵심.
+  const [booting, setBooting] = createSignal(false);
+  const [bootTimedOut, setBootTimedOut] = createSignal(false);
   const [bubbles, setBubbles] = createSignal<Bubble[]>([]);
   const [draft, setDraft] = createSignal("");
 
@@ -451,14 +456,33 @@ export function AcpConversation(props: {
   // 미설치면 spawnErr 로 명확히 안내(에이전트 선택 화면 fallback 에 표시됨).
   // preset 이 없으면(picker 경로) 단순히 목록만 로드.
   async function bootForPreset(p: AcpPreset) {
-    const list = await loadAgents();
-    const found = list.find((a) => a.name === p.adapter);
-    if (found && !found.installed) {
-      setSpawnErr(`이 에이전트의 ACP 어댑터(${p.adapter}) 미설치 — 어댑터를 설치한 뒤 다시 시도하세요.`);
-      return;
-    }
-    // 목록에 없어도(probe 누락) 구동을 시도 — 실제 미설치면 spawn 단계에서 오류가 노출됨.
-    await spawn(p.adapter, { cwd: p.cwd, execMode: p.execMode, label: p.label });
+    // ① 기록 우선(세션 부팅과 독립·병렬) — POST /sessions 의 (원격 always SSH spawn) hang 에
+    //    가로막히지 않고 저장된 대화가 즉시 보이게 한다. cold-case(라이브 세션 없음)의 핵심 fix.
+    //    렌더 게이트가 bubbles().length 로도 통과하므로 sessionId 가 영영 안 와도 기록은 표시된다.
+    void loadHistory().catch(() => {});
+
+    // ② 세션 부팅은 non-blocking + 타임아웃. 8초 내 sessionId 미수신이면 무한 "구동 중…" 대신
+    //    인라인 안내(기록은 표시됨, 전송 시 재시도)를 노출한다.
+    setBooting(true);
+    setBootTimedOut(false);
+    const t = window.setTimeout(() => {
+      if (!sessionId()) setBootTimedOut(true);
+    }, 8000);
+    void (async () => {
+      try {
+        const list = await loadAgents();
+        const found = list.find((a) => a.name === p.adapter);
+        if (found && !found.installed) {
+          setSpawnErr(`이 에이전트의 ACP 어댑터(${p.adapter}) 미설치 — 어댑터를 설치한 뒤 다시 시도하세요.`);
+          return;
+        }
+        // 목록에 없어도(probe 누락) 구동을 시도 — 실제 미설치면 spawn 단계에서 오류가 노출됨.
+        await spawn(p.adapter, { cwd: p.cwd, execMode: p.execMode, label: p.label });
+      } finally {
+        window.clearTimeout(t);
+        setBooting(false);
+      }
+    })();
   }
 
   if (props.preset) {
@@ -802,6 +826,7 @@ export function AcpConversation(props: {
         body,
       );
       setSessionId(r.sessionId);
+      setBootTimedOut(false); // 세션 연결됨 — 부팅 지연 안내 해제.
       setActiveAgent(props.preset?.displayName || opts?.label || agent);
       if (!opts?.keepHistory) {
         memInjected = false; // 새 세션 → 메모리 재주입 허용.
@@ -840,6 +865,15 @@ export function AcpConversation(props: {
       setSpawnErr((e as Error)?.message ?? String(e));
     } finally {
       setBusy(false);
+    }
+    // 세션이 막 붙었는데 부팅 지연 중 큐에 쌓인 메시지가 있으면 즉시 첫 건을 전송(나머지는 턴 종료 시 연쇄).
+    if (sessionId()) {
+      const q = queue();
+      if (q.length > 0 && !busy()) {
+        setQueue(q.slice(1));
+        setDraft(q[0]);
+        void sendPrompt();
+      }
     }
   }
 
@@ -1223,6 +1257,15 @@ export function AcpConversation(props: {
       setDraft("");
       return;
     }
+    // 세션이 아직 없으면(부팅 지연/실패한 cold-case) 전송을 큐에 적재하고 부팅을 재시도한다.
+    // 세션이 붙으면 큐가 자동 전송된다(턴 종료 핸들러). lazy-spawn-on-prompt.
+    if (!sessionId()) {
+      setQueue([...queue(), text]);
+      setDraft("");
+      if (!booting() && props.preset && lastSpawn == null) void bootForPreset(props.preset);
+      else if (!busy() && lastSpawn) void spawn(lastSpawn.agent, { ...(lastSpawn.opts ?? {}), keepHistory: true });
+      return;
+    }
     void sendPrompt();
   }
 
@@ -1253,7 +1296,10 @@ export function AcpConversation(props: {
 
   return (
     <Show
-      when={sessionId()}
+      // 렌더 게이트 완화 — sessionId 가 아직 null(부팅 중/실패)이라도 저장된 기록(bubbles)이 있으면
+      // 대화 화면을 즉시 렌더한다. 원격 always 에이전트의 POST /sessions hang 에 가로막혀 114개
+      // 메시지가 "구동 중…" 뒤에 숨던 버그 fix. 전송은 sessionId 생기면 가능(composer 가 안내).
+      when={sessionId() || bubbles().length > 0}
       fallback={
         props.preset ? (
           // ── preset 진입(roster 선택) — picker 없이 구동/오류 상태만 표시 ──
@@ -1273,8 +1319,12 @@ export function AcpConversation(props: {
               <Show when={spawnErr()}>
                 <div class="kk-talk-err">⚠ {spawnErr()}</div>
               </Show>
-              <Show when={!spawnErr() && !agentsErr()}>
+              <Show when={!spawnErr() && !agentsErr() && !bootTimedOut()}>
                 <div class="kk-talk-empty">⚡ ACP 세션 구동 중…</div>
+              </Show>
+              {/* 8초 내 미연결 — 무한 스피너 대신 명확한 안내(기록 없음 + 미연결). */}
+              <Show when={!spawnErr() && !agentsErr() && bootTimedOut()}>
+                <div class="kk-talk-empty">⏳ ACP 세션 연결 실패/지연 — 전송 시 재시도됩니다.</div>
               </Show>
             </div>
           </div>
@@ -1733,6 +1783,17 @@ export function AcpConversation(props: {
             </Show>
             <span class="kk-sl kk-sl-usage">⚡ {usageLabel()}</span>
           </div>
+          {/* 기록은 떴지만 세션이 아직 부팅 중/지연 — 전송은 잠시 후. 무한 스피너로 기록을 가리지 않는다. */}
+          <Show when={!sessionId() && booting() && !bootTimedOut()}>
+            <div style="border:1px solid #3a4658;border-radius:8px;padding:6px 8px;margin-bottom:6px;background:#1a2230;color:#9fb0c9;font-size:11.5px;">
+              ⚡ ACP 세션 구동 중… (기록은 표시됨 · 메시지 전송은 잠시 후 가능)
+            </div>
+          </Show>
+          <Show when={!sessionId() && bootTimedOut()}>
+            <div style="border:1px solid #5a4636;border-radius:8px;padding:6px 8px;margin-bottom:6px;background:#2a2117;color:#d9b48a;font-size:11.5px;">
+              ⏳ ACP 세션 연결 실패/지연 — 기록은 표시됨 · 전송 시 재시도됩니다.
+            </div>
+          </Show>
           <Show when={queue().length > 0}>
             <div style="border:1px solid #2f6a3a; border-radius:8px; padding:6px 8px; margin-bottom:6px; background:#16241b;">
               <div style="color:#7fc99a; font-size:11.5px; margin-bottom:4px;">⏱ 대기열 ({queue().length}) — 현재 턴 끝나면 순서대로 전송</div>

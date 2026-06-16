@@ -11917,12 +11917,29 @@ async fn a2a_agents(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
+    // 로컬 머신 라벨(기본 "서울"; machines.json local_label override). 원격 판별 기준.
+    let local_label = std::fs::read_to_string(machines_config_path())
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("local_label").and_then(|l| l.as_str()).map(String::from))
+        .unwrap_or_else(|| "서울".to_string());
     let infos: Vec<crate::daemon_gui_a2a::A2aAgentInfo> = {
         let mut db = state.db.lock().await;
+        // live peer 연결 신호 — peers 테이블에 alias 가 있는지(원격 도달성 판단). 조작 없음.
+        let peer_aliases: std::collections::HashSet<String> = {
+            let mut ps = db
+                .conn()
+                .prepare("SELECT alias FROM peers")
+                .map_err(|e| internal(&format!("a2a peers prep: {e}")))?;
+            let r = ps
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|e| internal(&format!("a2a peers query: {e}")))?;
+            r.filter_map(|x| x.ok()).collect()
+        };
         let mut stmt = db
             .conn()
             .prepare(
-                "SELECT ac.alias, p.ai_type \
+                "SELECT ac.alias, p.ai_type, p.machine \
                  FROM agent_capabilities ac \
                  LEFT JOIN agent_profiles p ON p.alias = ac.alias \
                  WHERE ac.role IS NOT 'tmux' \
@@ -11931,9 +11948,23 @@ async fn a2a_agents(
             .map_err(|e| internal(&format!("a2a roster prep: {e}")))?;
         let rows = stmt
             .query_map([], |r| {
+                let alias = r.get::<_, String>(0)?;
+                let ai_type = r.get::<_, Option<String>>(1)?;
+                let machine = r.get::<_, Option<String>>(2)?;
+                // 원격 = machine 설정됐고 로컬 라벨과 다름. peer 존재 = 살아있는 연결 신호.
+                let is_remote = machine
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|m| m != local_label)
+                    .unwrap_or(false);
+                let has_peer = peer_aliases.contains(&alias);
                 Ok(crate::daemon_gui_a2a::A2aAgentInfo {
-                    alias: r.get::<_, String>(0)?,
-                    ai_type: r.get::<_, Option<String>>(1)?,
+                    alias,
+                    ai_type,
+                    machine,
+                    is_remote,
+                    has_peer,
                 })
             })
             .map_err(|e| internal(&format!("a2a roster query: {e}")))?;

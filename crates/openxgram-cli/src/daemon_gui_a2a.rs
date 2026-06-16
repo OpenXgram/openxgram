@@ -118,6 +118,17 @@ pub struct A2aAgentInfo {
     /// `agent_profiles.ai_type` (free text, e.g. `claude`/`codex`/`gemini`).
     /// `None`/empty ⇒ not ACP-drivable ⇒ `reachable:false`.
     pub ai_type: Option<String>,
+    /// `agent_profiles.machine` — the machine label this agent lives on
+    /// (e.g. `서울`/`zalman`). `None` ⇒ treat as local (no machine pin).
+    pub machine: Option<String>,
+    /// Whether this agent runs on a remote machine (machine set AND != local).
+    /// A remote agent is only honestly reachable if it has a live peer
+    /// connection — a local-machine adapter is always ACP-drivable in-process.
+    pub is_remote: bool,
+    /// Whether a peer row exists for this alias (the connectivity signal for
+    /// remote agents). Local agents ignore this. No fabrication: derived from
+    /// the `peers` table by the caller (daemon_gui.rs).
+    pub has_peer: bool,
 }
 
 /// `GET /v1/gui/a2a/agents` — list A2A-reachable OpenXgram agents.
@@ -141,19 +152,40 @@ pub fn list_agents(agents_in: &[A2aAgentInfo]) -> Value {
                 .filter(|s| !s.is_empty())
                 .and_then(server::resolve_acp_agent)
                 .is_some();
-            if drivable {
+            // 정직한 reachability — ai_type 이 ACP 어댑터에 매핑되는 것만으론 부족하다.
+            // 원격 머신(machine != local) 에이전트는 살아있는 peer 연결(has_peer)이 있어야
+            // 실제로 호출 가능(SSH spawn 도달 보장). peer 없으면(peers=0) 라벨만 있고 미연결 →
+            // "미도달/대기"(reachable:false). 로컬 ACP 에이전트는 in-process spawn 가능 → 그대로 reachable.
+            // 절대 규칙 1: reachability 를 조작하지 않는다 — 실제 연결 데이터만 반영.
+            let connectivity_ok = !a.is_remote || a.has_peer;
+            if drivable && connectivity_ok {
                 json!({
                     "alias": a.alias,
                     "reachable": true,
                     "aiType": a.ai_type,
+                    "machine": a.machine,
+                    "remote": a.is_remote,
                     "agentCardUrl": server::agent_card_url(&a.alias),
                     "tasksUrl": server::agent_tasks_url(&a.alias),
+                })
+            } else if drivable && !connectivity_ok {
+                // ACP-drivable 이지만 원격이고 live peer 없음 — 라벨·미연결(전송 시도 시 도달 불가).
+                json!({
+                    "alias": a.alias,
+                    "reachable": false,
+                    "aiType": a.ai_type,
+                    "machine": a.machine,
+                    "remote": true,
+                    "agentCardUrl": Value::Null,
+                    "reason": "remote agent with no live peer connection (라벨·미연결 — peers=0)",
                 })
             } else {
                 json!({
                     "alias": a.alias,
                     "reachable": false,
                     "aiType": a.ai_type,
+                    "machine": a.machine,
+                    "remote": a.is_remote,
                     "agentCardUrl": Value::Null,
                     "reason": "no ACP-drivable ai_type (cannot be executed via ACP)",
                 })
