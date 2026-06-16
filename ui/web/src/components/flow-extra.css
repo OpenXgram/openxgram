@@ -1034,3 +1034,78 @@
   mask-image: linear-gradient(180deg, #000 calc(100% - 26px), transparent 100%);
 }
 
+/* ── 이슈 #124 — 협업 곁뷰 상세 설명(범례/도움말) + 발언권 가시적 피드백 ── */
+/* 범례: 카톡스타일로 컴팩트. 기본 접힘(summary)으로 패널을 어지럽히지 않음. */
+.side.a2a-side-panel .a2a-legend {
+  flex: none;
+  margin: 8px 14px 0;
+  border: 1px solid #e1e8ef;
+  border-radius: 10px;
+  background: #f7f9fb;
+  font-size: 11.5px;
+  color: #45525f;
+}
+.side.a2a-side-panel .a2a-legend > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 8px 11px;
+  font-weight: 700;
+  color: #4a627e;
+  user-select: none;
+}
+.side.a2a-side-panel .a2a-legend > summary::-webkit-details-marker { display: none; }
+.side.a2a-side-panel .a2a-legend[open] > summary { border-bottom: 1px solid #e1e8ef; }
+.side.a2a-side-panel .a2a-legend-list {
+  margin: 0;
+  padding: 8px 14px 10px 14px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  line-height: 1.45;
+}
+.side.a2a-side-panel .a2a-legend-list li { display: flex; align-items: baseline; gap: 6px; }
+.side.a2a-side-panel .a2a-legend-list li b { color: #2f3a45; }
+
+/* 상태 칩(.stt) — 클릭 아님을 분명히: default 커서. 턴 진행 중엔 강조 점멸. */
+.side.a2a-side-panel .convs .conv .stt { cursor: default; }
+.side.a2a-side-panel .convs .conv .stt.is-granting {
+  color: #2f7d44;
+  font-weight: 700;
+  animation: a2aGrantPulse 1.1s ease-in-out infinite;
+}
+
+/* 🎙 발언권 버튼 — class 기반(이전 inline style 대체). 도달가능과 무관하게 발언권 부여 가능. */
+.side.a2a-side-panel .convs .conv .give {
+  margin-left: 6px;
+  flex: none;
+  border: 1px solid #cdd9e4;
+  background: #eef4fa;
+  border-radius: 7px;
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #5a7fb0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.side.a2a-side-panel .convs .conv .give:hover:not(:disabled) { background: #e1ecf7; border-color: #b9cbdd; }
+.side.a2a-side-panel .convs .conv .give:disabled { opacity: .55; cursor: not-allowed; }
+/* 발언권 부여 중인 그 버튼만 초록 강조 + 점멸 — "클릭이 먹혔다"를 눈에 보이게. */
+.side.a2a-side-panel .convs .conv .give.granting {
+  opacity: 1;
+  background: #e7f3ea;
+  border-color: #acd6b6;
+  color: #2f7d44;
+  animation: a2aGrantPulse 1.1s ease-in-out infinite;
+}
+
+/* 발언권 진행 메시지 강조(.grantmsg.is-active) — 턴 진행 중엔 초록 배너로 또렷이. */
+.side.a2a-side-panel .convs .grantmsg.is-active {
+  background: #e7f3ea;
+  color: #2f7d44;
+  font-weight: 700;
+  border: 1px solid #acd6b6;
+}
+@keyframes a2aGrantPulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+

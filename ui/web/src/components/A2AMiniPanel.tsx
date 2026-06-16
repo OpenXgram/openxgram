@@ -451,6 +451,20 @@ export function A2AMiniPanel(props: {
           </div>
         </div>
 
+        {/* ── 범례/도움말(상세 설명) — 곁뷰의 아이콘·상태가 self-explanatory 하도록 한 줄 정리(이슈 #124).
+            카톡스타일로 컴팩트하게: 상태(도달/미도달)·자동열기(🔔/🔕)·발언권(🎙)·새창(🗗)·행 클릭 의미. ── */}
+        <details class="a2a-legend">
+          <summary>ℹ️ 협업 곁뷰 사용법 — 아이콘·상태 설명</summary>
+          <ul class="a2a-legend-list">
+            <li><span class="a2a-mini-dot live" /> <b>🟢 도달 가능</b> — 에이전트가 온라인이라 <b>A2A 위임(대화 진행) 가능</b>.</li>
+            <li><span class="a2a-mini-dot idle" /> <b>⚪ 미도달</b> — 오프라인/연결 불가 → 지금은 위임할 수 없음(대기).</li>
+            <li><b>“진행 가능” / “대기”</b> 는 클릭 동작이 아닌 <b>상태 표시</b>입니다(버튼 아님).</li>
+            <li><b>행/이름 클릭 🗗</b> — 그 에이전트와의 <b>A2A 대화창을 새 창으로</b> 엽니다(터미널 아님 · 터미널은 작업환경 곁뷰).</li>
+            <li><b>🔔/🔕 자동</b> — 자동 열기: 그 에이전트가 메시지를 보내면 대화창을 자동으로 띄움(🔔 켜짐 / 🔕 꺼짐).</li>
+            <li><b>🎙 발언권</b> — 누르면 그 에이전트의 ACP 턴을 진행(누적 맥락 + 방/역할 지침). 진행 상태가 아래에 표시됩니다.</li>
+          </ul>
+        </details>
+
         {/* 스크롤 본문 — 에이전트 목록 + 오케스트레이션 + 참가자(+보안방). flex:1 + min-height:0 으로
             실제로 스크롤. 내용이 넘치면 하단 페이드(.a2a-side-body2.scrollable)로 '더 있음' 단서,
             다 보이면 페이드 없이 깔끔히 끝남(#2b). */}
@@ -472,24 +486,29 @@ export function A2AMiniPanel(props: {
                   <div class="av" style={`width:36px;height:36px;background:${a.reachable ? "#5aa469" : "#7c8ba1"};cursor:pointer`}
                     title={`↔${a.alias} 대화를 새 창으로 열기`}
                     onClick={() => clickOpen(a.alias)}>{a.alias.slice(0, 1).toUpperCase()}</div>
-                  <div style="cursor:pointer" title={`↔${a.alias} 대화를 새 창으로 열기`} onClick={() => clickOpen(a.alias)}>
+                  <div style="cursor:pointer" title={`↔${a.alias} 대화를 새 창으로 열기 (A2A 대화창 · 터미널 아님)`} onClick={() => clickOpen(a.alias)}>
                     <div class="nm">↔ {a.alias} 🗗</div>
-                    <div class="lt">{a.reachable ? "도달 가능 — A2A 위임 가능" : "미도달 — 대기"}</div>
+                    <div class="lt">{a.reachable ? "🟢 도달 가능 — 클릭해 A2A 대화창 열기" : "⚪ 미도달 — 오프라인(지금 위임 불가)"}</div>
                   </div>
-                  <div class="stt">
+                  {/* 상태 표시(클릭 동작 아님). 도달가능=A2A 위임 가능 / 미도달=대기 / 발언권 부여 중=턴 진행중. */}
+                  <div class="stt" classList={{ "is-granting": granting() === a.alias }}
+                    title={granting() === a.alias ? "턴 진행중 — 발언권을 부여해 ACP 턴이 진행되고 있습니다"
+                      : (a.reachable ? "상태: 도달 가능 — A2A 위임 가능 (클릭 동작 아님)" : "상태: 미도달 — 오프라인이라 지금 위임 불가 (클릭 동작 아님)")}>
                     <Show when={a.reachable || granting() === a.alias} fallback={<>⚪ 대기</>}>
-                      <span class="live" /> {granting() === a.alias ? "턴 진행중" : "진행 가능"}
+                      <span class="live" /> {granting() === a.alias ? "턴 진행중…" : "진행 가능"}
                     </Show>
                   </div>
                   {/* per-agent AUTO-POP 토글 — 켜면 이 에이전트 활동 시 자동으로 새 창. (전역 ON 이면 항상 적용) */}
                   <button class="a2a-autopop-toggle" classList={{ on: isAutoOn(a.alias) }}
-                    title={allOn() ? "자동 열기: 전역 ON (모든 에이전트 적용 중)" : (isAutoOn(a.alias) ? "자동 열기 ON — 끄기" : "자동 열기 OFF — 켜기")}
+                    title={allOn() ? "자동 열기: 전역 ON (모든 에이전트 적용 중) — 헤더에서 끄기"
+                      : (isAutoOn(a.alias) ? "자동 열기 ON — 이 에이전트가 메시지를 보내면 대화창을 자동으로 띄웁니다 (눌러서 끄기)"
+                        : "자동 열기 OFF — 이 에이전트가 메시지를 보내면 자동으로 띄우지 않습니다 (눌러서 켜기)")}
                     disabled={allOn()}
-                    onClick={() => togglePerAgent(a.alias)}>{isAutoOn(a.alias) ? "🔔 자동" : "🔕 자동"}</button>
-                  <button class="give" style="margin-left:6px;border:1px solid #cdd9e4;background:#eef4fa;border-radius:7px;padding:4px 9px;font-size:11px;font-weight:700;color:#5a7fb0;cursor:pointer"
+                    onClick={() => togglePerAgent(a.alias)}>{isAutoOn(a.alias) ? "🔔 자동 ON" : "🔕 자동 OFF"}</button>
+                  <button class="give" classList={{ granting: granting() === a.alias }}
                     disabled={granting() !== null}
-                    title="이 에이전트에게 발언권 부여 (누적 맥락 + 방/역할 지침)"
-                    onClick={() => void grantTurn(a.alias)}>🎙</button>
+                    title="발언권 부여 — 이 에이전트의 ACP 턴을 진행합니다 (누적 맥락 + 방/역할 지침). 누르면 아래에 진행 상태가 표시됩니다."
+                    onClick={() => void grantTurn(a.alias)}>{granting() === a.alias ? "🎙 부여됨…" : "🎙 발언권"}</button>
                 </div>
               )}
             </For>
@@ -499,7 +518,7 @@ export function A2AMiniPanel(props: {
               ⚠ 팝업이 차단되어 ‹{popBlocked()}› 창을 자동으로 열지 못했습니다. 위 칩/행을 직접 클릭하면 열립니다(차단 해제 권장).
             </div>
           </Show>
-          <Show when={grantMsg()}><div class="grantmsg">{grantMsg()}</div></Show>
+          <Show when={grantMsg()}><div class="grantmsg" classList={{ "is-active": granting() !== null }}>{grantMsg()}</div></Show>
         </div>
 
         {/* ── P4c — 오케스트레이션 실행 러너 ── */}
