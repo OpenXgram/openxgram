@@ -267,7 +267,16 @@
 .kk-talk-roster .rcol .badge{background:#fa5252; color:#fff; font-size:10.5px; font-weight:800; border-radius:11px; min-width:18px; height:18px; padding:0 5px; display:flex; align-items:center; justify-content:center;}
 
 /* ---------- 우측 대화방 (정본 .chat / .chat-top / .pill) ---------- */
-.kk-talk-chat{flex:1; min-width:0; display:flex; flex-direction:column; background:var(--kk-surface); position:relative;}
+/* 🔧 CSS 변수 fallback — .kk-talk-chat 는 .kk 스코프 밖에서도 렌더된다(메신저 탭이
+   .kk 래퍼 안에 없음). 그래서 var(--kk-*) 가 미해결 → 말풍선 배경 투명 등 깨짐 버그.
+   여기서 동일 변수를 재선언해 스코프 무관하게 해결되게 한다. --kakao-yellow 는 정본 목업 값. */
+.kk-talk-chat{
+  --kk-yellow:#fee500; --kk-yellow-d:#f2d800; --kk-me:#e8edf3;
+  --kakao-yellow:#fee500;
+  --kk-surface:#f6f7f9; --kk-list:#ffffff; --kk-ink:#1f2937;
+  --kk-sub:#8a94a6; --kk-line:#e9ebf0; --kk-online:#27c24c; --kk-accent:#2f9e44;
+  flex:1; min-width:0; display:flex; flex-direction:column; background:var(--kk-surface); position:relative;
+}
 .kk-talk-blank{flex:1; display:flex; align-items:center; justify-content:center; color:var(--kk-sub); font-size:13px;}
 .kk-talk-chat .chat-top{background:#fff; padding:13px 20px; display:flex; align-items:center; gap:11px; border-bottom:1px solid var(--kk-line); flex:none;}
 .kk-talk-chat .chat-top .ava{width:34px; height:34px; border-radius:11px; flex:none; display:flex; align-items:center; justify-content:center; font-size:14px; color:#fff; font-weight:700;}
@@ -279,15 +288,18 @@
 .kk-talk-chat .pill.off .pdot{background:#c4c9d2;}
 .kk-talk-chat .pill.clk{cursor:pointer;}
 .kk-talk-chat .pill.clk:hover{background:#e4e8ee;}
+/* 토글 활성(작업환경/협업 곁뷰 열림) — 강조 배경. classList active 가 매칭. */
+.kk-talk-chat .pill.clk.active{background:#dde7f2; color:#2a4a6a;}
 .kk-talk-chat .back{display:none; font-size:21px; color:#5b6678; cursor:pointer; margin-right:4px; align-items:center; line-height:1;}
 
 .kk-talk-chat .msgs{flex:1; overflow-y:auto; padding:20px 26px; display:flex; flex-direction:column; gap:16px; min-height:0;}
 .kk-talk-empty{margin:auto; color:var(--kk-sub); font-size:12.5px; text-align:center; line-height:1.7;}
 .kk-talk-chat .day{align-self:center; background:#e3e7ec; color:#7b8494; font-size:11px; padding:3px 12px; border-radius:20px;}
 
-/* 내 메시지 = 그레이 말풍선 (오른쪽) */
-.kk-talk-chat .me{align-self:flex-end; display:flex; flex-direction:row-reverse; gap:7px; align-items:flex-end; max-width:70%;}
-.kk-talk-chat .me .b{background:var(--kk-me); padding:9px 13px; border-radius:14px; border-top-right-radius:4px; font-size:13.5px; line-height:1.45; color:#1c1c1c; white-space:pre-wrap; word-break:break-word;}
+/* 내 메시지 = 카카오 노랑 말풍선 (오른쪽) — 정본 목업 .row.me .bub.
+   background var(--kakao-yellow)#fee500, border-radius 14px 4px 14px 14px. */
+.kk-talk-chat .me{align-self:flex-end; display:flex; flex-direction:row-reverse; gap:7px; align-items:flex-end; max-width:74%;}
+.kk-talk-chat .me .b{background:var(--kakao-yellow, #fee500); padding:9px 13px; border-radius:14px 4px 14px 14px; font-size:13.5px; line-height:1.45; color:#1c1c1c; white-space:pre-wrap; word-break:break-word; box-shadow:0 1px 1px rgba(0,0,0,.05);}
 .kk-talk-chat .me .mr{display:flex; flex-direction:column; align-items:flex-end; margin-bottom:1px;}
 .kk-talk-chat .me .tm{font-size:10.5px; color:#b0b6c0;}
 .kk-talk-chat .me .rr{font-size:10px; font-weight:700;}

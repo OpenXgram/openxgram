@@ -270,35 +270,26 @@ export function KakaoShell(props: { onLogout?: () => void }) {
         >
           {(a) => (
             <>
-              <div class="chead">
-                <div class="av" style={`width:34px;height:34px;border-radius:12px;background:${avatarBg(a(), isPrimary(a()))};font-size:14px`}>
-                  {isPrimary(a()) ? "⭐" : agentName(a()).slice(0, 1).toUpperCase()}
-                </div>
-                <div>
-                  <div class="nm">{agentName(a())}</div>
-                  <div class="role">{a().role || a().description || "ACP"}</div>
-                </div>
-                <div class="sp" />
-                <button class="vbtn" classList={{ on: sideTmux() }} onClick={() => { setSideA2A(false); setSideTmux((v) => !v); }}>🖥 작업환경</button>
-                <button class="vbtn" classList={{ on: sideA2A() }} onClick={() => { setSideTmux(false); setSideA2A((v) => !v); }}>🔗 협업</button>
-                <button class="vbtn" title="방 설정 (하네스·역할·오케스트레이션)" onClick={() => setRoomCfgOpen(true)}>⚙️ 방 설정</button>
-              </div>
+              {/* 🔧 Fix#2 — 중복 헤더 제거: 예전엔 여기 별도 .chead(이름+역할+작업환경/협업/방설정) 를
+                  렌더하고, 그 아래 AcpConversation 이 자기 .chat-top(이름+스트리밍/ACP/아티팩트/새) 를
+                  또 렌더해 "Starian" 헤더가 두 줄로 보였다. 이제 단일 헤더 = AcpConversation 의
+                  .chat-top 하나만 쓰고, 작업환경/협업/방설정 버튼은 headerExtra 로 그 헤더에 합친다. */}
 
-              {/* A2A 실시간 미니패널(정본 .mini) + 협업 곁뷰(.side) — A2AMiniPanel 이 둘 다 렌더. */}
-              <A2AMiniPanel
-                selfAlias={agentName(a())}
-                open={sideA2A}
-                onOpen={() => { setSideTmux(false); setSideA2A(true); }}
-                onClose={() => setSideA2A(false)}
-              />
-
-              {/* 대화 본문 — 라이브 ACP 세션(SSE 스트림). 목업 .msgs 영역을 ACP 엔진으로 구동. */}
+              {/* 대화 본문 — 라이브 ACP 세션(SSE 스트림). 목업 .msgs 영역을 ACP 엔진으로 구동.
+                  단일 헤더(.chat-top)에 작업환경/협업/방설정 토글을 headerExtra 로 주입. */}
               <div class="oxg-acp-slot">
                 <Show when={selected()} keyed>
                   {(_k) => (
                     <AcpConversation
                       preset={acpPreset()}
                       popoutAlias={a().alias}
+                      headerExtra={() => (
+                        <>
+                          <span class="pill clk" classList={{ active: sideTmux() }} onClick={() => { setSideA2A(false); setSideTmux((v) => !v); }}>🖥 작업환경</span>
+                          <span class="pill clk" classList={{ active: sideA2A() }} onClick={() => { setSideTmux(false); setSideA2A((v) => !v); }}>🔗 협업</span>
+                          <span class="pill clk" title="방 설정 (하네스·역할·오케스트레이션)" onClick={() => setRoomCfgOpen(true)}>⚙️ 방 설정</span>
+                        </>
+                      )}
                       status={() => ({
                         folder: a().project_path ?? null,
                         role: a().role ?? null,
@@ -309,6 +300,18 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                     />
                   )}
                 </Show>
+              </div>
+
+              {/* A2A 실시간 미니패널(정본 .a2a-mini) + 협업 곁뷰(.a2a-side) — A2AMiniPanel 이 둘 다 렌더.
+                  .kk-a2a-mount 로 감싸 absolute 마운트 → strip 이 .chat-top 헤더 바로 아래(top:58px)에
+                  한 줄로 정렬(flow-extra.css). 헤더→strip→메시지 순서 보장(중복 헤더 인상 제거). */}
+              <div class="kk-a2a-mount">
+                <A2AMiniPanel
+                  selfAlias={agentName(a())}
+                  open={sideA2A}
+                  onOpen={() => { setSideTmux(false); setSideA2A(true); }}
+                  onClose={() => setSideA2A(false)}
+                />
               </div>
 
               {/* 작업환경(tmux) 곁뷰 — 정본 .side#sideTmux */}

@@ -234,22 +234,28 @@ export function A2AMiniPanel(props: {
 
   return (
     <>
-      {/* ── A2A 실시간 미니패널 (정본 .mini) — 대화 헤더 바로 아래 한 줄 요약 ── */}
-      <div class="mini" onClick={() => props.onOpen()} title="협업(A2A) 곁뷰 열기">
+      {/* ── A2A 실시간 미니패널 (정본 .a2a-mini) — 대화 헤더 바로 아래 한 줄 요약.
+          클래스는 flow-extra.css 의 .a2a-mini* 패밀리와 정확히 매칭(스코프 충돌 없음).
+          이전엔 bare .mini/.st 를 썼는데 그 CSS 는 mockup.css 의 .oxg-app 스코프 전용이라
+          라이브 경로(.oxg-app 래퍼 없음)에서 무스타일 → strip 깨짐 버그였다(fix). ── */}
+      <div class="a2a-mini" onClick={() => props.onOpen()} title="협업(A2A) 곁뷰 열기">
         <b>🔗 협업 현황</b>
         <Show
           when={agents().length > 0}
-          fallback={<span class="st"><span class="idle" /> 활성 협업 없음</span>}
+          fallback={<span class="a2a-mini-st"><span class="a2a-mini-dot idle" /> 활성 협업 없음</span>}
         >
           <For each={live().slice(0, 2)}>
-            {(a) => (<span class="st"><span class="live" /> ↔{a.alias} 진행 가능</span>)}
+            {(a) => (<span class="a2a-mini-st"><span class="a2a-mini-dot live" /> ↔{a.alias} 진행 가능</span>)}
           </For>
           <For each={idle().slice(0, 1)}>
-            {(a) => (<span class="st"><span class="idle" /> ↔{a.alias} 대기</span>)}
+            {(a) => (<span class="a2a-mini-st"><span class="a2a-mini-dot idle" /> ↔{a.alias} 대기</span>)}
           </For>
+          <Show when={agents().length > 0}>
+            <span class="a2a-mini-badge">{agents().length}</span>
+          </Show>
         </Show>
-        <span class="sp" />
-        <span class="more">자세히 ›</span>
+        <span class="a2a-mini-sp" />
+        <span class="a2a-mini-more">자세히 ›</span>
       </div>
 
       {/* ── 협업(A2A) 곁뷰 — 우측 슬라이드 패널 (정본 .side#sideA2A) ── */}

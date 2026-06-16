@@ -71,6 +71,33 @@ type Bubble =
 
 type Seg = { kind: "text"; text: string } | { kind: "code"; text: string };
 
+// ── 에이전트별 결정적 파스텔 배경 ──────────────────────────────────────────
+// 같은 에이전트(alias/displayName)는 항상 같은 흐린 파스텔색 → 여러 에이전트가 섞인
+// 대화에서 사람이 발화 주체를 시각적으로 구분. hue 는 신원 해시로, 채도·명도는 고정
+// (저채도·고명도 = 흐리게). 결정적: 같은 키 → 같은 hue. 사람/프라이머리는 호출측에서 별도.
+function hashHue(key: string): number {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) {
+    h = (h * 31 + key.charCodeAt(i)) | 0;
+  }
+  // 0..359 hue. 부호 제거.
+  return Math.abs(h) % 360;
+}
+// 흐린 파스텔 배경(매우 옅음) — 답변 블록 배경. 채도 38%, 명도 95%.
+function agentPastelBg(key: string | null | undefined): string {
+  const k = (key ?? "").trim();
+  if (!k) return "#ffffff"; // 신원 불명 → 흰색(기본).
+  const hue = hashHue(k.toLowerCase());
+  return `hsl(${hue}, 38%, 95%)`;
+}
+// 살짝 진한 동색 — 블록 좌측 보더/이름색 강조용(구분 보조). 채도 45%, 명도 78%.
+function agentPastelAccent(key: string | null | undefined): string {
+  const k = (key ?? "").trim();
+  if (!k) return "#e3e7ee";
+  const hue = hashHue(k.toLowerCase());
+  return `hsl(${hue}, 45%, 78%)`;
+}
+
 // spawn() 인자 — preset/picker 진입 + 칩 변경 재구동 공용.
 type SpawnArgs = {
   cwd?: string | null;
@@ -1406,13 +1433,19 @@ export function AcpConversation(props: {
                   </div>
                 </div>
               ) : (
-                <div class="agent kk-acp-answer">
+                <div
+                  class="agent kk-acp-answer"
+                  /* 답변 = 말풍선 X → 전체폭 블록(상·하단 모두 라운드, 꼬리 없음).
+                     배경 = 에이전트별 결정적 파스텔(흐림). 같은 에이전트=같은 색 →
+                     여러 에이전트 섞인 대화에서 발화 주체 시각 구분. 좌측 보더로 보조 강조. */
+                  style={`background:${agentPastelBg(props.preset?.displayName || props.preset?.label || activeAgent())};border-radius:14px;border-left:3px solid ${agentPastelAccent(props.preset?.displayName || props.preset?.label || activeAgent())};padding:10px 14px;max-width:100%;`}
+                >
                   <div class="head">
                     <div class="av c-claude">⚡</div>
                     <div class="nm">{props.preset?.displayName || activeAgent()}</div>
                   </div>
-                  {/* 답변은 말풍선 X — 평문 전체폭(배경·테두리 없음). 사용자 메시지만 말풍선. */}
-                  <div class="body" style="background:none;border:none;box-shadow:none;padding:2px 0;max-width:100%;">
+                  {/* 본문 자체엔 배경 없음 — 블록(.kk-acp-answer)이 파스텔 배경을 가진다. */}
+                  <div class="body" style="background:none;border:none;box-shadow:none;padding:0;max-width:100%;">
                     <For each={b.segs}>
                       {(seg) =>
                         seg.kind === "code" ? <pre class="code">{seg.text}</pre> : <p>{seg.text}</p>
