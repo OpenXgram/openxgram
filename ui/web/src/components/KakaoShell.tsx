@@ -5,6 +5,7 @@ import { AcpConversation, aiTypeToAdapter, type AcpPreset } from "./AcpConversat
 import { A2AMiniPanel } from "./A2AMiniPanel";
 import { RoomModal } from "./RoomModal";
 import { AddAgentModal } from "./AddAgentModal";
+import { AddFriendModal } from "./AddFriendModal";
 import { FlowTab } from "./FlowTab";
 import { MarketTab } from "./MarketTab";
 import { ConfigTab } from "./ConfigTab";
@@ -115,6 +116,9 @@ export function KakaoShell(props: { onLogout?: () => void }) {
   const [sideTmux, setSideTmux] = createSignal(false);
   const [roomCfgOpen, setRoomCfgOpen] = createSignal(false);
   const [addOpen, setAddOpen] = createSignal(false);
+  // rc.334 Phase 4a — 친구 추가 choice 모달(🖥 머신 추가 한쪽 / 🤝 에이전트 추가 상호 / 🌐 외부 A2A).
+  //   addOpen(로컬 에이전트 신규 등록 = AddAgentModal)과 별개. friendOpen 은 AddFriendModal.
+  const [friendOpen, setFriendOpen] = createSignal(false);
 
   const peerMap = createMemo(() => {
     const m = new Map<string, PeerDto>();
@@ -463,9 +467,16 @@ export function KakaoShell(props: { onLogout?: () => void }) {
               }}
             </For>
 
-            <div class="room" onClick={() => setAddOpen(true)} title="에이전트 추가">
+            {/* rc.334 Phase 4a — 추가는 두 흐름으로 분리.
+                ① 새 에이전트(이 머신) = AddAgentModal(로컬 신규 등록 · 새 ACP).
+                ② 머신/에이전트 추가 = AddFriendModal(🖥 내 머신 한쪽 · 🤝 상대 에이전트 상호 · 🌐 외부 A2A). */}
+            <div class="room" onClick={() => setAddOpen(true)} title="이 머신에 새 에이전트 등록 (새 ACP)">
               <div class="av grp">＋</div>
-              <div class="meta"><div class="nm">에이전트 추가</div><div class="ms">머신 · 외부 A2A · 새 ACP</div></div>
+              <div class="meta"><div class="nm">새 에이전트 (이 머신)</div><div class="ms">로컬 등록 · 새 ACP</div></div>
+            </div>
+            <div class="room" onClick={() => setFriendOpen(true)} title="🖥 머신 추가(내 머신·한쪽) · 🤝 에이전트 추가(상대·상호·격리·가격) · 🌐 외부 A2A">
+              <div class="av grp">🤝</div>
+              <div class="meta"><div class="nm">머신 · 에이전트 추가</div><div class="ms">🖥 머신(한쪽) · 🤝 에이전트(상호) · 🌐 외부</div></div>
             </div>
           </Show>
         </div>
@@ -676,7 +687,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
         <div style="padding:12px 24px 0;font-size:12px;color:var(--muted)">왼쪽 채팅 목록 = 대화방 · 여기 = 내 프로필 + 친구(에이전트) 목록</div>
         <div class="me-sec">
           <h3>친구 (에이전트) <span style="color:var(--muted);font-weight:600;font-size:13px">{friends().length}</span></h3>
-          <button class="add" onClick={() => setAddOpen(true)}>＋ 친구(에이전트) 추가</button>
+          <button class="add" onClick={() => setFriendOpen(true)}>＋ 머신 · 에이전트 추가</button>
         </div>
         <div class="friends">
           <For each={friends()}>
@@ -725,11 +736,25 @@ export function KakaoShell(props: { onLogout?: () => void }) {
         </Show>
       </div>
 
-      {/* 에이전트 추가 모달 */}
+      {/* 새 에이전트(이 머신) 등록 모달 */}
       <Show when={addOpen()}>
         <AddAgentModal
           onClose={() => setAddOpen(false)}
           onCreated={(alias) => { setAddOpen(false); void refetchAgents(); setSelected(alias); setTab("chat"); }}
+        />
+      </Show>
+
+      {/* rc.334 Phase 4a — 머신/에이전트 추가 choice 모달.
+          🖥 머신 추가 = 내 머신 한쪽 등록(전권) · 🤝 에이전트 추가 = 상대 에이전트 상호 요청(격리·소유자 가격 4b)
+          · 🌐 외부 A2A. 머신·에이전트는 agents_register(friend) → 명부 새로고침. */}
+      <Show when={friendOpen()}>
+        <AddFriendModal
+          onClose={() => setFriendOpen(false)}
+          onCreated={(alias, kind) => {
+            setFriendOpen(false);
+            // 머신·에이전트 추가 둘 다 agents_register(friend) → 명부 새로고침. 외부는 localStorage(별 소스).
+            if (kind === "machine" || kind === "agent") { void refetchAgents(); setSelected(alias); setTab("chat"); }
+          }}
         />
       </Show>
 

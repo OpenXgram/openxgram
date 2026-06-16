@@ -10,14 +10,20 @@ interface TailnetDevice {
   self: boolean;
 }
 
-// 친구(Friend) 추가 모달 — "원격 머신의 에이전트·외부"를 친구로 등록 (rc.320 agent-level opt-in 모델 B).
-// 종류 2종:
-//   🖥 머신     — 2단계: (1) Tailscale 장치를 골라 그 머신의 친구-가능 에이전트 로스터를 fetch
-//                 (friends_remote_agents → 원격 GET /v1/gui/friends/roster), (2) 로스터에서 SPECIFIC
-//                 에이전트 1개를 골라 친구로 등록. 친구 row = 머신이 아니라 고른 그 에이전트.
-//                 단방향(one-directional) opt-in — 강제 양방향/머신 전체 친구 없음.
-//                 기존 agents_register 재사용(classification="friend" + messenger_enabled=true →
-//                 sub-keypair + peers 등록). project_path 는 비워(원격 = 로컬 파일트리 없음).
+// 친구(Friend) 추가 모달 — rc.334 Phase 4a: "친구 추가"를 두 흐름으로 명시 분리.
+// 종류 3종:
+//   🖥 머신 추가 (one-sided) — 내가 관리하는 머신을 추가. 추가한 쪽이 전권을 가진다(상호 동의 불필요).
+//                 그 머신의 PRIMARY 피어를 등록하면 머신의 모든 실행 중 에이전트가 명부에
+//                 그 머신 그룹으로 보인다(명부는 이미 머신별 그룹 + peer-sync). 상대가 나를 또 추가하면
+//                 자연스럽게 상호가 된다(독립적인 두 번의 한쪽 추가). 2단계:
+//                 (1) Tailscale 장치 선택(또는 IP 수동 조회) → 그 머신의 에이전트 로스터 fetch,
+//                 (2) 프라이머리 피어 1개 선택 → 한쪽 등록(agents_register classification="friend").
+//   🤝 에이전트 추가 (mutual · sandboxed · owner-priced) — 다른 사람의 에이전트를 사용 요청.
+//                 4a = UI shell + 기존 재사용. 내가 요청 → 소유자가 수락 AND 가격 책정.
+//                 통신은 격리 컨테이너의 fresh worktree 에서만(강제). 가격은 소유자가 결정(지갑/마켓 정산).
+//                 ⚠️ 4b 백엔드 미구현: 상호 동의 handshake(요청→수락), 소유자 가격책정, 격리-컨테이너
+//                 실행. 4a 에서는 이 부분을 명시 라벨 UI 로만 표기(가격·수락을 날조하지 않음).
+//                 기존 친구 정책(rc.321 권한/격리/비용)을 재사용하되 격리는 강제, 가격은 "상대 책정 대기".
 //   🌐 외부 A2A — 외부 에이전트. 별칭(alias) + AgentCard base URL.
 //                 위임 시 a2a_send target=URL 로 쓰는 그 값. 백엔드에 영속 라우트가 없으므로
 //                 로컬(localStorage)에 등록만 — TalkTab 이 친구 섹션에 합쳐 표시한다.
@@ -52,10 +58,11 @@ function saveExternalFriends(list: ExternalFriend[]) {
   }
 }
 
-type FriendKind = "machine" | "external";
+type FriendKind = "machine" | "agent" | "external";
 
 const KIND_OPTS: { v: FriendKind; icon: string; label: string; hint: string }[] = [
-  { v: "machine", icon: "🖥", label: "머신", hint: "원격 머신의 에이전트를 골라 친구 추가" },
+  { v: "machine", icon: "🖥", label: "머신 추가", hint: "내가 관리하는 머신 — 한쪽 추가 (전권 · 상호 동의 불필요)" },
+  { v: "agent", icon: "🤝", label: "에이전트 추가", hint: "다른 사람의 에이전트 사용 요청 — 상호 수락 · 격리 · 소유자 가격책정" },
   { v: "external", icon: "🌐", label: "외부 A2A", hint: "외부 에이전트 (AgentCard URL)" },
 ];
 
@@ -165,10 +172,16 @@ export function AddFriendModal(props: {
 
   async function create() {
     setErr(null);
-    if (kind() === "machine") {
-      // 머신 친구 — 2단계 검증: 로스터에서 고른 SPECIFIC 에이전트가 있어야 한다.
+    if (kind() === "machine" || kind() === "agent") {
+      // 두 흐름 모두 로스터에서 고른 SPECIFIC 피어가 있어야 한다.
+      //   머신 추가 = 내가 관리하는 머신의 프라이머리 피어를 한쪽 등록(전권).
+      //   에이전트 추가 = 다른 사람 에이전트 사용 요청(격리 강제 · 가격은 소유자 책정 대기 = 4b).
+      const isAgent = kind() === "agent";
       const chosen = remoteAgents().find((a) => a.alias === pickedAgent());
-      if (!chosen) { setErr("원격 머신의 에이전트를 먼저 선택하세요."); return; }
+      if (!chosen) {
+        setErr(isAgent ? "사용 요청할 에이전트를 먼저 선택하세요." : "머신의 프라이머리 피어를 먼저 선택하세요.");
+        return;
+      }
       const name = (alias().trim() || chosen.alias);
       // 친구 row 의 machine = 응답 base url(없으면 장치 IP). 단방향 등록 — reciprocal announce 없음.
       const machineAddr = remoteBase() || addr().trim() || selectedDev() || "";
@@ -177,8 +190,10 @@ export function AddFriendModal(props: {
       try {
         await invoke("agents_register", {
           alias: name,
-          role: chosen.role ?? "원격 에이전트",
-          description: `원격 에이전트 ${chosen.alias} (${machineAddr})`,
+          role: chosen.role ?? (isAgent ? "사용 요청 에이전트" : "머신 프라이머리"),
+          description: isAgent
+            ? `사용 요청(소유자 수락·가격책정 대기) ${chosen.alias} (${machineAddr})`
+            : `머신 프라이머리 ${chosen.alias} (${machineAddr})`,
           project_path: null,
           group_name: null,
           messenger_enabled: true,
@@ -189,11 +204,12 @@ export function AddFriendModal(props: {
           worktree: null,
           is_public: false,
           // rc.321 — 친구 정책 (권한/격리/비용).
-          friend_permission: permission(),
-          friend_isolated: isolated(),
-          friend_cost_tracked: costTracked(),
+          //   에이전트 추가는 격리 강제(true) — 4b 격리 컨테이너/fresh worktree 정책의 UI 표현.
+          friend_permission: isAgent ? "request" : permission(),
+          friend_isolated: isAgent ? true : isolated(),
+          friend_cost_tracked: isAgent ? true : costTracked(),
         });
-        props.onCreated(name, "machine");
+        props.onCreated(name, kind());
       } catch (e) {
         setErr((e as Error)?.message ?? String(e));
       } finally {
@@ -225,11 +241,11 @@ export function AddFriendModal(props: {
   return (
     <div class="ovl" onClick={(e) => { if (e.target === e.currentTarget) props.onClose(); }}>
       <div class="modal" style="max-width:440px;">
-        <h2>👥 친구 추가</h2>
-        <p class="sub">원격 머신의 에이전트를 골라 친구 추가 · 또는 외부 A2A 에이전트 — A2A/peer 로 통신합니다.</p>
+        <h2>➕ 추가</h2>
+        <p class="sub">🖥 머신 추가(내 머신 · 한쪽) · 🤝 에이전트 추가(상대 · 상호·격리·가격) · 🌐 외부 A2A.</p>
 
         <div class="fld">
-          <label>종류</label>
+          <label>무엇을 추가할까요?</label>
           <div class="seg">
             <For each={KIND_OPTS}>
               {(k) => (
@@ -244,13 +260,24 @@ export function AddFriendModal(props: {
           </div>
         </div>
 
-        {/* 🖥 머신 — 2단계 흐름.
-            (1단계) Tailscale 장치 선택(또는 IP 수동 입력 후 조회) → 그 머신의 에이전트 로스터 fetch.
-            (2단계) 로스터에서 에이전트 1개 선택 → 친구로 등록. */}
-        <Show when={kind() === "machine"}>
+        {/* 🖥 머신 추가 / 🤝 에이전트 추가 — 공통 2단계 (장치→로스터→피어 선택).
+            머신 추가  = 내가 관리하는 머신의 프라이머리 피어를 한쪽 등록(전권 · 상호 동의 불필요).
+            에이전트 추가 = 다른 사람 에이전트 사용 요청(상호 수락·격리·소유자 가격책정 — 4b). */}
+        <Show when={kind() === "machine" || kind() === "agent"}>
+          {/* 흐름 안내 배너 — 한쪽/상호 차이를 명시. */}
+          <Show when={kind() === "machine"}>
+            <div class="hint" style="margin:2px 0 8px;padding:8px 10px;border-radius:8px;background:#1d2a20;border:1px solid #2f5d3a;color:#cfe3d6;">
+              🖥 <b>한쪽 추가</b> — 내가 관리하는 머신. 추가한 쪽이 전권. 상호 동의 불필요. 머신의 모든 에이전트가 명부에 그 머신 그룹으로 보입니다.
+            </div>
+          </Show>
+          <Show when={kind() === "agent"}>
+            <div class="hint" style="margin:2px 0 8px;padding:8px 10px;border-radius:8px;background:#26221a;border:1px solid #5d4a2f;color:#e3dccf;">
+              🤝 <b>상호 추가</b> — 다른 사람의 에이전트. 내가 요청 → 소유자가 <b>수락 AND 가격 책정</b>. 통신은 격리 컨테이너의 fresh worktree 에서만(강제).
+            </div>
+          </Show>
           {/* 1단계 — 장치 선택 */}
           <div class="fld">
-            <label>① Tailscale 장치 선택</label>
+            <label>① {kind() === "agent" ? "상대 머신 (Tailscale)" : "내 머신 (Tailscale 장치)"} 선택</label>
             <Show when={devLoading()}>
               <div class="hint" style="margin-top:2px;">장치 목록 불러오는 중…</div>
             </Show>
@@ -295,9 +322,9 @@ export function AddFriendModal(props: {
             </div>
           </div>
 
-          {/* 2단계 — 에이전트 선택 */}
+          {/* 2단계 — 피어 선택 */}
           <div class="fld">
-            <label>② 원격 머신의 에이전트 선택</label>
+            <label>② {kind() === "agent" ? "사용 요청할 에이전트 선택" : "머신의 프라이머리 피어 선택"}</label>
             <Show when={rosterLoading()}>
               <div class="hint" style="margin-top:2px;">원격 에이전트 목록 불러오는 중…</div>
             </Show>
@@ -332,10 +359,10 @@ export function AddFriendModal(props: {
             </Show>
           </div>
 
-          {/* ③ rc.321 — 친구 정책 (에이전트 선택 후 추가 전). 권한/격리/비용. */}
-          <Show when={pickedAgent()}>
+          {/* ③ 머신 추가 — rc.321 친구 정책 (편집 가능). 내 머신이므로 권한/격리/비용을 내가 정한다. */}
+          <Show when={kind() === "machine" && pickedAgent()}>
             <div class="fld">
-              <label>③ 친구 정책</label>
+              <label>③ 친구 정책 (내가 설정)</label>
               <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">
                 <div style="display:flex;align-items:center;gap:8px;">
                   <span style="font-size:12px;color:#8b94a3;width:64px;flex:none;">권한</span>
@@ -355,6 +382,31 @@ export function AddFriendModal(props: {
                   <input type="checkbox" checked={costTracked()} onChange={(e) => setCostTracked(e.currentTarget.checked)} />
                   비용 기록 — 친구별 사용량 원장에 기록
                 </label>
+              </div>
+            </div>
+          </Show>
+
+          {/* ③ 에이전트 추가 — 상호·격리·소유자 가격. 4a = 라벨 UI(가격·수락 날조 금지).
+              실제 handshake/가격책정/격리-컨테이너 실행은 4b 백엔드 미구현. */}
+          <Show when={kind() === "agent" && pickedAgent()}>
+            <div class="fld">
+              <label>③ 사용 조건 (상대가 정함)</label>
+              <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span style="font-size:12px;color:#8b94a3;width:64px;flex:none;">가격</span>
+                  <input class="ctl" style="flex:1;" value="상대(소유자)가 책정 — 대기" disabled
+                    title="가격은 소유자가 수락 시 책정합니다 (4b — 지갑/마켓 정산). 여기서 날조하지 않습니다." />
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#cfe3d6;">
+                  <input type="checkbox" checked disabled />
+                  격리 강제 — fresh worktree · 상호 격리 컨테이너에서만 실행 (해제 불가)
+                </div>
+                <div class="hint" style="padding:8px 10px;border-radius:8px;background:#26221a;border:1px solid #5d4a2f;color:#e3dccf;">
+                  ⏳ <b>대기 (상대 수락)</b> — 요청을 보내면 소유자가 수락하고 가격을 책정해야 사용 가능합니다.
+                  <div style="margin-top:4px;font-size:11px;color:#b5a98f;">
+                    🚧 4b 백엔드 미구현: 상호 동의 handshake(요청→수락), 소유자 가격책정, 격리 컨테이너/fresh worktree 실행.
+                  </div>
+                </div>
               </div>
             </div>
           </Show>
@@ -381,10 +433,14 @@ export function AddFriendModal(props: {
         <div class="modal-foot">
           <button class="btn-q" onClick={() => props.onClose()} disabled={busy()}>취소</button>
           <button class="btn-go" onClick={() => void create()}
-            disabled={busy() || (kind() === "machine" && !pickedAgent())}>{busy() ? "추가 중…" : "추가"}</button>
+            disabled={busy() || ((kind() === "machine" || kind() === "agent") && !pickedAgent())}>
+            {busy()
+              ? (kind() === "agent" ? "요청 보내는 중…" : "추가 중…")
+              : (kind() === "agent" ? "요청 보내기 (상대 수락·가격책정 대기)" : "추가")}
+          </button>
         </div>
         <div class="hint">
-          원격 머신의 에이전트를 골라 단방향 친구로 추가 (opt-in) · 외부는 AgentCard URL 로 A2A 통신.
+          🖥 머신 추가 = 내가 관리하는 머신 한쪽 추가(전권) · 🤝 에이전트 추가 = 상대 수락·격리·소유자 가격(4b) · 🌐 외부는 AgentCard URL.
         </div>
       </div>
     </div>
