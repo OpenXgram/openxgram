@@ -10,6 +10,7 @@ import { MarketTab } from "./MarketTab";
 import { ConfigTab } from "./ConfigTab";
 import { RuntimeTab } from "./RuntimeTab";
 import { WikiTab } from "./WikiTab";
+import { type DetectedSession, type SessionsDto, normPath, isTooBroadPath } from "./agentSessions";
 
 // ──────────────────────────────────────────────────────────────────────────
 // OpenXgram 대화 모델 셸 — 정본 목업 VERBATIM 이식.
@@ -153,6 +154,85 @@ export function KakaoShell(props: { onLogout?: () => void }) {
       thinking: a.thinking ?? null,
     };
   });
+
+  // ── 작업환경(tmux) 곁뷰 데이터 소스 — sessions 라우트(이 머신 tmux+워크트리). 동적 only.
+  //   TalkTab 정보 패널과 동일 contract: 선택 에이전트의 cwd(project_path) 매칭 + alias 보조.
+  const [sessions] = createResource<SessionsDto | null>(() => invoke("sessions"), { initialValue: null });
+
+  // 등록 에이전트들의 project_path 집합 — descendant 세션의 longest-prefix 귀속 판정용.
+  const registeredCwds = createMemo<Set<string>>(() => {
+    const s = new Set<string>();
+    for (const a of agents() ?? []) {
+      const p = normPath((a.project_path ?? "").trim());
+      if (p) s.add(p);
+    }
+    return s;
+  });
+
+  // 선택 에이전트의 tmux 세션 — cwd 매칭 우선 + alias 매칭 보조(TalkTab selSessions 로직 이식).
+  const selSessions = createMemo<DetectedSession[]>(() => {
+    const alias = (selected() ?? "").toLowerCase();
+    if (!alias) return [];
+    const convoCwd = normPath((selAgent()?.project_path ?? "").trim());
+    const regs = registeredCwds();
+    const all = sessions()?.sessions ?? [];
+    return all.filter((s) => {
+      if (s.kind !== "tmux") return false;
+      const sCwd = s.cwd ? normPath(s.cwd.trim()) : "";
+      if (convoCwd && sCwd) {
+        if (sCwd === convoCwd) return true;
+        if (sCwd.startsWith(convoCwd + "/") && !isTooBroadPath(convoCwd)) {
+          // longest-prefix: 더 구체적인 등록 에이전트가 있으면 그쪽 것(prefix-ownership leak 방지).
+          let closest = convoCwd;
+          for (const r of regs) {
+            if (r === convoCwd) continue;
+            if ((sCwd === r || sCwd.startsWith(r + "/")) && r.length > closest.length) closest = r;
+          }
+          if (closest === convoCwd) return true;
+        }
+      }
+      const aid = (s.agent_id ?? "").toLowerCase();
+      const disp = (s.display ?? "").toLowerCase();
+      const ident = (s.identifier ?? "").toLowerCase();
+      return aid === alias || disp === alias || ident === alias || ident === `tmux:${alias}`;
+    });
+  });
+
+  // 매칭 세션들의 nested worktrees 합집합(path 기준 dedup).
+  const selWorktrees = createMemo<{ path: string; branch?: string | null }[]>(() => {
+    const seen = new Set<string>();
+    const out: { path: string; branch?: string | null }[] = [];
+    for (const s of selSessions()) {
+      for (const w of s.worktrees ?? []) {
+        if (w.path && !seen.has(w.path)) { seen.add(w.path); out.push(w); }
+      }
+    }
+    return out;
+  });
+
+  const baseName = (p: string) => p.replace(/\/+$/, "").split("/").pop() || p;
+
+  // 라이브 pane 캡처 — 곁뷰가 열려 있고 세션이 있으면 첫 세션의 화면을 capture-pane 으로 가져온다.
+  //   GET /v1/gui/sessions/{identifier}/screen → { content(ANSI), lines, source_note }.
+  const captureTarget = createMemo<DetectedSession | null>(() => (sideTmux() ? (selSessions()[0] ?? null) : null));
+  const [paneScreen] = createResource(
+    () => captureTarget()?.identifier ?? null,
+    async (identifier) => {
+      try {
+        const r = await invoke("session_screen", { identifier });
+        return r as { content?: string; lines?: number; source_note?: string } | null;
+      } catch { return null; }
+    },
+  );
+
+  // tmux 라이브 새 창 열기 (?tmux=identifier).
+  function openTmuxPopout(identifier: string, display: string) {
+    const url = `${location.origin}${location.pathname}?tmux=${encodeURIComponent(identifier)}&label=${encodeURIComponent(display)}`;
+    const w = window.open("", `oxgtmux_${identifier}`, "width=820,height=620");
+    if (!w) { location.href = url; return; }
+    w.location.href = url;
+    w.focus();
+  }
 
   // 에이전트 전환 시 곁뷰 닫기.
   createEffect(() => { selected(); setSideA2A(false); setSideTmux(false); });
@@ -315,16 +395,89 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                 />
               </div>
 
-              {/* 작업환경(tmux) 곁뷰 — 정본 .side#sideTmux */}
+              {/* 작업환경(tmux) 곁뷰 — 정본 .side#sideTmux. 라이브 sessions 라우트 배선.
+                  세션 있으면: 세션·워크트리 목록 + 라이브 pane 캡처(다크 .term).
+                  세션 없으면(ACP-only 에이전트): 검은 void 대신 읽기 쉬운 light 빈 상태. */}
               <div class="side" classList={{ show: sideTmux() }}>
                 <h3>🖥 {agentName(a())} 작업환경 (tmux · 사람 전용)
                   <span class="x" onClick={() => setSideTmux(false)}>✕</span>
                 </h3>
-                <div class="term">
-                  <span class="c"># {a().alias} — 사람이 직접 모는 터미널 (A2A 주입 안 됨)</span>{"\n"}
-                  <span class="p">{a().alias}@seoul</span>:~$ <span style="color:#9fe6b0">▋</span>{"\n\n"}
-                  <span class="c"># 작업환경(tmux)은 사람 전용 — 에이전트간 A2A 대화는 ACP 채널(상단 🔗 협업)로.</span>
-                </div>
+                <Show
+                  when={selSessions().length > 0}
+                  fallback={
+                    <div class="kk-workenv-empty">
+                      <div class="kk-we-icon">🖥</div>
+                      <div class="kk-we-title">활성 tmux 작업환경이 없습니다</div>
+                      <p class="kk-we-body">
+                        이 에이전트는 ACP로 동작합니다 — 사람 전용 tmux 터미널이 떠 있지 않습니다.
+                        에이전트와의 대화는 이 채팅창에서, 에이전트 간 협업은 상단 <b>🔗 협업</b>(A2A)에서 진행하세요.
+                      </p>
+                      <div class="kk-we-meta">
+                        <Show when={a().project_path}>
+                          <div class="kk-we-row"><span class="k">폴더</span><span class="v" title={a().project_path!}>{a().project_path}</span></div>
+                        </Show>
+                        <Show when={a().machine}>
+                          <div class="kk-we-row"><span class="k">머신</span><span class="v">{a().machine}</span></div>
+                        </Show>
+                        <div class="kk-we-row"><span class="k">실행</span><span class="v">ACP · {a().alias}</span></div>
+                      </div>
+                      <p class="kk-we-hint">
+                        💡 이 폴더(또는 그 하위)에서 <code>tmux</code> 세션이 떠 있으면 여기에 자동으로 나타납니다.
+                      </p>
+                    </div>
+                  }
+                >
+                  <div class="kk-workenv">
+                    {/* 세션 목록 — 클릭 시 라이브 화면 새 창. */}
+                    <div class="kk-we-sec">
+                      <div class="kk-we-sech">실행 중 tmux · {selSessions().length} <span class="kk-we-sub">(클릭 → 라이브 새 창)</span></div>
+                      <For each={selSessions()}>
+                        {(s) => (
+                          <div class="kk-we-sess" title="클릭 → 라이브 화면 새 창" onClick={() => openTmuxPopout(s.identifier, s.display || s.identifier)}>
+                            <span class="dot" />
+                            <span class="nm">{s.display || s.identifier}</span>
+                            <span class="sx">{s.kind}{(s.cwd ? ` · ${baseName(s.cwd)}` : "")}</span>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+
+                    {/* 워크트리 — 매칭 세션들의 nested git worktree. */}
+                    <Show when={selWorktrees().length > 0}>
+                      <div class="kk-we-sec">
+                        <div class="kk-we-sech">워크트리 · {selWorktrees().length}</div>
+                        <For each={selWorktrees()}>
+                          {(w) => (
+                            <div class="kk-we-wt" title={w.path}>
+                              🌿 {baseName(w.path)}
+                              <Show when={w.branch}><span class="b">{w.branch}</span></Show>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+
+                    {/* 라이브 pane — capture-pane(다크 .term). 실제 터미널 내용이 있을 때만 다크. */}
+                    <div class="kk-we-sec kk-we-sec-term">
+                      <div class="kk-we-sech">
+                        라이브 화면 <span class="kk-we-sub">{captureTarget() ? captureTarget()!.display || captureTarget()!.identifier : ""}</span>
+                      </div>
+                      <div class="term">
+                        <Show
+                          when={paneScreen()?.content}
+                          fallback={
+                            <span class="c">{paneScreen.loading ? "# 화면 불러오는 중…" : "# 캡처할 화면이 없습니다 (세션이 비어있거나 접근 불가)."}</span>
+                          }
+                        >
+                          {paneScreen()!.content}
+                        </Show>
+                      </div>
+                      <Show when={paneScreen()?.source_note}>
+                        <div class="kk-we-note">{paneScreen()!.source_note}{paneScreen()?.lines ? ` · ${paneScreen()!.lines}줄` : ""}</div>
+                      </Show>
+                    </div>
+                  </div>
+                </Show>
               </div>
 
               {/* 방 설정 모달 — 정본 modal(.mset). room_config get/set 배선. */}
