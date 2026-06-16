@@ -128,6 +128,14 @@
 .oxg-app .side.show{display:flex}
 .oxg-app .side h3{padding:15px 18px;font-size:14px;font-weight:700;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
 .oxg-app .side h3 .x{margin-left:auto;cursor:pointer;color:var(--muted);font-weight:400}
+/* 🔧 Fix#123-3 — 작업환경 곁뷰 닫기 겹침 fix. 협업 곁뷰(rc.334)와 동일:
+   기본 .side(z:20)는 대화 헤더(.chat-top z:30) 아래라 패널 상단 닫기 hit area 가 가려졌다.
+   패널을 z:35 로 올리고, 닫기 버튼을 헤더 좌측(order:-1)에 z:31 로 배치해 항상 클릭을 받게 한다. */
+.oxg-app .side.tmux-side-panel{z-index:35}
+.oxg-app .side.tmux-side-panel>h3{position:relative;z-index:2;display:flex;align-items:center;gap:8px}
+.oxg-app .side.tmux-side-panel>h3 .tmux-side-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.oxg-app .side.tmux-side-panel>h3 .tmux-side-close{flex:none;order:-1;position:relative;z-index:31;display:inline-flex;align-items:center;gap:4px;border:1px solid #c9d4df;background:#fff;color:#45525f;border-radius:8px;padding:4px 11px;font-size:12px;font-weight:700;cursor:pointer;line-height:1}
+.oxg-app .side.tmux-side-panel>h3 .tmux-side-close:hover{background:#eef2f6;color:#1f2933;border-color:#aab8c4}
 .oxg-app .convs{padding:10px 14px;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
 .oxg-app .conv{background:#fff;border:1px solid var(--line);border-radius:11px;padding:11px 13px;display:flex;align-items:center;gap:10px}
 .oxg-app .conv .nm{font-weight:600;font-size:13.5px}
@@ -138,6 +146,12 @@
 .oxg-app .ctrl button:hover{background:#eaf0f6}
 .oxg-app .ctrl button:disabled{opacity:.5;cursor:not-allowed}
 .oxg-app .term{flex:1;background:#0c1116;color:#9fe6b0;font-family:ui-monospace,Menlo,monospace;font-size:12px;padding:14px 16px;overflow-y:auto;line-height:1.6;white-space:pre-wrap}
+/* 🔧 Fix#123-1 — 작업환경 라이브 term: 80컬럼 TUI(박스드로잉)를 패널 폭에 가로스크롤 없이 맞춘다.
+   pre-wrap 은 박스라인을 깨므로 white-space:pre 유지. inner .term-fit 을 JS(fitTerm)가 zoom 으로
+   균일 축소(정렬·박스라인 보존 + 레이아웃 폭까지 축소→가로 오버플로 제거). 새 창(🔳)에서 풀사이즈. */
+.oxg-app .kk-we-sec-term .term{overflow-x:hidden;padding:12px 13px;tab-size:8}
+.oxg-app .kk-we-sec-term .term .term-fit{display:inline-block;white-space:pre}
+.oxg-app .kk-we-sec-term .term .term-fit span{white-space:pre}
 .oxg-app .term .c{color:#5b6b7a}.oxg-app .term .p{color:#7cc7ff}
 
 /* 작업환경(tmux) 곁뷰 — 라이브 세션/워크트리 + pane 캡처. 빈 상태는 light(검은 void 금지). */
@@ -158,6 +172,12 @@
 .oxg-app .kk-we-sess .sx{margin-left:auto;font-size:11px;color:#8a93a0;font-family:ui-monospace,Menlo,monospace;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .oxg-app .kk-we-sess .po{flex:none;font-size:12px;opacity:.6;margin-left:8px}
 .oxg-app .kk-we-sess:hover .po{opacity:1}
+/* 🔧 Fix#123-2 — 세션 행 액션: 새로고침(🔄)·종료(🗑). 행 클릭(새 창)과 분리되도록 stopPropagation(JSX). */
+.oxg-app .kk-we-sess .kk-we-act{flex:none;border:1px solid #cdd9e4;background:#fff;border-radius:7px;padding:3px 7px;font-size:12px;line-height:1;cursor:pointer;opacity:.7}
+.oxg-app .kk-we-sess:hover .kk-we-act{opacity:1}
+.oxg-app .kk-we-sess .kk-we-act.refresh:hover{background:#eef4fa;border-color:#9fc0e6}
+.oxg-app .kk-we-sess .kk-we-act.kill:hover{background:#fdecec;border-color:#e9b3b3}
+.oxg-app .kk-we-sess .kk-we-act:disabled{opacity:.4;cursor:not-allowed}
 .oxg-app .kk-we-wt{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:9px;padding:7px 11px;font-size:12px;margin-bottom:5px;color:#37424d}
 .oxg-app .kk-we-wt .b{margin-left:auto;font-size:10.5px;color:#5a7fb0;background:#eef4fa;border-radius:6px;padding:2px 8px;font-family:ui-monospace,Menlo,monospace}
 /* 라이브 term = 고정 높이 스크롤 영역. flex:1+무한 grow 시 패널 안에서 term 자체 overflow 가 안 터져 스크롤 불가 → 확정 높이로 묶어 term 내부 스크롤 보장. overscroll-contain 으로 배경 체이닝 차단. */

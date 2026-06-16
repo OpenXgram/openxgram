@@ -1,4 +1,4 @@
-import { createSignal, createResource, createMemo, createEffect, For, Show } from "solid-js";
+import { createSignal, createResource, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import { invoke } from "../api/client";
 import "./mockup.css";
 import { AcpConversation, aiTypeToAdapter, type AcpPreset } from "./AcpConversation";
@@ -475,7 +475,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
   // 라이브 pane 캡처 — 곁뷰가 열려 있고 세션이 있으면 첫 세션의 화면을 capture-pane 으로 가져온다.
   //   GET /v1/gui/sessions/{identifier}/screen → { content(ANSI), lines, source_note }.
   const captureTarget = createMemo<DetectedSession | null>(() => (sideTmux() ? (selSessions()[0] ?? null) : null));
-  const [paneScreen] = createResource(
+  const [paneScreen, { refetch: refetchPane }] = createResource(
     () => captureTarget()?.identifier ?? null,
     async (identifier) => {
       try {
@@ -484,6 +484,44 @@ export function KakaoShell(props: { onLogout?: () => void }) {
       } catch { return null; }
     },
   );
+
+  // 🔧 Fix#123-2 — 작업환경 세션 행 새로고침: 해당 세션 화면(capture)을 다시 가져온다.
+  //   세션 목록도 함께 refetch 하여 죽은 세션이 사라지게.
+  async function refreshSession(_s: DetectedSession) {
+    await Promise.all([refetchPane(), refetchSessions()]);
+  }
+
+  // 🔧 Fix#123-1 — 라이브 term 을 패널 폭에 가로스크롤 없이 맞춤(80컬럼 TUI · 박스드로잉 보존).
+  //   inner(.term-fit) 의 실제 콘텐츠 폭이 컨테이너 폭을 넘으면 transform:scale 로 균일 축소.
+  //   균일 스케일이라 박스라인/정렬이 깨지지 않는다(pre-wrap 미사용). 콘텐츠/리사이즈마다 재계산.
+  let termBox: HTMLDivElement | undefined;
+  let termFit: HTMLDivElement | undefined;
+  const [termScale, setTermScale] = createSignal(1);
+  function fitTerm() {
+    if (!termBox || !termFit) return;
+    // zoom 1 기준 자연 폭 측정(zoom 은 transform 과 달리 레이아웃 박스·scrollWidth 를 함께 줄여
+    //   가로 오버플로 자체를 제거한다 — Chromium GUI 타깃). 먼저 1 로 두고 콘텐츠 자연 폭 읽기.
+    termFit.style.zoom = "1";
+    const natural = termFit.scrollWidth;
+    // 가용 폭 = term 콘텐츠 박스(clientWidth) − 좌우 패딩 − 안전여유. clientWidth 는 패딩 포함이라 패딩을 뺀다.
+    const cs = getComputedStyle(termBox);
+    const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+    const avail = termBox.clientWidth - padX - 4;
+    let s = 1;
+    if (natural > avail && natural > 0) s = Math.max(0.45, avail / natural);
+    setTermScale(s);
+    termFit.style.zoom = String(s);
+  }
+  // 콘텐츠(캡처) 바뀔 때마다 + 곁뷰 열릴 때 재맞춤.
+  createEffect(() => { paneScreen(); sideTmux(); requestAnimationFrame(() => requestAnimationFrame(fitTerm)); });
+  onMount(() => {
+    if (typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(() => fitTerm());
+      onCleanup(() => ro.disconnect());
+      // termBox 가 마운트되면 관찰 시작.
+      createEffect(() => { if (termBox) ro.observe(termBox); });
+    }
+  });
 
   // tmux 라이브 새 창 열기 (?tmux=identifier).
   function openTmuxPopout(identifier: string, display: string) {
@@ -780,9 +818,13 @@ export function KakaoShell(props: { onLogout?: () => void }) {
               {/* 작업환경(tmux) 곁뷰 — 정본 .side#sideTmux. 라이브 sessions 라우트 배선.
                   세션 있으면: 세션·워크트리 목록 + 라이브 pane 캡처(다크 .term).
                   세션 없으면(ACP-only 에이전트): 검은 void 대신 읽기 쉬운 light 빈 상태. */}
-              <div class="side" classList={{ show: sideTmux() }}>
-                <h3>🖥 {agentName(a())} 작업환경 (tmux · 사람 전용)
-                  <span class="x" onClick={() => setSideTmux(false)}>✕</span>
+              <div class="side tmux-side-panel" classList={{ show: sideTmux() }}>
+                {/* 🔧 Fix#123-3 — 닫기 ✕ 가 대화 헤더(.chat-top z:30) 아이콘 클러스터에 가려지던 문제.
+                    협업 곁뷰와 동일 fix(rc.334): 패널을 z:35로 올리고, 닫기 버튼을 헤더 좌측(order:-1)에
+                    z:31로 배치해 항상 클릭을 받게 한다. */}
+                <h3>
+                  <span class="tmux-side-close" title="작업환경 닫기" onClick={() => setSideTmux(false)}>‹ 닫기</span>
+                  <span class="tmux-side-title">🖥 {agentName(a())} 작업환경 (tmux · 사람 전용)</span>
                 </h3>
                 <Show
                   when={selSessions().length > 0}
@@ -822,18 +864,22 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                           >🔳 새 창에서 보기</button>
                         </Show>
                       </div>
-                      <div class="term">
-                        <Show
-                          when={paneScreen()?.content}
-                          fallback={
-                            <span class="c">{paneScreen.loading ? "# 화면 불러오는 중…" : "# 캡처할 화면이 없습니다 (세션이 비어있거나 접근 불가)."}</span>
-                          }
-                        >
-                          {/* ANSI SGR 색 코드를 실제 색 span 으로 렌더 — raw escape garbage 제거 (FIX 2) */}
-                          <For each={parseAnsi(paneScreen()!.content!)}>
-                            {(seg) => <span class={segClass(seg.style)} style={segCss(seg.style)}>{seg.text}</span>}
-                          </For>
-                        </Show>
+                      <div class="term" ref={(el) => (termBox = el)}>
+                        {/* 🔧 Fix#123-1 — 80컬럼 TUI(박스드로잉)를 패널 폭에 가로스크롤 없이 맞춘다.
+                            inner .term-fit 을 transform:scale 로 균일 축소(정렬/박스라인 보존) — fitTermScale effect. */}
+                        <div class="term-fit" ref={(el) => (termFit = el)} style={{ zoom: termScale() }}>
+                          <Show
+                            when={paneScreen()?.content}
+                            fallback={
+                              <span class="c">{paneScreen.loading ? "# 화면 불러오는 중…" : "# 캡처할 화면이 없습니다 (세션이 비어있거나 접근 불가)."}</span>
+                            }
+                          >
+                            {/* ANSI SGR 색 코드를 실제 색 span 으로 렌더 — raw escape garbage 제거 (FIX 2) */}
+                            <For each={parseAnsi(paneScreen()!.content!)}>
+                              {(seg) => <span class={segClass(seg.style)} style={segCss(seg.style)}>{seg.text}</span>}
+                            </For>
+                          </Show>
+                        </div>
                       </div>
                       <Show when={paneScreen()?.source_note}>
                         <div class="kk-we-note">{paneScreen()!.source_note}{paneScreen()?.lines ? ` · ${paneScreen()!.lines}줄` : ""}</div>
@@ -849,6 +895,19 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                             <span class="dot" />
                             <span class="nm">{s.display || s.identifier}</span>
                             <span class="sx">{s.kind}{(s.cwd ? ` · ${baseName(s.cwd)}` : "")}</span>
+                            {/* 🔧 Fix#123-2 — 새로고침(화면 재캡처) + 종료(kill). detach 는 ATTACHED 클라이언트 전용 →
+                                여기 나열되는 detached 세션엔 N/A 라 생략. kill 은 현황 탭과 동일 라우트(session_kill) 재사용. */}
+                            <button
+                              class="kk-we-act refresh"
+                              title="이 세션 라이브 화면 새로고침 (detach 는 attached 클라이언트 전용이라 미제공)"
+                              onClick={(e) => { e.stopPropagation(); void refreshSession(s); }}
+                            >🔄</button>
+                            <button
+                              class="kk-we-act kill"
+                              title="이 tmux 세션 종료"
+                              disabled={killing() === s.identifier}
+                              onClick={(e) => { e.stopPropagation(); void killTmux(s); }}
+                            >🗑</button>
                             <span class="po" title="새 창에서 보기">🔳</span>
                           </div>
                         )}
