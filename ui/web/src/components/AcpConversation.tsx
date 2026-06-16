@@ -1355,9 +1355,11 @@ export function AcpConversation(props: {
               >📎 아티팩트 {artifacts().length}</span>
             </Show>
             <Show when={props.popoutAlias}>
-              <span class="kk-acp-pop" title="새 창으로 열기" onClick={() => openPopout(props.popoutAlias!)}>⤢ 새 창</span>
+              <span class="kk-acp-pop kk-acp-pop-win" title="새 창으로 열기 (별도 팝업 창)" onClick={() => openPopout(props.popoutAlias!)}>🗗 새 창</span>
             </Show>
-            {/* 세션 닫기(=재시작)는 헤더에 노출하지 않음 — 상세 패널에서 제어(props.restartTrigger). */}
+            {/* ✕ 닫기 — 새 창 버튼과 시각적으로 명확히 구분(빨강 hover·far-right). onClose 는
+                팝업 창에서는 window.close(), 메인 앱에서는 대화 닫고 roster 복귀. 새 창 열기와 혼동되지 않게 분리. */}
+            <span class="kk-acp-close" title="닫기" onClick={() => props.onClose()}>✕</span>
           </div>
         </div>
 

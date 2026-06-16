@@ -423,6 +423,18 @@
 .kk-restart-btn:hover{background:#2a3140; border-color:#3a4a6a;}
 .kk-acp-pop{font-size:12px; color:#9aa1ad; cursor:pointer; padding:3px 8px; border:1px solid #2b303a; border-radius:7px; white-space:nowrap;}
 .kk-acp-pop:hover{color:#cfd5de; border-color:#3a4a6a;}
+/* 새 창(팝업 열기) — 파랑 계열로 명확화. "닫기"와 헷갈리지 않게 아이콘🗗 + 파랑 hover. */
+.kk-talk-chat .chat-top .kk-acp-pop-win{color:#3a6ea5; border-color:#bcd2ee; background:#f3f8fe;}
+.kk-talk-chat .chat-top .kk-acp-pop-win:hover{color:#2f5d8f; border-color:#7fb0e0; background:#e6f1fc;}
+/* ✕ 닫기 — 새 창 버튼과 시각적으로 완전히 분리. far-right + 좌측 간격/구분선 + 빨강 hover.
+   기본은 중립 회색 ✕, hover 시 빨강 배경으로 "닫기"임을 즉시 인지. */
+.kk-talk-chat .chat-top .kk-acp-close{
+  margin-left:6px; padding-left:9px; border-left:1px solid #e0e3ea;
+  font-size:15px; line-height:1; font-weight:700; color:#9aa1ad;
+  cursor:pointer; display:inline-flex; align-items:center; align-self:stretch;
+  border-radius:7px; padding-right:7px;
+}
+.kk-talk-chat .chat-top .kk-acp-close:hover{color:#fff; background:#e5484d; border-left-color:#e5484d;}
 .kk-popup-root{position:fixed; inset:0; display:flex; flex-direction:column; background:var(--surface,#fff);}
 .kk-popup-root .kk-talk{height:100vh; width:100vw;}
 .kk-popup-root .info{display:none !important;}
