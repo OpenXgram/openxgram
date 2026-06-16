@@ -642,6 +642,14 @@
   pointer-events: none;
   z-index: 25;
 }
+/* 곁뷰가 열린 동안만 마운트 래퍼를 대화 헤더(.chat-top z:30) 위로 올린다(rc.334 #3 close-fix).
+   기존엔 mount(z:25) < header(z:30) 라 패널 전체가 헤더 stacking 아래로 깔려, 패널 상단의
+   닫기 버튼이 헤더 우상단 아이콘 클러스터(.kk-acp-*)에 hit area 를 가로채였다(force-click 만 동작).
+   mount 자체는 pointer-events:none 이고 떠 있는 strip 은 패널이 열리면 숨겨지므로(Show when=!open)
+   헤더 클릭을 막지 않는다 — 곁뷰가 닫히면 z:25 로 복귀. */
+.kk-a2a-mount:has(.a2a-side-panel.show) {
+  z-index: 40;
+}
 /* 협업현황 strip — 대화 헤더(.chat-top, 높이~58px) 바로 아래 한 줄.
    in-flow 가 아닌 absolute 마운트라 top 오프셋으로 헤더 밑에 정렬한다.
    (헤더와 메시지 사이에 깔끔히 한 줄로 — 중복 헤더 인상 방지) */
@@ -654,6 +662,11 @@
   z-index: 26;
 }
 .kk-a2a-mount .a2a-side { pointer-events: auto; }
+/* 곁뷰 패널은 클래스가 `.a2a-side-panel`(≠ `.a2a-side`) 이라 위 규칙에 안 걸려
+   mount(pointer-events:none)를 상속한 채 클릭 투명 상태였다 → 패널 위 모든 클릭(닫기 포함)이
+   대화 헤더(.nm 등)로 통과해 버려, force-click 만 동작하고 일반 클릭은 가로채였다(rc.334 #3 핵심).
+   패널은 항상 자체 클릭을 받아야 하므로 pointer-events 를 명시 복원한다. */
+.kk-a2a-mount .a2a-side-panel { pointer-events: auto; }
 /* 가로 스크롤 어포던스 — strip 우측에 페이드 + chevron 으로 '더 있음/스크롤됨' 시각 단서.
    strip 자체(.a2a-mini)는 overflow-x:auto 라 mask-image 가 함께 스크롤되지 않도록
    mount 래퍼에 absolute 오버레이를 깐다(pointer-events:none → 클릭은 strip 으로 통과). */
@@ -884,4 +897,98 @@
 .a2a-invite-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; }
 .a2a-invite-go { margin-left: auto; border: 1px solid #add9bb; background: #eef9f1; border-radius: 7px; padding: 3px 10px; font-size: 11px; font-weight: 700; cursor: pointer; color: #238636; }
 .a2a-invite-go:hover { background: #d8f0e1; }
+
+/* ── 협업 곁뷰 레이아웃 fix (rc.334) — #1 헤더↔strip 겹침 · #2 스크롤 단서 · #3 곁뷰 전용 닫기 ──
+   패널은 .side(.oxg-app .side: position:absolute; flex-direction:column) 위에 추가 규칙으로
+   깔끔한 세로 스택을 강제: 헤더(고정) → 협업현황 strip(고정) → 스크롤 본문(flex) → 제어(고정). */
+/* 곁뷰는 대화 위로 슬라이드되는 오버레이 — 기본 .side(z:20)는 대화 헤더(.chat-top z:30) 아래라
+   패널 상단 band 가 헤더 아이콘 클러스터에 가려져 닫기 클릭이 가로채였다. 헤더 위(z:35)로 올린다. */
+.side.a2a-side-panel { overflow: hidden; z-index: 35; }
+.side.a2a-side-panel > h3 { flex: none; position: relative; z-index: 2; }
+.side.a2a-side-panel > .ctrl { flex: none; }
+
+/* #3 — 곁뷰 전용 닫기 버튼. 카톡 패널처럼 헤더 '좌측' back 버튼으로 닫는다.
+   기존엔 margin-left:auto 로 헤더 우상단에 놓여 대화 헤더(.chat-top z:30)의
+   아이콘 클러스터(.kk-acp-*)와 hit area 가 정확히 겹쳐 클릭이 가로채였다(force-click 만 동작).
+   → 좌측 배치로 대화 우상단 클러스터와 가로로 분리 + z-index 를 대화 헤더 위(31)로 올려
+   이 버튼이 항상 클릭을 받도록 한다. h3 는 position:relative; z-index:2 라 별도 stacking context. */
+.side.a2a-side-panel > h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.side.a2a-side-panel > h3 .a2a-side-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.side.a2a-side-panel > h3 .a2a-side-close {
+  flex: none;
+  order: -1;            /* 항상 제목보다 앞(좌측) */
+  position: relative;
+  z-index: 31;          /* 대화 헤더(.chat-top z:30) 위 — 클릭 가로채임 방지 */
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #c9d4df;
+  background: #fff;
+  color: #45525f;
+  border-radius: 8px;
+  padding: 4px 11px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1;
+}
+.side.a2a-side-panel > h3 .a2a-side-close:hover { background: #eef2f6; color: #1f2933; border-color: #aab8c4; }
+
+/* #1 — 패널 안 in-flow 협업현황 strip. .a2a-mini 를 재사용하되 떠 있는(absolute) 배치를 해제. */
+.side.a2a-side-panel .a2a-side-strip-wrap {
+  flex: none;
+  padding: 8px 14px 0;
+  position: relative;
+}
+.side.a2a-side-panel .a2a-mini.a2a-side-strip {
+  position: static;       /* .a2a-mini 의 floating(absolute;top:58px) 무력화 */
+  top: auto; left: auto; right: auto;
+  margin: 0;
+  cursor: default;
+}
+/* strip 가로 스크롤 단서(#2a) — 우측 페이드 + chevron(떠 있는 strip 의 ::after 대체, 패널 내부용). */
+.side.a2a-side-panel .a2a-side-strip-wrap::after {
+  content: "›";
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  height: calc(100% - 8px);
+  display: flex;
+  align-items: center;
+  padding-left: 22px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #5a7fb0;
+  background: linear-gradient(90deg, rgba(247,249,251,0) 0%, rgba(247,249,251,0.95) 60%);
+  pointer-events: none;
+}
+
+/* #2b — 스크롤 본문(에이전트 목록 + 오케스트레이션 + 참가자 + 보안방). flex:1 + min-height:0 → 실제 스크롤. */
+.side.a2a-side-panel .a2a-side-body2 {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  position: relative;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(90,127,176,0.4) transparent;
+}
+.side.a2a-side-panel .a2a-side-body2::-webkit-scrollbar { width: 8px; }
+.side.a2a-side-panel .a2a-side-body2::-webkit-scrollbar-thumb { background: rgba(90,127,176,0.4); border-radius: 999px; }
+.side.a2a-side-panel .a2a-side-body2::-webkit-scrollbar-track { background: transparent; }
+/* 내부 .convs 는 자체 스크롤하지 않고 본문 흐름에 둔다(이중 스크롤 방지). */
+.side.a2a-side-panel .a2a-side-body2 .convs { overflow: visible; }
+/* 내용이 넘치고 바닥이 아닐 때만 하단 페이드 — '더 있음' 단서. 다 보이면 깔끔히 끝남. */
+.side.a2a-side-panel .a2a-side-body2.scrollable {
+  -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 26px), transparent 100%);
+  mask-image: linear-gradient(180deg, #000 calc(100% - 26px), transparent 100%);
+}
 

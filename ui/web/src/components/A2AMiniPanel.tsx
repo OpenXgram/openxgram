@@ -232,38 +232,81 @@ export function A2AMiniPanel(props: {
     }
   }
 
+  // #2b — 스크롤 본문 어포던스: 내용이 넘치고 아직 바닥이 아니면 하단 페이드(.scrollable),
+  // 다 보이거나 바닥까지 스크롤하면 페이드 제거 → '더 있음' vs '여기가 끝' 을 명확히 구분.
+  function syncScrollAffordance(el: HTMLElement | null) {
+    if (!el) return;
+    const overflowing = el.scrollHeight - el.clientHeight > 4;
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 4;
+    el.classList.toggle("scrollable", overflowing && !atBottom);
+  }
+
   return (
     <>
       {/* ── A2A 실시간 미니패널 (정본 .a2a-mini) — 대화 헤더 바로 아래 한 줄 요약.
           클래스는 flow-extra.css 의 .a2a-mini* 패밀리와 정확히 매칭(스코프 충돌 없음).
           이전엔 bare .mini/.st 를 썼는데 그 CSS 는 mockup.css 의 .oxg-app 스코프 전용이라
           라이브 경로(.oxg-app 래퍼 없음)에서 무스타일 → strip 깨짐 버그였다(fix). ── */}
-      <div class="a2a-mini" onClick={() => props.onOpen()} title="협업(A2A) 곁뷰 열기">
-        <b>🔗 협업 현황</b>
-        <Show
-          when={agents().length > 0}
-          fallback={<span class="a2a-mini-st"><span class="a2a-mini-dot idle" /> 활성 협업 없음</span>}
-        >
-          <For each={live().slice(0, 2)}>
-            {(a) => (<span class="a2a-mini-st"><span class="a2a-mini-dot live" /> ↔{a.alias} 진행 가능</span>)}
-          </For>
-          <For each={idle().slice(0, 1)}>
-            {(a) => (<span class="a2a-mini-st"><span class="a2a-mini-dot idle" /> ↔{a.alias} 대기</span>)}
-          </For>
-          <Show when={agents().length > 0}>
-            <span class="a2a-mini-badge">{agents().length}</span>
+      {/* 떠 있는 협업현황 strip(.a2a-mini) — 대화 위 한 줄 요약. 곁뷰가 열리면 패널이 같은 정보를
+          자체 strip(.a2a-side-strip)으로 보여주므로 떠 있는 strip 은 숨겨 패널 헤더와의 겹침을 막는다(#1). */}
+      <Show when={!props.open()}>
+        <div class="a2a-mini" onClick={() => props.onOpen()} title="협업(A2A) 곁뷰 열기">
+          <b>🔗 협업 현황</b>
+          <Show
+            when={agents().length > 0}
+            fallback={<span class="a2a-mini-st"><span class="a2a-mini-dot idle" /> 활성 협업 없음</span>}
+          >
+            <For each={live().slice(0, 2)}>
+              {(a) => (<span class="a2a-mini-st"><span class="a2a-mini-dot live" /> ↔{a.alias} 진행 가능</span>)}
+            </For>
+            <For each={idle().slice(0, 1)}>
+              {(a) => (<span class="a2a-mini-st"><span class="a2a-mini-dot idle" /> ↔{a.alias} 대기</span>)}
+            </For>
+            <Show when={agents().length > 0}>
+              <span class="a2a-mini-badge">{agents().length}</span>
+            </Show>
           </Show>
-        </Show>
-        <span class="a2a-mini-sp" />
-        <span class="a2a-mini-more">자세히 ›</span>
-      </div>
+          <span class="a2a-mini-sp" />
+          <span class="a2a-mini-more">자세히 ›</span>
+        </div>
+      </Show>
 
-      {/* ── 협업(A2A) 곁뷰 — 우측 슬라이드 패널 (정본 .side#sideA2A) ── */}
-      <div class="side" classList={{ show: props.open() }}>
+      {/* ── 협업(A2A) 곁뷰 — 우측 슬라이드 패널 (정본 .side#sideA2A).
+          깔끔한 세로 스택: 헤더(곁뷰 전용 닫기) → 협업현황 strip → 스크롤 에이전트 목록 →
+          오케스트레이션/참가자 → 하단 제어 버튼. (이전엔 떠 있는 strip 이 헤더를 덮었다 — #1) ── */}
+      <div class="side a2a-side-panel" classList={{ show: props.open() }}>
         <h3>
-          🔗 {props.selfAlias ?? "에이전트"}의 협업 (에이전트간 ACP)
-          <span class="x" onClick={() => props.onClose()}>✕</span>
+          {/* 곁뷰 전용 닫기 — 카톡 패널처럼 좌측 back 버튼으로 닫는다(대화 헤더 우상단 아이콘 클러스터와 hit area 가 겹치지 않게).
+              대화 ✕ 와 구별되는 명확한 라벨(‹ 닫기). z-index 를 대화 헤더(.chat-top z:30) 위로 올려 클릭이 가로채이지 않게 한다(#3). */}
+          <button class="a2a-side-close" title="협업 곁뷰 닫기 (대화로 돌아가기)" aria-label="협업 곁뷰 닫기" onClick={() => props.onClose()}>‹ 닫기</button>
+          <span class="a2a-side-title">🔗 {props.selfAlias ?? "에이전트"}의 협업 (에이전트간 ACP)</span>
         </h3>
+
+        {/* 협업현황 strip — 패널 안 자체 한 줄(in-flow). 떠 있는 strip 과 달리 헤더와 겹치지 않는다(#1).
+            가로 스크롤 가능 시 우측 페이드 chevron 으로 '더 있음' 단서(#2a). */}
+        <div class="a2a-side-strip-wrap">
+          <div class="a2a-mini a2a-side-strip">
+            <b>🔗 협업 현황</b>
+            <Show
+              when={agents().length > 0}
+              fallback={<span class="a2a-mini-st"><span class="a2a-mini-dot idle" /> 활성 협업 없음</span>}
+            >
+              <For each={live()}>
+                {(a) => (<span class="a2a-mini-st"><span class="a2a-mini-dot live" /> ↔{a.alias} 진행 가능</span>)}
+              </For>
+              <For each={idle()}>
+                {(a) => (<span class="a2a-mini-st"><span class="a2a-mini-dot idle" /> ↔{a.alias} 대기</span>)}
+              </For>
+              <span class="a2a-mini-badge">{agents().length}</span>
+            </Show>
+            <span class="a2a-mini-sp" />
+          </div>
+        </div>
+
+        {/* 스크롤 본문 — 에이전트 목록 + 오케스트레이션 + 참가자(+보안방). flex:1 + min-height:0 으로
+            실제로 스크롤. 내용이 넘치면 하단 페이드(.a2a-side-body2.scrollable)로 '더 있음' 단서,
+            다 보이면 페이드 없이 깔끔히 끝남(#2b). */}
+        <div class="a2a-side-body2" ref={(el) => queueMicrotask(() => syncScrollAffordance(el))} onScroll={(e) => syncScrollAffordance(e.currentTarget)}>
         <div class="convs">
           <Show
             when={agents().length > 0}
@@ -388,6 +431,7 @@ export function A2AMiniPanel(props: {
         </Show>
 
         <div style="padding:0 14px 4px;font-size:11px;color:var(--muted)">↑ 대화방 클릭 → 발언권/오케스트레이션/멤버/보안방 제어</div>
+        </div>{/* /a2a-side-body2 (스크롤 본문 끝) */}
 
         {/* ── 제어 버튼 (정본 .ctrl) — 초대/내보내기/발언권/보안방 ── */}
         <div class="ctrl">
