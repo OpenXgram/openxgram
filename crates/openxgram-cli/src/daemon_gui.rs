@@ -694,6 +694,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         )
         .route("/v1/gui/a2a/send", post(a2a_send))
         .route("/v1/gui/a2a/tasks/{id}", get(a2a_task_get))
+        // 전역 A2A 활동 SSE — 새 A2A 메시지/턴이 어느 대화든 영속될 때 `a2a_message` 이벤트.
+        // GUI 가 실제 메시지 단위로 auto-pop(/blink). 종전 10초 reachability poll 근사 대체.
+        .route("/v1/gui/a2a/stream", get(a2a_activity_stream))
         // ── A2A SERVER (ACP-A2A-CORE) — OpenXgram agents CALLABLE via A2A ───
         // AgentCard hosting (discovery) + tasks/send (executes via ACP) + tasks/get.
         // Behind require_auth like the rest of the daemon surface.
@@ -11729,6 +11732,43 @@ async fn acp_session_stream(
                 // Lagged: skip dropped messages, keep streaming.
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                 // Sender gone (session closed) → end the stream.
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    });
+    Ok(axum::response::Sse::new(stream)
+        .keep_alive(axum::response::sse::KeepAlive::default()))
+}
+
+/// `GET /v1/gui/a2a/stream` — 전역 A2A 활동 SSE. 어느 대화든 새 A2A 메시지/턴이
+/// `acp_messages` 에 영속될 때마다 `a2a_message` 이벤트(`{type,alias,conv_key,from,ts}`)를
+/// 흘린다. `acp_session_stream` 와 동일 패턴(전역 broadcast 채널 구독 → SSE relay).
+/// GUI 의 auto-pop 이 실제 메시지 단위로 트리거되게 한다(종전 10초 reachability poll 대체).
+/// 본문은 싣지 않음(가벼운 활동 신호; 본문은 loadHistory 가 권위 소스).
+async fn a2a_activity_stream(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<
+    axum::response::Sse<
+        impl futures_util::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
+    >,
+    (StatusCode, Json<ErrorDto>),
+> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let rx = state.acp.subscribe_a2a_activity();
+    let stream = futures_util::stream::unfold(rx, |mut rx| async move {
+        loop {
+            match rx.recv().await {
+                Ok(ev) => {
+                    let payload = serde_json::to_string(&ev).unwrap_or_else(|_| "{}".to_string());
+                    let sse = axum::response::sse::Event::default()
+                        .event("a2a_message")
+                        .data(payload);
+                    return Some((Ok(sse), rx));
+                }
+                // Lagged: skip dropped markers, keep streaming(활동 신호라 유실 무해).
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                // Sender gone → end the stream.
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
             }
         }

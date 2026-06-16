@@ -555,6 +555,63 @@ export function acpStream(
   return () => ctrl.abort();
 }
 
+/**
+ * 전역 A2A 활동 SSE 구독 (`GET /v1/gui/a2a/stream`). 어느 대화든 새 A2A 메시지/턴이
+ * 영속되면 `event: a2a_message` 프레임(`{type,alias,conv_key,from,ts}`)을 흘린다.
+ * `acpStream` 과 동일한 fetch+ReadableStream 패턴(EventSource 는 Bearer 못 싣음).
+ * GUI 의 auto-pop 을 **실제 메시지 단위**로 트리거한다(reachability poll 근사 대체).
+ * @returns 구독 취소 함수 (AbortController.abort).
+ */
+export function a2aActivityStream(
+  onMessage: (payload: { type?: string; alias?: string; conv_key?: string; from?: string | null; ts?: string }) => void,
+  onError: (msg: string) => void,
+): () => void {
+  const ctrl = new AbortController();
+  const gui = getDaemonUrl().replace(/\/+$/, "");
+  const url = `${gui}/a2a/stream`;
+  (async () => {
+    let res: Response;
+    try {
+      res = await fetch(url, { headers: authHeaders(false), signal: ctrl.signal });
+    } catch (e) {
+      if (!ctrl.signal.aborted) onError(`A2A 활동 스트림 연결 실패: ${(e as Error).message}`);
+      return;
+    }
+    if (!res.ok || !res.body) {
+      onError(`A2A 활동 스트림 HTTP ${res.status}`);
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let sep: number;
+        while ((sep = buf.indexOf("\n\n")) !== -1) {
+          const frame = buf.slice(0, sep);
+          buf = buf.slice(sep + 2);
+          const dataLines: string[] = [];
+          for (const line of frame.split("\n")) {
+            if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+          }
+          if (dataLines.length === 0) continue;
+          try {
+            onMessage(JSON.parse(dataLines.join("\n")));
+          } catch {
+            // 비-JSON keep-alive/주석 프레임 — 무시.
+          }
+        }
+      }
+    } catch (e) {
+      if (!ctrl.signal.aborted) onError(`A2A 활동 스트림 중단: ${(e as Error).message}`);
+    }
+  })();
+  return () => ctrl.abort();
+}
+
 /** path 템플릿 치환 + 남은 args 반환. */
 function renderPath(
  template: string,

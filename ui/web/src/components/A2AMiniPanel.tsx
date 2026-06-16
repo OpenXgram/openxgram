@@ -1,5 +1,5 @@
 import { createResource, createSignal, createMemo, createEffect, onCleanup, For, Show } from "solid-js";
-import { invoke } from "../api/client";
+import { invoke, a2aActivityStream } from "../api/client";
 import "./flow-extra.css";
 
 // P2 — 사람↔ACP 대화 안의 A2A(에이전트↔에이전트) 실시간 미니패널 + 협업 곁뷰.
@@ -124,13 +124,39 @@ export function A2AMiniPanel(props: {
     else if (popBlocked() === alias) setPopBlocked(null);
   }
 
-  // ── 자동 열기: A2A 활동 감지 ──
-  // 정직성: 이 패널에는 per-message SSE 가 없다(데이터 출처는 a2a_agents 폴링 — reachable 플래그뿐).
-  // 따라서 '새 메시지/턴'의 근사 신호로 reachable 의 미도달→도달 전이(idle→live)를 활동으로 본다.
-  // 토글이 켜진 에이전트에 한해 그 전이 시 자동으로 창을 연다. (메시지 단위 자동팝은 백엔드 A2A 메시지
-  //  SSE 가 생기면 그때 더 정밀해진다 — 현재 셸의 한계로 보고.)
-  // 또한 자동 열기는 사용자 제스처가 아니므로 브라우저 팝업 차단에 걸릴 수 있다 → null 반환 시 strip 깜빡임 fallback.
+  // ── 자동 열기 ──
   const [autoBlink, setAutoBlink] = createSignal<Set<string>>(new Set());
+
+  // 토글이 켜진 에이전트의 대화 창을 (재사용·중복방지) 열고, 팝업 차단 시 in-app 깜빡임으로 fallback.
+  // 포커스 탈취 없음(openA2AWindow 가 열리는 순간 외엔 .focus() 안 함). 활동 신호의 단일 진입점.
+  function autoPop(alias: string) {
+    if (!alias || !isAutoOn(alias)) return;
+    const ok = openA2AWindow(alias);
+    if (!ok) {
+      // 팝업 차단(자동·비제스처) → in-app strip 깜빡임 + 안내로 graceful fallback(에러 X).
+      setPopBlocked(alias);
+      setAutoBlink((s) => new Set(s).add(alias));
+      setTimeout(() => setAutoBlink((s) => { const n = new Set(s); n.delete(alias); return n; }), 6000);
+    }
+  }
+
+  // ── 자동 열기 트리거 #1 (PRIMARY) — 실제 A2A 메시지 SSE ──
+  // 백엔드 `/v1/gui/a2a/stream` 구독: 어느 대화든 새 A2A 메시지/턴이 acp_messages 에 영속되면
+  // `a2a_message` 이벤트가 온다. 그 즉시(reachability 전이를 기다리지 않고) 해당 대화 창을 auto-pop.
+  // = 실제 메시지 단위 트리거(종전 10초 reachability poll 근사 대체). 토글로 게이트, 포커스 탈취 없음.
+  const stopStream = a2aActivityStream(
+    (ev) => {
+      if (ev?.type !== "a2a_message") return;
+      const alias = ev.alias || ev.conv_key;
+      if (alias) autoPop(alias);
+    },
+    () => { /* 스트림 끊김 = 조용한 status fallback(아래 reachability poll 이 계속 커버) */ },
+  );
+  onCleanup(() => stopStream());
+
+  // ── 자동 열기 트리거 #2 (FALLBACK) — reachability 전이 ──
+  // status 폴링(reachable 플래그)의 미도달→도달 전이를 보조 활동 신호로 유지한다. SSE 가 끊겼거나
+  // (장애/네트워크) 에이전트가 막 온라인된 경우의 안전망. 메시지 단위 정밀도는 #1(SSE)이 담당.
   let prevReachable = new Map<string, boolean>();
   createEffect(() => {
     const cur = agents();
@@ -138,16 +164,8 @@ export function A2AMiniPanel(props: {
     for (const a of cur) {
       next.set(a.alias, a.reachable);
       const was = prevReachable.get(a.alias);
-      // idle→live 전이 = 활동 근사 신호.
-      if (a.reachable && was === false && isAutoOn(a.alias)) {
-        const ok = openA2AWindow(a.alias);
-        if (!ok) {
-          // 팝업 차단(자동·비제스처) → in-app strip 깜빡임 + 안내로 graceful fallback(에러 X).
-          setPopBlocked(a.alias);
-          setAutoBlink((s) => new Set(s).add(a.alias));
-          setTimeout(() => setAutoBlink((s) => { const n = new Set(s); n.delete(a.alias); return n; }), 6000);
-        }
-      }
+      // idle→live 전이 = 활동 근사 신호(보조).
+      if (a.reachable && was === false) autoPop(a.alias);
     }
     prevReachable = next;
   });

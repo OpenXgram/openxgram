@@ -1,0 +1,3894 @@
+{
+  "name": "openxgram",
+  "description": "OpenXgram은 LLM 에이전트를 위한 기억(memory)·자격증명(credential) 인프라 sidecar daemon이다. 어떤 LLM·머신에서든 동일한 세션·기억·파일·자격증명에 접근할 수 있게 하며, 단일 Rust 바이너리(xgram)로 cross-machine peer-sync daemon, MCP 서버, secp256k1 HD wallet keystore/vault, 5계층 SQLite+sqlite-vec 메모리 store, Solid 기반 웹 GUI를 제공한다. Note: this project has over 100 source files; consider scoping analysis to a subdirectory for faster results.",
+  "languages": [
+    "css",
+    "html",
+    "json",
+    "markdown",
+    "rust",
+    "shell",
+    "sql",
+    "toml",
+    "typescript",
+    "unknown",
+    "yaml"
+  ],
+  "frameworks": [
+    "Solid",
+    "Vite",
+    "Zod",
+    "Tokio",
+    "Serde",
+    "Axum",
+    "GitHub Actions"
+  ],
+  "files": [
+    {
+      "path": ".cargo/config.toml",
+      "language": "toml",
+      "sizeLines": 31,
+      "fileCategory": "config"
+    },
+    {
+      "path": ".github/workflows/auto-tag-release.yml",
+      "language": "yaml",
+      "sizeLines": 74,
+      "fileCategory": "infra"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "language": "yaml",
+      "sizeLines": 100,
+      "fileCategory": "infra"
+    },
+    {
+      "path": ".github/workflows/release-binaries.yml",
+      "language": "yaml",
+      "sizeLines": 153,
+      "fileCategory": "infra"
+    },
+    {
+      "path": ".user/prd2checklist-26-05-09_23-30.md",
+      "language": "markdown",
+      "sizeLines": 306,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".user/prd2checklist26-05-04_03-08.md",
+      "language": "markdown",
+      "sizeLines": 583,
+      "fileCategory": "docs"
+    },
+    {
+      "path": ".user/prd2checklist26-05-04_07-46.md",
+      "language": "markdown",
+      "sizeLines": 1714,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "agents/eno/CLAUDE.md",
+      "language": "markdown",
+      "sizeLines": 48,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "agents/eno/memory/.gitkeep",
+      "language": "unknown",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "agents/pip/CLAUDE.md",
+      "language": "markdown",
+      "sizeLines": 41,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "agents/pip/memory/.gitkeep",
+      "language": "unknown",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "agents/qua/CLAUDE.md",
+      "language": "markdown",
+      "sizeLines": 41,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "agents/qua/memory/.gitkeep",
+      "language": "unknown",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "agents/qua/scenarios/phase-1-mvp.md",
+      "language": "markdown",
+      "sizeLines": 459,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "agents/res/CLAUDE.md",
+      "language": "markdown",
+      "sizeLines": 38,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "agents/res/memory/.gitkeep",
+      "language": "unknown",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "Cargo.toml",
+      "language": "toml",
+      "sizeLines": 99,
+      "fileCategory": "config"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "language": "markdown",
+      "sizeLines": 296,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "CLAUDE.md",
+      "language": "markdown",
+      "sizeLines": 121,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "CODE_OF_CONDUCT.md",
+      "language": "markdown",
+      "sizeLines": 77,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "language": "markdown",
+      "sizeLines": 108,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "crates/.gitkeep",
+      "language": "unknown",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-a2a/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 33,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-a2a/src/agent_card.rs",
+      "language": "rust",
+      "sizeLines": 162,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-a2a/src/client.rs",
+      "language": "rust",
+      "sizeLines": 203,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-a2a/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 105,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-a2a/src/mcp.rs",
+      "language": "rust",
+      "sizeLines": 130,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-a2a/src/task.rs",
+      "language": "rust",
+      "sizeLines": 226,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-a2a/tests/integration.rs",
+      "language": "rust",
+      "sizeLines": 214,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-adapter/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 28,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-adapter/src/channel_mcp.rs",
+      "language": "rust",
+      "sizeLines": 328,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-adapter/src/discord_gateway.rs",
+      "language": "rust",
+      "sizeLines": 220,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-adapter/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 81,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-adapter/src/telegram_bot.rs",
+      "language": "rust",
+      "sizeLines": 218,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-adapter/tests/poll.rs",
+      "language": "rust",
+      "sizeLines": 87,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-adapter/tests/send.rs",
+      "language": "rust",
+      "sizeLines": 91,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-anp/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 34,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-anp/src/client.rs",
+      "language": "rust",
+      "sizeLines": 261,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-anp/src/discovery.rs",
+      "language": "rust",
+      "sizeLines": 170,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-anp/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 82,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-anp/src/mcp.rs",
+      "language": "rust",
+      "sizeLines": 358,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-anp/src/message.rs",
+      "language": "rust",
+      "sizeLines": 230,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-anp/tests/integration.rs",
+      "language": "rust",
+      "sizeLines": 111,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-channel/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 28,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-channel/src/adapter.rs",
+      "language": "rust",
+      "sizeLines": 240,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-channel/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 60,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-channel/src/peer.rs",
+      "language": "rust",
+      "sizeLines": 69,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-channel/src/route.rs",
+      "language": "rust",
+      "sizeLines": 109,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-channel/src/server.rs",
+      "language": "rust",
+      "sizeLines": 319,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-channel/tests/server_smoke.rs",
+      "language": "rust",
+      "sizeLines": 164,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/build.rs",
+      "language": "rust",
+      "sizeLines": 30,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 96,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-cli/src/age_backup.rs",
+      "language": "rust",
+      "sizeLines": 148,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/agent.rs",
+      "language": "rust",
+      "sizeLines": 760,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/audit.rs",
+      "language": "rust",
+      "sizeLines": 164,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/auth.rs",
+      "language": "rust",
+      "sizeLines": 72,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/backup_push.rs",
+      "language": "rust",
+      "sizeLines": 86,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/backup.rs",
+      "language": "rust",
+      "sizeLines": 141,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/bot.rs",
+      "language": "rust",
+      "sizeLines": 640,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/channel.rs",
+      "language": "rust",
+      "sizeLines": 272,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/channels.rs",
+      "language": "rust",
+      "sizeLines": 293,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/daemon_gui_sessions.rs",
+      "language": "rust",
+      "sizeLines": 1219,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/daemon_gui_wallets.rs",
+      "language": "rust",
+      "sizeLines": 246,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/daemon_gui.rs",
+      "language": "rust",
+      "sizeLines": 7789,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/daemon_peer_sync.rs",
+      "language": "rust",
+      "sizeLines": 359,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/daemon_workers.rs",
+      "language": "rust",
+      "sizeLines": 1709,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/daemon.rs",
+      "language": "rust",
+      "sizeLines": 1351,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/doctor.rs",
+      "language": "rust",
+      "sizeLines": 471,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/dump.rs",
+      "language": "rust",
+      "sizeLines": 258,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/eas.rs",
+      "language": "rust",
+      "sizeLines": 151,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/find.rs",
+      "language": "rust",
+      "sizeLines": 101,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/gui.rs",
+      "language": "rust",
+      "sizeLines": 195,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/hitl.rs",
+      "language": "rust",
+      "sizeLines": 349,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/identity_handle.rs",
+      "language": "rust",
+      "sizeLines": 503,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/identity.rs",
+      "language": "rust",
+      "sizeLines": 155,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/import_app.rs",
+      "language": "rust",
+      "sizeLines": 537,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/init.rs",
+      "language": "rust",
+      "sizeLines": 336,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/invite.rs",
+      "language": "rust",
+      "sizeLines": 311,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 72,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/link.rs",
+      "language": "rust",
+      "sizeLines": 145,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/main.rs",
+      "language": "rust",
+      "sizeLines": 3287,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/mcp_install.rs",
+      "language": "rust",
+      "sizeLines": 1153,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/mcp_serve.rs",
+      "language": "rust",
+      "sizeLines": 2179,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/mcp_tokens.rs",
+      "language": "rust",
+      "sizeLines": 123,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/memory.rs",
+      "language": "rust",
+      "sizeLines": 200,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/migrate.rs",
+      "language": "rust",
+      "sizeLines": 65,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/mistake.rs",
+      "language": "rust",
+      "sizeLines": 120,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/nostr_inbound.rs",
+      "language": "rust",
+      "sizeLines": 210,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/notify_setup.rs",
+      "language": "rust",
+      "sizeLines": 749,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/notify.rs",
+      "language": "rust",
+      "sizeLines": 747,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/onboard.rs",
+      "language": "rust",
+      "sizeLines": 251,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/openagentx.rs",
+      "language": "rust",
+      "sizeLines": 279,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/orchestration.rs",
+      "language": "rust",
+      "sizeLines": 424,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/otel.rs",
+      "language": "rust",
+      "sizeLines": 148,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/pair_desktop.rs",
+      "language": "rust",
+      "sizeLines": 138,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/pair_host.rs",
+      "language": "rust",
+      "sizeLines": 245,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/pattern_cmd.rs",
+      "language": "rust",
+      "sizeLines": 131,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/patterns.rs",
+      "language": "rust",
+      "sizeLines": 67,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/payment_summary.rs",
+      "language": "rust",
+      "sizeLines": 219,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/payment.rs",
+      "language": "rust",
+      "sizeLines": 318,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/peer_send.rs",
+      "language": "rust",
+      "sizeLines": 1066,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/peer.rs",
+      "language": "rust",
+      "sizeLines": 142,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/pw.rs",
+      "language": "rust",
+      "sizeLines": 58,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/ratchet_cron.rs",
+      "language": "rust",
+      "sizeLines": 137,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/reputation.rs",
+      "language": "rust",
+      "sizeLines": 182,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/reset.rs",
+      "language": "rust",
+      "sizeLines": 56,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/response.rs",
+      "language": "rust",
+      "sizeLines": 297,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/retention.rs",
+      "language": "rust",
+      "sizeLines": 357,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/save_l0.rs",
+      "language": "rust",
+      "sizeLines": 120,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/send.rs",
+      "language": "rust",
+      "sizeLines": 143,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/session.rs",
+      "language": "rust",
+      "sizeLines": 397,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/status.rs",
+      "language": "rust",
+      "sizeLines": 71,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/sub_invoker.rs",
+      "language": "rust",
+      "sizeLines": 178,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/systemd.rs",
+      "language": "rust",
+      "sizeLines": 393,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/traits.rs",
+      "language": "rust",
+      "sizeLines": 107,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/tui.rs",
+      "language": "rust",
+      "sizeLines": 102,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/ui_assets.rs",
+      "language": "rust",
+      "sizeLines": 64,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/uninstall.rs",
+      "language": "rust",
+      "sizeLines": 118,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/update.rs",
+      "language": "rust",
+      "sizeLines": 169,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/vault.rs",
+      "language": "rust",
+      "sizeLines": 198,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/wiki.rs",
+      "language": "rust",
+      "sizeLines": 207,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/wizard.rs",
+      "language": "rust",
+      "sizeLines": 483,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/src/workflow_engine.rs",
+      "language": "rust",
+      "sizeLines": 293,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/agent_inject.rs",
+      "language": "rust",
+      "sizeLines": 155,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/audit.rs",
+      "language": "rust",
+      "sizeLines": 53,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/backup_push.rs",
+      "language": "rust",
+      "sizeLines": 142,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/cold_backup.rs",
+      "language": "rust",
+      "sizeLines": 293,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/cross_node_conversation.rs",
+      "language": "rust",
+      "sizeLines": 177,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/daemon.rs",
+      "language": "rust",
+      "sizeLines": 56,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/discord_gateway_smoke.rs",
+      "language": "rust",
+      "sizeLines": 90,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/doctor.rs",
+      "language": "rust",
+      "sizeLines": 219,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/dump.rs",
+      "language": "rust",
+      "sizeLines": 69,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/external_trade_demo.rs",
+      "language": "rust",
+      "sizeLines": 139,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/inbound_pipeline.rs",
+      "language": "rust",
+      "sizeLines": 255,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/init.rs",
+      "language": "rust",
+      "sizeLines": 144,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/mcp_http.rs",
+      "language": "rust",
+      "sizeLines": 254,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/mcp_serve.rs",
+      "language": "rust",
+      "sizeLines": 194,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/mcp_tokens.rs",
+      "language": "rust",
+      "sizeLines": 107,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/memory_export.rs",
+      "language": "rust",
+      "sizeLines": 122,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/memory.rs",
+      "language": "rust",
+      "sizeLines": 106,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/migrate.rs",
+      "language": "rust",
+      "sizeLines": 78,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/notify_channel.rs",
+      "language": "rust",
+      "sizeLines": 132,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/notify_listen.rs",
+      "language": "rust",
+      "sizeLines": 118,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/notify_setup.rs",
+      "language": "rust",
+      "sizeLines": 215,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/notify.rs",
+      "language": "rust",
+      "sizeLines": 51,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/patterns.rs",
+      "language": "rust",
+      "sizeLines": 120,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/payment.rs",
+      "language": "rust",
+      "sizeLines": 81,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/peer_send.rs",
+      "language": "rust",
+      "sizeLines": 169,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/peer.rs",
+      "language": "rust",
+      "sizeLines": 97,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/phase1_acceptance.rs",
+      "language": "rust",
+      "sizeLines": 239,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/schedule_cli.rs",
+      "language": "rust",
+      "sizeLines": 174,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/self_trigger_e2e.rs",
+      "language": "rust",
+      "sizeLines": 134,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/session.rs",
+      "language": "rust",
+      "sizeLines": 650,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/status_reset.rs",
+      "language": "rust",
+      "sizeLines": 149,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/systemd.rs",
+      "language": "rust",
+      "sizeLines": 156,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/traits.rs",
+      "language": "rust",
+      "sizeLines": 125,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/tui.rs",
+      "language": "rust",
+      "sizeLines": 64,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/two_node_e2e.rs",
+      "language": "rust",
+      "sizeLines": 279,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/uninstall.rs",
+      "language": "rust",
+      "sizeLines": 135,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/vault.rs",
+      "language": "rust",
+      "sizeLines": 149,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-cli/tests/wizard.rs",
+      "language": "rust",
+      "sizeLines": 236,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-core/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 12,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-core/src/confirm.rs",
+      "language": "rust",
+      "sizeLines": 4,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-core/src/env.rs",
+      "language": "rust",
+      "sizeLines": 24,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-core/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 21,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-core/src/paths.rs",
+      "language": "rust",
+      "sizeLines": 59,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-core/src/ports.rs",
+      "language": "rust",
+      "sizeLines": 15,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-core/src/time.rs",
+      "language": "rust",
+      "sizeLines": 15,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-db/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 23,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0001_init.sql",
+      "language": "sql",
+      "sizeLines": 69,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0002_message_embeddings.sql",
+      "language": "sql",
+      "sizeLines": 13,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0003_episodes.sql",
+      "language": "sql",
+      "sizeLines": 14,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0004_patterns.sql",
+      "language": "sql",
+      "sizeLines": 15,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0005_traits.sql",
+      "language": "sql",
+      "sizeLines": 16,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0006_vault.sql",
+      "language": "sql",
+      "sizeLines": 16,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0007_vault_acl.sql",
+      "language": "sql",
+      "sizeLines": 35,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0008_vault_pending.sql",
+      "language": "sql",
+      "sizeLines": 26,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0009_mcp_tokens.sql",
+      "language": "sql",
+      "sizeLines": 15,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0010_peers.sql",
+      "language": "sql",
+      "sizeLines": 22,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0011_payment_intents.sql",
+      "language": "sql",
+      "sizeLines": 28,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0012_peer_eth_address.sql",
+      "language": "sql",
+      "sizeLines": 6,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0013_audit_chain.sql",
+      "language": "sql",
+      "sizeLines": 17,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0014_kek_rotations.sql",
+      "language": "sql",
+      "sizeLines": 13,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0015_payment_daily_limits.sql",
+      "language": "sql",
+      "sizeLines": 22,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0016_orchestration.sql",
+      "language": "sql",
+      "sizeLines": 46,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0017_conversation_id.sql",
+      "language": "sql",
+      "sizeLines": 12,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0018_wiki_pages.sql",
+      "language": "sql",
+      "sizeLines": 43,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0019_mistakes.sql",
+      "language": "sql",
+      "sizeLines": 40,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0020_action_patterns.sql",
+      "language": "sql",
+      "sizeLines": 41,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0021_marketplace_cache.sql",
+      "language": "sql",
+      "sizeLines": 67,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0021_sub_wallets.sql",
+      "language": "sql",
+      "sizeLines": 59,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0022_messenger_full.sql",
+      "language": "sql",
+      "sizeLines": 100,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0022_users.sql",
+      "language": "sql",
+      "sizeLines": 43,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0023_messenger_attachments.sql",
+      "language": "sql",
+      "sizeLines": 41,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0024_memory_full.sql",
+      "language": "sql",
+      "sizeLines": 83,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0025_session_channel_bindings.sql",
+      "language": "sql",
+      "sizeLines": 17,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0026_full_specs.sql",
+      "language": "sql",
+      "sizeLines": 107,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0028_external_agent.sql",
+      "language": "sql",
+      "sizeLines": 48,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0029_workflows.sql",
+      "language": "sql",
+      "sizeLines": 38,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0030_identity_settings.sql",
+      "language": "sql",
+      "sizeLines": 23,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0031_role_policies.sql",
+      "language": "sql",
+      "sizeLines": 17,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0032_session_aliases.sql",
+      "language": "sql",
+      "sizeLines": 7,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0033_claude_ingest.sql",
+      "language": "sql",
+      "sizeLines": 9,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0034_discord_bots.sql",
+      "language": "sql",
+      "sizeLines": 17,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0035_agent_capabilities.sql",
+      "language": "sql",
+      "sizeLines": 14,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0036_messenger_group.sql",
+      "language": "sql",
+      "sizeLines": 12,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0037_agent_orchestration.sql",
+      "language": "sql",
+      "sizeLines": 7,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0038_agent_templates.sql",
+      "language": "sql",
+      "sizeLines": 22,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0039_memory_embeddings.sql",
+      "language": "sql",
+      "sizeLines": 16,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0040_message_ack.sql",
+      "language": "sql",
+      "sizeLines": 9,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0041_peer_gui_address.sql",
+      "language": "sql",
+      "sizeLines": 6,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0042_session_binding_echo_state.sql",
+      "language": "sql",
+      "sizeLines": 5,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0043_binding_proj_name.sql",
+      "language": "sql",
+      "sizeLines": 6,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0044_outbound_queue_ack.sql",
+      "language": "sql",
+      "sizeLines": 10,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0045_app_ack.sql",
+      "language": "sql",
+      "sizeLines": 24,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/migrations/0046_peer_session_identifier.sql",
+      "language": "sql",
+      "sizeLines": 10,
+      "fileCategory": "data"
+    },
+    {
+      "path": "crates/openxgram-db/src/connection.rs",
+      "language": "rust",
+      "sizeLines": 130,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-db/src/error.rs",
+      "language": "rust",
+      "sizeLines": 19,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-db/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 12,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-db/src/migrate.rs",
+      "language": "rust",
+      "sizeLines": 328,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-db/src/pragma.rs",
+      "language": "rust",
+      "sizeLines": 1,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-db/src/schema.rs",
+      "language": "rust",
+      "sizeLines": 1,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-db/tests/integration.rs",
+      "language": "rust",
+      "sizeLines": 115,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-did/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 24,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-did/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 321,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-did/src/wba.rs",
+      "language": "rust",
+      "sizeLines": 394,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-did/tests/round_trip.rs",
+      "language": "rust",
+      "sizeLines": 37,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-eas/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 23,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-eas/src/attest.rs",
+      "language": "rust",
+      "sizeLines": 107,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-eas/src/gas.rs",
+      "language": "rust",
+      "sizeLines": 107,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-eas/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 43,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-eas/src/schema.rs",
+      "language": "rust",
+      "sizeLines": 102,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-eas/src/store.rs",
+      "language": "rust",
+      "sizeLines": 153,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-indexer-sdk/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 25,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-indexer-sdk/src/crawler.rs",
+      "language": "rust",
+      "sizeLines": 113,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-indexer-sdk/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 31,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-indexer-sdk/src/ranking.rs",
+      "language": "rust",
+      "sizeLines": 127,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-indexer-sdk/src/service.rs",
+      "language": "rust",
+      "sizeLines": 223,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-indexer-sdk/src/subscriber.rs",
+      "language": "rust",
+      "sizeLines": 121,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-keystore/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 27,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-keystore/src/blob.rs",
+      "language": "rust",
+      "sizeLines": 81,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-keystore/src/error.rs",
+      "language": "rust",
+      "sizeLines": 32,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-keystore/src/hd.rs",
+      "language": "rust",
+      "sizeLines": 51,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-keystore/src/keypair.rs",
+      "language": "rust",
+      "sizeLines": 144,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-keystore/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 19,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-keystore/src/mnemonic.rs",
+      "language": "rust",
+      "sizeLines": 82,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-keystore/src/storage.rs",
+      "language": "rust",
+      "sizeLines": 382,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-keystore/tests/integration.rs",
+      "language": "rust",
+      "sizeLines": 161,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-manifest/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 21,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-manifest/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 370,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-manifest/tests/integration.rs",
+      "language": "rust",
+      "sizeLines": 204,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-marketplace/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 32,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-marketplace/src/agent.rs",
+      "language": "rust",
+      "sizeLines": 345,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-marketplace/src/client.rs",
+      "language": "rust",
+      "sizeLines": 319,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-marketplace/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 72,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-marketplace/src/mcp.rs",
+      "language": "rust",
+      "sizeLines": 289,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-marketplace/src/policy.rs",
+      "language": "rust",
+      "sizeLines": 346,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-marketplace/tests/integration.rs",
+      "language": "rust",
+      "sizeLines": 258,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-mcp/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 14,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-mcp/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 185,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-mcp/tests/handler.rs",
+      "language": "rust",
+      "sizeLines": 79,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 29,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-memory/src/claude_compat.rs",
+      "language": "rust",
+      "sizeLines": 511,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/src/embed.rs",
+      "language": "rust",
+      "sizeLines": 148,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/src/episode.rs",
+      "language": "rust",
+      "sizeLines": 151,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 66,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/src/memory.rs",
+      "language": "rust",
+      "sizeLines": 316,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/src/message.rs",
+      "language": "rust",
+      "sizeLines": 401,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/src/pattern.rs",
+      "language": "rust",
+      "sizeLines": 137,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/src/session.rs",
+      "language": "rust",
+      "sizeLines": 153,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/src/stats.rs",
+      "language": "rust",
+      "sizeLines": 24,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/src/traits.rs",
+      "language": "rust",
+      "sizeLines": 178,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/src/transfer.rs",
+      "language": "rust",
+      "sizeLines": 245,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/src/util.rs",
+      "language": "rust",
+      "sizeLines": 17,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/tests/conversation.rs",
+      "language": "rust",
+      "sizeLines": 161,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/tests/embedder_factory.rs",
+      "language": "rust",
+      "sizeLines": 31,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/tests/memories.rs",
+      "language": "rust",
+      "sizeLines": 111,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/tests/patterns.rs",
+      "language": "rust",
+      "sizeLines": 107,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/tests/recall.rs",
+      "language": "rust",
+      "sizeLines": 121,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/tests/reflection.rs",
+      "language": "rust",
+      "sizeLines": 104,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/tests/traits_derive.rs",
+      "language": "rust",
+      "sizeLines": 101,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-memory/tests/traits.rs",
+      "language": "rust",
+      "sizeLines": 129,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-mistakes/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 26,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-mistakes/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 49,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-mistakes/src/mcp.rs",
+      "language": "rust",
+      "sizeLines": 209,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-mistakes/src/mistake.rs",
+      "language": "rust",
+      "sizeLines": 248,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-mistakes/src/store.rs",
+      "language": "rust",
+      "sizeLines": 281,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-mistakes/tests/integration.rs",
+      "language": "rust",
+      "sizeLines": 81,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-nostr/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 27,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-nostr/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 412,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-nostr/src/nip65.rs",
+      "language": "rust",
+      "sizeLines": 166,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-nostr/src/ratchet.rs",
+      "language": "rust",
+      "sizeLines": 209,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-nostr/src/relay.rs",
+      "language": "rust",
+      "sizeLines": 113,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-nostr/src/sink.rs",
+      "language": "rust",
+      "sizeLines": 126,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-nostr/src/source.rs",
+      "language": "rust",
+      "sizeLines": 190,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-orchestration/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 30,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-orchestration/src/chain.rs",
+      "language": "rust",
+      "sizeLines": 533,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-orchestration/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 59,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-orchestration/src/scheduled.rs",
+      "language": "rust",
+      "sizeLines": 515,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-orchestration/tests/chain_run.rs",
+      "language": "rust",
+      "sizeLines": 115,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-orchestration/tests/scheduled_round_trip.rs",
+      "language": "rust",
+      "sizeLines": 49,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-orchestration/tests/self_trigger.rs",
+      "language": "rust",
+      "sizeLines": 70,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-patterns/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 26,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-patterns/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 56,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-patterns/src/mcp.rs",
+      "language": "rust",
+      "sizeLines": 283,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-patterns/src/pattern.rs",
+      "language": "rust",
+      "sizeLines": 231,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-patterns/src/store.rs",
+      "language": "rust",
+      "sizeLines": 292,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-payment/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 28,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-payment/examples/bridge_eth_sepolia_to_base.rs",
+      "language": "rust",
+      "sizeLines": 98,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-payment/src/alloy_bridge.rs",
+      "language": "rust",
+      "sizeLines": 71,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-payment/src/chain.rs",
+      "language": "rust",
+      "sizeLines": 69,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-payment/src/erc20.rs",
+      "language": "rust",
+      "sizeLines": 128,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-payment/src/evm_nonce.rs",
+      "language": "rust",
+      "sizeLines": 143,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-payment/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 420,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-payment/src/limits.rs",
+      "language": "rust",
+      "sizeLines": 276,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-payment/src/submit.rs",
+      "language": "rust",
+      "sizeLines": 273,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-payment/tests/payment.rs",
+      "language": "rust",
+      "sizeLines": 186,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-payment/tests/testnet.rs",
+      "language": "rust",
+      "sizeLines": 73,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-peer/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 22,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-peer/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 348,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-peer/tests/peer.rs",
+      "language": "rust",
+      "sizeLines": 195,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-scheduler/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 25,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-scheduler/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 114,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-scheduler/tests/wiring.rs",
+      "language": "rust",
+      "sizeLines": 27,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-transport/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 19,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-transport/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 463,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-transport/src/rate_limit.rs",
+      "language": "rust",
+      "sizeLines": 92,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-transport/src/replay.rs",
+      "language": "rust",
+      "sizeLines": 86,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-transport/src/tailscale.rs",
+      "language": "rust",
+      "sizeLines": 169,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-transport/tests/loopback.rs",
+      "language": "rust",
+      "sizeLines": 215,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-vault/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 29,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-vault/src/audit_chain.rs",
+      "language": "rust",
+      "sizeLines": 438,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-vault/src/kek_rotation.rs",
+      "language": "rust",
+      "sizeLines": 250,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-vault/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 889,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-vault/tests/vault_acl.rs",
+      "language": "rust",
+      "sizeLines": 178,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-vault/tests/vault_policy.rs",
+      "language": "rust",
+      "sizeLines": 175,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-vault/tests/vault.rs",
+      "language": "rust",
+      "sizeLines": 118,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-wiki/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 37,
+      "fileCategory": "config"
+    },
+    {
+      "path": "crates/openxgram-wiki/README.md",
+      "language": "markdown",
+      "sizeLines": 95,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "crates/openxgram-wiki/src/fs.rs",
+      "language": "rust",
+      "sizeLines": 187,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-wiki/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 112,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-wiki/src/mcp.rs",
+      "language": "rust",
+      "sizeLines": 336,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-wiki/src/page.rs",
+      "language": "rust",
+      "sizeLines": 334,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-wiki/src/search.rs",
+      "language": "rust",
+      "sizeLines": 139,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-wiki/src/store.rs",
+      "language": "rust",
+      "sizeLines": 467,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-wiki/src/sync.rs",
+      "language": "rust",
+      "sizeLines": 189,
+      "fileCategory": "code"
+    },
+    {
+      "path": "crates/openxgram-wiki/tests/integration.rs",
+      "language": "rust",
+      "sizeLines": 88,
+      "fileCategory": "code"
+    },
+    {
+      "path": "deny.toml",
+      "language": "toml",
+      "sizeLines": 60,
+      "fileCategory": "config"
+    },
+    {
+      "path": "docs/archive/architecture/overview.md",
+      "language": "markdown",
+      "sizeLines": 138,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/CHECKLIST.md",
+      "language": "markdown",
+      "sizeLines": 229,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/checklists/phase-1-mvp.md",
+      "language": "markdown",
+      "sizeLines": 273,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/checklists/phase-2-roadmap.md",
+      "language": "markdown",
+      "sizeLines": 148,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/decisions/6.4-tauri-gui-sync.md",
+      "language": "markdown",
+      "sizeLines": 41,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/decisions/ADR-001-naming-openxgram.md",
+      "language": "markdown",
+      "sizeLines": 32,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/decisions/ADR-DID-COMPAT.md",
+      "language": "markdown",
+      "sizeLines": 61,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/decisions/ADR-MFA-WEBAUTHN.md",
+      "language": "markdown",
+      "sizeLines": 50,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/decisions/ADR-NOSTR-FALLBACK.md",
+      "language": "markdown",
+      "sizeLines": 36,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/decisions/ADR-TAURI-VITE-SOLID.md",
+      "language": "markdown",
+      "sizeLines": 73,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/handoff/INJECT.md",
+      "language": "markdown",
+      "sizeLines": 101,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/handoff/inject.sh",
+      "language": "shell",
+      "sizeLines": 62,
+      "fileCategory": "script"
+    },
+    {
+      "path": "docs/archive/handoff/session-20260503.md",
+      "language": "markdown",
+      "sizeLines": 185,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/handoff/START-HERE.md",
+      "language": "markdown",
+      "sizeLines": 129,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/PRD-phase1-5.md",
+      "language": "markdown",
+      "sizeLines": 168,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/prd/PRD-OpenXgram-v1.md",
+      "language": "markdown",
+      "sizeLines": 553,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/prd/PRD-OpenXgram-v2-Phase2.md",
+      "language": "markdown",
+      "sizeLines": 314,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/README.md",
+      "language": "markdown",
+      "sizeLines": 50,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/research/rust-crate-survey-20260503.md",
+      "language": "markdown",
+      "sizeLines": 293,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/specs/SPEC-lifecycle-v1.md",
+      "language": "markdown",
+      "sizeLines": 1540,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/specs/SPEC-memory-transfer-v1.md",
+      "language": "markdown",
+      "sizeLines": 1311,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/usecases/01-cross-machine-session.md",
+      "language": "markdown",
+      "sizeLines": 70,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/usecases/02-vault-credential-share.md",
+      "language": "markdown",
+      "sizeLines": 101,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/usecases/03-usdc-payment-automation.md",
+      "language": "markdown",
+      "sizeLines": 89,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/usecases/04-nostr-cross-network.md",
+      "language": "markdown",
+      "sizeLines": 87,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/usecases/05-memory-layers.md",
+      "language": "markdown",
+      "sizeLines": 94,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/usecases/06-vault-rotate-kek.md",
+      "language": "markdown",
+      "sizeLines": 79,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/usecases/07-retention-cleanup.md",
+      "language": "markdown",
+      "sizeLines": 79,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/usecases/08-backup-restore.md",
+      "language": "markdown",
+      "sizeLines": 99,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/archive/usecases/README.md",
+      "language": "markdown",
+      "sizeLines": 45,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/IMPLEMENTATION-CHECKLIST.md",
+      "language": "markdown",
+      "sizeLines": 94,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "docs/oxg.md",
+      "language": "markdown",
+      "sizeLines": 311,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "package.json",
+      "language": "json",
+      "sizeLines": 9,
+      "fileCategory": "config"
+    },
+    {
+      "path": "README.md",
+      "language": "markdown",
+      "sizeLines": 338,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "rust-toolchain.toml",
+      "language": "toml",
+      "sizeLines": 3,
+      "fileCategory": "config"
+    },
+    {
+      "path": "scripts/.gitkeep",
+      "language": "unknown",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "scripts/deploy-www.sh",
+      "language": "shell",
+      "sizeLines": 111,
+      "fileCategory": "script"
+    },
+    {
+      "path": "scripts/inbound-watchdog.sh",
+      "language": "shell",
+      "sizeLines": 54,
+      "fileCategory": "script"
+    },
+    {
+      "path": "SECURITY.md",
+      "language": "markdown",
+      "sizeLines": 71,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "ui/.gitkeep",
+      "language": "unknown",
+      "sizeLines": 0,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/index.html",
+      "language": "html",
+      "sizeLines": 13,
+      "fileCategory": "markup"
+    },
+    {
+      "path": "ui/tauri/app/package.json",
+      "language": "json",
+      "sizeLines": 23,
+      "fileCategory": "config"
+    },
+    {
+      "path": "ui/tauri/app/src/App.tsx",
+      "language": "typescript",
+      "sizeLines": 103,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/components/ChainView.tsx",
+      "language": "typescript",
+      "sizeLines": 171,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/components/ChannelDashboard.tsx",
+      "language": "typescript",
+      "sizeLines": 122,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/components/ChatTab.tsx",
+      "language": "typescript",
+      "sizeLines": 40,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/components/MemoryTab.tsx",
+      "language": "typescript",
+      "sizeLines": 116,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/components/Messenger.tsx",
+      "language": "typescript",
+      "sizeLines": 321,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/components/NetworkTab.tsx",
+      "language": "typescript",
+      "sizeLines": 44,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/components/NotifySetup.tsx",
+      "language": "typescript",
+      "sizeLines": 273,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/components/Onboarding.tsx",
+      "language": "typescript",
+      "sizeLines": 67,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/components/PaymentLimitsView.tsx",
+      "language": "typescript",
+      "sizeLines": 64,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/components/PeersView.tsx",
+      "language": "typescript",
+      "sizeLines": 98,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/components/PendingList.tsx",
+      "language": "typescript",
+      "sizeLines": 67,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/components/ScheduleView.tsx",
+      "language": "typescript",
+      "sizeLines": 247,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/components/SearchView.tsx",
+      "language": "typescript",
+      "sizeLines": 98,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/components/SettingsTab.tsx",
+      "language": "typescript",
+      "sizeLines": 72,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/components/VaultRevealView.tsx",
+      "language": "typescript",
+      "sizeLines": 75,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/components/VaultView.tsx",
+      "language": "typescript",
+      "sizeLines": 20,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/i18n.tsx",
+      "language": "typescript",
+      "sizeLines": 57,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/i18n/en.json",
+      "language": "json",
+      "sizeLines": 164,
+      "fileCategory": "config"
+    },
+    {
+      "path": "ui/tauri/app/src/i18n/ko.json",
+      "language": "json",
+      "sizeLines": 164,
+      "fileCategory": "config"
+    },
+    {
+      "path": "ui/tauri/app/src/main.tsx",
+      "language": "typescript",
+      "sizeLines": 8,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/app/src/styles.css",
+      "language": "css",
+      "sizeLines": 438,
+      "fileCategory": "markup"
+    },
+    {
+      "path": "ui/tauri/app/tsconfig.json",
+      "language": "json",
+      "sizeLines": 21,
+      "fileCategory": "config"
+    },
+    {
+      "path": "ui/tauri/app/vite.config.ts",
+      "language": "typescript",
+      "sizeLines": 19,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/build.rs",
+      "language": "rust",
+      "sizeLines": 3,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/capabilities/main.json",
+      "language": "json",
+      "sizeLines": 16,
+      "fileCategory": "config"
+    },
+    {
+      "path": "ui/tauri/Cargo.toml",
+      "language": "toml",
+      "sizeLines": 55,
+      "fileCategory": "config"
+    },
+    {
+      "path": "ui/tauri/DEPRECATED.md",
+      "language": "markdown",
+      "sizeLines": 58,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "ui/tauri/frontend/index.html",
+      "language": "html",
+      "sizeLines": 258,
+      "fileCategory": "markup"
+    },
+    {
+      "path": "ui/tauri/README.md",
+      "language": "markdown",
+      "sizeLines": 61,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "ui/tauri/src/daemon_client.rs",
+      "language": "rust",
+      "sizeLines": 428,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/src/handlers_chain.rs",
+      "language": "rust",
+      "sizeLines": 221,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/src/handlers_channel.rs",
+      "language": "rust",
+      "sizeLines": 131,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/src/handlers_core.rs",
+      "language": "rust",
+      "sizeLines": 485,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/src/handlers_notify.rs",
+      "language": "rust",
+      "sizeLines": 188,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/src/handlers_schedule.rs",
+      "language": "rust",
+      "sizeLines": 201,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/src/lib.rs",
+      "language": "rust",
+      "sizeLines": 120,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/src/main.rs",
+      "language": "rust",
+      "sizeLines": 11,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/src/state.rs",
+      "language": "rust",
+      "sizeLines": 82,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/tauri/tauri.conf.json",
+      "language": "json",
+      "sizeLines": 38,
+      "fileCategory": "config"
+    },
+    {
+      "path": "ui/tauri/tests/invoke_smoke.rs",
+      "language": "rust",
+      "sizeLines": 100,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/index.html",
+      "language": "html",
+      "sizeLines": 14,
+      "fileCategory": "markup"
+    },
+    {
+      "path": "ui/web/package.json",
+      "language": "json",
+      "sizeLines": 22,
+      "fileCategory": "config"
+    },
+    {
+      "path": "ui/web/src/api/auth.ts",
+      "language": "typescript",
+      "sizeLines": 37,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/api/client.ts",
+      "language": "typescript",
+      "sizeLines": 449,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/api/clipboard.ts",
+      "language": "typescript",
+      "sizeLines": 25,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/api/dialog.ts",
+      "language": "typescript",
+      "sizeLines": 26,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/App.tsx",
+      "language": "typescript",
+      "sizeLines": 260,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/AgentSidePanel.tsx",
+      "language": "typescript",
+      "sizeLines": 1480,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/AgentTemplatesCard.tsx",
+      "language": "typescript",
+      "sizeLines": 186,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/ApprovalQueueBell.tsx",
+      "language": "typescript",
+      "sizeLines": 138,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/AutonomyCard.tsx",
+      "language": "typescript",
+      "sizeLines": 246,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/Breadcrumb.tsx",
+      "language": "typescript",
+      "sizeLines": 88,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/ChainView.tsx",
+      "language": "typescript",
+      "sizeLines": 171,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/ChannelDashboard.tsx",
+      "language": "typescript",
+      "sizeLines": 122,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/ChatTab.tsx",
+      "language": "typescript",
+      "sizeLines": 40,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/ExternalAgentCard.tsx",
+      "language": "typescript",
+      "sizeLines": 171,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/GlobalSearchModal.tsx",
+      "language": "typescript",
+      "sizeLines": 94,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/HomeDashboard.tsx",
+      "language": "typescript",
+      "sizeLines": 248,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/IdentityCard.tsx",
+      "language": "typescript",
+      "sizeLines": 320,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/LoginView.tsx",
+      "language": "typescript",
+      "sizeLines": 70,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/MemoryCard.tsx",
+      "language": "typescript",
+      "sizeLines": 673,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/MemoryTab.tsx",
+      "language": "typescript",
+      "sizeLines": 116,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/Messenger.tsx",
+      "language": "typescript",
+      "sizeLines": 2176,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/NetworkTab.tsx",
+      "language": "typescript",
+      "sizeLines": 39,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/Onboarding.tsx",
+      "language": "typescript",
+      "sizeLines": 67,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/OpsCard.tsx",
+      "language": "typescript",
+      "sizeLines": 123,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/PairingGuide.tsx",
+      "language": "typescript",
+      "sizeLines": 123,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/PaymentLimitsView.tsx",
+      "language": "typescript",
+      "sizeLines": 64,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/PeersView.tsx",
+      "language": "typescript",
+      "sizeLines": 112,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/PendingList.tsx",
+      "language": "typescript",
+      "sizeLines": 67,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/RoutingRulesModal.tsx",
+      "language": "typescript",
+      "sizeLines": 118,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/ScheduleView.tsx",
+      "language": "typescript",
+      "sizeLines": 247,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/SearchView.tsx",
+      "language": "typescript",
+      "sizeLines": 98,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/SessionScreen.tsx",
+      "language": "typescript",
+      "sizeLines": 198,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/SettingsTab.tsx",
+      "language": "typescript",
+      "sizeLines": 149,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/VaultMcpCard.tsx",
+      "language": "typescript",
+      "sizeLines": 148,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/VaultRevealView.tsx",
+      "language": "typescript",
+      "sizeLines": 75,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/VaultView.tsx",
+      "language": "typescript",
+      "sizeLines": 20,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/WhitelistModal.tsx",
+      "language": "typescript",
+      "sizeLines": 90,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/components/WorkflowPanel.tsx",
+      "language": "typescript",
+      "sizeLines": 143,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/i18n.tsx",
+      "language": "typescript",
+      "sizeLines": 57,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/i18n/en.json",
+      "language": "json",
+      "sizeLines": 203,
+      "fileCategory": "config"
+    },
+    {
+      "path": "ui/web/src/i18n/ko.json",
+      "language": "json",
+      "sizeLines": 203,
+      "fileCategory": "config"
+    },
+    {
+      "path": "ui/web/src/main.tsx",
+      "language": "typescript",
+      "sizeLines": 8,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/src/styles.css",
+      "language": "css",
+      "sizeLines": 1187,
+      "fileCategory": "markup"
+    },
+    {
+      "path": "ui/web/src/version.d.ts",
+      "language": "typescript",
+      "sizeLines": 2,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ui/web/tsconfig.json",
+      "language": "json",
+      "sizeLines": 25,
+      "fileCategory": "config"
+    },
+    {
+      "path": "ui/web/vite.config.ts",
+      "language": "typescript",
+      "sizeLines": 72,
+      "fileCategory": "code"
+    },
+    {
+      "path": "version.json",
+      "language": "json",
+      "sizeLines": 5,
+      "fileCategory": "config"
+    }
+  ],
+  "totalFiles": 480,
+  "filteredByIgnore": 23,
+  "estimatedComplexity": "large",
+  "importMap": {
+    ".cargo/config.toml": [],
+    ".github/workflows/auto-tag-release.yml": [],
+    ".github/workflows/ci.yml": [],
+    ".github/workflows/release-binaries.yml": [],
+    ".user/prd2checklist-26-05-09_23-30.md": [],
+    ".user/prd2checklist26-05-04_03-08.md": [],
+    ".user/prd2checklist26-05-04_07-46.md": [],
+    "agents/eno/CLAUDE.md": [],
+    "agents/eno/memory/.gitkeep": [],
+    "agents/pip/CLAUDE.md": [],
+    "agents/pip/memory/.gitkeep": [],
+    "agents/qua/CLAUDE.md": [],
+    "agents/qua/memory/.gitkeep": [],
+    "agents/qua/scenarios/phase-1-mvp.md": [],
+    "agents/res/CLAUDE.md": [],
+    "agents/res/memory/.gitkeep": [],
+    "Cargo.toml": [],
+    "CHANGELOG.md": [],
+    "CLAUDE.md": [],
+    "CODE_OF_CONDUCT.md": [],
+    "CONTRIBUTING.md": [],
+    "crates/.gitkeep": [],
+    "crates/openxgram-a2a/Cargo.toml": [],
+    "crates/openxgram-a2a/src/agent_card.rs": [],
+    "crates/openxgram-a2a/src/client.rs": [
+      "crates/openxgram-a2a/src/agent_card.rs",
+      "crates/openxgram-a2a/src/task.rs"
+    ],
+    "crates/openxgram-a2a/src/lib.rs": [
+      "crates/openxgram-a2a/src/agent_card.rs",
+      "crates/openxgram-a2a/src/client.rs",
+      "crates/openxgram-a2a/src/mcp.rs",
+      "crates/openxgram-a2a/src/task.rs"
+    ],
+    "crates/openxgram-a2a/src/mcp.rs": [
+      "crates/openxgram-a2a/src/agent_card.rs",
+      "crates/openxgram-a2a/src/client.rs",
+      "crates/openxgram-a2a/src/task.rs"
+    ],
+    "crates/openxgram-a2a/src/task.rs": [],
+    "crates/openxgram-a2a/tests/integration.rs": [],
+    "crates/openxgram-adapter/Cargo.toml": [],
+    "crates/openxgram-adapter/src/channel_mcp.rs": [],
+    "crates/openxgram-adapter/src/discord_gateway.rs": [],
+    "crates/openxgram-adapter/src/lib.rs": [
+      "crates/openxgram-adapter/src/channel_mcp.rs",
+      "crates/openxgram-adapter/src/discord_gateway.rs",
+      "crates/openxgram-adapter/src/telegram_bot.rs"
+    ],
+    "crates/openxgram-adapter/src/telegram_bot.rs": [],
+    "crates/openxgram-adapter/tests/poll.rs": [],
+    "crates/openxgram-adapter/tests/send.rs": [],
+    "crates/openxgram-anp/Cargo.toml": [],
+    "crates/openxgram-anp/src/client.rs": [
+      "crates/openxgram-anp/src/discovery.rs",
+      "crates/openxgram-anp/src/message.rs"
+    ],
+    "crates/openxgram-anp/src/discovery.rs": [],
+    "crates/openxgram-anp/src/lib.rs": [
+      "crates/openxgram-anp/src/client.rs",
+      "crates/openxgram-anp/src/discovery.rs",
+      "crates/openxgram-anp/src/mcp.rs",
+      "crates/openxgram-anp/src/message.rs"
+    ],
+    "crates/openxgram-anp/src/mcp.rs": [
+      "crates/openxgram-anp/src/client.rs",
+      "crates/openxgram-anp/src/discovery.rs",
+      "crates/openxgram-anp/src/message.rs"
+    ],
+    "crates/openxgram-anp/src/message.rs": [],
+    "crates/openxgram-anp/tests/integration.rs": [],
+    "crates/openxgram-channel/Cargo.toml": [],
+    "crates/openxgram-channel/src/adapter.rs": [],
+    "crates/openxgram-channel/src/lib.rs": [
+      "crates/openxgram-channel/src/adapter.rs",
+      "crates/openxgram-channel/src/peer.rs",
+      "crates/openxgram-channel/src/route.rs",
+      "crates/openxgram-channel/src/server.rs"
+    ],
+    "crates/openxgram-channel/src/peer.rs": [
+      "crates/openxgram-channel/src/adapter.rs"
+    ],
+    "crates/openxgram-channel/src/route.rs": [
+      "crates/openxgram-channel/src/adapter.rs",
+      "crates/openxgram-channel/src/peer.rs"
+    ],
+    "crates/openxgram-channel/src/server.rs": [
+      "crates/openxgram-channel/src/route.rs"
+    ],
+    "crates/openxgram-channel/tests/server_smoke.rs": [],
+    "crates/openxgram-cli/build.rs": [],
+    "crates/openxgram-cli/Cargo.toml": [],
+    "crates/openxgram-cli/src/age_backup.rs": [],
+    "crates/openxgram-cli/src/agent.rs": [
+      "crates/openxgram-cli/src/response.rs"
+    ],
+    "crates/openxgram-cli/src/audit.rs": [],
+    "crates/openxgram-cli/src/auth.rs": [],
+    "crates/openxgram-cli/src/backup_push.rs": [],
+    "crates/openxgram-cli/src/backup.rs": [],
+    "crates/openxgram-cli/src/bot.rs": [],
+    "crates/openxgram-cli/src/channel.rs": [],
+    "crates/openxgram-cli/src/channels.rs": [],
+    "crates/openxgram-cli/src/daemon_gui_sessions.rs": [],
+    "crates/openxgram-cli/src/daemon_gui_wallets.rs": [],
+    "crates/openxgram-cli/src/daemon_gui.rs": [],
+    "crates/openxgram-cli/src/daemon_peer_sync.rs": [],
+    "crates/openxgram-cli/src/daemon_workers.rs": [],
+    "crates/openxgram-cli/src/daemon.rs": [],
+    "crates/openxgram-cli/src/doctor.rs": [],
+    "crates/openxgram-cli/src/dump.rs": [],
+    "crates/openxgram-cli/src/eas.rs": [],
+    "crates/openxgram-cli/src/find.rs": [
+      "crates/openxgram-cli/src/identity_handle.rs"
+    ],
+    "crates/openxgram-cli/src/gui.rs": [],
+    "crates/openxgram-cli/src/hitl.rs": [],
+    "crates/openxgram-cli/src/identity_handle.rs": [],
+    "crates/openxgram-cli/src/identity.rs": [],
+    "crates/openxgram-cli/src/import_app.rs": [],
+    "crates/openxgram-cli/src/init.rs": [
+      "crates/openxgram-cli/src/pw.rs"
+    ],
+    "crates/openxgram-cli/src/invite.rs": [],
+    "crates/openxgram-cli/src/lib.rs": [
+      "crates/openxgram-cli/src/age_backup.rs",
+      "crates/openxgram-cli/src/agent.rs",
+      "crates/openxgram-cli/src/audit.rs",
+      "crates/openxgram-cli/src/auth.rs",
+      "crates/openxgram-cli/src/backup_push.rs",
+      "crates/openxgram-cli/src/backup.rs",
+      "crates/openxgram-cli/src/bot.rs",
+      "crates/openxgram-cli/src/channel.rs",
+      "crates/openxgram-cli/src/channels.rs",
+      "crates/openxgram-cli/src/daemon_gui_sessions.rs",
+      "crates/openxgram-cli/src/daemon_gui_wallets.rs",
+      "crates/openxgram-cli/src/daemon_gui.rs",
+      "crates/openxgram-cli/src/daemon_peer_sync.rs",
+      "crates/openxgram-cli/src/daemon_workers.rs",
+      "crates/openxgram-cli/src/daemon.rs",
+      "crates/openxgram-cli/src/doctor.rs",
+      "crates/openxgram-cli/src/dump.rs",
+      "crates/openxgram-cli/src/eas.rs",
+      "crates/openxgram-cli/src/find.rs",
+      "crates/openxgram-cli/src/gui.rs",
+      "crates/openxgram-cli/src/hitl.rs",
+      "crates/openxgram-cli/src/identity_handle.rs",
+      "crates/openxgram-cli/src/identity.rs",
+      "crates/openxgram-cli/src/import_app.rs",
+      "crates/openxgram-cli/src/init.rs",
+      "crates/openxgram-cli/src/invite.rs",
+      "crates/openxgram-cli/src/link.rs",
+      "crates/openxgram-cli/src/mcp_install.rs",
+      "crates/openxgram-cli/src/mcp_serve.rs",
+      "crates/openxgram-cli/src/mcp_tokens.rs",
+      "crates/openxgram-cli/src/memory.rs",
+      "crates/openxgram-cli/src/migrate.rs",
+      "crates/openxgram-cli/src/mistake.rs",
+      "crates/openxgram-cli/src/nostr_inbound.rs",
+      "crates/openxgram-cli/src/notify_setup.rs",
+      "crates/openxgram-cli/src/notify.rs",
+      "crates/openxgram-cli/src/onboard.rs",
+      "crates/openxgram-cli/src/openagentx.rs",
+      "crates/openxgram-cli/src/orchestration.rs",
+      "crates/openxgram-cli/src/otel.rs",
+      "crates/openxgram-cli/src/pair_desktop.rs",
+      "crates/openxgram-cli/src/pair_host.rs",
+      "crates/openxgram-cli/src/pattern_cmd.rs",
+      "crates/openxgram-cli/src/patterns.rs",
+      "crates/openxgram-cli/src/payment_summary.rs",
+      "crates/openxgram-cli/src/payment.rs",
+      "crates/openxgram-cli/src/peer_send.rs",
+      "crates/openxgram-cli/src/peer.rs",
+      "crates/openxgram-cli/src/pw.rs",
+      "crates/openxgram-cli/src/ratchet_cron.rs",
+      "crates/openxgram-cli/src/reputation.rs",
+      "crates/openxgram-cli/src/reset.rs",
+      "crates/openxgram-cli/src/response.rs",
+      "crates/openxgram-cli/src/retention.rs",
+      "crates/openxgram-cli/src/save_l0.rs",
+      "crates/openxgram-cli/src/send.rs",
+      "crates/openxgram-cli/src/session.rs",
+      "crates/openxgram-cli/src/status.rs",
+      "crates/openxgram-cli/src/sub_invoker.rs",
+      "crates/openxgram-cli/src/systemd.rs",
+      "crates/openxgram-cli/src/traits.rs",
+      "crates/openxgram-cli/src/tui.rs",
+      "crates/openxgram-cli/src/ui_assets.rs",
+      "crates/openxgram-cli/src/uninstall.rs",
+      "crates/openxgram-cli/src/update.rs",
+      "crates/openxgram-cli/src/vault.rs",
+      "crates/openxgram-cli/src/wiki.rs",
+      "crates/openxgram-cli/src/wizard.rs",
+      "crates/openxgram-cli/src/workflow_engine.rs"
+    ],
+    "crates/openxgram-cli/src/link.rs": [],
+    "crates/openxgram-cli/src/main.rs": [],
+    "crates/openxgram-cli/src/mcp_install.rs": [],
+    "crates/openxgram-cli/src/mcp_serve.rs": [],
+    "crates/openxgram-cli/src/mcp_tokens.rs": [],
+    "crates/openxgram-cli/src/memory.rs": [],
+    "crates/openxgram-cli/src/migrate.rs": [],
+    "crates/openxgram-cli/src/mistake.rs": [],
+    "crates/openxgram-cli/src/nostr_inbound.rs": [],
+    "crates/openxgram-cli/src/notify_setup.rs": [],
+    "crates/openxgram-cli/src/notify.rs": [],
+    "crates/openxgram-cli/src/onboard.rs": [],
+    "crates/openxgram-cli/src/openagentx.rs": [],
+    "crates/openxgram-cli/src/orchestration.rs": [],
+    "crates/openxgram-cli/src/otel.rs": [],
+    "crates/openxgram-cli/src/pair_desktop.rs": [],
+    "crates/openxgram-cli/src/pair_host.rs": [
+      "crates/openxgram-cli/src/peer.rs"
+    ],
+    "crates/openxgram-cli/src/pattern_cmd.rs": [],
+    "crates/openxgram-cli/src/patterns.rs": [],
+    "crates/openxgram-cli/src/payment_summary.rs": [],
+    "crates/openxgram-cli/src/payment.rs": [],
+    "crates/openxgram-cli/src/peer_send.rs": [],
+    "crates/openxgram-cli/src/peer.rs": [],
+    "crates/openxgram-cli/src/pw.rs": [],
+    "crates/openxgram-cli/src/ratchet_cron.rs": [],
+    "crates/openxgram-cli/src/reputation.rs": [],
+    "crates/openxgram-cli/src/reset.rs": [
+      "crates/openxgram-cli/src/uninstall.rs"
+    ],
+    "crates/openxgram-cli/src/response.rs": [],
+    "crates/openxgram-cli/src/retention.rs": [],
+    "crates/openxgram-cli/src/save_l0.rs": [],
+    "crates/openxgram-cli/src/send.rs": [
+      "crates/openxgram-cli/src/channels.rs"
+    ],
+    "crates/openxgram-cli/src/session.rs": [],
+    "crates/openxgram-cli/src/status.rs": [],
+    "crates/openxgram-cli/src/sub_invoker.rs": [],
+    "crates/openxgram-cli/src/systemd.rs": [],
+    "crates/openxgram-cli/src/traits.rs": [],
+    "crates/openxgram-cli/src/tui.rs": [],
+    "crates/openxgram-cli/src/ui_assets.rs": [],
+    "crates/openxgram-cli/src/uninstall.rs": [
+      "crates/openxgram-cli/src/backup.rs"
+    ],
+    "crates/openxgram-cli/src/update.rs": [],
+    "crates/openxgram-cli/src/vault.rs": [],
+    "crates/openxgram-cli/src/wiki.rs": [],
+    "crates/openxgram-cli/src/wizard.rs": [],
+    "crates/openxgram-cli/src/workflow_engine.rs": [],
+    "crates/openxgram-cli/tests/agent_inject.rs": [],
+    "crates/openxgram-cli/tests/audit.rs": [],
+    "crates/openxgram-cli/tests/backup_push.rs": [],
+    "crates/openxgram-cli/tests/cold_backup.rs": [],
+    "crates/openxgram-cli/tests/cross_node_conversation.rs": [],
+    "crates/openxgram-cli/tests/daemon.rs": [],
+    "crates/openxgram-cli/tests/discord_gateway_smoke.rs": [],
+    "crates/openxgram-cli/tests/doctor.rs": [],
+    "crates/openxgram-cli/tests/dump.rs": [],
+    "crates/openxgram-cli/tests/external_trade_demo.rs": [],
+    "crates/openxgram-cli/tests/inbound_pipeline.rs": [],
+    "crates/openxgram-cli/tests/init.rs": [],
+    "crates/openxgram-cli/tests/mcp_http.rs": [],
+    "crates/openxgram-cli/tests/mcp_serve.rs": [],
+    "crates/openxgram-cli/tests/mcp_tokens.rs": [],
+    "crates/openxgram-cli/tests/memory_export.rs": [],
+    "crates/openxgram-cli/tests/memory.rs": [],
+    "crates/openxgram-cli/tests/migrate.rs": [],
+    "crates/openxgram-cli/tests/notify_channel.rs": [],
+    "crates/openxgram-cli/tests/notify_listen.rs": [],
+    "crates/openxgram-cli/tests/notify_setup.rs": [],
+    "crates/openxgram-cli/tests/notify.rs": [],
+    "crates/openxgram-cli/tests/patterns.rs": [],
+    "crates/openxgram-cli/tests/payment.rs": [],
+    "crates/openxgram-cli/tests/peer_send.rs": [],
+    "crates/openxgram-cli/tests/peer.rs": [],
+    "crates/openxgram-cli/tests/phase1_acceptance.rs": [],
+    "crates/openxgram-cli/tests/schedule_cli.rs": [],
+    "crates/openxgram-cli/tests/self_trigger_e2e.rs": [],
+    "crates/openxgram-cli/tests/session.rs": [],
+    "crates/openxgram-cli/tests/status_reset.rs": [],
+    "crates/openxgram-cli/tests/systemd.rs": [],
+    "crates/openxgram-cli/tests/traits.rs": [],
+    "crates/openxgram-cli/tests/tui.rs": [],
+    "crates/openxgram-cli/tests/two_node_e2e.rs": [],
+    "crates/openxgram-cli/tests/uninstall.rs": [],
+    "crates/openxgram-cli/tests/vault.rs": [],
+    "crates/openxgram-cli/tests/wizard.rs": [],
+    "crates/openxgram-core/Cargo.toml": [],
+    "crates/openxgram-core/src/confirm.rs": [],
+    "crates/openxgram-core/src/env.rs": [],
+    "crates/openxgram-core/src/lib.rs": [
+      "crates/openxgram-core/src/confirm.rs",
+      "crates/openxgram-core/src/env.rs",
+      "crates/openxgram-core/src/paths.rs",
+      "crates/openxgram-core/src/ports.rs",
+      "crates/openxgram-core/src/time.rs"
+    ],
+    "crates/openxgram-core/src/paths.rs": [],
+    "crates/openxgram-core/src/ports.rs": [],
+    "crates/openxgram-core/src/time.rs": [],
+    "crates/openxgram-db/Cargo.toml": [],
+    "crates/openxgram-db/migrations/0001_init.sql": [],
+    "crates/openxgram-db/migrations/0002_message_embeddings.sql": [],
+    "crates/openxgram-db/migrations/0003_episodes.sql": [],
+    "crates/openxgram-db/migrations/0004_patterns.sql": [],
+    "crates/openxgram-db/migrations/0005_traits.sql": [],
+    "crates/openxgram-db/migrations/0006_vault.sql": [],
+    "crates/openxgram-db/migrations/0007_vault_acl.sql": [],
+    "crates/openxgram-db/migrations/0008_vault_pending.sql": [],
+    "crates/openxgram-db/migrations/0009_mcp_tokens.sql": [],
+    "crates/openxgram-db/migrations/0010_peers.sql": [],
+    "crates/openxgram-db/migrations/0011_payment_intents.sql": [],
+    "crates/openxgram-db/migrations/0012_peer_eth_address.sql": [],
+    "crates/openxgram-db/migrations/0013_audit_chain.sql": [],
+    "crates/openxgram-db/migrations/0014_kek_rotations.sql": [],
+    "crates/openxgram-db/migrations/0015_payment_daily_limits.sql": [],
+    "crates/openxgram-db/migrations/0016_orchestration.sql": [],
+    "crates/openxgram-db/migrations/0017_conversation_id.sql": [],
+    "crates/openxgram-db/migrations/0018_wiki_pages.sql": [],
+    "crates/openxgram-db/migrations/0019_mistakes.sql": [],
+    "crates/openxgram-db/migrations/0020_action_patterns.sql": [],
+    "crates/openxgram-db/migrations/0021_marketplace_cache.sql": [],
+    "crates/openxgram-db/migrations/0021_sub_wallets.sql": [],
+    "crates/openxgram-db/migrations/0022_messenger_full.sql": [],
+    "crates/openxgram-db/migrations/0022_users.sql": [],
+    "crates/openxgram-db/migrations/0023_messenger_attachments.sql": [],
+    "crates/openxgram-db/migrations/0024_memory_full.sql": [],
+    "crates/openxgram-db/migrations/0025_session_channel_bindings.sql": [],
+    "crates/openxgram-db/migrations/0026_full_specs.sql": [],
+    "crates/openxgram-db/migrations/0028_external_agent.sql": [],
+    "crates/openxgram-db/migrations/0029_workflows.sql": [],
+    "crates/openxgram-db/migrations/0030_identity_settings.sql": [],
+    "crates/openxgram-db/migrations/0031_role_policies.sql": [],
+    "crates/openxgram-db/migrations/0032_session_aliases.sql": [],
+    "crates/openxgram-db/migrations/0033_claude_ingest.sql": [],
+    "crates/openxgram-db/migrations/0034_discord_bots.sql": [],
+    "crates/openxgram-db/migrations/0035_agent_capabilities.sql": [],
+    "crates/openxgram-db/migrations/0036_messenger_group.sql": [],
+    "crates/openxgram-db/migrations/0037_agent_orchestration.sql": [],
+    "crates/openxgram-db/migrations/0038_agent_templates.sql": [],
+    "crates/openxgram-db/migrations/0039_memory_embeddings.sql": [],
+    "crates/openxgram-db/migrations/0040_message_ack.sql": [],
+    "crates/openxgram-db/migrations/0041_peer_gui_address.sql": [],
+    "crates/openxgram-db/migrations/0042_session_binding_echo_state.sql": [],
+    "crates/openxgram-db/migrations/0043_binding_proj_name.sql": [],
+    "crates/openxgram-db/migrations/0044_outbound_queue_ack.sql": [],
+    "crates/openxgram-db/migrations/0045_app_ack.sql": [],
+    "crates/openxgram-db/migrations/0046_peer_session_identifier.sql": [],
+    "crates/openxgram-db/src/connection.rs": [
+      "crates/openxgram-db/src/error.rs",
+      "crates/openxgram-db/src/migrate.rs"
+    ],
+    "crates/openxgram-db/src/error.rs": [],
+    "crates/openxgram-db/src/lib.rs": [
+      "crates/openxgram-db/src/connection.rs",
+      "crates/openxgram-db/src/error.rs",
+      "crates/openxgram-db/src/migrate.rs",
+      "crates/openxgram-db/src/pragma.rs",
+      "crates/openxgram-db/src/schema.rs"
+    ],
+    "crates/openxgram-db/src/migrate.rs": [
+      "crates/openxgram-db/src/error.rs"
+    ],
+    "crates/openxgram-db/src/pragma.rs": [],
+    "crates/openxgram-db/src/schema.rs": [],
+    "crates/openxgram-db/tests/integration.rs": [],
+    "crates/openxgram-did/Cargo.toml": [],
+    "crates/openxgram-did/src/lib.rs": [
+      "crates/openxgram-did/src/wba.rs"
+    ],
+    "crates/openxgram-did/src/wba.rs": [],
+    "crates/openxgram-did/tests/round_trip.rs": [],
+    "crates/openxgram-eas/Cargo.toml": [],
+    "crates/openxgram-eas/src/attest.rs": [
+      "crates/openxgram-eas/src/schema.rs"
+    ],
+    "crates/openxgram-eas/src/gas.rs": [],
+    "crates/openxgram-eas/src/lib.rs": [
+      "crates/openxgram-eas/src/attest.rs",
+      "crates/openxgram-eas/src/gas.rs",
+      "crates/openxgram-eas/src/schema.rs",
+      "crates/openxgram-eas/src/store.rs"
+    ],
+    "crates/openxgram-eas/src/schema.rs": [],
+    "crates/openxgram-eas/src/store.rs": [
+      "crates/openxgram-eas/src/attest.rs"
+    ],
+    "crates/openxgram-indexer-sdk/Cargo.toml": [],
+    "crates/openxgram-indexer-sdk/src/crawler.rs": [],
+    "crates/openxgram-indexer-sdk/src/lib.rs": [
+      "crates/openxgram-indexer-sdk/src/crawler.rs",
+      "crates/openxgram-indexer-sdk/src/ranking.rs",
+      "crates/openxgram-indexer-sdk/src/service.rs",
+      "crates/openxgram-indexer-sdk/src/subscriber.rs"
+    ],
+    "crates/openxgram-indexer-sdk/src/ranking.rs": [],
+    "crates/openxgram-indexer-sdk/src/service.rs": [
+      "crates/openxgram-indexer-sdk/src/ranking.rs"
+    ],
+    "crates/openxgram-indexer-sdk/src/subscriber.rs": [],
+    "crates/openxgram-keystore/Cargo.toml": [],
+    "crates/openxgram-keystore/src/blob.rs": [
+      "crates/openxgram-keystore/src/error.rs"
+    ],
+    "crates/openxgram-keystore/src/error.rs": [],
+    "crates/openxgram-keystore/src/hd.rs": [
+      "crates/openxgram-keystore/src/error.rs",
+      "crates/openxgram-keystore/src/keypair.rs"
+    ],
+    "crates/openxgram-keystore/src/keypair.rs": [
+      "crates/openxgram-keystore/src/error.rs"
+    ],
+    "crates/openxgram-keystore/src/lib.rs": [
+      "crates/openxgram-keystore/src/blob.rs",
+      "crates/openxgram-keystore/src/error.rs",
+      "crates/openxgram-keystore/src/hd.rs",
+      "crates/openxgram-keystore/src/keypair.rs",
+      "crates/openxgram-keystore/src/mnemonic.rs",
+      "crates/openxgram-keystore/src/storage.rs"
+    ],
+    "crates/openxgram-keystore/src/mnemonic.rs": [
+      "crates/openxgram-keystore/src/error.rs"
+    ],
+    "crates/openxgram-keystore/src/storage.rs": [
+      "crates/openxgram-keystore/src/error.rs",
+      "crates/openxgram-keystore/src/hd.rs",
+      "crates/openxgram-keystore/src/keypair.rs",
+      "crates/openxgram-keystore/src/mnemonic.rs"
+    ],
+    "crates/openxgram-keystore/tests/integration.rs": [],
+    "crates/openxgram-manifest/Cargo.toml": [],
+    "crates/openxgram-manifest/src/lib.rs": [],
+    "crates/openxgram-manifest/tests/integration.rs": [],
+    "crates/openxgram-marketplace/Cargo.toml": [],
+    "crates/openxgram-marketplace/src/agent.rs": [],
+    "crates/openxgram-marketplace/src/client.rs": [
+      "crates/openxgram-marketplace/src/agent.rs"
+    ],
+    "crates/openxgram-marketplace/src/lib.rs": [
+      "crates/openxgram-marketplace/src/agent.rs",
+      "crates/openxgram-marketplace/src/client.rs",
+      "crates/openxgram-marketplace/src/mcp.rs",
+      "crates/openxgram-marketplace/src/policy.rs"
+    ],
+    "crates/openxgram-marketplace/src/mcp.rs": [
+      "crates/openxgram-marketplace/src/agent.rs",
+      "crates/openxgram-marketplace/src/client.rs",
+      "crates/openxgram-marketplace/src/policy.rs"
+    ],
+    "crates/openxgram-marketplace/src/policy.rs": [
+      "crates/openxgram-marketplace/src/agent.rs"
+    ],
+    "crates/openxgram-marketplace/tests/integration.rs": [],
+    "crates/openxgram-mcp/Cargo.toml": [],
+    "crates/openxgram-mcp/src/lib.rs": [],
+    "crates/openxgram-mcp/tests/handler.rs": [],
+    "crates/openxgram-memory/Cargo.toml": [],
+    "crates/openxgram-memory/src/claude_compat.rs": [
+      "crates/openxgram-memory/src/memory.rs",
+      "crates/openxgram-memory/src/traits.rs"
+    ],
+    "crates/openxgram-memory/src/embed.rs": [],
+    "crates/openxgram-memory/src/episode.rs": [
+      "crates/openxgram-memory/src/util.rs"
+    ],
+    "crates/openxgram-memory/src/lib.rs": [
+      "crates/openxgram-memory/src/claude_compat.rs",
+      "crates/openxgram-memory/src/embed.rs",
+      "crates/openxgram-memory/src/episode.rs",
+      "crates/openxgram-memory/src/memory.rs",
+      "crates/openxgram-memory/src/message.rs",
+      "crates/openxgram-memory/src/pattern.rs",
+      "crates/openxgram-memory/src/session.rs",
+      "crates/openxgram-memory/src/stats.rs",
+      "crates/openxgram-memory/src/traits.rs",
+      "crates/openxgram-memory/src/transfer.rs",
+      "crates/openxgram-memory/src/util.rs"
+    ],
+    "crates/openxgram-memory/src/memory.rs": [
+      "crates/openxgram-memory/src/embed.rs",
+      "crates/openxgram-memory/src/util.rs"
+    ],
+    "crates/openxgram-memory/src/message.rs": [
+      "crates/openxgram-memory/src/embed.rs",
+      "crates/openxgram-memory/src/util.rs"
+    ],
+    "crates/openxgram-memory/src/pattern.rs": [
+      "crates/openxgram-memory/src/util.rs"
+    ],
+    "crates/openxgram-memory/src/session.rs": [
+      "crates/openxgram-memory/src/util.rs"
+    ],
+    "crates/openxgram-memory/src/stats.rs": [],
+    "crates/openxgram-memory/src/traits.rs": [
+      "crates/openxgram-memory/src/pattern.rs",
+      "crates/openxgram-memory/src/util.rs"
+    ],
+    "crates/openxgram-memory/src/transfer.rs": [
+      "crates/openxgram-memory/src/episode.rs",
+      "crates/openxgram-memory/src/memory.rs",
+      "crates/openxgram-memory/src/message.rs",
+      "crates/openxgram-memory/src/session.rs"
+    ],
+    "crates/openxgram-memory/src/util.rs": [],
+    "crates/openxgram-memory/tests/conversation.rs": [],
+    "crates/openxgram-memory/tests/embedder_factory.rs": [],
+    "crates/openxgram-memory/tests/memories.rs": [],
+    "crates/openxgram-memory/tests/patterns.rs": [],
+    "crates/openxgram-memory/tests/recall.rs": [],
+    "crates/openxgram-memory/tests/reflection.rs": [],
+    "crates/openxgram-memory/tests/traits_derive.rs": [],
+    "crates/openxgram-memory/tests/traits.rs": [],
+    "crates/openxgram-mistakes/Cargo.toml": [],
+    "crates/openxgram-mistakes/src/lib.rs": [
+      "crates/openxgram-mistakes/src/mcp.rs",
+      "crates/openxgram-mistakes/src/mistake.rs",
+      "crates/openxgram-mistakes/src/store.rs"
+    ],
+    "crates/openxgram-mistakes/src/mcp.rs": [
+      "crates/openxgram-mistakes/src/mistake.rs",
+      "crates/openxgram-mistakes/src/store.rs"
+    ],
+    "crates/openxgram-mistakes/src/mistake.rs": [],
+    "crates/openxgram-mistakes/src/store.rs": [
+      "crates/openxgram-mistakes/src/mistake.rs"
+    ],
+    "crates/openxgram-mistakes/tests/integration.rs": [],
+    "crates/openxgram-nostr/Cargo.toml": [],
+    "crates/openxgram-nostr/src/lib.rs": [
+      "crates/openxgram-nostr/src/ratchet.rs",
+      "crates/openxgram-nostr/src/relay.rs",
+      "crates/openxgram-nostr/src/sink.rs",
+      "crates/openxgram-nostr/src/source.rs"
+    ],
+    "crates/openxgram-nostr/src/nip65.rs": [],
+    "crates/openxgram-nostr/src/ratchet.rs": [],
+    "crates/openxgram-nostr/src/relay.rs": [],
+    "crates/openxgram-nostr/src/sink.rs": [],
+    "crates/openxgram-nostr/src/source.rs": [],
+    "crates/openxgram-orchestration/Cargo.toml": [],
+    "crates/openxgram-orchestration/src/chain.rs": [
+      "crates/openxgram-orchestration/src/scheduled.rs"
+    ],
+    "crates/openxgram-orchestration/src/lib.rs": [
+      "crates/openxgram-orchestration/src/chain.rs",
+      "crates/openxgram-orchestration/src/scheduled.rs"
+    ],
+    "crates/openxgram-orchestration/src/scheduled.rs": [],
+    "crates/openxgram-orchestration/tests/chain_run.rs": [],
+    "crates/openxgram-orchestration/tests/scheduled_round_trip.rs": [],
+    "crates/openxgram-orchestration/tests/self_trigger.rs": [],
+    "crates/openxgram-patterns/Cargo.toml": [],
+    "crates/openxgram-patterns/src/lib.rs": [
+      "crates/openxgram-patterns/src/mcp.rs",
+      "crates/openxgram-patterns/src/pattern.rs",
+      "crates/openxgram-patterns/src/store.rs"
+    ],
+    "crates/openxgram-patterns/src/mcp.rs": [
+      "crates/openxgram-patterns/src/pattern.rs",
+      "crates/openxgram-patterns/src/store.rs"
+    ],
+    "crates/openxgram-patterns/src/pattern.rs": [],
+    "crates/openxgram-patterns/src/store.rs": [
+      "crates/openxgram-patterns/src/pattern.rs"
+    ],
+    "crates/openxgram-payment/Cargo.toml": [],
+    "crates/openxgram-payment/examples/bridge_eth_sepolia_to_base.rs": [],
+    "crates/openxgram-payment/src/alloy_bridge.rs": [],
+    "crates/openxgram-payment/src/chain.rs": [],
+    "crates/openxgram-payment/src/erc20.rs": [],
+    "crates/openxgram-payment/src/evm_nonce.rs": [],
+    "crates/openxgram-payment/src/lib.rs": [
+      "crates/openxgram-payment/src/alloy_bridge.rs",
+      "crates/openxgram-payment/src/chain.rs",
+      "crates/openxgram-payment/src/erc20.rs",
+      "crates/openxgram-payment/src/evm_nonce.rs",
+      "crates/openxgram-payment/src/limits.rs",
+      "crates/openxgram-payment/src/submit.rs"
+    ],
+    "crates/openxgram-payment/src/limits.rs": [],
+    "crates/openxgram-payment/src/submit.rs": [],
+    "crates/openxgram-payment/tests/payment.rs": [],
+    "crates/openxgram-payment/tests/testnet.rs": [],
+    "crates/openxgram-peer/Cargo.toml": [],
+    "crates/openxgram-peer/src/lib.rs": [],
+    "crates/openxgram-peer/tests/peer.rs": [],
+    "crates/openxgram-scheduler/Cargo.toml": [],
+    "crates/openxgram-scheduler/src/lib.rs": [],
+    "crates/openxgram-scheduler/tests/wiring.rs": [],
+    "crates/openxgram-transport/Cargo.toml": [],
+    "crates/openxgram-transport/src/lib.rs": [
+      "crates/openxgram-transport/src/rate_limit.rs",
+      "crates/openxgram-transport/src/replay.rs",
+      "crates/openxgram-transport/src/tailscale.rs"
+    ],
+    "crates/openxgram-transport/src/rate_limit.rs": [],
+    "crates/openxgram-transport/src/replay.rs": [],
+    "crates/openxgram-transport/src/tailscale.rs": [],
+    "crates/openxgram-transport/tests/loopback.rs": [],
+    "crates/openxgram-vault/Cargo.toml": [],
+    "crates/openxgram-vault/src/audit_chain.rs": [],
+    "crates/openxgram-vault/src/kek_rotation.rs": [
+      "crates/openxgram-vault/src/audit_chain.rs"
+    ],
+    "crates/openxgram-vault/src/lib.rs": [
+      "crates/openxgram-vault/src/audit_chain.rs",
+      "crates/openxgram-vault/src/kek_rotation.rs"
+    ],
+    "crates/openxgram-vault/tests/vault_acl.rs": [],
+    "crates/openxgram-vault/tests/vault_policy.rs": [],
+    "crates/openxgram-vault/tests/vault.rs": [],
+    "crates/openxgram-wiki/Cargo.toml": [],
+    "crates/openxgram-wiki/README.md": [],
+    "crates/openxgram-wiki/src/fs.rs": [
+      "crates/openxgram-wiki/src/page.rs"
+    ],
+    "crates/openxgram-wiki/src/lib.rs": [
+      "crates/openxgram-wiki/src/fs.rs",
+      "crates/openxgram-wiki/src/mcp.rs",
+      "crates/openxgram-wiki/src/page.rs",
+      "crates/openxgram-wiki/src/search.rs",
+      "crates/openxgram-wiki/src/store.rs",
+      "crates/openxgram-wiki/src/sync.rs"
+    ],
+    "crates/openxgram-wiki/src/mcp.rs": [
+      "crates/openxgram-wiki/src/fs.rs",
+      "crates/openxgram-wiki/src/page.rs",
+      "crates/openxgram-wiki/src/search.rs",
+      "crates/openxgram-wiki/src/store.rs"
+    ],
+    "crates/openxgram-wiki/src/page.rs": [],
+    "crates/openxgram-wiki/src/search.rs": [
+      "crates/openxgram-wiki/src/page.rs",
+      "crates/openxgram-wiki/src/store.rs"
+    ],
+    "crates/openxgram-wiki/src/store.rs": [
+      "crates/openxgram-wiki/src/page.rs"
+    ],
+    "crates/openxgram-wiki/src/sync.rs": [
+      "crates/openxgram-wiki/src/fs.rs",
+      "crates/openxgram-wiki/src/page.rs",
+      "crates/openxgram-wiki/src/store.rs"
+    ],
+    "crates/openxgram-wiki/tests/integration.rs": [],
+    "deny.toml": [],
+    "docs/archive/architecture/overview.md": [],
+    "docs/archive/CHECKLIST.md": [],
+    "docs/archive/checklists/phase-1-mvp.md": [],
+    "docs/archive/checklists/phase-2-roadmap.md": [],
+    "docs/archive/decisions/6.4-tauri-gui-sync.md": [],
+    "docs/archive/decisions/ADR-001-naming-openxgram.md": [],
+    "docs/archive/decisions/ADR-DID-COMPAT.md": [],
+    "docs/archive/decisions/ADR-MFA-WEBAUTHN.md": [],
+    "docs/archive/decisions/ADR-NOSTR-FALLBACK.md": [],
+    "docs/archive/decisions/ADR-TAURI-VITE-SOLID.md": [],
+    "docs/archive/handoff/INJECT.md": [],
+    "docs/archive/handoff/inject.sh": [],
+    "docs/archive/handoff/session-20260503.md": [],
+    "docs/archive/handoff/START-HERE.md": [],
+    "docs/archive/PRD-phase1-5.md": [],
+    "docs/archive/prd/PRD-OpenXgram-v1.md": [],
+    "docs/archive/prd/PRD-OpenXgram-v2-Phase2.md": [],
+    "docs/archive/README.md": [],
+    "docs/archive/research/rust-crate-survey-20260503.md": [],
+    "docs/archive/specs/SPEC-lifecycle-v1.md": [],
+    "docs/archive/specs/SPEC-memory-transfer-v1.md": [],
+    "docs/archive/usecases/01-cross-machine-session.md": [],
+    "docs/archive/usecases/02-vault-credential-share.md": [],
+    "docs/archive/usecases/03-usdc-payment-automation.md": [],
+    "docs/archive/usecases/04-nostr-cross-network.md": [],
+    "docs/archive/usecases/05-memory-layers.md": [],
+    "docs/archive/usecases/06-vault-rotate-kek.md": [],
+    "docs/archive/usecases/07-retention-cleanup.md": [],
+    "docs/archive/usecases/08-backup-restore.md": [],
+    "docs/archive/usecases/README.md": [],
+    "docs/IMPLEMENTATION-CHECKLIST.md": [],
+    "docs/oxg.md": [],
+    "package.json": [],
+    "README.md": [],
+    "rust-toolchain.toml": [],
+    "scripts/.gitkeep": [],
+    "scripts/deploy-www.sh": [],
+    "scripts/inbound-watchdog.sh": [],
+    "SECURITY.md": [],
+    "ui/.gitkeep": [],
+    "ui/tauri/app/index.html": [],
+    "ui/tauri/app/package.json": [],
+    "ui/tauri/app/src/App.tsx": [
+      "ui/tauri/app/src/components/ChatTab.tsx",
+      "ui/tauri/app/src/components/MemoryTab.tsx",
+      "ui/tauri/app/src/components/NetworkTab.tsx",
+      "ui/tauri/app/src/components/Onboarding.tsx",
+      "ui/tauri/app/src/components/SettingsTab.tsx",
+      "ui/tauri/app/src/i18n.tsx"
+    ],
+    "ui/tauri/app/src/components/ChainView.tsx": [
+      "ui/tauri/app/src/i18n.tsx"
+    ],
+    "ui/tauri/app/src/components/ChannelDashboard.tsx": [
+      "ui/tauri/app/src/i18n.tsx"
+    ],
+    "ui/tauri/app/src/components/ChatTab.tsx": [
+      "ui/tauri/app/src/components/Messenger.tsx",
+      "ui/tauri/app/src/components/SearchView.tsx",
+      "ui/tauri/app/src/i18n.tsx"
+    ],
+    "ui/tauri/app/src/components/MemoryTab.tsx": [
+      "ui/tauri/app/src/components/VaultView.tsx",
+      "ui/tauri/app/src/i18n.tsx"
+    ],
+    "ui/tauri/app/src/components/Messenger.tsx": [
+      "ui/tauri/app/src/i18n.tsx"
+    ],
+    "ui/tauri/app/src/components/NetworkTab.tsx": [
+      "ui/tauri/app/src/components/ChannelDashboard.tsx",
+      "ui/tauri/app/src/components/NotifySetup.tsx",
+      "ui/tauri/app/src/components/PeersView.tsx",
+      "ui/tauri/app/src/i18n.tsx"
+    ],
+    "ui/tauri/app/src/components/NotifySetup.tsx": [
+      "ui/tauri/app/src/i18n.tsx"
+    ],
+    "ui/tauri/app/src/components/Onboarding.tsx": [
+      "ui/tauri/app/src/i18n.tsx"
+    ],
+    "ui/tauri/app/src/components/PaymentLimitsView.tsx": [
+      "ui/tauri/app/src/i18n.tsx"
+    ],
+    "ui/tauri/app/src/components/PeersView.tsx": [
+      "ui/tauri/app/src/i18n.tsx"
+    ],
+    "ui/tauri/app/src/components/PendingList.tsx": [
+      "ui/tauri/app/src/i18n.tsx"
+    ],
+    "ui/tauri/app/src/components/ScheduleView.tsx": [
+      "ui/tauri/app/src/i18n.tsx"
+    ],
+    "ui/tauri/app/src/components/SearchView.tsx": [
+      "ui/tauri/app/src/i18n.tsx"
+    ],
+    "ui/tauri/app/src/components/SettingsTab.tsx": [
+      "ui/tauri/app/src/components/ChainView.tsx",
+      "ui/tauri/app/src/components/PaymentLimitsView.tsx",
+      "ui/tauri/app/src/components/ScheduleView.tsx",
+      "ui/tauri/app/src/i18n.tsx"
+    ],
+    "ui/tauri/app/src/components/VaultRevealView.tsx": [
+      "ui/tauri/app/src/i18n.tsx"
+    ],
+    "ui/tauri/app/src/components/VaultView.tsx": [
+      "ui/tauri/app/src/components/PendingList.tsx",
+      "ui/tauri/app/src/components/VaultRevealView.tsx",
+      "ui/tauri/app/src/i18n.tsx"
+    ],
+    "ui/tauri/app/src/i18n.tsx": [
+      "ui/tauri/app/src/i18n/en.json",
+      "ui/tauri/app/src/i18n/ko.json"
+    ],
+    "ui/tauri/app/src/i18n/en.json": [],
+    "ui/tauri/app/src/i18n/ko.json": [],
+    "ui/tauri/app/src/main.tsx": [
+      "ui/tauri/app/src/App.tsx",
+      "ui/tauri/app/src/styles.css"
+    ],
+    "ui/tauri/app/src/styles.css": [],
+    "ui/tauri/app/tsconfig.json": [],
+    "ui/tauri/app/vite.config.ts": [],
+    "ui/tauri/build.rs": [],
+    "ui/tauri/capabilities/main.json": [],
+    "ui/tauri/Cargo.toml": [],
+    "ui/tauri/DEPRECATED.md": [],
+    "ui/tauri/frontend/index.html": [],
+    "ui/tauri/README.md": [],
+    "ui/tauri/src/daemon_client.rs": [],
+    "ui/tauri/src/handlers_chain.rs": [
+      "ui/tauri/src/state.rs"
+    ],
+    "ui/tauri/src/handlers_channel.rs": [
+      "ui/tauri/src/state.rs"
+    ],
+    "ui/tauri/src/handlers_core.rs": [
+      "ui/tauri/src/state.rs"
+    ],
+    "ui/tauri/src/handlers_notify.rs": [
+      "ui/tauri/src/state.rs"
+    ],
+    "ui/tauri/src/handlers_schedule.rs": [
+      "ui/tauri/src/state.rs"
+    ],
+    "ui/tauri/src/lib.rs": [
+      "ui/tauri/src/daemon_client.rs",
+      "ui/tauri/src/handlers_chain.rs",
+      "ui/tauri/src/handlers_channel.rs",
+      "ui/tauri/src/handlers_core.rs",
+      "ui/tauri/src/handlers_notify.rs",
+      "ui/tauri/src/handlers_schedule.rs",
+      "ui/tauri/src/state.rs"
+    ],
+    "ui/tauri/src/main.rs": [],
+    "ui/tauri/src/state.rs": [],
+    "ui/tauri/tauri.conf.json": [],
+    "ui/tauri/tests/invoke_smoke.rs": [],
+    "ui/web/index.html": [],
+    "ui/web/package.json": [],
+    "ui/web/src/api/auth.ts": [],
+    "ui/web/src/api/client.ts": [],
+    "ui/web/src/api/clipboard.ts": [],
+    "ui/web/src/api/dialog.ts": [],
+    "ui/web/src/App.tsx": [
+      "ui/web/src/api/auth.ts",
+      "ui/web/src/api/client.ts",
+      "ui/web/src/components/AgentTemplatesCard.tsx",
+      "ui/web/src/components/ApprovalQueueBell.tsx",
+      "ui/web/src/components/AutonomyCard.tsx",
+      "ui/web/src/components/ChatTab.tsx",
+      "ui/web/src/components/ExternalAgentCard.tsx",
+      "ui/web/src/components/GlobalSearchModal.tsx",
+      "ui/web/src/components/HomeDashboard.tsx",
+      "ui/web/src/components/IdentityCard.tsx",
+      "ui/web/src/components/LoginView.tsx",
+      "ui/web/src/components/MemoryCard.tsx",
+      "ui/web/src/components/MemoryTab.tsx",
+      "ui/web/src/components/NetworkTab.tsx",
+      "ui/web/src/components/Onboarding.tsx",
+      "ui/web/src/components/OpsCard.tsx",
+      "ui/web/src/components/SettingsTab.tsx",
+      "ui/web/src/components/VaultMcpCard.tsx",
+      "ui/web/src/i18n.tsx"
+    ],
+    "ui/web/src/components/AgentSidePanel.tsx": [
+      "ui/web/src/api/client.ts"
+    ],
+    "ui/web/src/components/AgentTemplatesCard.tsx": [
+      "ui/web/src/api/client.ts"
+    ],
+    "ui/web/src/components/ApprovalQueueBell.tsx": [
+      "ui/web/src/api/client.ts"
+    ],
+    "ui/web/src/components/AutonomyCard.tsx": [
+      "ui/web/src/api/client.ts",
+      "ui/web/src/components/Breadcrumb.tsx",
+      "ui/web/src/components/ChainView.tsx",
+      "ui/web/src/components/ScheduleView.tsx"
+    ],
+    "ui/web/src/components/Breadcrumb.tsx": [],
+    "ui/web/src/components/ChainView.tsx": [
+      "ui/web/src/api/client.ts",
+      "ui/web/src/i18n.tsx"
+    ],
+    "ui/web/src/components/ChannelDashboard.tsx": [
+      "ui/web/src/api/client.ts",
+      "ui/web/src/i18n.tsx"
+    ],
+    "ui/web/src/components/ChatTab.tsx": [
+      "ui/web/src/components/Messenger.tsx",
+      "ui/web/src/components/SearchView.tsx",
+      "ui/web/src/i18n.tsx"
+    ],
+    "ui/web/src/components/ExternalAgentCard.tsx": [
+      "ui/web/src/api/client.ts",
+      "ui/web/src/components/Breadcrumb.tsx"
+    ],
+    "ui/web/src/components/GlobalSearchModal.tsx": [
+      "ui/web/src/api/client.ts"
+    ],
+    "ui/web/src/components/HomeDashboard.tsx": [
+      "ui/web/src/api/client.ts"
+    ],
+    "ui/web/src/components/IdentityCard.tsx": [
+      "ui/web/src/api/client.ts",
+      "ui/web/src/components/Breadcrumb.tsx"
+    ],
+    "ui/web/src/components/LoginView.tsx": [
+      "ui/web/src/api/auth.ts",
+      "ui/web/src/i18n.tsx"
+    ],
+    "ui/web/src/components/MemoryCard.tsx": [
+      "ui/web/src/api/client.ts",
+      "ui/web/src/components/Breadcrumb.tsx",
+      "ui/web/src/components/MemoryTab.tsx"
+    ],
+    "ui/web/src/components/MemoryTab.tsx": [
+      "ui/web/src/api/client.ts",
+      "ui/web/src/components/VaultView.tsx",
+      "ui/web/src/i18n.tsx"
+    ],
+    "ui/web/src/components/Messenger.tsx": [
+      "ui/web/src/api/client.ts",
+      "ui/web/src/components/AgentSidePanel.tsx",
+      "ui/web/src/components/RoutingRulesModal.tsx",
+      "ui/web/src/components/SessionScreen.tsx",
+      "ui/web/src/components/WhitelistModal.tsx",
+      "ui/web/src/components/WorkflowPanel.tsx",
+      "ui/web/src/i18n.tsx"
+    ],
+    "ui/web/src/components/NetworkTab.tsx": [
+      "ui/web/src/components/ChannelDashboard.tsx",
+      "ui/web/src/components/PeersView.tsx",
+      "ui/web/src/i18n.tsx"
+    ],
+    "ui/web/src/components/Onboarding.tsx": [
+      "ui/web/src/api/client.ts",
+      "ui/web/src/i18n.tsx"
+    ],
+    "ui/web/src/components/OpsCard.tsx": [
+      "ui/web/src/api/client.ts",
+      "ui/web/src/components/Breadcrumb.tsx"
+    ],
+    "ui/web/src/components/PairingGuide.tsx": [
+      "ui/web/src/api/client.ts"
+    ],
+    "ui/web/src/components/PaymentLimitsView.tsx": [
+      "ui/web/src/api/client.ts",
+      "ui/web/src/api/dialog.ts",
+      "ui/web/src/i18n.tsx"
+    ],
+    "ui/web/src/components/PeersView.tsx": [
+      "ui/web/src/api/client.ts",
+      "ui/web/src/api/dialog.ts",
+      "ui/web/src/i18n.tsx"
+    ],
+    "ui/web/src/components/PendingList.tsx": [
+      "ui/web/src/api/client.ts",
+      "ui/web/src/api/dialog.ts",
+      "ui/web/src/i18n.tsx"
+    ],
+    "ui/web/src/components/RoutingRulesModal.tsx": [
+      "ui/web/src/api/client.ts"
+    ],
+    "ui/web/src/components/ScheduleView.tsx": [
+      "ui/web/src/api/client.ts",
+      "ui/web/src/i18n.tsx"
+    ],
+    "ui/web/src/components/SearchView.tsx": [
+      "ui/web/src/api/client.ts",
+      "ui/web/src/i18n.tsx"
+    ],
+    "ui/web/src/components/SessionScreen.tsx": [
+      "ui/web/src/api/client.ts"
+    ],
+    "ui/web/src/components/SettingsTab.tsx": [
+      "ui/web/src/api/client.ts",
+      "ui/web/src/components/ChainView.tsx",
+      "ui/web/src/components/PaymentLimitsView.tsx",
+      "ui/web/src/components/ScheduleView.tsx",
+      "ui/web/src/i18n.tsx"
+    ],
+    "ui/web/src/components/VaultMcpCard.tsx": [
+      "ui/web/src/api/client.ts",
+      "ui/web/src/components/Breadcrumb.tsx",
+      "ui/web/src/components/VaultView.tsx"
+    ],
+    "ui/web/src/components/VaultRevealView.tsx": [
+      "ui/web/src/api/client.ts",
+      "ui/web/src/api/clipboard.ts",
+      "ui/web/src/i18n.tsx"
+    ],
+    "ui/web/src/components/VaultView.tsx": [
+      "ui/web/src/components/PendingList.tsx",
+      "ui/web/src/components/VaultRevealView.tsx",
+      "ui/web/src/i18n.tsx"
+    ],
+    "ui/web/src/components/WhitelistModal.tsx": [
+      "ui/web/src/api/client.ts"
+    ],
+    "ui/web/src/components/WorkflowPanel.tsx": [
+      "ui/web/src/api/client.ts"
+    ],
+    "ui/web/src/i18n.tsx": [
+      "ui/web/src/i18n/en.json",
+      "ui/web/src/i18n/ko.json"
+    ],
+    "ui/web/src/i18n/en.json": [],
+    "ui/web/src/i18n/ko.json": [],
+    "ui/web/src/main.tsx": [
+      "ui/web/src/App.tsx",
+      "ui/web/src/styles.css"
+    ],
+    "ui/web/src/styles.css": [],
+    "ui/web/src/version.d.ts": [],
+    "ui/web/tsconfig.json": [],
+    "ui/web/vite.config.ts": [],
+    "version.json": []
+  }
+}

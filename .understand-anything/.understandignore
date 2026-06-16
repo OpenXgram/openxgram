@@ -1,0 +1,19 @@
+# .understandignore — openxgram 분석 제외 패턴 (gitignore 문법)
+# 빌트인 기본 제외(node_modules/, target/, dist/, *.lock 등)에 추가.
+
+# --- 에이전트 worktree 복사본 (repo 전체 중복 — 반드시 제외) ---
+.claude/
+.understand-anything/
+
+# --- 프론트엔드 빌드/생성물 ---
+www/
+ui/web/dist/
+**/node_modules/
+
+# --- Rust 빌드 산출물 ---
+target/
+
+# --- 기타 ---
+.fastembed_cache/
+*.bak
+*.bak-*

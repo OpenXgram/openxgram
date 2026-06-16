@@ -119,6 +119,12 @@ pub struct AcpHttpState {
     /// 증분 영속용 DB 핸들 — 진행 중 툴 호출을 스트리밍 중 `acp_messages` 에 즉시 기록한다
     /// (나갔다 와도 실시간 단계 복원). `new()` 기본 None, `with_db()` 로 주입. None 이면 증분 skip.
     db: Option<Arc<Mutex<openxgram_db::Db>>>,
+    /// 전역 A2A 활동 broadcast — 새 A2A 메시지/턴이 어느 대화든 영속될 때마다
+    /// `{type:"a2a_message", alias, conv_key, from, ts}` 마커를 쏜다. `GET /v1/gui/a2a/stream`
+    /// 이 이 채널을 구독해 GUI 가 **실제 메시지 단위**로 auto-pop 을 띄운다(종전 10초 reachability
+    /// poll 근사 대체). 세션별 `updates_tx`(loadHistory 동기화)와 별개 — 메시지 본문 없이
+    /// 가벼운 활동 신호만. 구독자 없으면 send 는 no-op(에러 무시).
+    a2a_activity_tx: Arc<tokio::sync::broadcast::Sender<Value>>,
 }
 
 impl Default for AcpHttpState {
@@ -130,11 +136,15 @@ impl Default for AcpHttpState {
 impl AcpHttpState {
     /// Fresh, empty ACP HTTP state.
     pub fn new() -> Self {
+        // 전역 A2A 활동 채널 — 구독자 0 이어도 send 는 무해(Err 무시). 256 buffer 면
+        // GUI 가 잠깐 lag 해도 활동 신호를 충분히 흘려보낸다(본문 없는 가벼운 마커라 OK).
+        let (a2a_activity_tx, _rx) = tokio::sync::broadcast::channel::<Value>(256);
         Self {
             tools: AcpTools::new(),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             next_session: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             db: None,
+            a2a_activity_tx: Arc::new(a2a_activity_tx),
         }
     }
 
@@ -167,6 +177,30 @@ impl AcpHttpState {
         ) {
             tracing::error!(target: "acp.daemon", conv_key = %conv_key, "a2a record_message 기록 실패: {e}");
         }
+    }
+
+    /// 전역 A2A 활동 마커 발신 — `handle_task` 가 새 A2A 메시지(inbound `me` / outbound `agent`)를
+    /// `acp_messages` 에 영속한 직후 호출한다. `{type:"a2a_message", alias, conv_key, from, ts}` 를
+    /// 전역 broadcast 채널에 쏜다 → `/v1/gui/a2a/stream` 구독 GUI 가 그 대화 창을 실제 메시지 단위로
+    /// auto-pop(/blink) 한다. 본문은 싣지 않는다(가벼운 활동 신호; 본문은 loadHistory 가 권위 소스).
+    /// 구독자 없으면 no-op(Err 무시 — 절대 규칙 1: 의미 있는 실패가 아니라 정상 경로).
+    pub fn notify_a2a_activity(&self, alias: &str, conv_key: &str, from: Option<&str>) {
+        if alias.is_empty() && conv_key.is_empty() {
+            return;
+        }
+        let ts = chrono::Utc::now().to_rfc3339();
+        let _ = self.a2a_activity_tx.send(serde_json::json!({
+            "type": "a2a_message",
+            "alias": alias,
+            "conv_key": conv_key,
+            "from": from,
+            "ts": ts,
+        }));
+    }
+
+    /// `/v1/gui/a2a/stream` SSE 핸들러용 — 전역 A2A 활동 채널 구독자 생성.
+    pub fn subscribe_a2a_activity(&self) -> tokio::sync::broadcast::Receiver<Value> {
+        self.a2a_activity_tx.subscribe()
     }
 
     fn new_session_id(&self) -> String {

@@ -769,6 +769,9 @@ pub mod server {
             None => prompt_text.clone(),
         };
         acp.record_message(&conv_key, "me", &me_text).await;
+        // 전역 A2A 활동 마커 — inbound 메시지 영속 직후. GUI(/v1/gui/a2a/stream)가 이 대화 창을
+        // 실제 메시지 단위로 auto-pop 한다(reachability poll 근사 대체). 본문 미포함(가벼운 신호).
+        acp.notify_a2a_activity(&conv_key, &conv_key, body.from.as_deref());
 
         // ── 지속 세션(멀티턴 기억 유지) ───────────────────────────────────────
         // 친구 대화는 하나의 ACP 세션을 유지해 멀티턴 기억·툴 상태가 이어지게 한다.
@@ -851,6 +854,8 @@ pub mod server {
 
         // 갭#1 — B 의 최종 응답을 'agent' 로 기록 → 가시 스레드 완성(me → ▸단계(증분 툴) → agent).
         acp.record_message(&conv_key, "agent", &agent_text).await;
+        // 전역 A2A 활동 마커 — outbound(에이전트 응답 턴) 영속 직후. 같은 대화 창 auto-pop/blink.
+        acp.notify_a2a_activity(&conv_key, &conv_key, body.from.as_deref());
 
         let task_id = served.new_task_id();
         let result = json!({
