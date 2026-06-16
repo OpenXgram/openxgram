@@ -24,7 +24,14 @@
 .oxg-app, .oxg-app *{margin:0;padding:0;box-sizing:border-box}
 .oxg-app{font-family:var(--sans);background:var(--panel);color:var(--ink);}
 .oxg-app.app{position:fixed;inset:0;z-index:50;width:100vw;height:100vh;height:100dvh;background:var(--panel);border-radius:0;overflow:hidden;
-  display:grid;grid-template-columns:60px 312px 1fr;}
+  display:grid;grid-template-columns:60px 312px 1fr;
+  /* 🔧 Fix — 명시 행 높이 없으면 grid 가 implicit auto row(=내용 높이) 로 늘어나
+     스크롤 영역(.rooms/.msgs)이 viewport 에 안 갇히고 컴포저가 화면 밖으로 밀린다.
+     행을 viewport 높이로 고정 + 자식 grid item 에 min-height:0 부여해 flex 체인 복구. */
+  grid-template-rows:100vh;grid-template-rows:100dvh;}
+/* grid item(레일·리스트·대화창·곁뷰) 들이 자기 내부 flex 자식의 overflow 를
+   가둘 수 있도록 min-height/min-width:0 강제(grid 기본 min-height:auto 무력화). */
+.oxg-app.app > *{min-height:0;min-width:0;}
 
 /* ── 좌측 레일 (탭) ── */
 .oxg-app .rail{background:var(--rail);display:flex;flex-direction:column;align-items:center;padding:18px 0;gap:6px}
@@ -40,7 +47,7 @@
 .oxg-app .rail .dot{position:absolute;top:7px;right:7px;width:8px;height:8px;border-radius:50%;background:#ff5b5b}
 
 /* ── 채팅 목록 ── */
-.oxg-app .list{border-right:1px solid var(--line);display:flex;flex-direction:column;background:#fafbfc}
+.oxg-app .list{border-right:1px solid var(--line);display:flex;flex-direction:column;background:#fafbfc;min-height:0;overflow:hidden}
 .oxg-app .list h2{font-size:15px;font-weight:700;padding:18px 18px 10px;letter-spacing:-.02em}
 .oxg-app .search{margin:0 14px 8px;background:#eef1f4;border-radius:9px;padding:8px 12px;color:var(--muted);font-size:13px}
 .oxg-app input.search{border:0;outline:none;width:auto;font-family:var(--sans)}
@@ -62,7 +69,7 @@
 .oxg-app .tag.grp{background:#e7edf3;color:#5a7fb0}
 
 /* ── 대화 창 ── */
-.oxg-app .chat{display:flex;flex-direction:column;background:var(--kakao-bg)}
+.oxg-app .chat{display:flex;flex-direction:column;background:var(--kakao-bg);min-height:0;min-width:0;overflow:hidden}
 .oxg-app .chead{background:#9bb3c9;padding:11px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #8aa3bb}
 .oxg-app .chead .nm{font-weight:700;font-size:15px;color:#16242f}
 .oxg-app .chead .role{font-size:11.5px;color:#3c5266}
