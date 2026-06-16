@@ -905,6 +905,131 @@ pub fn process_inbound(
             }
         }
 
+        // ── P4b — agent-add handshake INBOUND 분류 (rc.336) ─────────────────
+        // 송신측(daemon_gui gui_agent_request_create / gui_agent_request_accept)이
+        // `[AGENT_ADD_REQUEST] {json}` / `[AGENT_ADD_ACCEPT] {json}` prefix 의 서명 envelope 를
+        // 기존 peer transport 로 보낸다. 이는 **제어 메시지**이지 대화가 아니다 →
+        // 여기서 분류·영속 후 `continue` 로 tmux/ACP 전달 경로를 타지 않게 한다(이중 전달·세션 오염 방지).
+        // L0 inbox 저장(위)은 감사/추적용으로 유지(메시지 본문 자체는 보존). 전달만 중단.
+        if let Some(json_str) = body.strip_prefix("[AGENT_ADD_REQUEST] ") {
+            // 요청자 머신 → 소유자 머신 도착: incoming 요청 row 생성(pending).
+            // 송신 payload 필드: kind,id,requester,requester_machine,target_agent,note.
+            //   (target_owner/target_machine 은 payload 에 없음 — 수신측 머신이 소유자이므로 NULL 로 둔다.)
+            match serde_json::from_str::<serde_json::Value>(json_str.trim()) {
+                Ok(v) => {
+                    let req_id = v.get("id").and_then(|x| x.as_str()).unwrap_or_default();
+                    let requester = v.get("requester").and_then(|x| x.as_str()).unwrap_or_default();
+                    let target_agent = v.get("target_agent").and_then(|x| x.as_str()).unwrap_or_default();
+                    if req_id.is_empty() || requester.is_empty() || target_agent.is_empty() {
+                        tracing::warn!(
+                            from = %env.from,
+                            "rc.336 [AGENT_ADD_REQUEST] 필수 필드(id/requester/target_agent) 누락 — skip(절대 규칙 1: silent X)"
+                        );
+                    } else {
+                        let requester_machine = v.get("requester_machine").and_then(|x| x.as_str());
+                        let terms = v.get("note").and_then(|x| x.as_str()).filter(|s| !s.is_empty());
+                        let now = crate::daemon_gui::kst_now_string();
+                        // INSERT OR IGNORE on id(PK) — redelivery 멱등. direction=incoming, status=pending.
+                        match db.conn().execute(
+                            "INSERT OR IGNORE INTO agent_add_request \
+                                (id, requester, requester_machine, target_agent, \
+                                 status, currency, direction, terms, created_at_kst) \
+                             VALUES (?1, ?2, ?3, ?4, 'pending', 'USDC', 'incoming', ?5, ?6)",
+                            rusqlite::params![req_id, requester, requester_machine, target_agent, terms, now],
+                        ) {
+                            Ok(n) => tracing::info!(
+                                id = %req_id,
+                                requester = %requester,
+                                target_agent = %target_agent,
+                                inserted = n,
+                                "rc.336 P4b INBOUND [AGENT_ADD_REQUEST] → agent_add_request(direction=incoming, pending) 영속. tmux/ACP 전달 안 함(제어 메시지)."
+                            ),
+                            Err(e) => tracing::error!(
+                                id = %req_id, error = %e,
+                                "rc.336 [AGENT_ADD_REQUEST] INSERT 실패(silent X)"
+                            ),
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!(
+                    from = %env.from, error = %e,
+                    "rc.336 [AGENT_ADD_REQUEST] JSON 파싱 실패 — 제어 메시지로 분류했으나 본문 손상. drop(절대 규칙 1: 명시 로그)."
+                ),
+            }
+            // 제어 메시지 — 정상 대화 경로(recv_alias/tmux/ACP)로 fall-through 금지.
+            continue;
+        }
+        if let Some(json_str) = body.strip_prefix("[AGENT_ADD_ACCEPT] ") {
+            // 소유자 머신 → 요청자 머신 도착: 요청자의 OUTGOING row 를 accepted 로 갱신 + 가격/조건 반영.
+            // 송신 payload 필드: kind,id,target_agent,by,price_amount,price_unit,currency,terms.
+            match serde_json::from_str::<serde_json::Value>(json_str.trim()) {
+                Ok(v) => {
+                    let req_id = v.get("id").and_then(|x| x.as_str()).unwrap_or_default();
+                    if req_id.is_empty() {
+                        tracing::warn!(
+                            from = %env.from,
+                            "rc.336 [AGENT_ADD_ACCEPT] id 누락 — skip(절대 규칙 1: silent X)"
+                        );
+                    } else {
+                        let price_amount = v.get("price_amount").and_then(|x| x.as_f64());
+                        let price_unit = v.get("price_unit").and_then(|x| x.as_str()).filter(|s| !s.is_empty());
+                        let currency = v.get("currency").and_then(|x| x.as_str()).filter(|s| !s.is_empty()).unwrap_or("USDC");
+                        let terms = v.get("terms").and_then(|x| x.as_str()).filter(|s| !s.is_empty());
+                        let now = crate::daemon_gui::kst_now_string();
+                        // 요청자측 outgoing pending row 만 accepted 로 갱신(멱등 — 이미 accepted 면 0 rows).
+                        let updated = db.conn().execute(
+                            "UPDATE agent_add_request \
+                                SET status='accepted', price_amount=?2, price_unit=?3, \
+                                    currency=?4, terms=?5, decided_at_kst=?6 \
+                             WHERE id=?1 AND direction='outgoing' AND status='pending'",
+                            rusqlite::params![req_id, price_amount, price_unit, currency, terms, now],
+                        );
+                        match updated {
+                            Ok(n) if n > 0 => {
+                                // accept handler(소유자측) 미러 — 요청자측에서도 그 에이전트를 friend grant
+                                //   (classification=friend, isolated/cost_tracked 강제)로 사용 가능하게 한다.
+                                let target_agent = v.get("target_agent").and_then(|x| x.as_str());
+                                if let Some(ta) = target_agent.filter(|s| !s.is_empty()) {
+                                    let _ = crate::daemon_gui::upsert_agent_profile(
+                                        db.conn(),
+                                        ta,            // alias = target_agent (요청자가 사용할 에이전트)
+                                        "claude",
+                                        "friend",
+                                        "on_demand",
+                                        None,          // machine (요청자측 — 실행 경로는 별도 해석)
+                                        None,          // worktree
+                                        false,         // is_public
+                                        &now,
+                                        Some("request"),
+                                        Some(true),    // friend_isolated 강제
+                                        Some(true),    // friend_cost_tracked 강제
+                                    );
+                                }
+                                tracing::info!(
+                                    id = %req_id, rows = n,
+                                    "rc.336 P4b INBOUND [AGENT_ADD_ACCEPT] → outgoing row accepted + 가격/조건 반영 + friend grant. tmux/ACP 전달 안 함(제어 메시지)."
+                                );
+                            }
+                            Ok(_) => tracing::info!(
+                                id = %req_id,
+                                "rc.336 [AGENT_ADD_ACCEPT] 매칭 outgoing/pending row 없음(이미 처리됨 또는 unknown id) — 멱등 skip"
+                            ),
+                            Err(e) => tracing::error!(
+                                id = %req_id, error = %e,
+                                "rc.336 [AGENT_ADD_ACCEPT] UPDATE 실패(silent X)"
+                            ),
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!(
+                    from = %env.from, error = %e,
+                    "rc.336 [AGENT_ADD_ACCEPT] JSON 파싱 실패 — 제어 메시지로 분류했으나 본문 손상. drop(절대 규칙 1: 명시 로그)."
+                ),
+            }
+            // 제어 메시지 — 정상 대화 경로로 fall-through 금지.
+            continue;
+        }
+
         // rc.197 본질 push 알림 — DB INSERT 만 ≠ 통신.
         // rc.199 — envelope.recipient_alias hint 우선 (송신측 명시). 그래야 cross-machine 시
         // 받는 측 peers 에 receiver alias 등록 안 됐어도 tmux 매핑 가능.

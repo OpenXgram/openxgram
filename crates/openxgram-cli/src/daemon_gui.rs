@@ -4902,7 +4902,7 @@ fn upsert_agent_capabilities(
 
 /// `agent_profiles` UPSERT — `gui_agents_register` 와 `gui_friend_announce` 공용 helper.
 #[allow(clippy::too_many_arguments)]
-fn upsert_agent_profile(
+pub(crate) fn upsert_agent_profile(
     conn: &rusqlite::Connection,
     alias: &str,
     ai_type: &str,
@@ -11981,7 +11981,7 @@ fn sanitize_path_segment(s: &str) -> String {
 }
 
 /// KST(Asia/Seoul) 현재 시각 문자열 (절대 규칙 #4 — 모든 타임스탬프 KST).
-fn kst_now_string() -> String {
+pub(crate) fn kst_now_string() -> String {
     use chrono::{FixedOffset, Utc};
     // +09:00 은 유효한 오프셋(33+ hr 범위 내) → east_opt 는 Some. 방어적으로 None 이면 UTC.
     match FixedOffset::east_opt(9 * 3600) {
