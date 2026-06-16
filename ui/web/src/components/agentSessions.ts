@@ -28,6 +28,53 @@ export function normPath(p: string): string {
   return p.replace(/\/+$/, "");
 }
 
+// `~` / `~/...` 를 home 절대경로로 확장. project_path 에 tilde 가 저장되는 경우가 있어
+//   (예: "~/projects/starian-set") cwd("/home/llm/projects/starian-set") 매칭 전 반드시 확장.
+//   home 은 프론트에서 env 를 못 읽으므로 호출부가 세션 cwd 들에서 추정한 값을 주입한다.
+export function expandHome(p: string, home: string): string {
+  const t = (p ?? "").trim();
+  if (!t) return "";
+  const h = normPath((home ?? "").trim());
+  if (!h) return t;
+  if (t === "~") return h;
+  if (t.startsWith("~/")) return h + t.slice(1); // "~/x" -> "<home>/x"
+  return t;
+}
+
+// 세션 cwd 들에서 home 루트(`/home/<user>` 또는 `/Users/<user>`)를 추정.
+//   가장 흔하게 등장하는 home prefix 를 채택(동률이면 첫 등장). 없으면 "".
+export function detectHome(cwds: (string | null | undefined)[]): string {
+  const counts = new Map<string, number>();
+  for (const raw of cwds) {
+    const c = normPath((raw ?? "").trim());
+    const m = c.match(/^(\/home\/[^/]+|\/Users\/[^/]+)(?:\/|$)/);
+    if (m) counts.set(m[1], (counts.get(m[1]) ?? 0) + 1);
+  }
+  let best = "";
+  let bestN = 0;
+  for (const [h, n] of counts) if (n > bestN) { best = h; bestN = n; }
+  return best;
+}
+
+// alias 정규화 — 공백·특수문자 제거 + 소문자. "Starian Set" -> "starianset".
+//   세션 식별자에도 동일 적용 후 substring 포함 검사에 사용.
+export function normAlias(s: string): string {
+  return (s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+// 정규화 alias 가 세션 이름(identifier/display/agent_id)에 substring 으로 포함되는가.
+//   "starianset" ∈ normAlias("aoe_starianset_944a15df")=="aoestarianset944a15df" → true.
+//   너무 짧은 alias(<=2)는 오매칭 방지로 제외.
+export function aliasMatchesSession(alias: string, s: DetectedSession): boolean {
+  const a = normAlias(alias);
+  if (a.length < 3) return false;
+  for (const cand of [s.agent_id, s.display, s.identifier]) {
+    const c = normAlias(cand ?? "");
+    if (c && c.includes(a)) return true;
+  }
+  return false;
+}
+
 // 의미있는 작업 tmux 만: aoe_* 세션이거나, cwd 가 실제 프로젝트 폴더(HOME 하위·루트/시스템 아님).
 export function isMeaningfulSession(s: DetectedSession): boolean {
   if (s.kind !== "tmux") return false;

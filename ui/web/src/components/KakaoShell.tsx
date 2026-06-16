@@ -12,7 +12,7 @@ import { MarketTab } from "./MarketTab";
 import { ConfigTab } from "./ConfigTab";
 import { RuntimeTab } from "./RuntimeTab";
 import { WikiTab } from "./WikiTab";
-import { type DetectedSession, type SessionsDto, normPath, isTooBroadPath } from "./agentSessions";
+import { type DetectedSession, type SessionsDto, normPath, isTooBroadPath, expandHome, detectHome, aliasMatchesSession } from "./agentSessions";
 
 // ──────────────────────────────────────────────────────────────────────────
 // OpenXgram 대화 모델 셸 — 정본 목업 VERBATIM 이식.
@@ -300,26 +300,42 @@ export function KakaoShell(props: { onLogout?: () => void }) {
   });
 
 
-  // 등록 에이전트들의 project_path 집합 — descendant 세션의 longest-prefix 귀속 판정용.
+  // 세션 cwd 들에서 home 루트(`/home/<user>`)를 추정 — project_path 의 tilde(`~`) 확장용.
+  const sessionHome = createMemo<string>(() =>
+    detectHome((sessions()?.sessions ?? []).map((s) => s.cwd)),
+  );
+
+  // 에이전트의 project_path 를 절대경로로 정규화(tilde 확장 + 끝슬래시 제거). 빈 값이면 "".
+  const agentCwd = (pp: string | null | undefined): string => {
+    const raw = (pp ?? "").trim();
+    if (!raw) return "";
+    return normPath(expandHome(raw, sessionHome()));
+  };
+
+  // 등록 에이전트들의 project_path 집합(tilde 확장 후) — descendant 세션의 longest-prefix 귀속 판정용.
   const registeredCwds = createMemo<Set<string>>(() => {
     const s = new Set<string>();
     for (const a of agents() ?? []) {
-      const p = normPath((a.project_path ?? "").trim());
+      const p = agentCwd(a.project_path);
       if (p) s.add(p);
     }
     return s;
   });
 
-  // 선택 에이전트의 tmux 세션 — cwd 매칭 우선 + alias 매칭 보조(TalkTab selSessions 로직 이식).
+  // 선택 에이전트의 tmux 세션 — cwd 매칭(절대경로, prefix-aware, longest-prefix) 우선 +
+  //   정규화 alias substring 매칭 보조. 매칭되는 모든 세션 반환(첫 것만 X).
   const selSessions = createMemo<DetectedSession[]>(() => {
-    const alias = (selected() ?? "").toLowerCase();
-    if (!alias) return [];
-    const convoCwd = normPath((selAgent()?.project_path ?? "").trim());
+    const aliasRaw = selected() ?? "";
+    if (!aliasRaw) return [];
+    const convoCwd = agentCwd(selAgent()?.project_path);
     const regs = registeredCwds();
     const all = sessions()?.sessions ?? [];
     return all.filter((s) => {
       if (s.kind !== "tmux") return false;
+      // peer 가 미러링한 원격 뷰(`peer:<alias>:tmux:…`)는 로컬 세션과 중복 — 제외.
+      if ((s.identifier ?? "").startsWith("peer:")) return false;
       const sCwd = s.cwd ? normPath(s.cwd.trim()) : "";
+      // 1순위: cwd 매칭(가장 신뢰도 높음). 세션 cwd == 폴더 또는 폴더 하위.
       if (convoCwd && sCwd) {
         if (sCwd === convoCwd) return true;
         if (sCwd.startsWith(convoCwd + "/") && !isTooBroadPath(convoCwd)) {
@@ -332,10 +348,16 @@ export function KakaoShell(props: { onLogout?: () => void }) {
           if (closest === convoCwd) return true;
         }
       }
-      const aid = (s.agent_id ?? "").toLowerCase();
-      const disp = (s.display ?? "").toLowerCase();
-      const ident = (s.identifier ?? "").toLowerCase();
-      return aid === alias || disp === alias || ident === alias || ident === `tmux:${alias}`;
+      // 2순위(보조): 정규화 alias 가 세션 이름에 substring 포함("starianset" ∈ "aoe_starianset_…").
+      //   단, 세션 cwd 가 *다른* 등록 에이전트의 폴더(==/하위)에 더 구체적으로 귀속되면
+      //   alias substring 오매칭을 막는다(예: alias "Star"⊂"starianset" 인데 cwd 는 starian-set).
+      if (sCwd) {
+        for (const r of regs) {
+          if (r === convoCwd) continue;
+          if ((sCwd === r || sCwd.startsWith(r + "/")) && r.length > convoCwd.length) return false;
+        }
+      }
+      return aliasMatchesSession(aliasRaw, s);
     });
   });
 
