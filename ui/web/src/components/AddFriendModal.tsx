@@ -58,11 +58,12 @@ function saveExternalFriends(list: ExternalFriend[]) {
   }
 }
 
-type FriendKind = "machine" | "agent" | "external";
+type FriendKind = "newlocal" | "machine" | "agent" | "external";
 
 const KIND_OPTS: { v: FriendKind; icon: string; label: string; hint: string }[] = [
+  { v: "newlocal", icon: "🆕", label: "새 에이전트 (이 머신)", hint: "이 머신에 새 로컬 에이전트를 만들고 설정 — 폴더 · AI 종류 · 역할 · 실행모드 · 워크트리" },
   { v: "machine", icon: "🖥", label: "머신 추가", hint: "내가 관리하는 머신 — 한쪽 추가 (전권 · 상호 동의 불필요)" },
-  { v: "agent", icon: "🤝", label: "에이전트 추가", hint: "다른 사람의 에이전트 사용 요청 — 상호 수락 · 격리 · 소유자 가격책정" },
+  { v: "agent", icon: "🤝", label: "외부 에이전트 사용", hint: "다른 사람의 에이전트를 사용 요청 (만드는 게 아님) — 상호 수락 · 격리 · 소유자 가격책정" },
   { v: "external", icon: "🌐", label: "외부 A2A", hint: "외부 에이전트 (AgentCard URL)" },
 ];
 
@@ -77,8 +78,10 @@ export function AddFriendModal(props: {
   onClose: () => void;
   // 머신 친구는 alias, 외부 친구는 alias 반환(부모가 선택/새로고침에 사용).
   onCreated: (alias: string, kind: FriendKind) => void;
+  // 🆕 "새 에이전트 (이 머신)" 선택 시 — 부모가 기존 AddAgentModal(로컬 생성 흐름)을 연다.
+  onPickNewLocal?: () => void;
 }) {
-  const [kind, setKind] = createSignal<FriendKind>("machine");
+  const [kind, setKind] = createSignal<FriendKind>("newlocal");
   const [alias, setAlias] = createSignal("");
   const [addr, setAddr] = createSignal(""); // 머신: Tailscale IP/host · 외부: AgentCard base URL
   const [busy, setBusy] = createSignal(false);
@@ -258,14 +261,20 @@ export function AddFriendModal(props: {
     <div class="ovl" onClick={(e) => { if (e.target === e.currentTarget) props.onClose(); }}>
       <div class="modal" style="max-width:440px;">
         <h2>➕ 추가</h2>
-        <p class="sub">🖥 머신 추가(내 머신 · 한쪽) · 🤝 에이전트 추가(상대 · 상호·격리·가격) · 🌐 외부 A2A.</p>
+        <p class="sub">🆕 새 에이전트(이 머신 · 직접 생성) · 🖥 머신 추가(내 머신 · 한쪽) · 🤝 외부 에이전트 사용(상대 · 상호·격리·가격) · 🌐 외부 A2A.</p>
 
         <div class="fld">
           <label>무엇을 추가할까요?</label>
           <div class="seg">
             <For each={KIND_OPTS}>
               {(k) => (
-                <div class={`s${kind() === k.v ? " on" : ""}`} title={k.hint} onClick={() => { setKind(k.v); setErr(null); }}>
+                <div class={`s${kind() === k.v ? " on" : ""}`} title={k.hint}
+                  onClick={() => {
+                    setErr(null);
+                    // 🆕 새 에이전트(이 머신) → 기존 AddAgentModal(폴더/모델/설정) 생성 흐름으로 즉시 전환.
+                    if (k.v === "newlocal") { if (props.onPickNewLocal) props.onPickNewLocal(); return; }
+                    setKind(k.v);
+                  }}>
                   {k.icon} {k.label}
                 </div>
               )}
@@ -275,6 +284,19 @@ export function AddFriendModal(props: {
             {KIND_OPTS.find((k) => k.v === kind())?.hint}
           </div>
         </div>
+
+        {/* 🆕 새 에이전트 (이 머신) — 폴더/AI종류/역할/실행모드/워크트리 등 전체 설정은 AddAgentModal 에 있다.
+            여기서는 그 흐름으로의 진입만 제공(필드 중복 금지). */}
+        <Show when={kind() === "newlocal"}>
+          <div class="hint" style="margin:2px 0 8px;padding:10px 12px;border-radius:8px;background:#eef6ff;border:1px solid #bcd6f0;color:#1e3a5f;">
+            🆕 <b>이 머신에 새 에이전트</b> — 폴더 · AI 종류 · 역할 · 분류 · 그룹 · 실행모드 · 워크트리 · 공개를 직접 설정합니다.
+            <div style="margin-top:8px;">
+              <button class="btn-go" onClick={() => { if (props.onPickNewLocal) props.onPickNewLocal(); }}>
+                새 에이전트 만들기 →
+              </button>
+            </div>
+          </div>
+        </Show>
 
         {/* 🖥 머신 추가 / 🤝 에이전트 추가 — 공통 2단계 (장치→로스터→피어 선택).
             머신 추가  = 내가 관리하는 머신의 프라이머리 피어를 한쪽 등록(전권 · 상호 동의 불필요).
@@ -287,8 +309,8 @@ export function AddFriendModal(props: {
             </div>
           </Show>
           <Show when={kind() === "agent"}>
-            <div class="hint" style="margin:2px 0 8px;padding:8px 10px;border-radius:8px;background:#26221a;border:1px solid #5d4a2f;color:#e3dccf;">
-              🤝 <b>상호 추가</b> — 다른 사람의 에이전트. 내가 요청 → 소유자가 <b>수락 AND 가격 책정</b>. 통신은 격리 컨테이너의 fresh worktree 에서만(강제).
+            <div class="hint" style="margin:2px 0 8px;padding:8px 10px;border-radius:8px;background:#fff6e6;border:1px solid #e2c98f;color:#6b4f12;">
+              🤝 <b>외부 에이전트 사용</b> — 다른 사람의 에이전트를 <b>사용 요청</b> (새로 만드는 게 아닙니다). 내가 요청 → 소유자가 <b>수락 AND 가격 책정</b>. 통신은 격리 컨테이너의 fresh worktree 에서만(강제).
             </div>
           </Show>
           {/* 1단계 — 장치 선택 */}
@@ -313,16 +335,16 @@ export function AddFriendModal(props: {
                       onClick={() => void pickDevice(d)}
                       title={d.self ? "이 머신 — 자기 자신은 친구로 추가 불가" : `${d.name} · ${d.ip}`}
                       style={`display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;` +
-                        `border:1px solid ${selectedDev() === d.ip ? "#2f5d3a" : "#2a2f3a"};` +
+                        `border:1px solid ${selectedDev() === d.ip ? "#2563eb" : "#d0d7e2"};` +
                         (d.self
-                          ? "opacity:0.5;cursor:not-allowed;background:#15171c;"
-                          : `cursor:pointer;background:${selectedDev() === d.ip ? "#1d2a20" : "#15171c"};`)}
+                          ? "opacity:0.55;cursor:not-allowed;background:#f1f3f6;"
+                          : `cursor:pointer;background:${selectedDev() === d.ip ? "#eaf2ff" : "#ffffff"};`)}
                     >
-                      <span style={`width:8px;height:8px;border-radius:50%;flex:none;background:${d.online ? "#3fb950" : "#4a4f5a"};`} />
-                      <span style="font-size:13px;color:#cfe3d6;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                      <span style={`width:8px;height:8px;border-radius:50%;flex:none;background:${d.online ? "#22a447" : "#b7bdc7"};`} />
+                      <span style="font-size:13px;color:#16242f;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
                         {d.name}{d.self ? " (이 머신)" : ""}
                       </span>
-                      <span style="font-size:11px;color:#6b7280;margin-left:auto;flex:none;">{d.ip}</span>
+                      <span style="font-size:11px;color:#7a8290;margin-left:auto;flex:none;">{d.ip}</span>
                     </div>
                   )}
                 </For>
@@ -358,16 +380,16 @@ export function AddFriendModal(props: {
                       onClick={() => pickAgent(a)}
                       title={`${a.alias}${a.role ? " · " + a.role : ""}`}
                       style={`display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;cursor:pointer;` +
-                        `border:1px solid ${pickedAgent() === a.alias ? "#2f5d3a" : "#2a2f3a"};` +
-                        `background:${pickedAgent() === a.alias ? "#1d2a20" : "#15171c"};`}
+                        `border:1px solid ${pickedAgent() === a.alias ? "#2563eb" : "#d0d7e2"};` +
+                        `background:${pickedAgent() === a.alias ? "#eaf2ff" : "#ffffff"};`}
                     >
-                      <span style="font-size:13px;color:#cfe3d6;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                      <span style="font-size:13px;color:#16242f;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
                         {a.alias}
                       </span>
                       <Show when={a.role}>
-                        <span style="font-size:11px;color:#8b94a3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">· {a.role}</span>
+                        <span style="font-size:11px;color:#7a8290;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">· {a.role}</span>
                       </Show>
-                      <span style="font-size:11px;color:#6b7280;margin-left:auto;flex:none;">{a.ai_type ?? "claude"}</span>
+                      <span style="font-size:11px;color:#7a8290;margin-left:auto;flex:none;">{a.ai_type ?? "claude"}</span>
                     </div>
                   )}
                 </For>
@@ -449,15 +471,18 @@ export function AddFriendModal(props: {
 
         <div class="modal-foot">
           <button class="btn-q" onClick={() => props.onClose()} disabled={busy()}>취소</button>
-          <button class="btn-go" onClick={() => void create()}
-            disabled={busy() || ((kind() === "machine" || kind() === "agent") && !pickedAgent())}>
-            {busy()
-              ? (kind() === "agent" ? "요청 보내는 중…" : "추가 중…")
-              : (kind() === "agent" ? "요청 보내기 (상대 수락·가격책정 대기)" : "추가")}
-          </button>
+          {/* 🆕 새 에이전트 모드는 AddAgentModal 로 전환되므로 이 모달의 생성 버튼 숨김. */}
+          <Show when={kind() !== "newlocal"}>
+            <button class="btn-go" onClick={() => void create()}
+              disabled={busy() || ((kind() === "machine" || kind() === "agent") && !pickedAgent())}>
+              {busy()
+                ? (kind() === "agent" ? "요청 보내는 중…" : "추가 중…")
+                : (kind() === "agent" ? "요청 보내기 (상대 수락·가격책정 대기)" : "추가")}
+            </button>
+          </Show>
         </div>
         <div class="hint">
-          🖥 머신 추가 = 내가 관리하는 머신 한쪽 추가(전권) · 🤝 에이전트 추가 = 상대 수락·격리·소유자 가격(4b) · 🌐 외부는 AgentCard URL.
+          🆕 새 에이전트 = 이 머신에 로컬 생성(폴더·모델·설정) · 🖥 머신 추가 = 내 머신 한쪽 추가(전권) · 🤝 외부 에이전트 사용 = 상대 수락·격리·소유자 가격(4b) · 🌐 외부는 AgentCard URL.
         </div>
       </div>
     </div>

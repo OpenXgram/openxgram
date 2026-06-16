@@ -1125,6 +1125,8 @@ export function KakaoShell(props: { onLogout?: () => void }) {
       <Show when={friendOpen()}>
         <AddFriendModal
           onClose={() => setFriendOpen(false)}
+          // 🆕 "새 에이전트 (이 머신)" 선택 → 친구 모달 닫고 기존 AddAgentModal(폴더/모델/설정 생성 흐름) 오픈.
+          onPickNewLocal={() => { setFriendOpen(false); setAddOpen(true); }}
           onCreated={(alias, kind) => {
             setFriendOpen(false);
             // 머신·에이전트 추가 둘 다 agents_register(friend) → 명부 새로고침. 외부는 localStorage(별 소스).
