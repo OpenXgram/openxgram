@@ -776,6 +776,28 @@
   animation: a2aPulse 1.6s infinite;
 }
 .a2a-mini-dot.idle { background: #b9c2cc; }
+
+/* 🗗 "새 창" 어포던스 — 행/칩 클릭(=앱 안 모달)과 시각적으로 구별되는 명시적 새 창 버튼.
+   별도 pill 로 노출해 사용자가 "이건 새 창" 임을 알도록 한다(기본 클릭=같은 창 in-app). */
+.a2a-popout {
+  margin-left: 6px;
+  flex: none;
+  border: 1px solid #d6c3a0;
+  background: #fbf5e8;
+  border-radius: 7px;
+  padding: 2px 7px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #9a7b3a;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.3;
+}
+.a2a-popout:hover { background: #f6ecd6; border-color: #c9b389; }
+/* 칩 안의 새 창 버튼은 더 컴팩트(텍스트 라벨 없이 아이콘만). */
+.a2a-mini-chip .a2a-popout { margin-left: 5px; padding: 0 4px; font-size: 11px; background: transparent; border-color: transparent; color: #9a7b3a; }
+.a2a-mini-chip .a2a-popout:hover { background: #f6ecd6; border-color: #c9b389; }
+
 @keyframes a2aPulse {
   0% { box-shadow: 0 0 0 0 rgba(33, 196, 93, 0.5); }
   70% { box-shadow: 0 0 0 7px rgba(33, 196, 93, 0); }
@@ -1108,4 +1130,79 @@
   border: 1px solid #acd6b6;
 }
 @keyframes a2aGrantPulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+
+/* ── IN-APP A2A 대화 모달 (rc.340) — 팝업(window.open) 차단 시 fallback ──
+   새 창을 못 띄워도 항상 대화가 보이도록 앱 내부 오버레이에 AcpConversation 을 호스팅.
+   팝업 창과 유사한 다크 백드롭 + 중앙 패널(헤더 + 대화 본문 + ✕). */
+.a2a-inapp-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 21, 30, 0.55);
+  backdrop-filter: blur(2px);
+  padding: 24px;
+}
+.a2a-inapp-modal {
+  width: min(480px, 96vw);
+  height: min(820px, 92vh);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+}
+.a2a-inapp-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #1f2733;
+  color: #f1f5f9;
+}
+.a2a-inapp-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.a2a-inapp-x {
+  flex: none;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f1f5f9;
+  border-radius: 8px;
+  width: 28px;
+  height: 28px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.a2a-inapp-x:hover { background: rgba(255, 255, 255, 0.18); }
+.a2a-inapp-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* AcpConversation 의 카톡 대화 마크업이 모달 본문을 꽉 채우도록. */
+.a2a-inapp-body > .kk-talk-chat,
+.a2a-inapp-body > * {
+  flex: 1;
+  min-height: 0;
+}
+.a2a-inapp-loading {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  color: #6b7785;
+}
 

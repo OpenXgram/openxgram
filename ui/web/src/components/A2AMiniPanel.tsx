@@ -1,5 +1,6 @@
 import { createResource, createSignal, createMemo, createEffect, onCleanup, For, Show } from "solid-js";
 import { invoke, a2aActivityStream } from "../api/client";
+import { AcpConversation, aiTypeToAdapter, type AcpPreset } from "./AcpConversation";
 import "./flow-extra.css";
 
 // P2 — 사람↔ACP 대화 안의 A2A(에이전트↔에이전트) 실시간 미니패널 + 협업 곁뷰.
@@ -38,31 +39,39 @@ function popoutUrl(alias: string): string {
   return `${location.origin}${location.pathname}?chat=${encodeURIComponent(alias)}`;
 }
 
-// 클릭(사용자 제스처) 또는 활동 자동(차단될 수 있음)으로 alias 대화 창을 연다.
-// 이미 열려 있으면 그 창을 재사용해 URL 만 보장(중복 창 X). 포커스는 '열리는 순간'만 OS 가 가져가며,
-// 직후 opener(메인 창)로 포커스를 되돌린다. 메시지 도착 시에는 절대 .focus() 안 함(팝업이 title 깜빡임으로 처리).
+// alias 대화 창을 새 브라우저 창(window.open)으로 연다.
+// 두 호출 경로:
+//   (A) 🗗 명시적 새 창 클릭 (focusNew=true) — 사용자가 의도해서 별도 창을 원함 → 새 창에 포커스 유지(뒤로 숨지 않게).
+//   (B) AUTO-POP 메시지 도착 (focusNew=false) — 비-제스처 자동 열기 → 새 창이 막 열릴 때 OS 가 포커스를
+//       가져가는 것이 유일 허용 순간이고, 직후 opener(메인 창)로 포커스를 되돌려 작업 흐름을 끊지 않는다.
+// 이미 열려 있으면 그 창을 재사용해 URL 만 보장(중복 창 X).
 // 반환: 열기/재사용 성공 시 true, 팝업 차단(window.open === null) 시 false.
-function openA2AWindow(alias: string): boolean {
+function openA2AWindow(alias: string, focusNew = false): boolean {
   const existing = a2aWindows.get(alias);
   if (existing && !existing.closed) {
-    // 이미 열림 — 중복 생성 금지. URL 만 보장(흰화면 방지). focus 는 사용자 제스처 클릭일 때만 best-effort.
+    // 이미 열림 — 중복 생성 금지. URL 만 보장(흰화면 방지).
     try { if (!existing.location.href.includes(`chat=${encodeURIComponent(alias)}`)) existing.location.href = popoutUrl(alias); } catch { /* cross-origin 아님(같은 오리진) */ }
+    if (focusNew) { try { existing.focus(); } catch { /* best-effort */ } }
     return true;
   }
   // 팝업 차단기 친화: 사용자 제스처 중엔 window.open(URL, ...) 형태(첫 인자에 실제 URL)가
   //   window.open("") + 이후 .href 할당보다 훨씬 안정적으로 허용된다. URL 을 바로 넘긴다.
   const w = window.open(popoutUrl(alias), `oxgchat_${alias}`, "width=480,height=820");
   if (!w) {
-    // 팝업 차단 — 자동 열기(비-제스처)에서 흔함. 호출자가 in-app 깜빡임으로 graceful fallback.
+    // 팝업 차단 — 자동 열기(비-제스처)에서 흔함. 호출자가 in-app 모달로 graceful fallback.
     a2aWindows.delete(alias);
     return false;
   }
   // 일부 브라우저는 window.open(URL) 만으로 로드한다. 안전망으로 about:blank 이면 한 번 더 지정.
   try { if (!w.location || w.location.href === "about:blank") w.location.href = popoutUrl(alias); } catch { /* same-origin */ }
   a2aWindows.set(alias, w);
-  // 🔒 포커스 탈취 금지: 새 창이 막 열릴 때 OS 가 포커스를 가져가는 것이 '유일하게 허용된' 포커스 순간.
-  //    직후 opener(메인 창)로 포커스를 되돌린다(best-effort). 이후 메시지 도착 시엔 절대 .focus() 안 함.
-  try { window.focus(); } catch { /* best-effort */ }
+  if (focusNew) {
+    // 명시적 새 창(🗗) — 사용자가 의도. 새 창에 포커스를 유지해 메인 창 뒤로 숨지 않게 한다.
+    try { w.focus(); } catch { /* best-effort */ }
+  } else {
+    // 🔒 자동 열기 — 포커스 탈취 금지: 직후 opener(메인 창)로 포커스를 되돌린다(best-effort).
+    try { window.focus(); } catch { /* best-effort */ }
+  }
   return true;
 }
 
@@ -72,6 +81,52 @@ function readAll(): boolean {
 }
 function readPerAgent(alias: string): boolean {
   try { return localStorage.getItem(`oxg.autopop.${alias}`) === "1"; } catch { return false; }
+}
+
+// ── IN-APP 대화 모달 컴포넌트 ──
+// 팝업(window.open)이 차단됐을 때의 신뢰 가능한 fallback. ChatPopup 과 동일하게 alias 로
+// agents_list 에서 preset 을 복원하고 AcpConversation 을 그대로(.chat-top 헤더 + 기록/empty-state
+// + 컴포저, rc.340 history-decouple 포함) 앱 내부 오버레이에 호스팅한다. 대화를 재구현하지 않고
+// 기존 컴포넌트를 재사용 — 새 창 대신 모달에 마운트하는 것만 다르다.
+interface ConvAgentRow {
+  alias: string;
+  ai_type?: string | null;
+  project_path?: string | null;
+  execution_mode?: string | null;
+}
+function A2AInAppConvModal(props: { alias: string; onClose: () => void }) {
+  // alias → AcpPreset (ChatPopup 과 동일 로직). 명부에 없으면 alias 를 라벨로 기본 어댑터 진입.
+  const [preset] = createResource<AcpPreset | null>(async () => {
+    try {
+      const r = await invoke<ConvAgentRow[]>("agents_list");
+      const a = (Array.isArray(r) ? r : []).find((x) => x.alias === props.alias);
+      if (!a) return { adapter: "claude-agent-acp", cwd: null, execMode: null, label: props.alias };
+      return {
+        adapter: aiTypeToAdapter(a.ai_type),
+        cwd: a.project_path ?? null,
+        execMode: a.execution_mode ?? null,
+        label: a.alias,
+      };
+    } catch {
+      return { adapter: "claude-agent-acp", cwd: null, execMode: null, label: props.alias };
+    }
+  });
+  return (
+    <div class="a2a-inapp-overlay" onClick={(e) => { if (e.target === e.currentTarget) props.onClose(); }}>
+      <div class="a2a-inapp-modal" role="dialog" aria-label={`↔ ${props.alias} A2A 대화`}>
+        <div class="a2a-inapp-head">
+          <span class="a2a-inapp-title">↔ {props.alias} · A2A 대화</span>
+          <button class="a2a-inapp-x" title="대화 모달 닫기" aria-label="닫기" onClick={() => props.onClose()}>✕</button>
+        </div>
+        <div class="a2a-inapp-body">
+          <Show when={preset() !== undefined} fallback={<div class="a2a-inapp-loading">대화 불러오는 중…</div>}>
+            {/* AcpConversation 그대로 재사용 — 기록 있으면 기록, 없으면 empty-state, 항상 컴포저(lazy-spawn). */}
+            <AcpConversation preset={preset()} onClose={() => props.onClose()} />
+          </Show>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -119,18 +174,30 @@ export function A2AMiniPanel(props: {
     setPerAgent(map);
   });
 
-  // 클릭(사용자 제스처)으로 대화 창 열기 + 차단 시 안내.
   const [popBlocked, setPopBlocked] = createSignal<string | null>(null);
-  function clickOpen(alias: string) {
-    const ok = openA2AWindow(alias);
+
+  // ── IN-APP 대화 모달 (rc.340) — 행/이름/칩 클릭의 '항상' 동작 ──
+  // window.open 은 (1) 진짜 제스처여도 메인 창 뒤로 숨거나 (2) 차단되거나 (3) 아무것도 안 보이는
+  // 문제가 있었다. 그래서 행/이름/칩 클릭은 더 이상 window.open 에 의존하지 않고 '항상' 앱 내부
+  // 오버레이 모달(AcpConversation, rc.340 history-decouple + empty-state + 컴포저)을 같은 창에 띄운다.
+  // → 클릭 = 같은 창에서 즉시·신뢰 가능하게 대화가 보인다(팝업 설정 무관). 숨은 배경 창 없음.
+  const [modalAlias, setModalAlias] = createSignal<string | null>(null);
+
+  // 행/이름/칩 클릭 → 항상 IN-APP 모달. window.open 미사용 → 프로그램적 클릭에서도 동작.
+  function openInApp(alias: string) {
+    setModalAlias(alias);
+    if (popBlocked() === alias) setPopBlocked(null);
+  }
+
+  // 🗗 명시적 "새 창" 어포던스 — 사용자가 별도 창을 의도. window.open + 새 창 포커스(뒤로 숨지 않게).
+  // 차단되면 in-app 모달로 graceful fallback(아무것도 안 보임 방지).
+  function popoutWindow(alias: string, e?: MouseEvent) {
+    e?.stopPropagation();
+    const ok = openA2AWindow(alias, /* focusNew */ true);
     if (!ok) {
-      // 팝업 차단(브라우저 팝업 차단기) → 사용자가 떠 있는 strip 의 칩을 눌렀는데 창이 안 뜨면
-      // "아무것도 안 보임" 으로 느낀다(곁뷰가 닫혀 있어 안내도 안 보임). 가시적 fallback 보장:
-      //   1) 곁뷰(side panel)를 즉시 연다 → 안내 배너 + 클릭 가능한 에이전트 행이 보인다.
-      //   2) 떠 있는 strip 위에도 floating 안내 배너를 띄운다(곁뷰가 미처 안 열려도 보이게).
-      // 이렇게 하면 절대 "무반응" 이 아니다.
+      // 팝업 차단 → 새 창 못 띄움. 대화는 항상 보여야 하므로 in-app 모달로 대체.
       setPopBlocked(alias);
-      if (!props.open()) props.onOpen();
+      setModalAlias(alias);
     } else if (popBlocked() === alias) {
       setPopBlocked(null);
     }
@@ -375,6 +442,11 @@ export function A2AMiniPanel(props: {
 
   return (
     <>
+      {/* ── IN-APP 대화 모달 — 팝업(window.open) 차단 시 fallback. 새 창을 못 띄워도 항상 대화가 보인다.
+          AcpConversation 을 그대로 호스팅(기록/empty-state/컴포저). 직접 열기도 허용. ── */}
+      <Show when={modalAlias()}>
+        <A2AInAppConvModal alias={modalAlias()!} onClose={() => { setModalAlias(null); if (popBlocked() === modalAlias()) setPopBlocked(null); }} />
+      </Show>
       {/* ── A2A 실시간 미니패널 (정본 .a2a-mini) — 대화 헤더 바로 아래 한 줄 요약.
           클래스는 flow-extra.css 의 .a2a-mini* 패밀리와 정확히 매칭(스코프 충돌 없음).
           이전엔 bare .mini/.st 를 썼는데 그 CSS 는 mockup.css 의 .oxg-app 스코프 전용이라
@@ -389,12 +461,12 @@ export function A2AMiniPanel(props: {
             fallback={<span class="a2a-mini-st"><span class="a2a-mini-dot idle" /> 활성 협업 없음</span>}
           >
             <For each={live().slice(0, 2)}>
-              {(a) => (<span class="a2a-mini-st a2a-mini-chip" classList={{ "a2a-blink": autoBlink().has(a.alias) }} title={`↔${a.alias} 대화를 새 창으로 열기`}
-                onClick={(e) => { e.stopPropagation(); clickOpen(a.alias); }}><span class="a2a-mini-dot live" /> ↔{a.alias} 진행 가능 🗗</span>)}
+              {(a) => (<span class="a2a-mini-st a2a-mini-chip" classList={{ "a2a-blink": autoBlink().has(a.alias) }} title={`↔${a.alias} 대화를 앱 안에서 열기`}
+                onClick={(e) => { e.stopPropagation(); openInApp(a.alias); }}><span class="a2a-mini-dot live" /> ↔{a.alias} 진행 가능<button class="a2a-popout" title="새 창으로 열기" aria-label="새 창으로 열기" onClick={(e) => popoutWindow(a.alias, e)}>🗗</button></span>)}
             </For>
             <For each={idle().slice(0, 1)}>
-              {(a) => (<span class="a2a-mini-st a2a-mini-chip" classList={{ "a2a-blink": autoBlink().has(a.alias) }} title={`↔${a.alias} 대화를 새 창으로 열기`}
-                onClick={(e) => { e.stopPropagation(); clickOpen(a.alias); }}><span class="a2a-mini-dot idle" /> ↔{a.alias} 대기 🗗</span>)}
+              {(a) => (<span class="a2a-mini-st a2a-mini-chip" classList={{ "a2a-blink": autoBlink().has(a.alias) }} title={`↔${a.alias} 대화를 앱 안에서 열기`}
+                onClick={(e) => { e.stopPropagation(); openInApp(a.alias); }}><span class="a2a-mini-dot idle" /> ↔{a.alias} 대기<button class="a2a-popout" title="새 창으로 열기" aria-label="새 창으로 열기" onClick={(e) => popoutWindow(a.alias, e)}>🗗</button></span>)}
             </For>
             <Show when={agents().length > 0}>
               <span class="a2a-mini-badge">{agents().length}</span>
@@ -406,9 +478,9 @@ export function A2AMiniPanel(props: {
         {/* 팝업 차단 시 떠 있는 strip 위 floating 안내(곁뷰가 닫혀 있어도 보이게) — "무반응" 방지.
             클릭하면 곁뷰를 열어 클릭 가능한 에이전트 행 + 상세 안내를 보여준다. */}
         <Show when={popBlocked()}>
-          <div class="a2a-mini-popblock" title="협업 곁뷰 열기 (대화 시작)"
-            onClick={(e) => { e.stopPropagation(); props.onOpen(); }}>
-            ⚠ 팝업이 차단되어 ‹{popBlocked()}› 새 창을 열지 못했습니다 — 여기를 눌러 곁뷰에서 대화하세요 ›
+          <div class="a2a-mini-popblock" title="앱 안에서 대화 열기"
+            onClick={(e) => { e.stopPropagation(); setModalAlias(popBlocked()); }}>
+            ⚠ 팝업이 차단되어 ‹{popBlocked()}› 새 창을 열지 못했습니다 — 여기를 눌러 앱 안에서 대화하세요 ›
           </div>
         </Show>
       </Show>
@@ -438,12 +510,12 @@ export function A2AMiniPanel(props: {
               fallback={<span class="a2a-mini-st"><span class="a2a-mini-dot idle" /> 활성 협업 없음</span>}
             >
               <For each={live()}>
-                {(a) => (<span class="a2a-mini-st a2a-mini-chip" classList={{ "a2a-blink": autoBlink().has(a.alias) }} title={`↔${a.alias} 대화를 새 창으로 열기`}
-                  onClick={(e) => { e.stopPropagation(); clickOpen(a.alias); }}><span class="a2a-mini-dot live" /> ↔{a.alias} 진행 가능 🗗</span>)}
+                {(a) => (<span class="a2a-mini-st a2a-mini-chip" classList={{ "a2a-blink": autoBlink().has(a.alias) }} title={`↔${a.alias} 대화를 앱 안에서 열기`}
+                  onClick={(e) => { e.stopPropagation(); openInApp(a.alias); }}><span class="a2a-mini-dot live" /> ↔{a.alias} 진행 가능<button class="a2a-popout" title="새 창으로 열기" aria-label="새 창으로 열기" onClick={(e) => popoutWindow(a.alias, e)}>🗗</button></span>)}
               </For>
               <For each={idle()}>
-                {(a) => (<span class="a2a-mini-st a2a-mini-chip" classList={{ "a2a-blink": autoBlink().has(a.alias) }} title={`↔${a.alias} 대화를 새 창으로 열기`}
-                  onClick={(e) => { e.stopPropagation(); clickOpen(a.alias); }}><span class="a2a-mini-dot idle" /> ↔{a.alias} 대기 🗗</span>)}
+                {(a) => (<span class="a2a-mini-st a2a-mini-chip" classList={{ "a2a-blink": autoBlink().has(a.alias) }} title={`↔${a.alias} 대화를 앱 안에서 열기`}
+                  onClick={(e) => { e.stopPropagation(); openInApp(a.alias); }}><span class="a2a-mini-dot idle" /> ↔{a.alias} 대기<button class="a2a-popout" title="새 창으로 열기" aria-label="새 창으로 열기" onClick={(e) => popoutWindow(a.alias, e)}>🗗</button></span>)}
               </For>
               <span class="a2a-mini-badge">{agents().length}</span>
             </Show>
@@ -459,7 +531,7 @@ export function A2AMiniPanel(props: {
             <li><span class="a2a-mini-dot live" /> <b>🟢 도달 가능</b> — 에이전트가 온라인이라 <b>A2A 위임(대화 진행) 가능</b>.</li>
             <li><span class="a2a-mini-dot idle" /> <b>⚪ 미도달</b> — 오프라인/연결 불가 → 지금은 위임할 수 없음(대기).</li>
             <li><b>“진행 가능” / “대기”</b> 는 클릭 동작이 아닌 <b>상태 표시</b>입니다(버튼 아님).</li>
-            <li><b>행/이름 클릭 🗗</b> — 그 에이전트와의 <b>A2A 대화창을 새 창으로</b> 엽니다(터미널 아님 · 터미널은 작업환경 곁뷰).</li>
+            <li><b>행/이름 클릭</b> — 그 에이전트와의 <b>A2A 대화를 앱 안에서</b> 엽니다(같은 창 오버레이 · 터미널 아님). <b>🗗 새 창</b> 버튼은 원하면 별도 창으로.</li>
             <li><b>🔔/🔕 자동</b> — 자동 열기: 그 에이전트가 메시지를 보내면 대화창을 자동으로 띄움(🔔 켜짐 / 🔕 꺼짐).</li>
             <li><b>🎙 발언권</b> — 누르면 그 에이전트의 ACP 턴을 진행(누적 맥락 + 방/역할 지침). 진행 상태가 아래에 표시됩니다.</li>
           </ul>
@@ -482,14 +554,16 @@ export function A2AMiniPanel(props: {
             <For each={agents()}>
               {(a) => (
                 <div class="conv" classList={{ "a2a-blink": autoBlink().has(a.alias) }}>
-                  {/* 행 클릭(아바타·이름 영역) → 이 에이전트 A2A 대화를 새 창으로 (사용자 제스처). */}
+                  {/* 행 클릭(아바타·이름 영역) → 이 에이전트 A2A 대화를 '앱 안에서' 즉시 연다(같은 창 오버레이). */}
                   <div class="av" style={`width:36px;height:36px;background:${a.reachable ? "#5aa469" : "#7c8ba1"};cursor:pointer`}
-                    title={`↔${a.alias} 대화를 새 창으로 열기`}
-                    onClick={() => clickOpen(a.alias)}>{a.alias.slice(0, 1).toUpperCase()}</div>
-                  <div style="cursor:pointer" title={`↔${a.alias} 대화를 새 창으로 열기 (A2A 대화창 · 터미널 아님)`} onClick={() => clickOpen(a.alias)}>
-                    <div class="nm">↔ {a.alias} 🗗</div>
-                    <div class="lt">{a.reachable ? "🟢 도달 가능 — 클릭해 A2A 대화창 열기" : "⚪ 미도달 — 오프라인(지금 위임 불가)"}</div>
+                    title={`↔${a.alias} 대화를 앱 안에서 열기`}
+                    onClick={() => openInApp(a.alias)}>{a.alias.slice(0, 1).toUpperCase()}</div>
+                  <div style="cursor:pointer;flex:1;min-width:0" title={`↔${a.alias} 대화를 앱 안에서 열기 (A2A 대화창 · 터미널 아님)`} onClick={() => openInApp(a.alias)}>
+                    <div class="nm">↔ {a.alias}</div>
+                    <div class="lt">{a.reachable ? "🟢 도달 가능 — 클릭해 A2A 대화 열기" : "⚪ 미도달 — 오프라인(지금 위임 불가)"}</div>
                   </div>
+                  {/* 🗗 명시적 새 창 — 별도 창을 원하는 사용자용. window.open + 새 창 포커스. */}
+                  <button class="a2a-popout" title={`↔${a.alias} 대화를 새 창으로 열기`} aria-label="새 창으로 열기" onClick={(e) => popoutWindow(a.alias, e)}>🗗 새 창</button>
                   {/* 상태 표시(클릭 동작 아님). 도달가능=A2A 위임 가능 / 미도달=대기 / 발언권 부여 중=턴 진행중. */}
                   <div class="stt" classList={{ "is-granting": granting() === a.alias }}
                     title={granting() === a.alias ? "턴 진행중 — 발언권을 부여해 ACP 턴이 진행되고 있습니다"
@@ -514,8 +588,9 @@ export function A2AMiniPanel(props: {
             </For>
           </Show>
           <Show when={popBlocked()}>
-            <div class="grantmsg" style="background:#fff3cf;color:#8a6d1a">
-              ⚠ 팝업이 차단되어 ‹{popBlocked()}› 창을 자동으로 열지 못했습니다. 위 칩/행을 직접 클릭하면 열립니다(차단 해제 권장).
+            <div class="grantmsg" style="background:#fff3cf;color:#8a6d1a;cursor:pointer"
+              title="앱 안에서 대화 열기" onClick={() => setModalAlias(popBlocked())}>
+              ⚠ 팝업이 차단되어 ‹{popBlocked()}› 새 창을 열지 못했습니다 — 여기를 눌러 앱 안에서 대화하세요(또는 위 행 클릭).
             </div>
           </Show>
           <Show when={grantMsg()}><div class="grantmsg" classList={{ "is-active": granting() !== null }}>{grantMsg()}</div></Show>
