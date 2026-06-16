@@ -285,9 +285,10 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                       popoutAlias={a().alias}
                       headerExtra={() => (
                         <>
-                          <span class="pill clk" classList={{ active: sideTmux() }} onClick={() => { setSideA2A(false); setSideTmux((v) => !v); }}>🖥 작업환경</span>
-                          <span class="pill clk" classList={{ active: sideA2A() }} onClick={() => { setSideTmux(false); setSideA2A((v) => !v); }}>🔗 협업</span>
-                          <span class="pill clk" title="방 설정 (하네스·역할·오케스트레이션)" onClick={() => setRoomCfgOpen(true)}>⚙️ 방 설정</span>
+                          {/* 자주 쓰는 액션 = 아이콘 전용(title 툴팁). 줄바꿈 없이 한 줄에 들어가도록 컴팩트. */}
+                          <span class="kk-acp-icon clk" classList={{ active: sideTmux() }} title="작업환경 (tmux · 사람 전용 터미널)" onClick={() => { setSideA2A(false); setSideTmux((v) => !v); }}>🖥</span>
+                          <span class="kk-acp-icon clk" classList={{ active: sideA2A() }} title="협업 (A2A 에이전트간 대화)" onClick={() => { setSideTmux(false); setSideA2A((v) => !v); }}>🔗</span>
+                          <span class="kk-acp-icon clk" title="방 설정 (하네스·역할·오케스트레이션)" onClick={() => setRoomCfgOpen(true)}>⚙️</span>
                         </>
                       )}
                       status={() => ({

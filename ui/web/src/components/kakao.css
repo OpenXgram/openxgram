@@ -278,14 +278,19 @@
   flex:1; min-width:0; display:flex; flex-direction:column; background:var(--kk-surface); position:relative;
 }
 .kk-talk-blank{flex:1; display:flex; align-items:center; justify-content:center; color:var(--kk-sub); font-size:13px;}
-.kk-talk-chat .chat-top{background:#fff; padding:13px 20px; display:flex; align-items:center; gap:11px; border-bottom:1px solid var(--kk-line); flex:none;}
+/* 헤더는 단일 행 고정 높이(~58px). 솔리드 배경 + 협업 strip(z-index 26) 보다 높은 z-index 로
+   strip 이 어떤 경우에도 헤더 위로 올라오지 않게(겹침 방지) 한다. */
+.kk-talk-chat .chat-top{background:#fff; padding:13px 20px; display:flex; align-items:center; gap:11px; border-bottom:1px solid var(--kk-line); flex:none; position:relative; z-index:30;}
 .kk-talk-chat .chat-top .ava{width:34px; height:34px; border-radius:11px; flex:none; display:flex; align-items:center; justify-content:center; font-size:14px; color:#fff; font-weight:700;}
 .kk-talk-chat .chat-top .nm{font-size:15px; font-weight:700; color:var(--kk-ink);}
 /* 제목 + 대화 모델 캡션 세로 묶음 (캡션은 하단 .note 에서 헤더 제목 아래로 이전). */
-.kk-talk-chat .chat-top .nm-wrap{display:flex; flex-direction:column; gap:1px; min-width:0; flex:0 1 auto; overflow:hidden;}
-.kk-talk-chat .chat-top .nm-wrap .nm{line-height:1.15;}
+/* 제목 영역은 공간이 부족하면 가장 먼저 줄어든다(flex:1 + min-width:0) → 우측 컨트롤이 한 줄 유지. */
+.kk-talk-chat .chat-top .nm-wrap{display:flex; flex-direction:column; gap:1px; min-width:0; flex:1 1 auto; overflow:hidden;}
+.kk-talk-chat .chat-top .nm-wrap .nm{line-height:1.15; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 .kk-talk-chat .chat-top .chat-cap{font-size:10.5px; font-weight:500; color:var(--kk-sub); line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%;}
-.kk-talk-chat .chat-top .meta-r{margin-left:auto; display:flex; gap:7px;}
+/* 우측 컨트롤 행 — 절대 줄바꿈/겹침 금지. 단일 flex 행, 항목은 축소·줄바꿈 안 함. */
+.kk-talk-chat .chat-top .meta-r{margin-left:auto; display:flex; flex-wrap:nowrap; align-items:center; gap:6px; flex:none;}
+.kk-talk-chat .chat-top .meta-r > *{flex:none;}
 .kk-talk-chat .pill{font-size:11px; font-weight:700; background:#f1f3f6; color:#5b6678; border-radius:20px; padding:4px 10px; display:flex; align-items:center; gap:5px;}
 .kk-talk-chat .pill .pdot{width:7px; height:7px; border-radius:50%; background:var(--kk-online);}
 .kk-talk-chat .pill.off{color:#9aa1ad; background:#f1f3f6;}
@@ -435,6 +440,32 @@
   border-radius:7px; padding-right:7px;
 }
 .kk-talk-chat .chat-top .kk-acp-close:hover{color:#fff; background:#e5484d; border-left-color:#e5484d;}
+
+/* ── 컴팩트 아이콘 버튼(헤더 우측) — 아이콘 전용·일관 크기·title 툴팁. 줄바꿈 방지용 고정폭. ── */
+.kk-talk-chat .chat-top .kk-acp-icon{
+  flex:none; width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center;
+  font-size:14px; line-height:1; border-radius:8px; cursor:pointer;
+  background:#f1f3f6; color:#5b6678; border:1px solid transparent; user-select:none;
+}
+.kk-talk-chat .chat-top .kk-acp-icon:hover{background:#e4e8ee;}
+.kk-talk-chat .chat-top .kk-acp-icon.active{background:#dde7f2; color:#2a4a6a; border-color:#bcd2ee;}
+.kk-talk-chat .chat-top .kk-acp-more{font-size:18px; font-weight:700;}
+
+/* ⋯ 더보기 드롭다운 — 헤더 아래로 펼쳐지는 작은 팝업. 보조 컨트롤 목록. */
+.kk-talk-chat .chat-top .kk-acp-morewrap{position:relative; flex:none; display:inline-flex;}
+.kk-acp-more-back{position:fixed; inset:0; z-index:40;}
+.kk-talk-chat .chat-top .kk-acp-more-menu{
+  position:absolute; top:36px; right:0; z-index:41; min-width:188px;
+  background:#fff; border:1px solid var(--kk-line,#e0e3ea); border-radius:11px;
+  box-shadow:0 8px 26px rgba(20,30,50,.16); padding:5px; display:flex; flex-direction:column; gap:1px;
+}
+.kk-acp-more-row{display:flex; align-items:center; gap:7px; font-size:12.5px; font-weight:600; color:#41506a; padding:7px 9px; border-radius:7px; white-space:nowrap;}
+.kk-acp-more-row.clk{cursor:pointer;}
+.kk-acp-more-row.clk:hover{background:#f1f4f8;}
+.kk-acp-more-row .kk-acp-more-ck{width:13px; flex:none; color:#2f7d4f; font-weight:800; text-align:center;}
+.kk-acp-more-row .pdot{width:7px; height:7px; border-radius:50%; background:var(--kk-online); flex:none;}
+.kk-acp-more-row .pdot.off{background:#c4c9d2;}
+
 .kk-popup-root{position:fixed; inset:0; display:flex; flex-direction:column; background:var(--surface,#fff);}
 .kk-popup-root .kk-talk{height:100vh; width:100vw;}
 .kk-popup-root .info{display:none !important;}

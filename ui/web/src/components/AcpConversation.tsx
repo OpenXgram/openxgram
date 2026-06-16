@@ -500,6 +500,9 @@ export function AcpConversation(props: {
   // 모아 우측 슬라이드 패널에 미리보기. 이미지=썸네일(클릭 확대), 그 외=다운로드 + 경로 표시.
   // 파일 바이트 서빙 라우트(daemon)가 없으므로 같은-머신 file:// 미리보기 + 경로 복사 위주.
   const [artOpen, setArtOpen] = createSignal(false);
+  // ⋯ 더보기 오버플로 메뉴 — 항상 보일 필요 없는 보조 컨트롤(스트리밍/ACP 토글·아티팩트·새 창)을
+  // 한 드롭다운에 모아 헤더가 한 줄을 넘지 않게 한다(겹침/줄바꿈 방지). 바깥 클릭 시 닫힘.
+  const [moreOpen, setMoreOpen] = createSignal(false);
   const [artZoom, setArtZoom] = createSignal<string | null>(null); // 확대 중인 이미지 src
   // 아티팩트별(=path 키) 인라인 뷰어/에디터 상태. 읽기·편집·저장은 fs_file_get/fs_file_put 사용.
   type ArtState = {
@@ -1339,26 +1342,51 @@ export function AcpConversation(props: {
             {/* 대화 모델 캡션 — 옛날엔 앱 하단 고정바(.note)였는데, 헤더 제목 아래 작은 muted 캡션으로 이전. */}
             <div class="chat-cap">OpenXgram 대화 모델: A2A=ACP · tmux=사람전용 · 사람=고권한 참가자 · 카카오톡 스타일</div>
           </div>
+          {/* 단일 행 컨트롤 — flex-wrap:nowrap. 자주 쓰는 액션만 아이콘으로 항상 노출하고
+              (headerExtra = 🖥작업환경/🔗협업/⚙️방설정 아이콘), 보조 컨트롤(스트리밍/ACP 토글·
+              아티팩트·새 창)은 ⋯ 더보기 메뉴로 접는다. ✕ 닫기는 far-right 에 항상 노출. */}
           <div class="meta-r">
             <Show when={props.headerExtra}>{props.headerExtra!() as never}</Show>
-            <Show when={streaming()} fallback={<span class="pill off"><span class="pdot" />스트림 끊김</span>}>
-              <span class="pill"><span class="pdot" />스트리밍</span>
-            </Show>
-            <span class="pill">⚡ ACP</span>
-            {/* 옛 클립보드 📤이어가기/📥가져오기 버튼 제거 — 대화 핸드오프는 ⇢ 위임 모달로 대체됨. */}
-            {/* 📎 아티팩트 패널 토글 — 대화 중 등장한 파일·이미지 미리보기. */}
-            <Show when={artifacts().length > 0}>
+            {/* ⋯ 더보기 — 보조 컨트롤 오버플로 메뉴. 토글 on/off 상태는 ✓ 로 메뉴 안에 표시. */}
+            <div class="kk-acp-morewrap">
               <span
-                class="kk-acp-pop"
-                title="대화 중 등장한 파일·이미지 미리보기"
-                onClick={() => setArtOpen((v) => !v)}
-              >📎 아티팩트 {artifacts().length}</span>
-            </Show>
-            <Show when={props.popoutAlias}>
-              <span class="kk-acp-pop kk-acp-pop-win" title="새 창으로 열기 (별도 팝업 창)" onClick={() => openPopout(props.popoutAlias!)}>🗗 새 창</span>
-            </Show>
-            {/* ✕ 닫기 — 새 창 버튼과 시각적으로 명확히 구분(빨강 hover·far-right). onClose 는
-                팝업 창에서는 window.close(), 메인 앱에서는 대화 닫고 roster 복귀. 새 창 열기와 혼동되지 않게 분리. */}
+                class="kk-acp-icon kk-acp-more"
+                classList={{ active: moreOpen() }}
+                title="더보기 (스트리밍·ACP·아티팩트·새 창)"
+                onClick={() => setMoreOpen((v) => !v)}
+              >⋯</span>
+              <Show when={moreOpen()}>
+                {/* 바깥 클릭 닫힘용 backdrop(투명). */}
+                <div class="kk-acp-more-back" onClick={() => setMoreOpen(false)} />
+                <div class="kk-acp-more-menu">
+                  <div class="kk-acp-more-row" classList={{ on: streaming() }}>
+                    <span class="kk-acp-more-ck">{streaming() ? "✓" : ""}</span>
+                    <span class="pdot" classList={{ off: !streaming() }} />
+                    스트리밍 {streaming() ? "(연결됨)" : "(끊김)"}
+                  </div>
+                  <div class="kk-acp-more-row on">
+                    <span class="kk-acp-more-ck">✓</span>⚡ ACP 세션
+                  </div>
+                  <Show when={artifacts().length > 0}>
+                    <div
+                      class="kk-acp-more-row clk"
+                      onClick={() => { setArtOpen((v) => !v); setMoreOpen(false); }}
+                    >
+                      <span class="kk-acp-more-ck">{artOpen() ? "✓" : ""}</span>📎 아티팩트 ({artifacts().length})
+                    </div>
+                  </Show>
+                  <Show when={props.popoutAlias}>
+                    <div
+                      class="kk-acp-more-row clk"
+                      onClick={() => { openPopout(props.popoutAlias!); setMoreOpen(false); }}
+                    >
+                      <span class="kk-acp-more-ck" />🗗 새 창으로 열기
+                    </div>
+                  </Show>
+                </div>
+              </Show>
+            </div>
+            {/* ✕ 닫기 — far-right 항상 노출. 빨강 hover 로 "닫기" 명확. 새 창과 혼동 방지. */}
             <span class="kk-acp-close" title="닫기" onClick={() => props.onClose()}>✕</span>
           </div>
         </div>
