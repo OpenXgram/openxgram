@@ -188,12 +188,29 @@ export function AddFriendModal(props: {
       if (!machineAddr) { setErr("원격 머신 주소를 확인하지 못했습니다. 장치를 다시 선택하세요."); return; }
       setBusy(true);
       try {
+        if (isAgent) {
+          // 🤝 에이전트 추가 (4b) — 남의 에이전트 사용 요청. 실제 handshake:
+          //   요청 row 생성 + 기존 peer envelope 로 소유자에게 전달(상태=대기). 소유자가
+          //   수락 AND 가격 책정해야 사용 가능. 여기서 가격/수락을 날조하지 않는다.
+          const r = await invoke<{ ok?: boolean; id?: string; delivered?: boolean; delivery_note?: string }>(
+            "agent_request_create",
+            {
+              target_agent: chosen.alias,
+              target_owner: chosen.alias, // 소유자 = 그 머신의 대상 에이전트(머신 primary 가 수신·라우팅)
+              target_machine: machineAddr,
+              note: `${name} 가 ${chosen.alias} 사용 요청`,
+            },
+          );
+          if (!r?.ok) { setErr("요청 생성에 실패했습니다."); return; }
+          // 전달 여부를 사용자에게 명시(peer 미도달이어도 row 는 생성됨 — 재시도/소유자 직접 통지 가능).
+          props.onCreated(name, kind());
+          return;
+        }
+        // 🖥 머신 추가 (4a) — 한쪽 등록(전권). 기존 동작 보존.
         await invoke("agents_register", {
           alias: name,
-          role: chosen.role ?? (isAgent ? "사용 요청 에이전트" : "머신 프라이머리"),
-          description: isAgent
-            ? `사용 요청(소유자 수락·가격책정 대기) ${chosen.alias} (${machineAddr})`
-            : `머신 프라이머리 ${chosen.alias} (${machineAddr})`,
+          role: chosen.role ?? "머신 프라이머리",
+          description: `머신 프라이머리 ${chosen.alias} (${machineAddr})`,
           project_path: null,
           group_name: null,
           messenger_enabled: true,
@@ -203,11 +220,10 @@ export function AddFriendModal(props: {
           machine: machineAddr,
           worktree: null,
           is_public: false,
-          // rc.321 — 친구 정책 (권한/격리/비용).
-          //   에이전트 추가는 격리 강제(true) — 4b 격리 컨테이너/fresh worktree 정책의 UI 표현.
-          friend_permission: isAgent ? "request" : permission(),
-          friend_isolated: isAgent ? true : isolated(),
-          friend_cost_tracked: isAgent ? true : costTracked(),
+          // rc.321 — 친구 정책 (권한/격리/비용). 내 머신이므로 내가 정한다.
+          friend_permission: permission(),
+          friend_isolated: isolated(),
+          friend_cost_tracked: costTracked(),
         });
         props.onCreated(name, kind());
       } catch (e) {
@@ -404,7 +420,8 @@ export function AddFriendModal(props: {
                 <div class="hint" style="padding:8px 10px;border-radius:8px;background:#26221a;border:1px solid #5d4a2f;color:#e3dccf;">
                   ⏳ <b>대기 (상대 수락)</b> — 요청을 보내면 소유자가 수락하고 가격을 책정해야 사용 가능합니다.
                   <div style="margin-top:4px;font-size:11px;color:#b5a98f;">
-                    🚧 4b 백엔드 미구현: 상호 동의 handshake(요청→수락), 소유자 가격책정, 격리 컨테이너/fresh worktree 실행.
+                    요청은 기존 peer 채널로 소유자에게 전달됩니다. 수락 시 격리(fresh worktree)에서만 실행되고
+                    사용량은 소유자 가격으로 과금 원장에 기록됩니다. (정산은 결제 인프라 책임 · OS 컨테이너 격리는 미구현)
                   </div>
                 </div>
               </div>

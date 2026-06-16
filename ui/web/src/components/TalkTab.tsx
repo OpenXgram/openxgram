@@ -5,6 +5,7 @@ import { A2AMiniPanel } from "./A2AMiniPanel";
 import { AddAgentModal } from "./AddAgentModal";
 import { RoomModal } from "./RoomModal";
 import { AddFriendModal, loadExternalFriends, type ExternalFriend } from "./AddFriendModal";
+import { AgentRequestsInbox } from "./AgentRequestsInbox";
 import { ProviderLogo, providerKey } from "./ProviderLogo";
 import {
   computeUnregisteredSessions,
@@ -184,6 +185,8 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
   const [addOpen, setAddOpen] = createSignal(false);
   // 👥 친구 추가 모달 — 종류(머신/외부 A2A) 선택. addOpen(에이전트 추가)와 별개.
   const [friendOpen, setFriendOpen] = createSignal(false);
+  // 🤝 4b — 에이전트 사용 요청 inbox(소유자 받은 요청 + 내가 보낸 요청 상태).
+  const [reqInboxOpen, setReqInboxOpen] = createSignal(false);
   // 외부 A2A 친구(localStorage 영속) — 머신 친구는 agents_list 에 들어오지만 외부는 별도 소스.
   const [extFriends, setExtFriends] = createSignal<ExternalFriend[]>(loadExternalFriends());
   function reloadExtFriends() { setExtFriends(loadExternalFriends()); }
@@ -649,6 +652,8 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
         <div class="side-top">
           <h1>OpenXgram</h1>
           <button class="add-btn" onClick={() => setAddOpen(true)}>＋ <span class="lbl">에이전트 추가</span></button>
+          <button class="add-btn" title="🤝 에이전트 사용 요청 (받은 요청 수락·가격책정 / 보낸 요청 상태)"
+            onClick={() => setReqInboxOpen(true)}>🤝 <span class="lbl">사용 요청</span></button>
         </div>
         <input
           class="search"
@@ -785,15 +790,15 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
                   </For>
                 </Show>
 
-                {/* ➕ 친구 추가 — 종류 선택(머신 / 외부 A2A) 모달. */}
-                <div class="row kk-unreg-row" title="다른 머신·외부 에이전트를 친구로 추가" onClick={() => setFriendOpen(true)}>
+                {/* ➕ 추가 — rc.334 Phase 4a: 머신 추가(한쪽) / 에이전트 추가(상호·격리·가격) / 외부 A2A 선택 모달. */}
+                <div class="row kk-unreg-row" title="🖥 머신 추가(내 머신·한쪽) · 🤝 에이전트 추가(상대·상호) · 🌐 외부 A2A" onClick={() => setFriendOpen(true)}>
                   <div class="ava c-group">＋<span class="dot" /></div>
                   <div class="meta">
                     <div class="kk-card-l1">
-                      <span class="nm">➕ 친구 추가</span>
+                      <span class="nm">➕ 추가</span>
                     </div>
                     <div class="kk-card-l2">
-                      <span class="st">머신 · 외부 A2A</span>
+                      <span class="st">🖥 머신 · 🤝 에이전트 · 🌐 외부 A2A</span>
                     </div>
                   </div>
                 </div>
@@ -1041,11 +1046,17 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
           onClose={() => setFriendOpen(false)}
           onCreated={(alias, kind) => {
             setFriendOpen(false);
-            if (kind === "machine") void refetchAgents();
+            // 머신 추가·에이전트 추가 둘 다 agents_register(friend) → 명부 새로고침.
+            if (kind === "machine" || kind === "agent") void refetchAgents();
             else reloadExtFriends(); // 외부 A2A — localStorage 재로드.
             setSelected(alias);
           }}
         />
+      </Show>
+
+      {/* 🤝 4b — 에이전트 사용 요청 inbox (소유자 수락+가격책정 / 요청자 상태). */}
+      <Show when={reqInboxOpen()}>
+        <AgentRequestsInbox onClose={() => { setReqInboxOpen(false); void refetchAgents(); }} />
       </Show>
     </div>
   );

@@ -118,6 +118,15 @@ const ROUTES: Record<string, Route> = {
  // rc.321 — 친구 단위 정책(권한/격리/비용) 읽기/갱신. {alias} 치환. body {permission?, isolated?, cost_tracked?}.
  friends_policy_get: { method: "GET", path: "/friends/{alias}/policy"},
  friends_policy_set: { method: "POST", path: "/friends/{alias}/policy", body: true},
+ // rc.335 4b — "에이전트 추가"(남의 에이전트 사용) 상호 동의 handshake + 소유자 가격.
+ //   create: body{target_agent, target_owner?, target_machine?, note?} → 요청 생성 + peer 전달.
+ //   list: ?role=incoming(소유자 받은 요청)|outgoing(내가 보낸 요청). { requests:[...] }.
+ //   accept: body{price_amount, price_unit?, currency?, terms?, actor?}. reject/revoke: body{actor?}.
+ agent_requests_list: { method: "GET", path: "/agent-requests"},
+ agent_request_create: { method: "POST", path: "/agent-requests", body: true},
+ agent_request_accept: { method: "POST", path: "/agent-requests/{id}/accept", body: true},
+ agent_request_reject: { method: "POST", path: "/agent-requests/{id}/reject", body: true},
+ agent_request_revoke: { method: "POST", path: "/agent-requests/{id}/revoke", body: true},
  agent_machines: { method: "GET", path: "/agent-machines"},
  models_list: { method: "GET", path: "/models"},
  // Phase 3 — A2A(에이전트↔에이전트)

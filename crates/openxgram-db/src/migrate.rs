@@ -348,6 +348,14 @@ const MIGRATIONS: &[Migration] = &[
         name: "room_vault",
         sql: include_str!("../migrations/0062_room_vault.sql"),
     },
+    // rc.335 — Phase 4b: "에이전트 추가"(남의 에이전트 사용) 상호 동의 handshake +
+    // 소유자 가격책정 + 격리 실행. agent_add_request(요청/수락/거절) + agent_add_usage(과금 원장).
+    // 전달은 기존 peer envelope 재사용, 정산은 기존 payment 인프라 책임(원장 기록만).
+    Migration {
+        version: 63,
+        name: "agent_add_request",
+        sql: include_str!("../migrations/0063_agent_add_request.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

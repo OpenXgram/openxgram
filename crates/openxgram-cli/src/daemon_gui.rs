@@ -432,6 +432,14 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/friends/remote-agents", get(gui_friends_remote_agents))
         // rc.321 — 친구 단위 정책 읽기/갱신 (권한/격리/비용). 인증 필요.
         .route("/v1/gui/friends/{alias}/policy", get(gui_friend_policy_get).post(gui_friend_policy_set))
+        // rc.335 4b — "에이전트 추가"(남의 에이전트 사용) 상호 동의 handshake + 소유자 가격.
+        //   POST: 요청 생성 + peer envelope 전달. GET ?role=incoming|outgoing: 목록.
+        //   accept(가격책정)/reject/revoke: 소유자 결정. 모두 require_auth.
+        .route("/v1/gui/agent-requests",
+               get(gui_agent_requests_list).post(gui_agent_request_create))
+        .route("/v1/gui/agent-requests/{id}/accept", post(gui_agent_request_accept))
+        .route("/v1/gui/agent-requests/{id}/reject", post(gui_agent_request_reject))
+        .route("/v1/gui/agent-requests/{id}/revoke", post(gui_agent_request_revoke))
         .route("/v1/gui/agents/{alias}",
                post(gui_agents_delete))
         // rc.125 — 자동 감지 (alias 의 cwd CLAUDE.md + .mcp.json)
@@ -5075,6 +5083,363 @@ fn this_machine_alias() -> String {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| crate::daemon_gui_sessions::detect_machine().alias)
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// rc.335 — Phase 4b: "에이전트 추가"(남의 에이전트 사용) 상호 동의 handshake +
+//          소유자 가격책정 + 격리 실행.
+//
+//  흐름: 요청자(나) → POST request (row 생성 + 기존 peer envelope 로 소유자에게 전달)
+//        소유자 → GET pending (도착한 요청 열람) → POST accept(가격책정) | reject
+//        accept 시 요청자는 그 에이전트를 사용 가능 — 사용 시 가격으로 charge 원장 기록.
+//
+//  전달(delivery): 새 transport 안 만든다. run_peer_send_with_conv(기존 peer envelope,
+//    cross-machine A2A 가 쓰는 그 경로)로 소유자 머신 데몬에 서명 envelope 전송. 본문 prefix
+//    `[AGENT_ADD_REQUEST]` + JSON 으로 수신측 분류.
+//  ⚠️ 신뢰모델 검토 필요: envelope 는 발신자 키로 서명되나, 소유자 머신이 요청을 inbox 에
+//    자동 보존하는 라우팅은 별도(process_inbound) — 본 4b 는 요청자측 row + 전달 + 양측 API 까지.
+//  ⚠️ 정산 검토 필요: 가격은 소유자가 책정·영속하나, 실제 USDC 정산은 기존 payment 인프라 책임.
+//    여기서는 charge 원장(agent_add_usage, settled=0)만 기록 — 가짜 영수증 금지.
+// ════════════════════════════════════════════════════════════════════════
+
+#[derive(serde::Deserialize)]
+struct AgentAddRequestBody {
+    target_agent: String,
+    #[serde(default)] target_owner: Option<String>,
+    #[serde(default)] target_machine: Option<String>,
+    #[serde(default)] requester: Option<String>,
+    #[serde(default)] note: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct AgentAddAcceptBody {
+    price_amount: f64,
+    #[serde(default)] price_unit: Option<String>,   // per_call|per_token|subscription|flat
+    #[serde(default)] currency: Option<String>,     // 기본 USDC
+    #[serde(default)] terms: Option<String>,
+    #[serde(default)] actor: Option<String>,        // 소유자 alias (수익 귀속)
+}
+
+#[derive(serde::Deserialize)]
+struct AgentAddDecisionBody {
+    #[serde(default)] actor: Option<String>,
+}
+
+fn validate_price_unit(u: &str) -> Result<(), String> {
+    match u {
+        "per_call" | "per_token" | "subscription" | "flat" => Ok(()),
+        other => Err(format!(
+            "price_unit '{other}' 무효 (per_call|per_token|subscription|flat 중 하나)"
+        )),
+    }
+}
+
+/// `POST /v1/gui/agent-requests` — 요청자가 남의 에이전트 사용을 요청.
+/// row(direction=outgoing, status=pending) 생성 + 기존 peer envelope 로 소유자에게 전달.
+async fn gui_agent_request_create(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<AgentAddRequestBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let target = body.target_agent.trim().to_string();
+    if target.is_empty() {
+        return Err(bad_request("target_agent (사용 요청 대상) 비어 있음"));
+    }
+    let requester = body
+        .requester
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(this_machine_alias);
+    let requester_machine = this_machine_alias();
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = kst_now_string();
+
+    {
+        let mut db = state.db.lock().await;
+        db.conn().execute(
+            "INSERT INTO agent_add_request \
+                (id, requester, requester_machine, target_agent, target_owner, target_machine, \
+                 status, currency, direction, created_at_kst) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', 'USDC', 'outgoing', ?7)",
+            rusqlite::params![
+                id,
+                requester,
+                requester_machine,
+                target,
+                body.target_owner.as_deref().filter(|s| !s.trim().is_empty()),
+                body.target_machine.as_deref().filter(|s| !s.trim().is_empty()),
+                now,
+            ],
+        ).map_err(|e| internal(&format!("agent_add_request insert: {e}")))?;
+    }
+
+    // ── 소유자 머신으로 전달 — 기존 peer envelope 재사용(새 transport 안 만든다) ──
+    // recipient = target_owner(있으면) 아니면 target_agent 의 머신 primary. cross-machine
+    // A2A 와 동일 경로: run_peer_send_with_conv(서명 envelope). 본문 prefix 로 수신측 분류.
+    let recipient = body
+        .target_owner
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(target.as_str())
+        .to_string();
+    let payload = serde_json::json!({
+        "kind": "agent_add_request",
+        "id": id,
+        "requester": requester,
+        "requester_machine": requester_machine,
+        "target_agent": target,
+        "note": body.note.as_deref().unwrap_or(""),
+    });
+    let envelope_body = format!("[AGENT_ADD_REQUEST] {payload}");
+    let data_dir = state.data_dir.as_ref().clone();
+    let mut delivered = false;
+    let mut delivery_note = String::new();
+    match std::env::var("XGRAM_KEYSTORE_PASSWORD") {
+        Ok(pw) if !pw.is_empty() => {
+            match crate::peer_send::run_peer_send_with_conv(
+                &data_dir,
+                &recipient,
+                Some(&requester),
+                &envelope_body,
+                &pw,
+                None,
+            )
+            .await
+            {
+                Ok(()) => { delivered = true; }
+                Err(e) => {
+                    // 전달 실패는 명시 — row 는 보존(요청자가 재시도/소유자 직접 통지 가능).
+                    delivery_note = format!("peer 전달 실패({recipient}): {e}");
+                    tracing::warn!(recipient = %recipient, error = %e, "agent_add_request peer 전달 실패 (row 는 보존)");
+                }
+            }
+        }
+        _ => {
+            delivery_note = "XGRAM_KEYSTORE_PASSWORD 미설정 — envelope 전달 보류(요청 row 는 생성됨)".to_string();
+            tracing::warn!("agent_add_request: keystore 비번 부재 — 전달 보류");
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "id": id,
+        "status": "pending",
+        "target_agent": target,
+        "recipient": recipient,
+        "delivered": delivered,
+        "delivery_note": delivery_note,
+    })))
+}
+
+/// `GET /v1/gui/agent-requests?role=incoming|outgoing` — 요청 목록.
+///   incoming(기본): 소유자가 받은 요청(수락/거절 대상).
+///   outgoing: 요청자가 보낸 요청(상태 추적).
+async fn gui_agent_requests_list(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Query(q): Query<AgentRequestsQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let role = q.role.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("incoming");
+    let direction = if role == "outgoing" { "outgoing" } else { "incoming" };
+    let mut db = state.db.lock().await;
+    let mut stmt = db.conn().prepare(
+        "SELECT id, requester, requester_machine, target_agent, target_owner, target_machine, \
+                status, price_amount, price_unit, currency, terms, direction, created_at_kst, decided_at_kst \
+         FROM agent_add_request WHERE direction = ?1 ORDER BY created_at_kst DESC",
+    ).map_err(|e| internal(&format!("agent_requests prep: {e}")))?;
+    let rows: Vec<serde_json::Value> = stmt.query_map([direction], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_, String>(0)?,
+            "requester": r.get::<_, String>(1)?,
+            "requester_machine": r.get::<_, Option<String>>(2)?,
+            "target_agent": r.get::<_, String>(3)?,
+            "target_owner": r.get::<_, Option<String>>(4)?,
+            "target_machine": r.get::<_, Option<String>>(5)?,
+            "status": r.get::<_, String>(6)?,
+            "price_amount": r.get::<_, Option<f64>>(7)?,
+            "price_unit": r.get::<_, Option<String>>(8)?,
+            "currency": r.get::<_, Option<String>>(9)?,
+            "terms": r.get::<_, Option<String>>(10)?,
+            "direction": r.get::<_, String>(11)?,
+            "created_at_kst": r.get::<_, String>(12)?,
+            "decided_at_kst": r.get::<_, Option<String>>(13)?,
+        }))
+    }).map_err(|e| internal(&format!("agent_requests q: {e}")))?
+        .filter_map(|r| r.ok()).collect();
+    Ok(Json(serde_json::json!({ "requests": rows })))
+}
+
+#[derive(serde::Deserialize)]
+struct AgentRequestsQuery {
+    #[serde(default)] role: Option<String>,
+}
+
+/// `POST /v1/gui/agent-requests/{id}/accept` — 소유자가 수락 + 가격 책정.
+/// status=accepted, price_amount/unit/currency/terms 영속. 수락 결과를 요청자에게 envelope 전달.
+/// 수락 시 요청자에게 friend grant(agent_profiles classification=friend, isolated 강제)를 생성.
+async fn gui_agent_request_accept(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<AgentAddAcceptBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    if !body.price_amount.is_finite() || body.price_amount < 0.0 {
+        return Err((StatusCode::UNPROCESSABLE_ENTITY, Json(ErrorDto { error: "price_amount 는 0 이상 유한수".into() })));
+    }
+    let unit = body.price_unit.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("per_call");
+    validate_price_unit(unit)
+        .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, Json(ErrorDto { error: e })))?;
+    let currency = body.currency.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("USDC").to_string();
+    let now = kst_now_string();
+
+    // row 조회 + 갱신 + grant 를 한 lock 안에서.
+    let (requester, target_agent, requester_machine): (String, String, Option<String>) = {
+        let mut db = state.db.lock().await;
+        let row = db.conn().query_row(
+            "SELECT requester, target_agent, requester_machine FROM agent_add_request WHERE id = ?1",
+            [&id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)),
+        ).map_err(|_| (StatusCode::NOT_FOUND, Json(ErrorDto { error: format!("unknown request: {id}") })))?;
+
+        let affected = db.conn().execute(
+            "UPDATE agent_add_request SET status='accepted', price_amount=?2, price_unit=?3, \
+                currency=?4, terms=?5, decided_at_kst=?6 WHERE id=?1 AND status='pending'",
+            rusqlite::params![id, body.price_amount, unit, currency, body.terms.as_deref(), now],
+        ).map_err(|e| internal(&format!("accept update: {e}")))?;
+        if affected == 0 {
+            return Err((StatusCode::CONFLICT, Json(ErrorDto { error: "이미 결정된 요청이거나 pending 아님".into() })));
+        }
+
+        // 요청자에게 grant — agent_profiles classification=friend, isolated 강제(4b 격리 정책).
+        // upsert_agent_profile 재사용(머신 추가/친구 announce 공용 helper)으로 중복 회피.
+        let _ = upsert_agent_profile(
+            db.conn(),
+            &row.1,            // alias = target_agent (요청자가 사용할 에이전트)
+            "claude",
+            "friend",
+            "on_demand",
+            row.2.as_deref(),  // machine = requester_machine (전달 경로)
+            None,              // worktree
+            false,             // is_public
+            &now,
+            Some("request"),   // friend_permission
+            Some(true),        // friend_isolated = true (강제)
+            Some(true),        // friend_cost_tracked = true (강제)
+        );
+        (row.0, row.1, row.2)
+    };
+
+    // ── 수락 결과를 요청자에게 envelope 전달(기존 peer envelope 재사용) ──
+    let actor = body.actor.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("owner").to_string();
+    let payload = serde_json::json!({
+        "kind": "agent_add_accept",
+        "id": id, "target_agent": target_agent, "by": actor,
+        "price_amount": body.price_amount, "price_unit": unit, "currency": currency,
+        "terms": body.terms.as_deref().unwrap_or(""),
+    });
+    let envelope_body = format!("[AGENT_ADD_ACCEPT] {payload}");
+    let recipient = requester.clone();
+    let data_dir = state.data_dir.as_ref().clone();
+    let mut delivered = false;
+    if let Ok(pw) = std::env::var("XGRAM_KEYSTORE_PASSWORD") {
+        if !pw.is_empty() {
+            match crate::peer_send::run_peer_send_with_conv(&data_dir, &recipient, Some(&actor), &envelope_body, &pw, None).await {
+                Ok(()) => delivered = true,
+                Err(e) => tracing::warn!(recipient = %recipient, error = %e, "agent_add_accept 전달 실패 (수락 자체는 영속)"),
+            }
+        }
+    }
+    let _ = requester_machine;
+
+    Ok(Json(serde_json::json!({
+        "ok": true, "id": id, "status": "accepted",
+        "price_amount": body.price_amount, "price_unit": unit, "currency": currency,
+        "delivered_to_requester": delivered,
+    })))
+}
+
+/// `POST /v1/gui/agent-requests/{id}/reject` (status=rejected) /
+/// `POST /v1/gui/agent-requests/{id}/revoke` (status=revoked) — 공용 핸들러.
+async fn gui_agent_request_decide(
+    state: GuiServerState,
+    id: String,
+    new_status: &str,
+    actor: Option<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    let now = kst_now_string();
+    let mut db = state.db.lock().await;
+    let affected = db.conn().execute(
+        "UPDATE agent_add_request SET status=?2, decided_at_kst=?3 WHERE id=?1 \
+            AND status IN ('pending','accepted')",
+        rusqlite::params![id, new_status, now],
+    ).map_err(|e| internal(&format!("decide update: {e}")))?;
+    if affected == 0 {
+        return Err((StatusCode::NOT_FOUND, Json(ErrorDto { error: format!("unknown/terminal request: {id}") })));
+    }
+    let _ = actor;
+    Ok(Json(serde_json::json!({ "ok": true, "id": id, "status": new_status })))
+}
+
+async fn gui_agent_request_reject(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<AgentAddDecisionBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    gui_agent_request_decide(state, id, "rejected", body.actor).await
+}
+
+async fn gui_agent_request_revoke(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<AgentAddDecisionBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    gui_agent_request_decide(state, id, "revoked", body.actor).await
+}
+
+/// 사용량/과금 원장 기록 — accepted 요청의 에이전트를 요청자가 구동(turn)할 때 호출.
+/// ⚠️ 실제 USDC 정산은 기존 payment 인프라 책임 — settled=0 으로 charge 이벤트만 기록(날조 금지).
+/// best-effort: 실패해도 turn 결과는 죽이지 않되 명시 로그(절대 규칙 #1 fallback 금지).
+fn record_agent_add_usage(conn: &rusqlite::Connection, target_agent: &str, units: f64) {
+    // accepted + outgoing 요청 중 이 에이전트의 최신 1건을 단가 소스로.
+    let row: Option<(String, String, Option<String>, Option<f64>, Option<String>, Option<String>)> = conn.query_row(
+        "SELECT id, requester, target_owner, price_amount, price_unit, currency \
+         FROM agent_add_request \
+         WHERE target_agent = ?1 AND status='accepted' \
+         ORDER BY decided_at_kst DESC LIMIT 1",
+        [target_agent],
+        |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?,
+            r.get::<_, Option<f64>>(3)?, r.get::<_, Option<String>>(4)?, r.get::<_, Option<String>>(5)?,
+        )),
+    ).ok();
+    let Some((request_id, requester, target_owner, price_amount, price_unit, currency)) = row else {
+        return; // 4b accepted grant 가 없는 에이전트 → 4b 과금 대상 아님(무회귀).
+    };
+    let charge = price_amount.map(|p| p * units);
+    let now = kst_now_string();
+    if let Err(e) = conn.execute(
+        "INSERT INTO agent_add_usage \
+            (request_id, requester, target_agent, target_owner, occurred_at_kst, \
+             price_amount, price_unit, currency, units, charge_amount, settled, note) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11)",
+        rusqlite::params![
+            request_id, requester, target_agent, target_owner, now,
+            price_amount, price_unit, currency, units, charge,
+            "agent_add turn — settlement: existing payment infra (settled=0)",
+        ],
+    ) {
+        tracing::warn!(target = %target_agent, error = %e, "agent_add_usage insert 실패 (turn 결과는 보존)");
+    }
 }
 
 /// `GET /v1/gui/friends/roster` — rc.320 agent-level opt-in 친구 모델.
@@ -11431,7 +11796,7 @@ async fn load_a2a_agent_meta(
     let mut stmt = db
         .conn()
         .prepare(
-            "SELECT ac.alias, ac.role, ac.capabilities, ac.project_path, p.ai_type \
+            "SELECT ac.alias, ac.role, ac.capabilities, ac.project_path, p.ai_type, p.friend_isolated \
              FROM agent_capabilities ac \
              LEFT JOIN agent_profiles p ON p.alias = ac.alias \
              WHERE ac.alias = ?1 AND ac.role IS NOT 'tmux'",
@@ -11445,6 +11810,9 @@ async fn load_a2a_agent_meta(
                 capabilities: r.get::<_, Option<String>>(2)?,
                 project_path: r.get::<_, Option<String>>(3)?,
                 ai_type: r.get::<_, Option<String>>(4)?,
+                // rc.335 4b — 격리(sandbox) 강제 플래그. friend_isolated=1 이면 handle_task 가
+                // 메인 트리가 아닌 fresh worktree 를 cwd 로 사용한다(파일시스템 격리).
+                friend_isolated: r.get::<_, Option<i64>>(5)?.map(|v| v != 0),
             })
         })
         .map_err(|e| internal(&format!("a2a meta query: {e}")))?;
@@ -11586,6 +11954,16 @@ async fn a2a_served_task_send(
                 tracing::warn!(from = %f, error = %e, "friend_cost_ledger insert 실패 (요청 결과는 보존)");
             }
         }
+    }
+
+    // rc.335 4b — 소유자 가격 과금. 대상 에이전트가 accepted agent_add_request 를 가지면
+    // turn 성공 시 1 row(agent_add_usage, settled=0) 기록. 단가 = 요청의 price_amount.
+    //   ⚠️ 실제 USDC 정산은 기존 payment 인프라 책임 — 여기서는 charge 이벤트만(가짜 영수증 금지).
+    //   per_token 단가도 units=1(per_call 동등)로 기록 — 토큰 집계 신호 부재(handle_task 미반환).
+    //   정확한 토큰 단가는 후속(토큰 집계 배선) 작업. 현재는 per_call 기준 charge.
+    if result.is_ok() {
+        let mut db = state.db.lock().await;
+        record_agent_add_usage(db.conn(), &alias, 1.0);
     }
 
     result.map(Json).map_err(a2a_err)

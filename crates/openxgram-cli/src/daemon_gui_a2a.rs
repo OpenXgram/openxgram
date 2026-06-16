@@ -304,6 +304,10 @@ pub mod server {
         pub ai_type: Option<String>,
         /// `agent_capabilities.project_path` → ACP session cwd.
         pub project_path: Option<String>,
+        /// rc.335 4b — `agent_profiles.friend_isolated`. `Some(true)` 면 격리 실행:
+        /// handle_task 가 메인 트리(project_path)가 아닌 fresh git worktree 를 cwd 로 사용.
+        /// 파일시스템 격리(worktree)만 — OS 컨테이너 격리는 미구현(정직한 갭).
+        pub friend_isolated: Option<bool>,
     }
 
     /// Hosted AgentCard route for `alias` (relative — A2A discovery is host-rooted).
@@ -692,7 +696,7 @@ pub mod server {
                 ),
             )
         })?;
-        let cwd = meta
+        let base_cwd = meta
             .project_path
             .as_deref()
             .map(str::trim)
@@ -703,6 +707,52 @@ pub mod server {
                     format!("agent '{}' has no project_path (ACP cwd)", meta.alias),
                 )
             })?;
+
+        // ── rc.335 4b — 격리(sandbox) 실행 ────────────────────────────────────
+        // friend_isolated=1(에이전트 추가/소유자 수락 시 강제)이면 메인 트리가 아닌 fresh git
+        // worktree 를 cwd 로 만든다. 기존 a2a_send endpoint="worktree" 격리 로직과 동일한
+        // `git worktree add` 를 재사용 — 요청자의 작업이 메인 트리를 오염시키지 못하게 한다.
+        //   ⚠️ 정직한 갭: 이것은 **파일시스템 레벨 격리(worktree)** 일 뿐, OS 컨테이너/네임스페이스
+        //      격리가 아니다. 같은 OS·같은 권한·같은 자격증명에서 실행된다. 진짜 샌드박스(컨테이너)는
+        //      미구현. 마스터 검토 필요.
+        // 멀티턴 resume(session_id 재사용) 시에는 이미 격리 세션이 살아있으므로 새 worktree 를
+        // 만들지 않는다 — 아래 session_id 분기가 처리한다.
+        let isolate = meta.friend_isolated == Some(true);
+        let cwd: String = if isolate
+            && body
+                .session_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .is_none()
+        {
+            let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
+            let branch = format!("a2a-iso-{ts}");
+            let wt_path = format!("{base_cwd}/.worktrees/{branch}");
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(base_cwd)
+                .args(["worktree", "add", "-b", &branch, &wt_path, "HEAD"])
+                .output()
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("격리 worktree add 실행 실패(agent={}): {e}", meta.alias),
+                    )
+                })?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("격리 worktree add 실패(path={wt_path}): {stderr}"),
+                ));
+            }
+            tracing::info!(agent = %meta.alias, wt = %wt_path, "rc.335 4b — 격리 worktree 실행(메인 트리 보호)");
+            wt_path
+        } else {
+            base_cwd.to_string()
+        };
+        let cwd = cwd.as_str();
 
         let prompt_text = extract_prompt(&body)?;
 
