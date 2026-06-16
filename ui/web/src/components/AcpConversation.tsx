@@ -167,6 +167,9 @@ export function AcpConversation(props: {
   importTrigger?: () => number;
   // status line 데이터 — 폴더/역할/공개여부/연결 워크플로우 수(모델·토큰은 내부 값 사용).
   status?: () => { folder?: string | null; role?: string | null; isPublic?: boolean; workflows?: number };
+  // 라이브로 새 버블이 append 될 때마다 호출(복원 버블 제외). 팝업 창의 title-blink 트리거에 사용.
+  // ⚠️ 이 콜백은 절대 window.focus() 를 호출하지 않는다(포커스 탈취 금지) — title 깜빡임만.
+  onNewBubble?: (b: Bubble) => void;
 }) {
   // 대화창만 별도 창으로. 절대 URL + 연 뒤 항상 명시적 이동(재사용된 빈/옛 창의 흰화면 방지).
   function openPopout(alias: string) {
@@ -493,6 +496,8 @@ export function AcpConversation(props: {
   function pushBubble(b: Bubble) {
     setBubbles((prev) => [...prev, b]);
     scrollDown();
+    // 팝업 창 blink 트리거 — 사람 자신의 'me' 버블은 제외(상대/에이전트 활동만 알림).
+    if (b.kind !== "me") { try { props.onNewBubble?.(b); } catch { /* blink best-effort */ } }
   }
 
   // ── 아티팩트 미리보기 패널 ──

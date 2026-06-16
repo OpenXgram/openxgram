@@ -923,6 +923,28 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── AUTO-POP (rc.334) — 클릭으로 새 창 + 활동 깜빡임 + 자동열기 토글 ── */
+.a2a-mini-chip { cursor: pointer; transition: background .12s, box-shadow .12s; border-radius: 7px; }
+.a2a-mini-chip:hover { background: #eef4fa; box-shadow: inset 0 0 0 1px #cdd9e4; }
+/* 활동 깜빡임(팝업 차단 fallback) — 칩/행이 부드럽게 점멸. 포커스 탈취 없이 시각 신호만. */
+@keyframes a2aBlink { 0%,100% { background: transparent; } 50% { background: #ffe9a8; } }
+.a2a-blink { animation: a2aBlink 0.9s ease-in-out 0s 6; border-radius: 8px; }
+/* per-agent 자동열기 토글 버튼 */
+.a2a-autopop-toggle {
+  margin-left: 6px; flex: none; border: 1px solid #cdd9e4; background: #f4f6f9;
+  border-radius: 7px; padding: 4px 8px; font-size: 10.5px; font-weight: 700;
+  color: #7c8ba1; cursor: pointer; white-space: nowrap;
+}
+.a2a-autopop-toggle.on { background: #e7f3ea; border-color: #acd6b6; color: #2f7d44; }
+.a2a-autopop-toggle:disabled { opacity: .55; cursor: not-allowed; }
+/* 전역 자동열기 토글(패널 헤더) */
+.side.a2a-side-panel > h3 .a2a-autopop-all {
+  flex: none; margin-left: auto; border: 1px solid #cdd9e4; background: #f4f6f9;
+  border-radius: 8px; padding: 4px 9px; font-size: 10.5px; font-weight: 700;
+  color: #7c8ba1; cursor: pointer; white-space: nowrap;
+}
+.side.a2a-side-panel > h3 .a2a-autopop-all.on { background: #e7f3ea; border-color: #acd6b6; color: #2f7d44; }
 .side.a2a-side-panel > h3 .a2a-side-close {
   flex: none;
   order: -1;            /* 항상 제목보다 앞(좌측) */

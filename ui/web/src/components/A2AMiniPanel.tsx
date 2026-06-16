@@ -28,6 +28,49 @@ function normalizeAgents(r: A2AAgent[] | A2AAgentsResp | null | undefined): A2AA
   return (r as A2AAgentsResp).agents ?? [];
 }
 
+// ── AUTO-POP (rc.334) — A2A 대화를 새 브라우저 창으로 ──
+// 창 레지스트리(모듈 전역): conv 키(alias) → WindowProxy. 같은 대화는 하나의 창만(중복 방지).
+// 모듈 전역이라 패널이 리렌더돼도 열린 창 핸들이 보존된다.
+const a2aWindows = new Map<string, Window>();
+
+// 팝업 URL = 기존 메커니즘 재사용(AcpConversation.openPopout 과 동일한 `?chat=<alias>`).
+function popoutUrl(alias: string): string {
+  return `${location.origin}${location.pathname}?chat=${encodeURIComponent(alias)}`;
+}
+
+// 클릭(사용자 제스처) 또는 활동 자동(차단될 수 있음)으로 alias 대화 창을 연다.
+// 이미 열려 있으면 그 창을 재사용해 URL 만 보장(중복 창 X). 포커스는 '열리는 순간'만 OS 가 가져가며,
+// 직후 opener(메인 창)로 포커스를 되돌린다. 메시지 도착 시에는 절대 .focus() 안 함(팝업이 title 깜빡임으로 처리).
+// 반환: 열기/재사용 성공 시 true, 팝업 차단(window.open === null) 시 false.
+function openA2AWindow(alias: string): boolean {
+  const existing = a2aWindows.get(alias);
+  if (existing && !existing.closed) {
+    // 이미 열림 — 중복 생성 금지. URL 만 보장(흰화면 방지). focus 는 사용자 제스처 클릭일 때만 best-effort.
+    try { if (!existing.location.href.includes(`chat=${encodeURIComponent(alias)}`)) existing.location.href = popoutUrl(alias); } catch { /* cross-origin 아님(같은 오리진) */ }
+    return true;
+  }
+  const w = window.open("", `oxgchat_${alias}`, "width=480,height=820");
+  if (!w) {
+    // 팝업 차단 — 자동 열기(비-제스처)에서 흔함. 호출자가 in-app 깜빡임으로 graceful fallback.
+    a2aWindows.delete(alias);
+    return false;
+  }
+  w.location.href = popoutUrl(alias);
+  a2aWindows.set(alias, w);
+  // 🔒 포커스 탈취 금지: 새 창이 막 열릴 때 OS 가 포커스를 가져가는 것이 '유일하게 허용된' 포커스 순간.
+  //    직후 opener(메인 창)로 포커스를 되돌린다(best-effort). 이후 메시지 도착 시엔 절대 .focus() 안 함.
+  try { window.focus(); } catch { /* best-effort */ }
+  return true;
+}
+
+// 토글 영속(localStorage): per-agent `oxg.autopop.<alias>`, global `oxg.autopop.all`.
+function readAll(): boolean {
+  try { return localStorage.getItem("oxg.autopop.all") === "1"; } catch { return false; }
+}
+function readPerAgent(alias: string): boolean {
+  try { return localStorage.getItem(`oxg.autopop.${alias}`) === "1"; } catch { return false; }
+}
+
 /**
  * 미니패널 + 협업 곁뷰. selfAlias 는 현재 대화 중인 사람↔ACP 에이전트 alias(요약 라벨에 사용).
  * open/onToggle 로 곁뷰(side panel) 열림을 부모(TalkTab)가 제어 — 작업환경(tmux) 곁뷰와 상호배타.
@@ -49,6 +92,65 @@ export function A2AMiniPanel(props: {
   const agents = createMemo<A2AAgent[]>(() => normalizeAgents(resp()));
   const live = createMemo(() => agents().filter((a) => a.reachable));
   const idle = createMemo(() => agents().filter((a) => !a.reachable));
+
+  // ── AUTO-POP 상태 ──
+  // 토글(전역 + per-agent) — localStorage 와 동기화하는 반응형 신호.
+  const [allOn, setAllOn] = createSignal<boolean>(readAll());
+  const [perAgent, setPerAgent] = createSignal<Record<string, boolean>>({});
+  const isAutoOn = (alias: string) => allOn() || (perAgent()[alias] ?? readPerAgent(alias));
+  function toggleAll() {
+    const v = !allOn();
+    setAllOn(v);
+    try { localStorage.setItem("oxg.autopop.all", v ? "1" : "0"); } catch { /* ignore */ }
+  }
+  function togglePerAgent(alias: string) {
+    const cur = perAgent()[alias] ?? readPerAgent(alias);
+    const v = !cur;
+    setPerAgent((p) => ({ ...p, [alias]: v }));
+    try { localStorage.setItem(`oxg.autopop.${alias}`, v ? "1" : "0"); } catch { /* ignore */ }
+  }
+  // per-agent 토글 초기 로드(localStorage → 신호).
+  createEffect(() => {
+    const map: Record<string, boolean> = {};
+    for (const a of agents()) map[a.alias] = readPerAgent(a.alias);
+    setPerAgent(map);
+  });
+
+  // 클릭(사용자 제스처)으로 대화 창 열기 + 차단 시 안내.
+  const [popBlocked, setPopBlocked] = createSignal<string | null>(null);
+  function clickOpen(alias: string) {
+    const ok = openA2AWindow(alias);
+    if (!ok) setPopBlocked(alias);
+    else if (popBlocked() === alias) setPopBlocked(null);
+  }
+
+  // ── 자동 열기: A2A 활동 감지 ──
+  // 정직성: 이 패널에는 per-message SSE 가 없다(데이터 출처는 a2a_agents 폴링 — reachable 플래그뿐).
+  // 따라서 '새 메시지/턴'의 근사 신호로 reachable 의 미도달→도달 전이(idle→live)를 활동으로 본다.
+  // 토글이 켜진 에이전트에 한해 그 전이 시 자동으로 창을 연다. (메시지 단위 자동팝은 백엔드 A2A 메시지
+  //  SSE 가 생기면 그때 더 정밀해진다 — 현재 셸의 한계로 보고.)
+  // 또한 자동 열기는 사용자 제스처가 아니므로 브라우저 팝업 차단에 걸릴 수 있다 → null 반환 시 strip 깜빡임 fallback.
+  const [autoBlink, setAutoBlink] = createSignal<Set<string>>(new Set());
+  let prevReachable = new Map<string, boolean>();
+  createEffect(() => {
+    const cur = agents();
+    const next = new Map<string, boolean>();
+    for (const a of cur) {
+      next.set(a.alias, a.reachable);
+      const was = prevReachable.get(a.alias);
+      // idle→live 전이 = 활동 근사 신호.
+      if (a.reachable && was === false && isAutoOn(a.alias)) {
+        const ok = openA2AWindow(a.alias);
+        if (!ok) {
+          // 팝업 차단(자동·비제스처) → in-app strip 깜빡임 + 안내로 graceful fallback(에러 X).
+          setPopBlocked(a.alias);
+          setAutoBlink((s) => new Set(s).add(a.alias));
+          setTimeout(() => setAutoBlink((s) => { const n = new Set(s); n.delete(a.alias); return n; }), 6000);
+        }
+      }
+    }
+    prevReachable = next;
+  });
 
   // P4a — 발언권 주기(턴 부여). 진행자(사람)가 특정 에이전트에게 "지금 발언하라"를 누른다.
   // 방 키 = 현재 대화 중인 사람↔ACP 에이전트 alias(selfAlias). 누적 맥락 + 방/역할 지침으로 한 번 턴 발화.
@@ -257,10 +359,12 @@ export function A2AMiniPanel(props: {
             fallback={<span class="a2a-mini-st"><span class="a2a-mini-dot idle" /> 활성 협업 없음</span>}
           >
             <For each={live().slice(0, 2)}>
-              {(a) => (<span class="a2a-mini-st"><span class="a2a-mini-dot live" /> ↔{a.alias} 진행 가능</span>)}
+              {(a) => (<span class="a2a-mini-st a2a-mini-chip" classList={{ "a2a-blink": autoBlink().has(a.alias) }} title={`↔${a.alias} 대화를 새 창으로 열기`}
+                onClick={(e) => { e.stopPropagation(); clickOpen(a.alias); }}><span class="a2a-mini-dot live" /> ↔{a.alias} 진행 가능 🗗</span>)}
             </For>
             <For each={idle().slice(0, 1)}>
-              {(a) => (<span class="a2a-mini-st"><span class="a2a-mini-dot idle" /> ↔{a.alias} 대기</span>)}
+              {(a) => (<span class="a2a-mini-st a2a-mini-chip" classList={{ "a2a-blink": autoBlink().has(a.alias) }} title={`↔${a.alias} 대화를 새 창으로 열기`}
+                onClick={(e) => { e.stopPropagation(); clickOpen(a.alias); }}><span class="a2a-mini-dot idle" /> ↔{a.alias} 대기 🗗</span>)}
             </For>
             <Show when={agents().length > 0}>
               <span class="a2a-mini-badge">{agents().length}</span>
@@ -280,6 +384,10 @@ export function A2AMiniPanel(props: {
               대화 ✕ 와 구별되는 명확한 라벨(‹ 닫기). z-index 를 대화 헤더(.chat-top z:30) 위로 올려 클릭이 가로채이지 않게 한다(#3). */}
           <button class="a2a-side-close" title="협업 곁뷰 닫기 (대화로 돌아가기)" aria-label="협업 곁뷰 닫기" onClick={() => props.onClose()}>‹ 닫기</button>
           <span class="a2a-side-title">🔗 {props.selfAlias ?? "에이전트"}의 협업 (에이전트간 ACP)</span>
+          {/* 전역 AUTO-POP 토글 — 모든 에이전트의 A2A 활동 시 자동으로 새 창을 연다. localStorage 영속. */}
+          <button class="a2a-autopop-all" classList={{ on: allOn() }}
+            title={allOn() ? "자동 새 창: 모든 에이전트에 적용 중 — 끄기" : "자동 새 창: 모든 에이전트에 적용 — 켜기"}
+            onClick={() => toggleAll()}>{allOn() ? "🔔 모든 에이전트 자동열기 ON" : "🔕 모든 에이전트 자동열기 OFF"}</button>
         </h3>
 
         {/* 협업현황 strip — 패널 안 자체 한 줄(in-flow). 떠 있는 strip 과 달리 헤더와 겹치지 않는다(#1).
@@ -292,10 +400,12 @@ export function A2AMiniPanel(props: {
               fallback={<span class="a2a-mini-st"><span class="a2a-mini-dot idle" /> 활성 협업 없음</span>}
             >
               <For each={live()}>
-                {(a) => (<span class="a2a-mini-st"><span class="a2a-mini-dot live" /> ↔{a.alias} 진행 가능</span>)}
+                {(a) => (<span class="a2a-mini-st a2a-mini-chip" classList={{ "a2a-blink": autoBlink().has(a.alias) }} title={`↔${a.alias} 대화를 새 창으로 열기`}
+                  onClick={(e) => { e.stopPropagation(); clickOpen(a.alias); }}><span class="a2a-mini-dot live" /> ↔{a.alias} 진행 가능 🗗</span>)}
               </For>
               <For each={idle()}>
-                {(a) => (<span class="a2a-mini-st"><span class="a2a-mini-dot idle" /> ↔{a.alias} 대기</span>)}
+                {(a) => (<span class="a2a-mini-st a2a-mini-chip" classList={{ "a2a-blink": autoBlink().has(a.alias) }} title={`↔${a.alias} 대화를 새 창으로 열기`}
+                  onClick={(e) => { e.stopPropagation(); clickOpen(a.alias); }}><span class="a2a-mini-dot idle" /> ↔{a.alias} 대기 🗗</span>)}
               </For>
               <span class="a2a-mini-badge">{agents().length}</span>
             </Show>
@@ -319,10 +429,13 @@ export function A2AMiniPanel(props: {
           >
             <For each={agents()}>
               {(a) => (
-                <div class="conv">
-                  <div class="av" style={`width:36px;height:36px;background:${a.reachable ? "#5aa469" : "#7c8ba1"}`}>{a.alias.slice(0, 1).toUpperCase()}</div>
-                  <div>
-                    <div class="nm">↔ {a.alias}</div>
+                <div class="conv" classList={{ "a2a-blink": autoBlink().has(a.alias) }}>
+                  {/* 행 클릭(아바타·이름 영역) → 이 에이전트 A2A 대화를 새 창으로 (사용자 제스처). */}
+                  <div class="av" style={`width:36px;height:36px;background:${a.reachable ? "#5aa469" : "#7c8ba1"};cursor:pointer`}
+                    title={`↔${a.alias} 대화를 새 창으로 열기`}
+                    onClick={() => clickOpen(a.alias)}>{a.alias.slice(0, 1).toUpperCase()}</div>
+                  <div style="cursor:pointer" title={`↔${a.alias} 대화를 새 창으로 열기`} onClick={() => clickOpen(a.alias)}>
+                    <div class="nm">↔ {a.alias} 🗗</div>
                     <div class="lt">{a.reachable ? "도달 가능 — A2A 위임 가능" : "미도달 — 대기"}</div>
                   </div>
                   <div class="stt">
@@ -330,6 +443,11 @@ export function A2AMiniPanel(props: {
                       <span class="live" /> {granting() === a.alias ? "턴 진행중" : "진행 가능"}
                     </Show>
                   </div>
+                  {/* per-agent AUTO-POP 토글 — 켜면 이 에이전트 활동 시 자동으로 새 창. (전역 ON 이면 항상 적용) */}
+                  <button class="a2a-autopop-toggle" classList={{ on: isAutoOn(a.alias) }}
+                    title={allOn() ? "자동 열기: 전역 ON (모든 에이전트 적용 중)" : (isAutoOn(a.alias) ? "자동 열기 ON — 끄기" : "자동 열기 OFF — 켜기")}
+                    disabled={allOn()}
+                    onClick={() => togglePerAgent(a.alias)}>{isAutoOn(a.alias) ? "🔔 자동" : "🔕 자동"}</button>
                   <button class="give" style="margin-left:6px;border:1px solid #cdd9e4;background:#eef4fa;border-radius:7px;padding:4px 9px;font-size:11px;font-weight:700;color:#5a7fb0;cursor:pointer"
                     disabled={granting() !== null}
                     title="이 에이전트에게 발언권 부여 (누적 맥락 + 방/역할 지침)"
@@ -337,6 +455,11 @@ export function A2AMiniPanel(props: {
                 </div>
               )}
             </For>
+          </Show>
+          <Show when={popBlocked()}>
+            <div class="grantmsg" style="background:#fff3cf;color:#8a6d1a">
+              ⚠ 팝업이 차단되어 ‹{popBlocked()}› 창을 자동으로 열지 못했습니다. 위 칩/행을 직접 클릭하면 열립니다(차단 해제 권장).
+            </div>
           </Show>
           <Show when={grantMsg()}><div class="grantmsg">{grantMsg()}</div></Show>
         </div>
