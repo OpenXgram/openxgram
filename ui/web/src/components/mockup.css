@@ -160,7 +160,8 @@
 .oxg-app .kk-we-sess:hover .po{opacity:1}
 .oxg-app .kk-we-wt{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:9px;padding:7px 11px;font-size:12px;margin-bottom:5px;color:#37424d}
 .oxg-app .kk-we-wt .b{margin-left:auto;font-size:10.5px;color:#5a7fb0;background:#eef4fa;border-radius:6px;padding:2px 8px;font-family:ui-monospace,Menlo,monospace}
-.oxg-app .kk-we-sec-term .term{flex:1;margin:0 16px 0;border-radius:10px;min-height:240px;overscroll-behavior:contain}
+/* 라이브 term = 고정 높이 스크롤 영역. flex:1+무한 grow 시 패널 안에서 term 자체 overflow 가 안 터져 스크롤 불가 → 확정 높이로 묶어 term 내부 스크롤 보장. overscroll-contain 으로 배경 체이닝 차단. */
+.oxg-app .kk-we-sec-term .term{flex:none;margin:0 16px 0;border-radius:10px;height:42vh;max-height:46vh;min-height:200px;overflow-y:auto;overscroll-behavior:contain}
 .oxg-app .kk-we-note{font-size:10.5px;color:#8a93a0;padding:6px 16px 10px;font-family:ui-monospace,Menlo,monospace}
 /* ACP-only 빈 상태 — 읽기 쉬운 light 카드(검은 화면 아님). */
 .oxg-app .kk-workenv-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;text-align:center;padding:40px 26px;background:#f7f9fb;overflow-y:auto;overscroll-behavior:contain}

@@ -43,7 +43,7 @@ interface AgentRow {
   execution_mode?: string | null;
   unread?: number | null;
 }
-interface PeerDto { alias: string; last_seen?: string; machine?: string }
+interface PeerDto { alias: string; last_seen?: string; machine?: string; address?: string }
 interface MessageDto { id: string; sender: string; body: string; timestamp: string; conversation_id: string }
 
 const agentName = (a: { display_name?: string | null; alias: string }) =>
@@ -183,6 +183,45 @@ export function KakaoShell(props: { onLogout?: () => void }) {
     return selfMachineNames().some((n) => n && (mm === n || mm.includes(n) || n.includes(mm)));
   };
 
+  // ── 원격 머신 "실제 연결" 판정 (마스터 결정: 연결된 머신만 표시, 미연결은 숨김 — "미연결" 라벨 X) ──
+  //   원격 머신은 그 머신을 가리키는 *실제 peer 연결*이 있을 때만 연결로 간주한다.
+  //   실제 원격 peer = address 의 host 가 이 머신(로컬 tailscale_ip)·localhost·loopback 이 아닌 peer.
+  //   (단지 machine=X 라벨이 붙은 에이전트만으로는 연결 아님 — seoul 에 등록된 잘만 라벨 에이전트가 그 예.)
+  //   현재 모든 peer address 가 로컬 seoul IP → 연결된 원격 머신 0 → 잘만 라벨 에이전트 전부 숨김.
+  //   진짜 원격 머신(다른 IP 의 peer)이 추가되면 그 머신명이 자동으로 연결 집합에 들어와 표시된다.
+  const localHostTokens = createMemo<string[]>(() => {
+    const out: string[] = ["127.0.0.1", "localhost", "::1", "0.0.0.0"];
+    const ip = sessions()?.machine?.tailscale_ip;
+    if (ip) out.push(ip.toLowerCase());
+    const host = sessions()?.machine?.hostname;
+    if (host) out.push(host.toLowerCase());
+    return [...new Set(out.filter(Boolean))];
+  });
+  const peerAddrIsRemote = (address: string | null | undefined): boolean => {
+    const a = (address ?? "").trim().toLowerCase();
+    if (!a) return false;
+    // host 추출 (scheme·port·path 제거).
+    let host = a.replace(/^[a-z]+:\/\//, "").split("/")[0].split(":")[0];
+    if (!host) return false;
+    return !localHostTokens().some((t) => t && (host === t || host.includes(t) || t.includes(host)));
+  };
+  // 실제 원격 peer 가 가리키는 머신명 집합(소문자). peer.machine 라벨 우선; 없으면 attribution 불가 → 제외.
+  const connectedRemoteMachines = createMemo<Set<string>>(() => {
+    const s = new Set<string>();
+    for (const p of peers() ?? []) {
+      if (!peerAddrIsRemote(p.address)) continue; // 로컬 IP peer = 원격 연결 아님.
+      const m = (p.machine ?? "").trim().toLowerCase();
+      if (m && !isLocalMachine(m)) s.add(m);
+    }
+    return s;
+  });
+  const isRemoteMachineConnected = (machine: string): boolean => {
+    const mm = machine.trim().toLowerCase();
+    if (!mm) return false;
+    const set = connectedRemoteMachines();
+    return [...set].some((n) => n && (mm === n || mm.includes(n) || n.includes(mm)));
+  };
+
   // 분류 키(👑 primary / 📁 project / ⚙️ special / 📁 분류 미지정).
   //   classification 이 명시되면 그대로. null/미상이면 role 로 약하게 추정, 그래도 모르면 "unknown"(미지정).
   //   primary/special 을 날조하지 않는다(데이터 sparse 정직 반영).
@@ -224,10 +263,13 @@ export function KakaoShell(props: { onLogout?: () => void }) {
       if (!buckets.has(mach)) buckets.set(mach, []);
       buckets.get(mach)!.push(a);
     }
-    const groups = [...buckets.entries()].map(([machine, rows]) => {
-      const byClass = bucketByClass(rows);
-      return { machine, byClass, hasPrimary: byClass.primary.length > 0 };
-    });
+    const groups = [...buckets.entries()]
+      // 마스터 결정: 실제 연결된 원격 머신만 표시. 미연결 머신 라벨 그룹은 통째로 숨김("미연결" 표기 X).
+      .filter(([machine]) => isRemoteMachineConnected(machine))
+      .map(([machine, rows]) => {
+        const byClass = bucketByClass(rows);
+        return { machine, byClass, hasPrimary: byClass.primary.length > 0 };
+      });
     groups.sort((a, b) => {
       if (a.hasPrimary !== b.hasPrimary) return a.hasPrimary ? -1 : 1;
       return a.machine.localeCompare(b.machine);
