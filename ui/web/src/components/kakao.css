@@ -303,6 +303,8 @@
 
 .kk-talk-chat .msgs{flex:1; overflow-y:auto; padding:20px 26px; display:flex; flex-direction:column; gap:16px; min-height:0;}
 .kk-talk-empty{margin:auto; color:var(--kk-sub); font-size:12.5px; text-align:center; line-height:1.7;}
+/* 0-기록 빈 상태 안내(rc.340) — 어두운 팝업 배경 위 중앙 muted 블록. bare-blank 방지. */
+.kk-acp-emptystate{max-width:300px; padding:18px 12px;}
 .kk-talk-chat .day{align-self:center; background:#e3e7ec; color:#7b8494; font-size:11px; padding:3px 12px; border-radius:20px;}
 
 /* 내 메시지 = 카카오 노랑 말풍선 (오른쪽) — 정본 목업 .row.me .bub.

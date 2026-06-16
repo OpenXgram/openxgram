@@ -192,6 +192,9 @@ export function AcpConversation(props: {
   // 가리지 않는다(아래 렌더 게이트가 bubbles().length 로도 통과). cold-case(라이브 세션 없음) 핵심.
   const [booting, setBooting] = createSignal(false);
   const [bootTimedOut, setBootTimedOut] = createSignal(false);
+  // 기록 로드 1회 완료 여부 — 빈 메시지 영역에서 "불러오는 중…"(미완료) vs "기록 없음"(완료·0건)을
+  // 구분해 절대 bare-blank 가 안 나오게 한다. loadHistory 끝나면(성공/0건/실패 모두) true.
+  const [histLoaded, setHistLoaded] = createSignal(false);
   const [bubbles, setBubbles] = createSignal<Bubble[]>([]);
   const [draft, setDraft] = createSignal("");
 
@@ -517,6 +520,12 @@ export function AcpConversation(props: {
     return out;
   });
 
+  // 실제 대화 내용(me/agent/tool/plan)이 하나라도 있는지 — 시스템 note(세션 시작·재연결 안내 등)는
+  // 대화 기록으로 치지 않는다. 0-기록 에이전트는 보통 부팅 시 "⚡ 세션 시작"/"🔗 재연결" note 만 생겨
+  // bubbles().length>0 이 되는데, 그것만으로 빈 상태 안내를 가리면 사용자는 정체 모를 시스템 줄 하나만
+  // 보게 된다(=사실상 빈 화면). 그래서 빈 상태 게이트는 이 memo(실 대화 유무)로 판정한다.
+  const hasRealContent = createMemo(() => bubbles().some((b) => b.kind !== "note"));
+
   function pushBubble(b: Bubble) {
     setBubbles((prev) => [...prev, b]);
     scrollDown();
@@ -742,7 +751,7 @@ export function AcpConversation(props: {
   async function loadHistory(resync = false): Promise<boolean> {
     try {
       const rows = await invoke<{ role: string; text: string; created_at?: string }[]>("acp_conv_list", { key: convKey() });
-      if (!Array.isArray(rows) || rows.length === 0) return false;
+      if (!Array.isArray(rows) || rows.length === 0) { setHistLoaded(true); return false; }
       // created_at(RFC3339) → "M/D HH:MM". 복원된 메시지에 실제 보낸 시각 표시(언제 보냈는지 확인 가능).
       const fmtTs = (ca?: string): string => {
         if (!ca) return "";
@@ -775,9 +784,11 @@ export function AcpConversation(props: {
       // 맥락 재주입은 이제 데몬이 권위있게 담당한다(daemon_gui_acp prompt: 서브프로세스 새로 spawn 시
       // DB 기록을 첫 프롬프트에 prepend). UI 의존 pendingContext 는 비활성 — 이중 주입·UI 마운트
       // 타이밍에 의존하던 불안정 제거. (재시작·크래시·on_demand 재spawn 어떤 경우에도 데몬이 복원.)
+      setHistLoaded(true);
       scrollDown();
       return true;
     } catch {
+      setHistLoaded(true);
       return false;
     }
   }
@@ -1296,10 +1307,12 @@ export function AcpConversation(props: {
 
   return (
     <Show
-      // 렌더 게이트 완화 — sessionId 가 아직 null(부팅 중/실패)이라도 저장된 기록(bubbles)이 있으면
-      // 대화 화면을 즉시 렌더한다. 원격 always 에이전트의 POST /sessions hang 에 가로막혀 114개
-      // 메시지가 "구동 중…" 뒤에 숨던 버그 fix. 전송은 sessionId 생기면 가능(composer 가 안내).
-      when={sessionId() || bubbles().length > 0}
+      // 렌더 게이트 완화 (rc.340) — preset 진입(roster 클릭/팝업)이면 세션·기록 상태와 무관하게
+      // 항상 대화 화면(헤더 + 메시지 영역 + 컴포저)을 렌더한다. 0-기록·무세션 에이전트
+      // (Rex/Akashic 등)가 빈 화면만 보이고 개입할 컴포저조차 없던 버그 fix — 메시지 영역은
+      // 기록/로딩중/빈상태/지연안내 중 하나를 반드시 보여주고, 컴포저는 세션 없이도 항상 노출돼
+      // 타이핑→lazy-spawn 으로 대화를 시작할 수 있다. picker 경로(preset 없음)만 fallback 유지.
+      when={props.preset || sessionId() || bubbles().length > 0}
       fallback={
         props.preset ? (
           // ── preset 진입(roster 선택) — picker 없이 구동/오류 상태만 표시 ──
@@ -1393,7 +1406,8 @@ export function AcpConversation(props: {
           <span class="back" onClick={() => props.onClose()}>←</span>
           <div class="ava c-claude">⚡</div>
           <div class="nm-wrap">
-            <div class="nm">{props.preset?.displayName || activeAgent()}</div>
+            {/* 세션이 아직 안 붙어 activeAgent()=null 이어도 preset 라벨로 헤더를 채운다(무세션 0-기록 시 빈 헤더 방지). */}
+            <div class="nm">{props.preset?.displayName || activeAgent() || props.preset?.label || props.preset?.adapter}</div>
             {/* 대화 모델 캡션 — 옛날엔 앱 하단 고정바(.note)였는데, 헤더 제목 아래 작은 muted 캡션으로 이전. */}
             <div class="chat-cap">OpenXgram 대화 모델: A2A=ACP · tmux=사람전용 · 사람=고권한 참가자 · 카카오톡 스타일</div>
           </div>
@@ -1555,8 +1569,21 @@ export function AcpConversation(props: {
               )
             }
           </For>
-          <Show when={bubbles().length === 0}>
-            <div class="kk-talk-empty">세션 준비됨. 아래에서 첫 프롬프트를 보내세요.</div>
+          {/* 메시지 영역은 절대 bare-blank 가 되지 않는다(rc.340). 실 대화 내용(me/agent/…)이 없으면:
+              ① 아직 기록 로딩 중 → "대화 기록 불러오는 중…"
+              ② 로딩 완료·실 내용 0 → 명확한 빈 상태 안내(아래 컴포저로 대화 시작 유도).
+              시스템 note(세션 시작/재연결 안내)만 있어도 빈 상태를 보여준다 — 정체 모를 한 줄만 뜨는 것=사실상 빈 화면 방지. */}
+          <Show when={!hasRealContent()}>
+            <Show
+              when={histLoaded()}
+              fallback={<div class="kk-talk-empty">대화 기록 불러오는 중…</div>}
+            >
+              <div class="kk-talk-empty kk-acp-emptystate">
+                <div style="font-size:30px;line-height:1;margin-bottom:10px;opacity:.65;">💬</div>
+                <div style="font-weight:600;margin-bottom:4px;">아직 대화 기록이 없습니다</div>
+                <div style="opacity:.8;">아래에서 메시지를 보내 대화를 시작하세요.</div>
+              </div>
+            </Show>
           </Show>
           {/* 입력중 표시 — 내가 보낸 턴(busy) + 다른 창서 진행 중인 턴을 reconnect SSE 로 감지(recvActive).
               streaming 은 세션 살아있는 내내 true 라 안 씀(유휴에도 떠버림). */}
