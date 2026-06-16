@@ -446,7 +446,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
         />
       </Show>
 
-      <div class="note">OpenXgram 대화 모델: A2A=ACP · tmux=사람전용 · 사람=고권한 참가자 · 카카오톡 스타일</div>
+      {/* 옛 하단 고정 캡션바(.note) 제거 — 대화 모델 캡션은 .chat-top 헤더 제목 아래 .chat-cap 로 이전. */}
     </div>
   );
 }

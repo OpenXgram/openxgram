@@ -1334,7 +1334,11 @@ export function AcpConversation(props: {
         <div class="chat-top">
           <span class="back" onClick={() => props.onClose()}>←</span>
           <div class="ava c-claude">⚡</div>
-          <div class="nm">{props.preset?.displayName || activeAgent()}</div>
+          <div class="nm-wrap">
+            <div class="nm">{props.preset?.displayName || activeAgent()}</div>
+            {/* 대화 모델 캡션 — 옛날엔 앱 하단 고정바(.note)였는데, 헤더 제목 아래 작은 muted 캡션으로 이전. */}
+            <div class="chat-cap">OpenXgram 대화 모델: A2A=ACP · tmux=사람전용 · 사람=고권한 참가자 · 카카오톡 스타일</div>
+          </div>
           <div class="meta-r">
             <Show when={props.headerExtra}>{props.headerExtra!() as never}</Show>
             <Show when={streaming()} fallback={<span class="pill off"><span class="pdot" />스트림 끊김</span>}>

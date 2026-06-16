@@ -654,6 +654,26 @@
   z-index: 26;
 }
 .kk-a2a-mount .a2a-side { pointer-events: auto; }
+/* 가로 스크롤 어포던스 — strip 우측에 페이드 + chevron 으로 '더 있음/스크롤됨' 시각 단서.
+   strip 자체(.a2a-mini)는 overflow-x:auto 라 mask-image 가 함께 스크롤되지 않도록
+   mount 래퍼에 absolute 오버레이를 깐다(pointer-events:none → 클릭은 strip 으로 통과). */
+.kk-a2a-mount::after {
+  content: "›";
+  position: absolute;
+  top: 58px;
+  right: 14px;
+  height: 35px;
+  display: flex;
+  align-items: center;
+  padding-left: 26px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #5a7fb0;
+  background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.92) 55%);
+  border-radius: 0 10px 10px 0;
+  pointer-events: none;
+  z-index: 27;
+}
 /* 협업현황 strip 이 absolute 로 .msgs 최상단을 덮으므로, 첫 메시지가 strip 아래로
    내려오도록 메시지 영역 상단 여백을 strip 높이만큼 확보(겹침 → 중복 헤더 인상 방지).
    TalkTab(.kk-talk 부모) · KakaoShell(.chat 부모) 두 마운트 위치 모두 커버. */
@@ -676,9 +696,15 @@
   overflow-x: auto;
   overflow-y: hidden;
   white-space: nowrap;
-  scrollbar-width: none;
+  /* 얇은 가로 스크롤바를 보이게(스크롤 가능 시각 단서) — 우측 페이드 chevron 과 병행. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(90,127,176,0.35) transparent;
+  /* 우측 chevron 오버레이가 마지막 칩을 가리지 않도록 끝에 여백 확보. */
+  padding-right: 30px;
 }
-.a2a-mini::-webkit-scrollbar { display: none; }
+.a2a-mini::-webkit-scrollbar { height: 5px; }
+.a2a-mini::-webkit-scrollbar-thumb { background: rgba(90,127,176,0.35); border-radius: 999px; }
+.a2a-mini::-webkit-scrollbar-track { background: transparent; }
 .a2a-mini b { font-weight: 700; flex: none; }
 .a2a-mini-st {
   display: inline-flex;
@@ -694,15 +720,21 @@
 }
 .a2a-mini-sp { flex: 1 0 8px; min-width: 8px; }
 .a2a-mini-more { color: #5a7fb0; font-weight: 700; font-size: 11.5px; flex: none; white-space: nowrap; }
+/* A2A 에이전트 카운트 배지 — 좌측 칩들과 우측 '자세히'에서 분리된 의도적 카운트 pill.
+   (이전엔 margin 없이 텍스트에 붙어 '대기43자세히' 처럼 뭉개짐 → 좌측 여백 + 분리감 부여.) */
 .a2a-mini-badge {
-  background: #ff5b5b;
+  background: #5a7fb0;
   color: #fff;
-  border-radius: 11px;
+  border-radius: 999px;
   font-size: 11px;
   font-weight: 700;
-  padding: 1px 7px;
-  min-width: 19px;
+  line-height: 1;
+  padding: 3px 8px;
+  min-width: 20px;
   text-align: center;
+  flex: none;
+  margin-left: 4px;
+  box-shadow: 0 1px 2px rgba(40, 60, 90, 0.18);
 }
 .a2a-mini-dot { width: 7px; height: 7px; border-radius: 50%; }
 .a2a-mini-dot.live {
