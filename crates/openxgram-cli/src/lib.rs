@@ -17,6 +17,7 @@ pub mod daemon_gui;
 pub mod daemon_gui_a2a;
 pub mod daemon_gui_acp;
 pub mod daemon_gui_sessions;
+pub mod daemon_gui_terminal;
 pub mod daemon_gui_wallets;
 pub mod daemon_peer_sync;
 pub mod daemon_workers;

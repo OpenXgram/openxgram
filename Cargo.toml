@@ -33,7 +33,7 @@ members = [
 exclude = ["ui/tauri"]
 
 [workspace.package]
-version = "0.2.0-rc.338"
+version = "0.2.0-rc.339"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/OpenXgram/openxgram"
@@ -69,8 +69,11 @@ rusqlite = { version = "0.39", features = ["bundled"] }
 
 # HTTP
 reqwest = { version = "0.13", features = ["json", "rustls", "webpki-roots", "blocking", "multipart"], default-features = false }
-axum = "0.8"
+# rc.339 — `ws` feature 추가: 인증된 인터랙티브 터미널 브리지 WebSocket (GET /v1/gui/sessions/{id}/terminal).
+axum = { version = "0.8", features = ["ws"] }
 tokio-cron-scheduler = "0.13"
+# rc.339 — PTY 브리지: `tmux attach-session` 을 PTY 로 실행해 실시간 양방향 터미널 스트림.
+portable-pty = "0.9"
 
 # Payment RPC (PRD-PAY-01~08)
 alloy = { version = "2", default-features = false, features = ["std", "rpc-types", "providers", "transport-http", "transports", "signer-local", "network", "consensus", "sol-types", "contract", "reqwest-rustls-tls"] }

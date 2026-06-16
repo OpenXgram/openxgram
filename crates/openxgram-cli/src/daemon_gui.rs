@@ -332,6 +332,10 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         //   세션을 가져와 머신의 개별 에이전트를 각각 peer 카드로 노출.
         .route("/v1/gui/public/sessions", get(gui_public_sessions))
         .route("/v1/gui/sessions/{identifier}/input", post(gui_session_input))
+        // rc.339 — 인증된 인터랙티브 터미널 (WS upgrade). 브라우저 WS 는 Authorization
+        //   헤더를 못 싣기에 ?token=<bearer> 쿼리로 받아 require_auth 와 동일 검증.
+        //   익명 허용 없음(read-only screen 의 tailnet-anon 경로 미재사용). 로컬 tmux only.
+        .route("/v1/gui/sessions/{identifier}/terminal", get(gui_session_terminal))
         // rc.338 — 현황 탭에서 tmux 세션 종료(파괴적). 로컬 tmux 세션만, 존재 검증 + injection 방지.
         .route("/v1/gui/sessions/{identifier}/kill", post(gui_session_kill))
         .route("/v1/gui/sessions/{identifier}/dropfile", post(gui_session_dropfile))
@@ -2154,6 +2158,73 @@ async fn gui_session_kill(
         "ok": true,
         "killed": format!("tmux:{name_for_resp}"),
     })))
+}
+
+/// rc.339 — 터미널 WS 의 `?token=<bearer>` 쿼리.
+/// 브라우저 WebSocket 은 Authorization 헤더를 못 싣기에 쿼리로 토큰을 받는다.
+#[derive(Debug, Deserialize)]
+struct TerminalAuthQuery {
+    token: Option<String>,
+}
+
+/// WS 토큰 검증 — require_auth 와 동일 로직(session_token | mcp-token). 쿼리 token 사용.
+/// 반환: Ok(subject) = 인증 주체(감사 로그용). Err = 인증 실패(WS upgrade 거부).
+async fn verify_terminal_auth(
+    state: &GuiServerState,
+    token: Option<&str>,
+) -> Result<String, StatusCode> {
+    // require_auth 와 동일하게 XGRAM_GUI_REQUIRE_AUTH=0 이면 우회(로컬 dev 전용).
+    if std::env::var("XGRAM_GUI_REQUIRE_AUTH").as_deref() == Ok("0") {
+        return Ok("self".to_string());
+    }
+    let token = token.ok_or(StatusCode::UNAUTHORIZED)?;
+    if token.is_empty() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    // 1) session_token (웹 GUI unlock).
+    if crate::auth::verify_session_token(token) {
+        return Ok("self".to_string());
+    }
+    // 2) mcp-token (CLI/agent Bearer) fallback.
+    let mut db = state.db.lock().await;
+    match crate::mcp_tokens::verify_token(&mut db, token) {
+        Ok(Some(agent)) => Ok(agent),
+        Ok(None) => Err(StatusCode::UNAUTHORIZED),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+/// `GET /v1/gui/sessions/{identifier}/terminal` (rc.339) — 인증된 인터랙티브 터미널 WS.
+///
+/// 보안(security review): ① ?token 검증(익명 거부) ② 세션 id 정제+존재 검증 ③ 로컬 tmux only
+/// ④ injection 불가(인자 배열) ⑤ open/close 감사 로그. read-only screen 의 tailnet-anon
+/// 경로를 **재사용하지 않는다** — 셸 제어는 반드시 인증.
+async fn gui_session_terminal(
+    State(state): State<GuiServerState>,
+    Path(identifier): Path<String>,
+    Query(q): Query<TerminalAuthQuery>,
+    ws: axum::extract::ws::WebSocketUpgrade,
+) -> axum::response::Response {
+    // ① AUTH — upgrade 전에 토큰 검증. 실패 시 401(WS 업그레이드 안 함).
+    let subject = match verify_terminal_auth(&state, q.token.as_deref()).await {
+        Ok(s) => s,
+        Err(code) => {
+            tracing::warn!(session = %identifier, "터미널 WS 인증 거부 (익명/무효 토큰)");
+            return (code, "unauthorized — terminal requires ?token=<bearer>").into_response();
+        }
+    };
+    // ②③④ 세션 id 정제 + 로컬 tmux 범위 + 존재 검증.
+    let tmux_name = match crate::daemon_gui_terminal::validate_terminal_target(&identifier) {
+        Ok(n) => n,
+        Err(reason) => {
+            tracing::warn!(session = %identifier, %reason, "터미널 WS 대상 거부");
+            return (StatusCode::BAD_REQUEST, reason).into_response();
+        }
+    };
+    // ⑤ upgrade → 브리지 실행(open/close 감사 로그는 브리지 내부).
+    ws.on_upgrade(move |socket| {
+        crate::daemon_gui_terminal::run_terminal_bridge(socket, tmux_name, subject)
+    })
 }
 
 /// rc.269 gap#5 — binding alias → 실제 tmux session 명 해석.

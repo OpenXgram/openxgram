@@ -461,6 +461,29 @@ export function getAcpBase(): string {
   return "/v1/acp";
 }
 
+/**
+ * rc.339 — 인증된 인터랙티브 터미널 WS URL.
+ * `GET /v1/gui/sessions/{id}/terminal?token=<bearer>` 의 절대 ws(s):// URL 을 만든다.
+ * 브라우저 WebSocket 은 Authorization 헤더를 못 싣기에 Bearer 를 ?token 쿼리로 전달
+ * (백엔드 verify_terminal_auth 가 require_auth 와 동일 검증). 토큰 없으면 null.
+ */
+export function terminalWsUrl(identifier: string): string | null {
+  const token = getBearer();
+  if (!token) return null;
+  const gui = getDaemonUrl().replace(/\/+$/, ""); // 보통 "/v1/gui"
+  // gui 가 절대 URL(http…)이면 그 host, 아니면 현재 origin 기준.
+  let httpBase: string;
+  if (/^https?:\/\//i.test(gui)) {
+    httpBase = gui;
+  } else {
+    httpBase = `${location.origin}${gui}`;
+  }
+  // http(s) → ws(s).
+  const wsBase = httpBase.replace(/^http/i, "ws");
+  const path = `/sessions/${encodeURIComponent(identifier)}/terminal`;
+  return `${wsBase}${path}?token=${encodeURIComponent(token)}`;
+}
+
 function authHeaders(json: boolean): Record<string, string> {
   const h: Record<string, string> = {};
   const token = getBearer();
