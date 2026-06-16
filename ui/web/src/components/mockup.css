@@ -58,6 +58,14 @@
 .oxg-app .rooms > .group-title.machine:first-child{border-top:none;margin-top:0}
 .oxg-app .group-title.sub{padding-left:28px;font-weight:600;color:#7e8a96}
 .oxg-app .group-title .gt-sub{font-weight:500;color:#b3bcc6;margin-left:3px}
+/* 접기/펴기 헤더 — 클릭 가능. 셰브론(▸ 접힘 / ▾ 펼침) + hover 어포던스. 카톡 클린. */
+.oxg-app .group-title.collapsible{cursor:pointer;user-select:none;transition:background .12s ease,color .12s ease}
+.oxg-app .group-title.machine.collapsible{display:flex;align-items:center;gap:6px}
+.oxg-app .group-title.sub.collapsible{display:flex;align-items:center;gap:5px}
+.oxg-app .group-title.collapsible:hover{background:#eef2f6}
+.oxg-app .group-title.machine.collapsible:hover{color:#0c1a24}
+.oxg-app .group-title .gt-chev{display:inline-block;width:11px;font-size:9px;color:#9aa6b1;line-height:1;transition:color .12s ease;flex:none}
+.oxg-app .group-title.collapsible:hover .gt-chev{color:#5a7fb0}
 .oxg-app .room{display:flex;gap:11px;padding:11px 16px;cursor:pointer;border-left:3px solid transparent;align-items:center}
 .oxg-app .room:hover{background:#f1f4f7}
 .oxg-app .room.on{background:#eaf0f6;border-left-color:#5a7fb0}

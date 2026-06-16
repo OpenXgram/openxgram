@@ -92,6 +92,24 @@ export function KakaoShell(props: { onLogout?: () => void }) {
 
   const [selected, setSelected] = createSignal<string | null>(null);
   const [search, setSearch] = createSignal("");
+
+  // ── 로스터 그룹 접기/펴기 ──────────────────────────────────────────────────
+  // 그룹 헤더(머신·분류 서브그룹) 클릭 → 그 아래 row 숨김/표시. 기본 = 펼침(false).
+  //   상태는 그룹별 localStorage 키(oxg.roster.collapsed.<groupId>)로 영속 → 리로드 후 유지.
+  //   카운트 배지는 접혀도 헤더에 계속 보이고, 셰브론(▸/▾)으로 상태 표시.
+  const COLLAPSE_KEY = (gid: string) => `oxg.roster.collapsed.${gid}`;
+  const readCollapsed = (gid: string): boolean => {
+    try { return localStorage.getItem(COLLAPSE_KEY(gid)) === "1"; } catch { return false; }
+  };
+  // 시그널 맵으로 반응성 보장(For/Show 가 토글 시 즉시 재렌더).
+  const [collapseMap, setCollapseMap] = createSignal<Record<string, boolean>>({});
+  const isCollapsed = (gid: string): boolean => collapseMap()[gid] ?? readCollapsed(gid);
+  const toggleCollapse = (gid: string) => {
+    const next = !isCollapsed(gid);
+    setCollapseMap((prev) => ({ ...prev, [gid]: next }));
+    try { localStorage.setItem(COLLAPSE_KEY(gid), next ? "1" : "0"); } catch { /* localStorage 불가 환경 무시 */ }
+  };
+  const chevron = (gid: string) => (isCollapsed(gid) ? "▸" : "▾");
   // 곁뷰: a2a(협업) / tmux(작업환경) — 상호배타. 목업 .side 두 패널.
   const [sideA2A, setSideA2A] = createSignal(false);
   const [sideTmux, setSideTmux] = createSignal(false);
@@ -394,32 +412,55 @@ export function KakaoShell(props: { onLogout?: () => void }) {
           <Show when={!agents.loading} fallback={<div style="padding:16px;color:var(--muted);font-size:13px">불러오는 중…</div>}>
             {/* ── 이 머신 (로컬) — 데몬이 도는 머신. 👑 프라이머리 / 📁 프로젝트 / ⚙️ 특수 / 미지정. ── */}
             <Show when={localCount() > 0}>
-              <div class="group-title machine">🖥 이 머신 (로컬)</div>
+              <div class="group-title machine collapsible" classList={{ collapsed: isCollapsed("local:machine") }} onClick={() => toggleCollapse("local:machine")}>
+                <span class="gt-chev">{chevron("local:machine")}</span>🖥 이 머신 (로컬) <span class="gt-sub">({localCount()})</span>
+              </div>
             </Show>
-            <For each={CLS_GROUPS}>
-              {(g) => (
-                <Show when={(localGroups()[g.key] ?? []).length > 0}>
-                  <div class="group-title sub">{g.title} <span class="gt-sub">({localGroups()[g.key].length})</span></div>
-                  <For each={localGroups()[g.key]}>{(a) => roomRow(a, g.key === "primary")}</For>
-                </Show>
-              )}
-            </For>
+            <Show when={!isCollapsed("local:machine")}>
+              <For each={CLS_GROUPS}>
+                {(g) => (
+                  <Show when={(localGroups()[g.key] ?? []).length > 0}>
+                    <div class="group-title sub collapsible" classList={{ collapsed: isCollapsed(`local:${g.key}`) }} onClick={() => toggleCollapse(`local:${g.key}`)}>
+                      <span class="gt-chev">{chevron(`local:${g.key}`)}</span>{g.title} <span class="gt-sub">({localGroups()[g.key].length})</span>
+                    </div>
+                    <Show when={!isCollapsed(`local:${g.key}`)}>
+                      <For each={localGroups()[g.key]}>{(a) => roomRow(a, g.key === "primary")}</For>
+                    </Show>
+                  </Show>
+                )}
+              </For>
+            </Show>
 
             {/* ── 다른 머신 (원격) — 머신별 그룹. 각 머신 안에서 프라이머리→프로젝트→특수→미지정. ── */}
             <For each={remoteGroups()}>
-              {(mg) => (
-                <>
-                  <div class="group-title machine">🖥 {mg.machine} <span class="gt-sub">(다른 머신)</span></div>
-                  <For each={CLS_GROUPS}>
-                    {(g) => (
-                      <Show when={(mg.byClass[g.key] ?? []).length > 0}>
-                        <div class="group-title sub">{g.title} <span class="gt-sub">({mg.byClass[g.key].length})</span></div>
-                        <For each={mg.byClass[g.key]}>{(a) => roomRow(a, g.key === "primary")}</For>
-                      </Show>
-                    )}
-                  </For>
-                </>
-              )}
+              {(mg) => {
+                const machGid = `remote:${mg.machine}`;
+                const machCount = (Object.values(mg.byClass) as AgentRow[][]).reduce((n, arr) => n + arr.length, 0);
+                return (
+                  <>
+                    <div class="group-title machine collapsible" classList={{ collapsed: isCollapsed(machGid) }} onClick={() => toggleCollapse(machGid)}>
+                      <span class="gt-chev">{chevron(machGid)}</span>🖥 {mg.machine} <span class="gt-sub">(다른 머신 · {machCount})</span>
+                    </div>
+                    <Show when={!isCollapsed(machGid)}>
+                      <For each={CLS_GROUPS}>
+                        {(g) => {
+                          const subGid = `${machGid}:${g.key}`;
+                          return (
+                            <Show when={(mg.byClass[g.key] ?? []).length > 0}>
+                              <div class="group-title sub collapsible" classList={{ collapsed: isCollapsed(subGid) }} onClick={() => toggleCollapse(subGid)}>
+                                <span class="gt-chev">{chevron(subGid)}</span>{g.title} <span class="gt-sub">({mg.byClass[g.key].length})</span>
+                              </div>
+                              <Show when={!isCollapsed(subGid)}>
+                                <For each={mg.byClass[g.key]}>{(a) => roomRow(a, g.key === "primary")}</For>
+                              </Show>
+                            </Show>
+                          );
+                        }}
+                      </For>
+                    </Show>
+                  </>
+                );
+              }}
             </For>
 
             <div class="room" onClick={() => setAddOpen(true)} title="에이전트 추가">
