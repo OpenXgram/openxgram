@@ -719,6 +719,26 @@
 .a2a-mini::-webkit-scrollbar-thumb { background: rgba(90,127,176,0.35); border-radius: 999px; }
 .a2a-mini::-webkit-scrollbar-track { background: transparent; }
 .a2a-mini b { font-weight: 700; flex: none; }
+/* 팝업 차단 시 떠 있는 strip 바로 아래 보이는 floating 안내 — "무반응" 방지(클릭→곁뷰 열기). */
+.kk-a2a-mount .a2a-mini-popblock {
+  pointer-events: auto;
+  position: absolute;
+  top: 90px;
+  left: 14px;
+  right: 14px;
+  z-index: 28;
+  background: #fff3cf;
+  color: #8a6d1a;
+  border: 1px solid #e6c766;
+  border-radius: 9px;
+  padding: 7px 11px;
+  font-size: 11.8px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  box-shadow: 0 3px 10px rgba(40, 60, 90, 0.16);
+}
+.kk-a2a-mount .a2a-mini-popblock:hover { background: #ffeebf; }
 .a2a-mini-st {
   display: inline-flex;
   align-items: center;

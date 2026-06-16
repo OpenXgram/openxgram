@@ -49,13 +49,16 @@ function openA2AWindow(alias: string): boolean {
     try { if (!existing.location.href.includes(`chat=${encodeURIComponent(alias)}`)) existing.location.href = popoutUrl(alias); } catch { /* cross-origin 아님(같은 오리진) */ }
     return true;
   }
-  const w = window.open("", `oxgchat_${alias}`, "width=480,height=820");
+  // 팝업 차단기 친화: 사용자 제스처 중엔 window.open(URL, ...) 형태(첫 인자에 실제 URL)가
+  //   window.open("") + 이후 .href 할당보다 훨씬 안정적으로 허용된다. URL 을 바로 넘긴다.
+  const w = window.open(popoutUrl(alias), `oxgchat_${alias}`, "width=480,height=820");
   if (!w) {
     // 팝업 차단 — 자동 열기(비-제스처)에서 흔함. 호출자가 in-app 깜빡임으로 graceful fallback.
     a2aWindows.delete(alias);
     return false;
   }
-  w.location.href = popoutUrl(alias);
+  // 일부 브라우저는 window.open(URL) 만으로 로드한다. 안전망으로 about:blank 이면 한 번 더 지정.
+  try { if (!w.location || w.location.href === "about:blank") w.location.href = popoutUrl(alias); } catch { /* same-origin */ }
   a2aWindows.set(alias, w);
   // 🔒 포커스 탈취 금지: 새 창이 막 열릴 때 OS 가 포커스를 가져가는 것이 '유일하게 허용된' 포커스 순간.
   //    직후 opener(메인 창)로 포커스를 되돌린다(best-effort). 이후 메시지 도착 시엔 절대 .focus() 안 함.
@@ -120,8 +123,17 @@ export function A2AMiniPanel(props: {
   const [popBlocked, setPopBlocked] = createSignal<string | null>(null);
   function clickOpen(alias: string) {
     const ok = openA2AWindow(alias);
-    if (!ok) setPopBlocked(alias);
-    else if (popBlocked() === alias) setPopBlocked(null);
+    if (!ok) {
+      // 팝업 차단(브라우저 팝업 차단기) → 사용자가 떠 있는 strip 의 칩을 눌렀는데 창이 안 뜨면
+      // "아무것도 안 보임" 으로 느낀다(곁뷰가 닫혀 있어 안내도 안 보임). 가시적 fallback 보장:
+      //   1) 곁뷰(side panel)를 즉시 연다 → 안내 배너 + 클릭 가능한 에이전트 행이 보인다.
+      //   2) 떠 있는 strip 위에도 floating 안내 배너를 띄운다(곁뷰가 미처 안 열려도 보이게).
+      // 이렇게 하면 절대 "무반응" 이 아니다.
+      setPopBlocked(alias);
+      if (!props.open()) props.onOpen();
+    } else if (popBlocked() === alias) {
+      setPopBlocked(null);
+    }
   }
 
   // ── 자동 열기 ──
@@ -391,6 +403,14 @@ export function A2AMiniPanel(props: {
           <span class="a2a-mini-sp" />
           <span class="a2a-mini-more">자세히 ›</span>
         </div>
+        {/* 팝업 차단 시 떠 있는 strip 위 floating 안내(곁뷰가 닫혀 있어도 보이게) — "무반응" 방지.
+            클릭하면 곁뷰를 열어 클릭 가능한 에이전트 행 + 상세 안내를 보여준다. */}
+        <Show when={popBlocked()}>
+          <div class="a2a-mini-popblock" title="협업 곁뷰 열기 (대화 시작)"
+            onClick={(e) => { e.stopPropagation(); props.onOpen(); }}>
+            ⚠ 팝업이 차단되어 ‹{popBlocked()}› 새 창을 열지 못했습니다 — 여기를 눌러 곁뷰에서 대화하세요 ›
+          </div>
+        </Show>
       </Show>
 
       {/* ── 협업(A2A) 곁뷰 — 우측 슬라이드 패널 (정본 .side#sideA2A).
