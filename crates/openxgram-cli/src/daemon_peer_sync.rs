@@ -211,22 +211,33 @@ pub fn reachable_remote_peers(data_dir: &Path) -> anyhow::Result<Vec<RemotePeer>
     let mut store = PeerStore::new(&mut db);
     let peers = store.list()?;
 
-    // BUG2/3 — 이 머신 데몬의 reachable transport 주소(=self peer 의 address). LOCAL ACP
-    // 에이전트(navi)는 자기 sub-bot 포트가 아니라 **머신 데몬**으로 envelope 가 와야 한다
-    // (process_inbound + ① fix 가 거기서 돌며 recipient_alias=navi → navi 의 로컬 ACP 구동).
-    // self peer row(eth==self_eth)의 reachable address 를 ACP 에이전트 광고 주소로 덮어쓴다.
-    // self 주소 검출 실패 시(예: self row 없음) ACP 에이전트는 자기 등록 address 를 그대로 쓴다
-    // (localhost 면 merge 측 is_unreachable 가드가 거른다 — silent 오염 없음).
-    let self_machine_addr: Option<String> = self_eth.as_deref().and_then(|me| {
-        peers.iter().find_map(|p| {
-            let eth = p.eth_address.as_deref()?;
-            if me.eq_ignore_ascii_case(eth.trim()) && !is_unreachable_address(&p.address) {
-                Some(p.address.clone())
-            } else {
-                None
-            }
+    // rc.345 — self 머신의 reachable transport 주소는 **동적 설정(env)이 진리원천**이다.
+    // DB self peer row 의 address 는 캐시일 뿐 — gossip 으로 옛/오염 값이 들어올 수 있어
+    // self 광고의 권위로 신뢰하지 않는다(예: zalman self-row 가 seoul 주소로 오염됐던 사건).
+    // 마스터가 머신별로 설정한 XGRAM_TRANSPORT_PUBLIC_URL(또는 XGRAM_SELF_ADDRESS)을 우선
+    // 채택(도달 가능 시). 그래야 각 머신이 자기 env 만 맞으면 self 광고가 자동 정상화되고
+    // 수동 DB 시드/신원 선택이 영구 불필요해진다. env 미설정·도달불가일 때만 self peer row
+    // (eth==self_eth) 주소로 폴백한다.
+    let self_machine_addr: Option<String> = std::env::var("XGRAM_TRANSPORT_PUBLIC_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty() && !is_unreachable_address(u))
+        .or_else(|| {
+            std::env::var("XGRAM_SELF_ADDRESS")
+                .ok()
+                .filter(|u| !u.trim().is_empty() && !is_unreachable_address(u))
         })
-    });
+        .or_else(|| {
+            self_eth.as_deref().and_then(|me| {
+                peers.iter().find_map(|p| {
+                    let eth = p.eth_address.as_deref()?;
+                    if me.eq_ignore_ascii_case(eth.trim()) && !is_unreachable_address(&p.address) {
+                        Some(p.address.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+        });
 
     Ok(peers
         .iter()
@@ -283,8 +294,12 @@ pub fn reachable_remote_peers(data_dir: &Path) -> anyhow::Result<Vec<RemotePeer>
                     }
                 }
             }
-            // ACP 에이전트는 머신 데몬 주소로 광고(있으면). 그래야 envelope 가 머신 데몬에 도달.
-            let address = if is_local_acp_agent {
+            // rc.345 — self peer 와 LOCAL ACP 에이전트는 **동적 설정(env) 기반 self 머신 주소**로
+            // 광고한다. self peer 가 자기 DB row(캐시·오염 가능)가 아닌 env 권위 주소로 광고해야
+            // 다른 머신이 나를 올바른 주소로 학습한다(zalman 이 자기를 seoul 주소로 광고하던 버그의
+            // 핵심 — self 가 p.address 로 광고하던 줄). 순수 원격 병합 peer 만 그들이 광고한 주소를
+            // 그대로 전달한다.
+            let address = if is_self || is_local_acp_agent {
                 self_machine_addr.clone().unwrap_or_else(|| p.address.clone())
             } else {
                 p.address.clone()
