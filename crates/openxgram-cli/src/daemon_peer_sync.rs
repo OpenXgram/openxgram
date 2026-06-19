@@ -86,6 +86,14 @@ pub fn merge_remote_peers(
                 continue; // 자기 자신
             }
         }
+        // 마스터 룰 — gossip 신규 흡수 차단. 이미 존재하는 peer 만 UPDATE 하고,
+        //   처음 보는 alias/eth 는 CREATE 하지 않는다(미등록 머신 자동흡수 방지).
+        let exists = store.get_by_eth_address(rp.eth_address.trim())?.is_some()
+            || store.get_by_alias(&rp.alias)?.is_some();
+        if !exists {
+            tracing::debug!(alias = %rp.alias, eth = %rp.eth_address, "peer-sync skip — gossip 신규 흡수 차단(미존재 peer)");
+            continue;
+        }
         let role = PeerRole::parse(&rp.role).unwrap_or(PeerRole::Worker);
         let gui = rp
             .gui_address
@@ -140,10 +148,25 @@ pub fn reachable_peer_addresses(data_dir: &Path) -> anyhow::Result<Vec<String>> 
         path: openxgram_core::paths::db_path(data_dir),
         ..Default::default()
     })?;
+    // 마스터 룰 — pull(gossip) 대상은 UI 로 등록한 머신만.
+    //   agent_profiles.source='user' 행이 있는 alias 의 peer 만 pull 후보로 채택.
+    //   미등록 머신은 pull 안 함 → 그 머신의 peer 가 흡수되지 않는다.
+    let mut registered: std::collections::HashSet<String> = Default::default();
+    if let Ok(mut stmt) = db
+        .conn()
+        .prepare("SELECT alias FROM agent_profiles WHERE source = 'user'")
+    {
+        if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+            for a in rows.flatten() {
+                registered.insert(a);
+            }
+        }
+    }
     let mut store = PeerStore::new(&mut db);
     let peers = store.list()?;
     Ok(peers
         .into_iter()
+        .filter(|p| registered.contains(&p.alias))
         .map(|p| p.address)
         .filter(|a| !is_unreachable_address(a))
         .collect())
@@ -510,34 +533,81 @@ mod tests {
     #[test]
     fn merge_skips_localhost_addresses() {
         let mut db = open_mem_db();
+        // update-only 정책 — merge 대상은 이미 존재해야 UPDATE 됨. "good" 만 pre-seed.
+        //   localhost/0.0.0.0 는 주소 단계에서 먼저 거부되므로 pre-seed 와 무관하게 skip.
+        {
+            let mut store = PeerStore::new(&mut db);
+            store
+                .add_with_eth(
+                    "good",
+                    "02seed-good",
+                    "http://100.101.237.9:47300",
+                    Some("0xbbb1"),
+                    PeerRole::Worker,
+                    None,
+                )
+                .unwrap();
+        }
         let remote = vec![
             rp("local", "http://127.0.0.1:47300", "0xaaa1"),
             rp("zero", "http://0.0.0.0:47300", "0xaaa2"),
             rp("good", "http://100.101.237.9:47300", "0xbbb1"),
         ];
         let merged = merge_remote_peers(&mut db, &remote, None).unwrap();
-        assert_eq!(merged, 1, "localhost/0.0.0.0 는 거부, reachable 1 개만 merge");
+        assert_eq!(merged, 1, "localhost/0.0.0.0 는 거부, 기존 reachable 1 개만 UPDATE");
         let mut store = PeerStore::new(&mut db);
         assert!(store.get_by_eth_address("0xbbb1").unwrap().is_some());
+        // localhost peer 는 흡수 안 됨 (주소 거부 + 미존재).
         assert!(store.get_by_eth_address("0xaaa1").unwrap().is_none());
     }
 
     #[test]
     fn merge_skips_self() {
         let mut db = open_mem_db();
+        // update-only — "other" 를 pre-seed 해 기존 상태로 만든 뒤 merge → UPDATE 검증.
+        //   "me"(self) 는 self_eth 단계에서 거부되므로 pre-seed 안 함.
+        {
+            let mut store = PeerStore::new(&mut db);
+            store
+                .add_with_eth(
+                    "other",
+                    "02seed-other",
+                    "http://100.64.0.6:47300",
+                    Some("0xOTHER"),
+                    PeerRole::Worker,
+                    None,
+                )
+                .unwrap();
+        }
         let remote = vec![
             rp("me", "http://100.64.0.5:47300", "0xSELF"),
             rp("other", "http://100.64.0.6:47300", "0xOTHER"),
         ];
         let merged = merge_remote_peers(&mut db, &remote, Some("0xself")).unwrap();
-        assert_eq!(merged, 1, "self(eth 동일, 대소문자 무시) 제외");
+        assert_eq!(merged, 1, "self(eth 동일, 대소문자 무시) 제외, 기존 other 만 UPDATE");
         let mut store = PeerStore::new(&mut db);
         assert!(store.get_by_eth_address("0xOTHER").unwrap().is_some());
+        // self 는 흡수 안 됨.
+        assert!(store.get_by_eth_address("0xSELF").unwrap().is_none());
     }
 
     #[test]
     fn merge_is_idempotent() {
         let mut db = open_mem_db();
+        // update-only — "dup" 을 pre-seed 한 뒤 두 번 merge. 매번 기존 row UPDATE → 중복 없음.
+        {
+            let mut store = PeerStore::new(&mut db);
+            store
+                .add_with_eth(
+                    "dup",
+                    "02seed-dup",
+                    "http://100.64.0.7:47300",
+                    Some("0xdup"),
+                    PeerRole::Worker,
+                    None,
+                )
+                .unwrap();
+        }
         let remote = vec![rp("dup", "http://100.64.0.7:47300", "0xdup")];
         let a = merge_remote_peers(&mut db, &remote, None).unwrap();
         let b = merge_remote_peers(&mut db, &remote, None).unwrap();
@@ -546,6 +616,18 @@ mod tests {
         let mut store = PeerStore::new(&mut db);
         let all = store.list().unwrap();
         assert_eq!(all.iter().filter(|p| p.alias == "dup").count(), 1);
+    }
+
+    #[test]
+    fn merge_skips_unknown_peers() {
+        // 마스터 룰 — gossip 신규 흡수 차단. 미존재 alias/eth 는 CREATE 안 함.
+        let mut db = open_mem_db();
+        let remote = vec![rp("stranger", "http://100.64.0.8:47300", "0xstranger")];
+        let merged = merge_remote_peers(&mut db, &remote, None).unwrap();
+        assert_eq!(merged, 0, "미존재 peer 는 흡수 안 됨 (update-only)");
+        let mut store = PeerStore::new(&mut db);
+        assert!(store.get_by_eth_address("0xstranger").unwrap().is_none());
+        assert!(store.get_by_alias("stranger").unwrap().is_none());
     }
 
     #[test]
@@ -584,14 +666,21 @@ mod tests {
     #[test]
     fn prune_removes_only_absent_same_host_peers() {
         let mut db = open_mem_db();
-        // 같은 base host(100.64.0.5) 에 두 peer 가 있었다.
-        let initial = vec![
-            rp("alive", "http://100.64.0.5:47300", "0xALIVE"),
-            rp("dead", "http://100.64.0.5:47300", "0xDEAD"),
+        // 같은 base host(100.64.0.5) 에 두 peer 가 있었다. update-only 정책상
+        //   초기 상태는 직접 add 로 구성 (merge 는 더 이상 신규 생성 안 함).
+        {
+            let mut store = PeerStore::new(&mut db);
+            store
+                .add_with_eth("alive", "02seed-alive", "http://100.64.0.5:47300", Some("0xALIVE"), PeerRole::Worker, None)
+                .unwrap();
+            store
+                .add_with_eth("dead", "02seed-dead", "http://100.64.0.5:47300", Some("0xDEAD"), PeerRole::Worker, None)
+                .unwrap();
             // 다른 머신 peer — prune 대상 아님.
-            rp("other_host", "http://100.64.0.9:47300", "0xOTHER"),
-        ];
-        merge_remote_peers(&mut db, &initial, None).unwrap();
+            store
+                .add_with_eth("other_host", "02seed-other", "http://100.64.0.9:47300", Some("0xOTHER"), PeerRole::Worker, None)
+                .unwrap();
+        }
 
         // base(100.64.0.5) 가 이제 alive 만 광고 → dead 는 tombstone.
         let now_remote = vec![rp("alive", "http://100.64.0.5:47300", "0xALIVE")];
@@ -611,12 +700,13 @@ mod tests {
     #[test]
     fn prune_protects_self() {
         let mut db = open_mem_db();
-        merge_remote_peers(
-            &mut db,
-            &[rp("me", "http://100.64.0.5:47300", "0xSELF")],
-            None,
-        )
-        .unwrap();
+        // update-only 정책상 self peer 도 직접 add 로 초기 구성.
+        {
+            let mut store = PeerStore::new(&mut db);
+            store
+                .add_with_eth("me", "02seed-me", "http://100.64.0.5:47300", Some("0xSELF"), PeerRole::Worker, None)
+                .unwrap();
+        }
         // 원격이 self 를 광고 안 해도 (빈 목록) self 는 보호.
         let pruned =
             prune_absent_from_remote(&mut db, "http://100.64.0.5:47300", &[], Some("0xself"))

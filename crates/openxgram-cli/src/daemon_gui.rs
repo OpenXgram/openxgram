@@ -1023,6 +1023,19 @@ async fn gui_peers(
             }
         }
     }
+    // 마스터 룰 — UI 로 등록한 머신/에이전트만 로스터에 노출.
+    //   agent_profiles.source='user' 행이 있는 alias = 사용자가 UI 로 등록한 것.
+    //   profile 없는 peer(MCP 자기등록·gossip 자동흡수)는 로스터에서 제외한다.
+    let mut registered: std::collections::HashSet<String> = Default::default();
+    if let Ok(mut stmt) = db.conn().prepare(
+        "SELECT alias FROM agent_profiles WHERE source = 'user'"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+            for a in rows.flatten() {
+                registered.insert(a);
+            }
+        }
+    }
     let mut store = PeerStore::new(&mut db);
     let rows = store.list().map_err(|e| {
         (
@@ -1056,6 +1069,12 @@ async fn gui_peers(
     // rc.274/rc.280 — 같은 tmux 세션을 가리키는 중복 peer 행 dedupe (GUI 로스터 1행/세션).
     //   공통 헬퍼 dedup_by_tmux_session 으로 일원화 (gui_orchestration_agents 와 동일 규칙).
     let rows = dedup_by_tmux_session(rows, &sid_map, |p| p.alias.as_str());
+    // 마스터 룰 — UI(agent_profiles.source='user')로 등록한 alias 만 로스터에 남긴다.
+    //   gossip 자동흡수/MCP 자기등록 peer(profile 없음)는 제외.
+    let rows: Vec<_> = rows
+        .into_iter()
+        .filter(|p| registered.contains(&p.alias))
+        .collect();
     // rc.229 — fix#1: per-peer subprocess enrichment 전부 제거 (8.7s → <200ms).
     //   project_folder/llm_type/llm_version/worktrees/subagents/ex_peers 는 모두
     //   on-demand `/v1/gui/agent/{alias}/detail` 에서 1개씩 enrich (fix#3).
