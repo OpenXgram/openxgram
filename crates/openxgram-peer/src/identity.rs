@@ -33,6 +33,81 @@ impl<'a> IdentityStore<'a> {
         }
     }
 
+    /// peers 를 스캔해 정본 신원으로 분류·매핑한다.
+    /// 그룹핑 키: session_identifier(있으면) -> eth_address -> 둘 다 없으면 격리.
+    /// 정본 주소: 그룹 내 role='primary' 의 eth_address (없으면 첫 행의 eth_address, 그것도 없으면 sid:<session>).
+    pub fn reconcile(&mut self, now_rfc3339: &str) -> Result<()> {
+        struct Row {
+            alias: String,
+            eth: Option<String>,
+            sid: Option<String>,
+            role: String,
+        }
+        let rows: Vec<Row> = {
+            let mut stmt = self.db.conn().prepare(
+                "SELECT alias, eth_address, session_identifier, role FROM peers ORDER BY created_at ASC",
+            )?;
+            let mapped = stmt.query_map([], |r| {
+                Ok(Row {
+                    alias: r.get(0)?,
+                    eth: r.get(1)?,
+                    sid: r.get(2)?,
+                    role: r.get(3)?,
+                })
+            })?;
+            let mut out = Vec::new();
+            for r in mapped {
+                out.push(r?);
+            }
+            out
+        };
+
+        use std::collections::BTreeMap;
+        let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut quarantine: Vec<usize> = Vec::new();
+        for (i, row) in rows.iter().enumerate() {
+            let key = if let Some(sid) = &row.sid {
+                Some(format!("sid:{sid}"))
+            } else {
+                row.eth.clone()
+            };
+            match key {
+                Some(k) => groups.entry(k).or_default().push(i),
+                None => quarantine.push(i),
+            }
+        }
+
+        for (_key, idxs) in &groups {
+            let primary_idx = idxs
+                .iter()
+                .copied()
+                .find(|&i| rows[i].role == "primary")
+                .unwrap_or(idxs[0]);
+            let canonical_address = rows[primary_idx]
+                .eth
+                .clone()
+                .or_else(|| idxs.iter().filter_map(|&i| rows[i].eth.clone()).next())
+                .unwrap_or_else(|| {
+                    rows[primary_idx]
+                        .sid
+                        .clone()
+                        .map(|s| format!("sid:{s}"))
+                        .unwrap_or_else(|| format!("alias:{}", rows[primary_idx].alias))
+                });
+            for &i in idxs {
+                let is_primary = i == primary_idx;
+                self.upsert_alias(&rows[i].alias, &canonical_address, is_primary, "active", now_rfc3339)?;
+            }
+        }
+
+        for &i in &quarantine {
+            let canon = format!("alias:{}", rows[i].alias);
+            self.upsert_alias(&rows[i].alias, &canon, false, "quarantined", now_rfc3339)?;
+        }
+
+        Ok(())
+    }
+
     /// 별칭 upsert. created_at 은 RFC3339 호출자 주입.
     pub fn upsert_alias(
         &mut self,
