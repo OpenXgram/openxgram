@@ -1903,6 +1903,18 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         "UPDATE peers SET session_identifier = ?1 WHERE alias = ?2",
                         rusqlite::params![sid, entry.alias],
                     );
+                    // 동일 신원의 sibling human-alias 자동 재바인딩 — 같은 display_name 을 가진 모든
+                    //   peers 행의 session_identifier 를 새 세션으로 repoint. (예: star/starian 가 같은
+                    //   Star 신원이면 둘 다 라이브 세션으로 따라감.) display_name 제공 시에만, 자기 행은
+                    //   위에서 이미 갱신됐고 IS NOT 가드로 동일 sid·NULL 중복 갱신을 회피.
+                    if let Some(dn) = display_name {
+                        let _ = self.db.conn().execute(
+                            "UPDATE peers SET session_identifier = ?1 \
+                             WHERE alias IN (SELECT alias FROM agent_profiles WHERE display_name = ?2) \
+                               AND session_identifier IS NOT ?1",
+                            rusqlite::params![sid, dn],
+                        );
+                    }
                 }
                 Ok(json!({
                     "registered": true,
