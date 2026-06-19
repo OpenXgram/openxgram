@@ -10,6 +10,7 @@ authors.workspace = true
 [dependencies]
 openxgram-core = { path = "../openxgram-core" }
 openxgram-db = { path = "../openxgram-db" }
+anyhow = { workspace = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

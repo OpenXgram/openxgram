@@ -5,6 +5,9 @@
 //!
 //! Phase 2 baseline: CRUD + last_seen 갱신. 실제 push/pull 흐름은 transport 통합 PR.
 
+mod identity;
+pub use identity::{CanonicalGroup, IdentityStore};
+
 use chrono::{DateTime, FixedOffset};
 use openxgram_core::time::kst_now;
 use openxgram_db::{Db, DbError};
