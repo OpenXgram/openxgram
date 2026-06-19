@@ -929,6 +929,7 @@ async fn gui_initialized(
 ///   - canonical: alias == 세션명(sid 의 "tmux:" 접두 제거값, 즉 aoe_* full alias) 우선.
 ///     (worktree/subagent 연결이 full alias 기준이므로 그쪽을 살린다.) 없으면 첫 행.
 ///   - sid NULL / 비-tmux(원격·채널·self) 행은 dedupe 대상 아님 — 각자 고유하므로 그대로 유지.
+///
 /// `alias_of` 로 각 행의 alias 를 추출, `sid_map` 으로 그 alias 의 session_identifier 를 조회.
 /// gui_peers(PeerDto) 와 gui_orchestration_agents(serde_json::Value) 가 공유.
 fn dedup_by_tmux_session<T>(
@@ -968,6 +969,28 @@ fn dedup_by_tmux_session<T>(
         .collect()
 }
 
+/// peers.session_identifier 를 alias→ident 맵으로 prefetch.
+///   PeerStore.list() 가 반환하지 않는 필드 + tmux 세션 dedupe 의 입력.
+///   gui_peers / gui_agents_list / gui_orchestration_agents 가 공유 (rc.245/rc.280).
+///   조회 실패는 빈 맵으로 흡수(기존 동작 보존 — 각 호출부가 그랬듯이).
+fn prefetch_session_identifiers(
+    conn: &rusqlite::Connection,
+) -> std::collections::HashMap<String, String> {
+    let mut sid_map = std::collections::HashMap::new();
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT alias, session_identifier FROM peers WHERE session_identifier IS NOT NULL AND session_identifier != ''"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        }) {
+            for row in rows.flatten() {
+                sid_map.insert(row.0, row.1);
+            }
+        }
+    }
+    sid_map
+}
+
 /// `GET /v1/gui/peers` — 등록된 peer 전체 목록.
 async fn gui_peers(
     State(state): State<GuiServerState>,
@@ -993,18 +1016,7 @@ async fn gui_peers(
     }
     // rc.245 — peers.session_identifier 별도 prefetch (PeerStore.list() 미반환 필드).
     //   결정적 세션 매핑: Messenger.tsx 가 normalizeAlias 추정 대신 이 값을 직접 사용.
-    let mut sid_map: std::collections::HashMap<String, String> = Default::default();
-    if let Ok(mut stmt) = db.conn().prepare(
-        "SELECT alias, session_identifier FROM peers WHERE session_identifier IS NOT NULL AND session_identifier != ''"
-    ) {
-        if let Ok(rows) = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        }) {
-            for row in rows.flatten() {
-                sid_map.insert(row.0, row.1);
-            }
-        }
-    }
+    let sid_map = prefetch_session_identifiers(db.conn());
     // 0064 — peers 전용 캐시 3컬럼 별도 prefetch (PeerStore.list() 미반환 필드).
     let mut meta_map: std::collections::HashMap<String, (Option<String>, Option<String>, Option<String>)> = Default::default();
     if let Ok(mut stmt) = db.conn().prepare(
@@ -1023,19 +1035,9 @@ async fn gui_peers(
             }
         }
     }
-    // 마스터 룰 — UI 로 등록한 머신/에이전트만 로스터에 노출.
-    //   agent_profiles.source='user' 행이 있는 alias = 사용자가 UI 로 등록한 것.
-    //   profile 없는 peer(MCP 자기등록·gossip 자동흡수)는 로스터에서 제외한다.
-    let mut registered: std::collections::HashSet<String> = Default::default();
-    if let Ok(mut stmt) = db.conn().prepare(
-        "SELECT alias FROM agent_profiles WHERE source = 'user'"
-    ) {
-        if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
-            for a in rows.flatten() {
-                registered.insert(a);
-            }
-        }
-    }
+    // 주의 — peers(통신 엔드포인트) 뷰는 온라인 상태 오버레이용이다. 에이전트 명부(현황)는
+    //   gui_agents_list(agent_profiles 단일 진리원천)가 책임진다. 여기서 등록 여부 필터를
+    //   걸지 않는다(명부와 통신 뷰를 혼동하지 않기 위함).
     let mut store = PeerStore::new(&mut db);
     let rows = store.list().map_err(|e| {
         (
@@ -1069,12 +1071,6 @@ async fn gui_peers(
     // rc.274/rc.280 — 같은 tmux 세션을 가리키는 중복 peer 행 dedupe (GUI 로스터 1행/세션).
     //   공통 헬퍼 dedup_by_tmux_session 으로 일원화 (gui_orchestration_agents 와 동일 규칙).
     let rows = dedup_by_tmux_session(rows, &sid_map, |p| p.alias.as_str());
-    // 마스터 룰 — UI(agent_profiles.source='user')로 등록한 alias 만 로스터에 남긴다.
-    //   gossip 자동흡수/MCP 자기등록 peer(profile 없음)는 제외.
-    let rows: Vec<_> = rows
-        .into_iter()
-        .filter(|p| registered.contains(&p.alias))
-        .collect();
     // rc.229 — fix#1: per-peer subprocess enrichment 전부 제거 (8.7s → <200ms).
     //   project_folder/llm_type/llm_version/worktrees/subagents/ex_peers 는 모두
     //   on-demand `/v1/gui/agent/{alias}/detail` 에서 1개씩 enrich (fix#3).
@@ -4697,27 +4693,12 @@ async fn gui_agents_list(
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     let mut db = state.db.lock().await;
     // peers.session_identifier prefetch — 현황 패널 6컬럼(session id)용. gui_orchestration_agents 와 동일 패턴.
-    let mut sid_map: std::collections::HashMap<String, String> = Default::default();
-    if let Ok(mut stmt) = db.conn().prepare(
-        "SELECT alias, session_identifier FROM peers WHERE session_identifier IS NOT NULL AND session_identifier != ''"
-    ) {
-        if let Ok(rows) = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        }) {
-            for row in rows.flatten() {
-                sid_map.insert(row.0, row.1);
-            }
-        }
-    }
-    // Phase 2-C — agent_profiles LEFT JOIN: 명부 그룹화용 classification/execution_mode/ai_type/public.
-    // 아키텍처 수정 — 로스터 = 마스터가 의도적으로 생성한 에이전트만.
-    //   소스 테이블은 agent_capabilities 그대로 유지한다("에이전트 추가"(gui_agents_register)
-    //   가 agent_capabilities 에 기록하고, agent_profiles 는 생성 시점에 채워지지 않으므로
-    //   profile-first 로 바꾸면 로스터가 비게 됨 — 라이브 DB 에서 agent_profiles 가 빈 것을 확인).
-    //   대신 과거 auto_seed_local_tmux_agents 가 박아둔 tmux 세션 행(role='tmux')을 제외하여
-    //   로스터에 tmux 세션이 섞이지 않게 한다. tmux 는 DETAIL 패널(/v1/gui/sessions)에서만 노출.
-    //   (auto_seed 의 신규 INSERT 는 daemon.rs 에서 이미 중단됨 — 이 WHERE 는 기존 라이브 DB 의
-    //    잔존 행을 view 레벨에서 정리. 파괴적 DELETE 마이그레이션 없이 표시만 교정.)
+    let sid_map = prefetch_session_identifiers(db.conn());
+    // 에이전트 명부 = **단일 진리원천 = agent_profiles** (마스터가 UI 로 등록·관리하는 에이전트만).
+    //   `agent_capabilities INNER JOIN agent_profiles` — profile 행이 있어야 명부에 노출한다.
+    //   profile 없는 행(MCP 자기등록 peer·gossip 자동흡수·과거 auto_seed tmux 스텁)은 명부에서 제외.
+    //   능력 메타(role/description/capabilities)는 agent_capabilities 에서 가져온다(명부 소스는 아님).
+    //   tmux 세션 전체 관찰은 DETAIL 패널(/v1/gui/sessions)이 책임 — 명부와 분리. role='tmux' 잔존행도 제외.
     let mut stmt = db.conn().prepare(
         "SELECT ac.alias, ac.role, ac.description, ac.capabilities, ac.tool_list, ac.project_path, \
                 ac.group_name, ac.messenger_enabled, ac.orchestration_role, ac.special_instructions, ac.updated_at, \
@@ -4727,7 +4708,7 @@ async fn gui_agents_list(
                 (SELECT COUNT(*) FROM acp_messages am WHERE am.conv_key = ac.alias AND am.role='agent' \
                    AND am.created_at > COALESCE((SELECT last_read FROM acp_read WHERE conv_key = ac.alias), '')) AS unread \
          FROM agent_capabilities ac \
-         LEFT JOIN agent_profiles p ON p.alias = ac.alias \
+         JOIN agent_profiles p ON p.alias = ac.alias \
          WHERE ac.role IS NOT 'tmux' \
          ORDER BY ac.messenger_enabled DESC, ac.alias ASC",
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
@@ -4776,18 +4757,7 @@ async fn gui_orchestration_agents(
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     let mut db = state.db.lock().await;
     // rc.280 — peers.session_identifier prefetch (tmux 세션 dedupe 용, gui_peers 와 동일).
-    let mut sid_map: std::collections::HashMap<String, String> = Default::default();
-    if let Ok(mut stmt) = db.conn().prepare(
-        "SELECT alias, session_identifier FROM peers WHERE session_identifier IS NOT NULL AND session_identifier != ''"
-    ) {
-        if let Ok(rows) = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        }) {
-            for row in rows.flatten() {
-                sid_map.insert(row.0, row.1);
-            }
-        }
-    }
+    let sid_map = prefetch_session_identifiers(db.conn());
     let mut stmt = db.conn().prepare(
         "SELECT alias, role, description, capabilities, orchestration_role, \
                 company_id, reports_to, adapter_type, adapter_config, \
