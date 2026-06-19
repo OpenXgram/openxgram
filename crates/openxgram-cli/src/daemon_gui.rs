@@ -108,6 +108,16 @@ pub struct PeerDto {
     /// NULL 이면 Messenger.tsx 가 기존 normalizeAlias 추정 fallback.
     /// auto-seed 가 기본값 set, 사용자가 PATCH /v1/gui/peers/{alias}/session 으로 override.
     pub session_identifier: Option<String>,
+    /// 0064 — peers 전용 캐시 3컬럼 (register_subagent 가 갱신, PeerStore.list() 미반환 필드).
+    ///   로스터 표시용 대화명 (없으면 None → 클라이언트 fallback).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// 현재 작업 디렉토리 (register args.project_path 캐시).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// 세션 상태 ('active' 등; register 시 'active').
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_status: Option<String>,
 }
 
 /// rc.228 — peer 의 git worktree entry.
@@ -995,6 +1005,24 @@ async fn gui_peers(
             }
         }
     }
+    // 0064 — peers 전용 캐시 3컬럼 별도 prefetch (PeerStore.list() 미반환 필드).
+    let mut meta_map: std::collections::HashMap<String, (Option<String>, Option<String>, Option<String>)> = Default::default();
+    if let Ok(mut stmt) = db.conn().prepare(
+        "SELECT alias, display_name, cwd, session_status FROM peers"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, Option<String>>(3)?,
+            ))
+        }) {
+            for row in rows.flatten() {
+                meta_map.insert(row.0, (row.1, row.2, row.3));
+            }
+        }
+    }
     let mut store = PeerStore::new(&mut db);
     let rows = store.list().map_err(|e| {
         (
@@ -1036,6 +1064,7 @@ async fn gui_peers(
     for p in rows.into_iter() {
         let (description, capabilities) = caps_map.get(&p.alias).cloned().unwrap_or((None, vec![]));
         let session_identifier = sid_map.get(&p.alias).cloned();
+        let (display_name, cwd, session_status) = meta_map.get(&p.alias).cloned().unwrap_or((None, None, None));
         dtos.push(PeerDto {
             id: p.id,
             alias: p.alias,
@@ -1054,6 +1083,9 @@ async fn gui_peers(
             subagents: Vec::new(),
             ex_peers: Vec::new(),
             session_identifier,
+            display_name,
+            cwd,
+            session_status,
         });
     }
     Ok(Json(dtos))
@@ -10695,6 +10727,9 @@ async fn gui_peer_add(
         subagents: Vec::new(),
         ex_peers: Vec::new(),
         session_identifier: None,
+        display_name: None,
+        cwd: None,
+        session_status: None,
     }))
 }
 

@@ -356,6 +356,12 @@ const MIGRATIONS: &[Migration] = &[
         name: "agent_add_request",
         sql: include_str!("../migrations/0063_agent_add_request.sql"),
     },
+    // step6 — peers 로스터 6필드 전용 캐시 컬럼(display_name·cwd·session_status).
+    Migration {
+        version: 64,
+        name: "peer_dedicated_fields",
+        sql: include_str!("../migrations/0064_peer_dedicated_fields.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

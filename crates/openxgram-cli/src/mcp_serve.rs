@@ -928,6 +928,19 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         }
                     }
                 }
+                // 0064 — peers 전용 캐시 3컬럼 별도 prefetch (PeerStore.list() 미반환 필드).
+                let mut meta_map: std::collections::HashMap<String, (Option<String>, Option<String>, Option<String>)> = Default::default();
+                if let Ok(mut stmt) = self.db.conn().prepare(
+                    "SELECT alias, display_name, cwd, session_status FROM peers"
+                ) {
+                    if let Ok(rows) = stmt.query_map([], |r| {
+                        Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?))
+                    }) {
+                        for row in rows.flatten() {
+                            meta_map.insert(row.0, (row.1, row.2, row.3));
+                        }
+                    }
+                }
                 let peer_aliases: std::collections::HashSet<String> = peers.iter().map(|p| p.alias.clone()).collect();
                 let mut items: Vec<Value> = peers
                     .iter()
@@ -936,6 +949,7 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         let capabilities: Vec<String> = capabilities_json.as_ref()
                             .and_then(|s| serde_json::from_str(s).ok())
                             .unwrap_or_default();
+                        let (display_name, cwd, session_status) = meta_map.get(&p.alias).cloned().unwrap_or((None, None, None));
                         json!({
                             "alias": p.alias,
                             "public_key_hex": p.public_key_hex,
@@ -944,6 +958,9 @@ impl ToolDispatcher for OpenxgramDispatcher {
                             "eth_address": p.eth_address,
                             "description": description,
                             "capabilities": capabilities,
+                            "display_name": display_name,
+                            "cwd": cwd,
+                            "session_status": session_status,
                             "kind": "peer",
                         })
                     })
@@ -954,6 +971,7 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     let capabilities: Vec<String> = caps_json.as_ref()
                         .and_then(|s| serde_json::from_str(s).ok())
                         .unwrap_or_default();
+                    let (display_name, cwd, session_status) = meta_map.get(alias).cloned().unwrap_or((None, None, None));
                     items.push(json!({
                         "alias": alias,
                         "public_key_hex": null,
@@ -962,6 +980,9 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         "eth_address": null,
                         "description": description,
                         "capabilities": capabilities,
+                        "display_name": display_name,
+                        "cwd": cwd,
+                        "session_status": session_status,
                         "kind": "agent",
                     }));
                 }
@@ -1893,6 +1914,16 @@ impl ToolDispatcher for OpenxgramDispatcher {
                        execution_mode=excluded.execution_mode, machine=excluded.machine, worktree=excluded.worktree, \
                        display_name=COALESCE(excluded.display_name, display_name), updated_at=excluded.updated_at",
                     rusqlite::params![entry.alias, ai_type, classification, execution_mode, machine_p, worktree, display_name, now],
+                );
+                // 0064 — peers 전용 캐시 3컬럼 갱신 (로스터 6필드 소스). peers 행 존재 시에만 영향;
+                //   부재 시 affected 0 (무해 통과 — 행은 transport 등록이 생성).
+                //   display_name = agent_profiles 와 동일 소스(args.display_name, 없으면 alias).
+                //   cwd = project_path. 둘 다 COALESCE 로 None 이 기존값 안 덮게 보존. session_status='active'.
+                let peers_display_name = display_name.or(Some(entry.alias.as_str()));
+                let _ = self.db.conn().execute(
+                    "UPDATE peers SET display_name = COALESCE(?1, display_name), \
+                       cwd = COALESCE(?2, cwd), session_status = 'active' WHERE alias = ?3",
+                    rusqlite::params![peers_display_name, project_path, entry.alias],
                 );
                 // session_identifier 영속 — peers 행이 이 alias 로 존재하면 기록(현황 패널 6컬럼 + 종료/재시작 대상).
                 //   peers 행 부재 시(transport 등록 전) silent skip — 행은 transport 등록이 생성.
