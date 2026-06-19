@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::Result;
 use openxgram_db::Db;
 
 /// 정본 신원 매핑 저장소. PeerStore 패턴 미러 (`db: &mut Db`).
