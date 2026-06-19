@@ -36,6 +36,7 @@ interface AgentRow {
   project_path?: string | null;
   machine?: string | null;
   display_name?: string | null;
+  session_identifier?: string | null;
   is_public?: boolean | null;
   perm_mode?: string | null;
   model?: string | null;
@@ -641,6 +642,45 @@ export function KakaoShell(props: { onLogout?: () => void }) {
     }
   }
 
+  // ── list-peer 로스터 액션 — 종료 / 재시작(kill+재spawn) / spawn ──────────────
+  //   재사용: session_kill(identifier) + 신규 session_restart / agent_spawn (GUI route).
+  //   동작 후 agents()·sessions() refetch 로 현황 동적 갱신(룰: list-peer 와 동적 연동).
+  const [acting, setActing] = createSignal<string | null>(null);
+  async function killAgent(a: AgentRow) {
+    const id = a.session_identifier;
+    if (!id) { window.alert("세션 id 없음 — 종료할 활성 세션이 없습니다."); return; }
+    if (!window.confirm(`이 에이전트 세션을 종료하시겠습니까?\n\n${agentName(a)} (${a.alias})\n\n(되돌릴 수 없습니다)`)) return;
+    setActing(a.alias);
+    try {
+      await invoke("session_kill", { identifier: id });
+      await refetchAgents(); await refetchSessions();
+    } catch (e) {
+      window.alert(`종료 실패: ${(e as Error).message}`);
+    } finally { setActing(null); }
+  }
+  async function restartAgent(a: AgentRow) {
+    const id = a.session_identifier;
+    if (!id) { window.alert("세션 id 없음 — 재시작할 활성 세션이 없습니다. spawn 으로 새로 띄우세요."); return; }
+    if (!window.confirm(`이 에이전트 세션을 재시작(종료 후 재생성)하시겠습니까?\n\n${agentName(a)} (${a.alias})`)) return;
+    setActing(a.alias);
+    try {
+      await invoke("session_restart", { identifier: id, alias: a.alias });
+      await refetchAgents(); await refetchSessions();
+    } catch (e) {
+      window.alert(`재시작 실패: ${(e as Error).message}`);
+    } finally { setActing(null); }
+  }
+  async function spawnAgent(a: AgentRow) {
+    if (!window.confirm(`이 에이전트를 spawn(새 ACP 세션 생성)하시겠습니까?\n\n${agentName(a)} (${a.alias})`)) return;
+    setActing(a.alias);
+    try {
+      await invoke("agent_spawn", { alias: a.alias });
+      await refetchAgents(); await refetchSessions();
+    } catch (e) {
+      window.alert(`spawn 실패: ${(e as Error).message}`);
+    } finally { setActing(null); }
+  }
+
   function openTab(t: Tab) {
     setTab(t);
   }
@@ -976,6 +1016,34 @@ export function KakaoShell(props: { onLogout?: () => void }) {
             <div class="li">🌳 worktree · 🔒 격리 — 방별 override</div>
             <div class="li">새 A2A → 새 ACP 생성 시 적용</div>
             <div class="li" style="color:var(--muted)">설정 ▸ 하네스에서 전역 기본 변경</div>
+          </div>
+        </div>
+
+        {/* ── list-peer 로스터 — 6컬럼(대화명·alias·세션id·역할·폴더·활성) + 종료/재시작/spawn ── */}
+        <h2 style="padding-top:4px">🧩 에이전트 로스터 (list-peer)</h2>
+        <div class="sub">세션 시작 시 각 에이전트가 자기 정보를 갱신 · 종료 🗑 / 재시작 🔄 / spawn ＋ 직접 제어 (list-peer 동적 연동)</div>
+        <div class="mach-cards">
+          <div class="mach-card" style="grid-column:1/-1">
+            <div class="seclab">에이전트 ({(agents() ?? []).length})</div>
+            <Show when={(agents() ?? []).length > 0} fallback={<div class="mach-row"><span class="empty">등록된 에이전트 없음</span></div>}>
+              <For each={agents() ?? []}>
+                {(a) => (
+                  <div class="mach-row">
+                    <span class="dot" style={`background:${onlineFor(a) ? "var(--green)" : "var(--muted)"}`} />
+                    <span class="nm">{isPrimary(a) ? "⭐ " : ""}{agentName(a)}</span>
+                    <span class="sx" title="alias">{a.alias}</span>
+                    <span class="sx" title="세션 id">{a.session_identifier || "—"}</span>
+                    <span class="meta" title="역할">{a.role || a.ai_type || "ACP"}</span>
+                    <span class="sx" title="폴더">{a.project_path || "—"}</span>
+                    <span class="meta" style={`color:${onlineFor(a) ? "var(--green)" : "var(--muted)"}`}>{onlineFor(a) ? "● 활성" : "○ 비활성"}</span>
+                    <span style="flex:1" />
+                    <button class="killbtn" title="세션 종료" disabled={acting() === a.alias || !a.session_identifier} onClick={() => killAgent(a)}>🗑 종료</button>
+                    <button class="killbtn" title="세션 재시작(kill+재spawn)" disabled={acting() === a.alias || !a.session_identifier} onClick={() => restartAgent(a)}>🔄 재시작</button>
+                    <button class="killbtn" title="ACP 세션 spawn" disabled={acting() === a.alias} onClick={() => spawnAgent(a)}>＋ spawn</button>
+                  </div>
+                )}
+              </For>
+            </Show>
           </div>
         </div>
 

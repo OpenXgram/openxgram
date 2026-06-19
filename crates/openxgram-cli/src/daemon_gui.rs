@@ -338,6 +338,10 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/sessions/{identifier}/terminal", get(gui_session_terminal))
         // rc.338 — 현황 탭에서 tmux 세션 종료(파괴적). 로컬 tmux 세션만, 존재 검증 + injection 방지.
         .route("/v1/gui/sessions/{identifier}/kill", post(gui_session_kill))
+        // 현황 탭 [재시작] — kill(tmux) → ACP 세션 fresh spawn(create_session 재사용).
+        .route("/v1/gui/sessions/{identifier}/restart", post(gui_session_restart))
+        // 현황 탭 [+spawn] — 에이전트 ACP 세션 fresh spawn(create_session 재사용).
+        .route("/v1/gui/agents/{alias}/spawn", post(gui_agent_spawn))
         .route("/v1/gui/sessions/{identifier}/dropfile", post(gui_session_dropfile))
         .route("/v1/gui/public/sessions/{identifier}/input", post(gui_public_session_input))
         // UI-MEMORY-SPEC v1.1 §K7 / §1.2 — L0 raw API + 5층 stats
@@ -2157,6 +2161,156 @@ async fn gui_session_kill(
     Ok(Json(serde_json::json!({
         "ok": true,
         "killed": format!("tmux:{name_for_resp}"),
+    })))
+}
+
+/// `identifier` → 로컬 tmux 세션명 정제 (gui_session_kill 과 동일 규칙).
+/// peer/portal/aoe/claude/proc prefix 는 범위 외(거부). `tmux:<name>` / bare 허용, window 부분 제거.
+fn parse_tmux_kill_target(identifier: &str) -> Result<String, (StatusCode, Json<ErrorDto>)> {
+    if identifier.starts_with("peer:")
+        || identifier.starts_with("portal:")
+        || identifier.starts_with("aoe:")
+        || identifier.starts_with("claude:")
+        || identifier.starts_with("proc:")
+    {
+        return Err(bad_request(
+            "kill 은 로컬 tmux 세션만 지원합니다 (peer/portal/aoe/claude/proc 미지원)",
+        ));
+    }
+    let name = identifier
+        .strip_prefix("tmux:")
+        .unwrap_or(identifier)
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_string();
+    Ok(name)
+}
+
+/// alias 로 ACP 세션을 fresh spawn — `gui_kb_ingest` 의 adapter/cwd 해석 + `POST /v1/acp/sessions`
+/// (`create_session`) 경로를 재사용. agent_capabilities/agent_profiles 에서 ai_type→adapter, project_path→cwd
+/// 해석. label=alias 로 키잉 → 세션 지속(find-or-create). 새 라우트 2개(restart/spawn)의 공통 헬퍼.
+async fn acp_spawn_for_alias(
+    state: &GuiServerState,
+    alias: &str,
+) -> Result<serde_json::Value, (StatusCode, Json<ErrorDto>)> {
+    use rusqlite::OptionalExtension;
+    let (ai_type, cwd, machine) = {
+        let mut db = state.db.lock().await;
+        let row = db
+            .conn()
+            .query_row(
+                "SELECT COALESCE(p.ai_type,'claude'), COALESCE(ac.project_path,''), p.machine \
+                 FROM agent_capabilities ac JOIN agent_profiles p ON p.alias=ac.alias WHERE ac.alias=?1",
+                rusqlite::params![alias],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .ok()
+            .flatten();
+        match row {
+            Some((a, c, m)) if !c.trim().is_empty() => (a, c, m),
+            Some(_) => {
+                return Err((
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(ErrorDto {
+                        error: format!("에이전트 '{alias}' cwd(project_path) 없음 — spawn 불가"),
+                    }),
+                ))
+            }
+            None => {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    Json(ErrorDto {
+                        error: format!("에이전트 '{alias}' 미등록 — spawn 불가"),
+                    }),
+                ))
+            }
+        }
+    };
+    let adapter = match ai_type.as_str() {
+        "codex" => "codex-acp",
+        "gemini" => "gemini",
+        "opencode" => "opencode",
+        _ => "claude-agent-acp",
+    };
+    crate::daemon_gui_acp::create_session(
+        &state.acp,
+        crate::daemon_gui_acp::CreateSessionBody {
+            agent: adapter.to_string(),
+            cwd,
+            mcp_servers: Vec::new(),
+            execution_mode: Some("always".to_string()),
+            permission_mode: None,
+            model: None,
+            thinking: None,
+            machine,
+            label: Some(alias.to_string()),
+        },
+    )
+    .await
+    .map_err(|(c, m)| (c, Json(ErrorDto { error: m })))
+}
+
+/// 현황 패널 [재시작] 본문 — kill 대상 alias 지정용(선택).
+#[derive(Debug, Default, Deserialize)]
+struct SessionRestartBody {
+    #[serde(default)]
+    alias: Option<String>,
+}
+
+/// `POST /v1/gui/sessions/{identifier}/restart` — refresh = 세션 재시작.
+/// 동작: ① identifier 의 로컬 tmux 세션 kill(gui_session_kill 과 동일 로직) → ② 에이전트 ACP 세션 fresh spawn.
+/// body.alias 우선, 없으면 identifier 의 tmux 세션명을 alias 로 사용.
+async fn gui_session_restart(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(identifier): Path<String>,
+    body: Option<Json<SessionRestartBody>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let name = parse_tmux_kill_target(&identifier)?;
+    // ① kill — gui_session_kill 과 동일 헬퍼(kill_tmux_session). 세션 부재 시 에러는 무시하고 spawn 진행.
+    let kill_name = name.clone();
+    let killed = tokio::task::spawn_blocking(move || {
+        crate::daemon_gui_sessions::kill_tmux_session(&kill_name)
+    })
+    .await
+    .map_err(|e| internal(&format!("spawn: {e}")))?;
+    let kill_err = killed.err();
+    // ② ACP fresh spawn — body.alias 우선, 없으면 tmux 세션명.
+    let alias = body
+        .and_then(|b| b.0.alias)
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| name.clone());
+    let create = acp_spawn_for_alias(&state, &alias).await?;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "killed": kill_err.is_none(),
+        "kill_note": kill_err,
+        "alias": alias,
+        "acp": create,
+    })))
+}
+
+/// `POST /v1/gui/agents/{alias}/spawn` — 현황 패널 [+spawn]. 에이전트 ACP 세션 fresh spawn(kill 없음).
+async fn gui_agent_spawn(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let create = acp_spawn_for_alias(&state, &alias).await?;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "alias": alias,
+        "acp": create,
     })))
 }
 
@@ -4491,6 +4645,19 @@ async fn gui_agents_list(
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     let mut db = state.db.lock().await;
+    // peers.session_identifier prefetch — 현황 패널 6컬럼(session id)용. gui_orchestration_agents 와 동일 패턴.
+    let mut sid_map: std::collections::HashMap<String, String> = Default::default();
+    if let Ok(mut stmt) = db.conn().prepare(
+        "SELECT alias, session_identifier FROM peers WHERE session_identifier IS NOT NULL AND session_identifier != ''"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        }) {
+            for row in rows.flatten() {
+                sid_map.insert(row.0, row.1);
+            }
+        }
+    }
     // Phase 2-C — agent_profiles LEFT JOIN: 명부 그룹화용 classification/execution_mode/ai_type/public.
     // 아키텍처 수정 — 로스터 = 마스터가 의도적으로 생성한 에이전트만.
     //   소스 테이블은 agent_capabilities 그대로 유지한다("에이전트 추가"(gui_agents_register)
@@ -4509,13 +4676,15 @@ async fn gui_agents_list(
                 (SELECT COUNT(*) FROM acp_messages am WHERE am.conv_key = ac.alias AND am.role='agent' \
                    AND am.created_at > COALESCE((SELECT last_read FROM acp_read WHERE conv_key = ac.alias), '')) AS unread \
          FROM agent_capabilities ac \
-         JOIN agent_profiles p ON p.alias = ac.alias \
+         LEFT JOIN agent_profiles p ON p.alias = ac.alias \
          WHERE ac.role IS NOT 'tmux' \
          ORDER BY ac.messenger_enabled DESC, ac.alias ASC",
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("prep: {e}")})))?;
     let rows = stmt.query_map([], |r| {
+        let alias = r.get::<_, String>(0)?;
         Ok(serde_json::json!({
-            "alias": r.get::<_, String>(0)?,
+            "alias": alias,
+            "session_identifier": sid_map.get(&alias),
             "role": r.get::<_, Option<String>>(1)?,
             "description": r.get::<_, Option<String>>(2)?,
             "capabilities": r.get::<_, Option<String>>(3)?,

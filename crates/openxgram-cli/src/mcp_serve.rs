@@ -338,7 +338,9 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         "execution_mode": {"type": "string", "enum": ["always", "on_demand", "heartbeat"], "description": "Phase 2: 실행모드. always=상시 / on_demand=선택 / heartbeat=깨움. 기본 on_demand."},
                         "worktree": {"type": "string", "description": "Phase 2: git worktree 경로 (선택)."},
                         "project_path": {"type": "string", "description": "에이전트 프로젝트 폴더 절대경로 (예: /home/llm/projects/starian-set). ACP 대화 cwd 로 사용 + 로스터 표시."},
-                        "group_name": {"type": "string", "description": "에이전트 그룹명 (선택, 예: 배포팀)."}
+                        "group_name": {"type": "string", "description": "에이전트 그룹명 (선택, 예: 배포팀)."},
+                        "display_name": {"type": "string", "description": "로스터 표시용 대화명 (alias 와 별개). 미지정 시 프론트가 alias 폴백. 같은 대화명의 옛 레코드는 등록 시 정리(dedup)."},
+                        "session_identifier": {"type": "string", "description": "이 에이전트의 세션 식별자 (예: tmux:<name>). peers.session_identifier 에 기록 → 현황 패널 6컬럼 표시 + 세션 종료/재시작 대상."}
                     },
                     "required": ["role"]
                 }),
@@ -1870,16 +1872,38 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 let execution_mode = args.get("execution_mode").and_then(|v| v.as_str()).unwrap_or("on_demand");
                 let worktree = args.get("worktree").and_then(|v| v.as_str());
                 let machine_p = args.get("machine").and_then(|v| v.as_str());
+                // 로스터 표시용 대화명 (agent_profiles.display_name, migration 0050). 미지정 시 기존값 유지(COALESCE).
+                let display_name = args.get("display_name").and_then(|v| v.as_str())
+                    .map(|s| s.trim()).filter(|s| !s.is_empty());
                 if !matches!(ai_type, "claude" | "codex" | "gemini") { return Err(invalid("ai_type 은 claude|codex|gemini")); }
                 if !matches!(classification, "primary" | "project" | "special") { return Err(invalid("classification 은 primary|project|special")); }
                 if !matches!(execution_mode, "always" | "on_demand" | "heartbeat") { return Err(invalid("execution_mode 은 always|on_demand|heartbeat")); }
+                // dedup-on-register — 같은 대화명을 가진 다른 alias 의 옛 레코드 제거(자기 행은 아래 UPSERT 가 갱신).
+                //   `alias <> ?` 가드로 갱신 대상 행은 보호. display_name 제공·비어있지 않을 때만 실행.
+                if let Some(dn) = display_name {
+                    let _ = self.db.conn().execute(
+                        "DELETE FROM agent_profiles WHERE display_name = ?1 AND alias <> ?2",
+                        rusqlite::params![dn, entry.alias],
+                    );
+                }
                 let _ = self.db.conn().execute(
-                    "INSERT INTO agent_profiles (alias, ai_type, classification, execution_mode, machine, worktree, is_public, created_at, updated_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?7) \
+                    "INSERT INTO agent_profiles (alias, ai_type, classification, execution_mode, machine, worktree, display_name, is_public, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?8) \
                      ON CONFLICT(alias) DO UPDATE SET ai_type=excluded.ai_type, classification=excluded.classification, \
-                       execution_mode=excluded.execution_mode, machine=excluded.machine, worktree=excluded.worktree, updated_at=excluded.updated_at",
-                    rusqlite::params![entry.alias, ai_type, classification, execution_mode, machine_p, worktree, now],
+                       execution_mode=excluded.execution_mode, machine=excluded.machine, worktree=excluded.worktree, \
+                       display_name=COALESCE(excluded.display_name, display_name), updated_at=excluded.updated_at",
+                    rusqlite::params![entry.alias, ai_type, classification, execution_mode, machine_p, worktree, display_name, now],
                 );
+                // session_identifier 영속 — peers 행이 이 alias 로 존재하면 기록(현황 패널 6컬럼 + 종료/재시작 대상).
+                //   peers 행 부재 시(transport 등록 전) silent skip — 행은 transport 등록이 생성.
+                let session_identifier = args.get("session_identifier").and_then(|v| v.as_str())
+                    .map(|s| s.trim()).filter(|s| !s.is_empty());
+                if let Some(sid) = session_identifier {
+                    let _ = self.db.conn().execute(
+                        "UPDATE peers SET session_identifier = ?1 WHERE alias = ?2",
+                        rusqlite::params![sid, entry.alias],
+                    );
+                }
                 Ok(json!({
                     "registered": true,
                     "name": entry.name,

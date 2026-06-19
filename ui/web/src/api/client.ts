@@ -180,6 +180,9 @@ const ROUTES: Record<string, Route> = {
  session_input: { method: "POST", path: "/sessions/{identifier}/input", body: true},
  // rc.338 — 현황 탭 tmux 세션 종료(파괴적). 로컬 tmux 만, 데몬이 존재 검증 + injection 방지.
  session_kill: { method: "POST", path: "/sessions/{identifier}/kill", body: true},
+ // list-peer 로스터 액션 (현황 탭) — 재시작=kill+ACP 재생성, spawn=ACP 생성.
+ session_restart: { method: "POST", path: "/sessions/{identifier}/restart", body: true},
+ agent_spawn: { method: "POST", path: "/agents/{alias}/spawn", body: true},
  session_aliases: { method: "GET", path: "/sessions/aliases"},
  memory_l0_list: { method: "GET", path: "/memory/l0"},
  memory_l0_save: { method: "POST", path: "/memory/l0", body: true},
