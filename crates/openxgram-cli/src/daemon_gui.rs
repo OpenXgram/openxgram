@@ -3956,7 +3956,7 @@ async fn gui_wiki_ingest(
             .filter_map(|x| x.ok()).collect();
         (ai_type, cwd, ts.join(", "))
     };
-    let adapter = match ai_type.as_str() { "codex" => "codex-acp", "gemini" => "gemini", _ => "claude-agent-acp" };
+    let adapter = match ai_type.as_str() { "codex" => "codex-acp", "gemini" => "gemini", "opencode" => "opencode", _ => "claude-agent-acp" };
     let prompt = format!(
         "너는 OpenXgram 위키 편집자다. 아래 소스를 위키 페이지로 정리해라.\n\
          기존 페이지 제목(관련되면 [[제목]]으로 연결): {titles}\n\
@@ -4471,6 +4471,8 @@ struct AgentRegisterBody {
     #[serde(default)] machine: Option<String>,
     #[serde(default)] worktree: Option<String>,
     #[serde(default)] is_public: Option<bool>,
+    // rc.341 — 권한 모드 (acceptEdits|bypassPermissions|plan). 생성 시 에이전트 기본 perm_mode.
+    #[serde(default)] perm_mode: Option<String>,
     // rc.321 — 친구 단위 정책 (classification="friend" 일 때만 의미 있음).
     #[serde(default)] friend_permission: Option<String>,
     #[serde(default)] friend_isolated: Option<bool>,
@@ -4916,6 +4918,16 @@ async fn gui_agents_register(
         body.friend_isolated,
         body.friend_cost_tracked,
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{error: format!("profiles upsert: {e}")})))?;
+
+    // rc.341 — 생성 시 권한 모드 설정 (별도 컬럼 UPDATE; upsert_agent_profile 시그니처 불변 유지).
+    if let Some(pm) = body.perm_mode.as_deref().filter(|s| !s.is_empty()) {
+        if matches!(pm, "acceptEdits" | "bypassPermissions" | "plan") {
+            let _ = db.conn().execute(
+                "UPDATE agent_profiles SET perm_mode=?2, updated_at=?3 WHERE alias=?1",
+                rusqlite::params![body.alias, pm, now],
+            );
+        }
+    }
 
     // rc.192 본질 fix — UI 토글 messenger_enabled=true 시 sub-keypair + peer entry 자동 생성.
     // 이전엔 messenger_enabled flag 만 set 되어 UI MSG 태그 거짓 표시였음.
@@ -6187,8 +6199,8 @@ async fn gui_agents_instructions_save(
 fn validate_profile_enums(
     ai_type: &str, classification: &str, execution_mode: &str,
 ) -> Result<(), String> {
-    if !matches!(ai_type, "claude" | "codex" | "gemini") {
-        return Err(format!("ai_type 는 claude|codex|gemini (받음: {ai_type})"));
+    if !matches!(ai_type, "claude" | "codex" | "gemini" | "opencode") {
+        return Err(format!("ai_type 는 claude|codex|gemini|opencode (받음: {ai_type})"));
     }
     if !matches!(classification, "primary" | "project" | "special") {
         return Err(format!("classification 은 primary|project|special (받음: {classification})"));
@@ -7936,7 +7948,7 @@ async fn heartbeat_wake(state: &GuiServerState) {
         it.filter_map(|x| x.ok()).filter(|(_, _, c)| !c.trim().is_empty()).collect()
     };
     for (alias, ai_type, cwd) in agents {
-        let adapter = match ai_type.as_str() { "codex" => "codex-acp", "gemini" => "gemini", _ => "claude-agent-acp" };
+        let adapter = match ai_type.as_str() { "codex" => "codex-acp", "gemini" => "gemini", "opencode" => "opencode", _ => "claude-agent-acp" };
         let create = match crate::daemon_gui_acp::create_session(&state.acp, crate::daemon_gui_acp::CreateSessionBody {
             agent: adapter.to_string(), cwd, mcp_servers: Vec::new(),
             execution_mode: Some("always".to_string()), permission_mode: Some("bypassPermissions".to_string()),
@@ -9388,7 +9400,7 @@ async fn gui_workflow_plan(
             .filter_map(|x| x.ok()).collect();
         (ai_type, cwd, rl.join(", "))
     };
-    let adapter = match ai_type.as_str() { "codex" => "codex-acp", "gemini" => "gemini", _ => "claude-agent-acp" };
+    let adapter = match ai_type.as_str() { "codex" => "codex-acp", "gemini" => "gemini", "opencode" => "opencode", _ => "claude-agent-acp" };
     let prompt = format!(
         "너는 OpenXgram 워크플로우 플래너다. 아래 목표를 달성할 워크플로우를 설계해라.\n\
          보유 에이전트(steps.agent 에는 이들 alias 또는 새로 고용할 alias 사용): {roster}\n\

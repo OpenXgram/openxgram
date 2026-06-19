@@ -1,5 +1,5 @@
 import { createSignal, createResource, Show, For } from "solid-js";
-import { invoke } from "@/api/client";
+import { invoke, acpFetch } from "@/api/client";
 
 // fs/tree 노드 — 디렉토리 트리 선택용.
 type FsNode = { name: string; path: string; is_dir?: boolean; children?: FsNode[] };
@@ -63,6 +63,12 @@ const AI_TYPES: { v: string; label: string }[] = [
   { v: "claude", label: "claude" },
   { v: "codex", label: "codex" },
   { v: "gemini", label: "gemini" },
+  { v: "opencode", label: "opencode" },
+];
+const PERM_OPTS = [
+  { v: "acceptEdits", label: "기본 (acceptEdits)" },
+  { v: "bypassPermissions", label: "모든 권한 (Bypass)" },
+  { v: "plan", label: "계획만 (plan)" },
 ];
 const CLASS_OPTS = [
   { v: "project", label: "📁 프로젝트 에이전트" },
@@ -98,6 +104,20 @@ export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: s
   const [execMode, setExecMode] = createSignal("on_demand"); // always | on_demand | heartbeat
   const [worktree, setWorktree] = createSignal(false);
   const [isPublic, setIsPublic] = createSignal(false);
+  const [permMode, setPermMode] = createSignal("acceptEdits"); // acceptEdits | bypassPermissions | plan
+  // ACP 어댑터 설치 상태 — ai_type 옵션에 ✓ 설치됨 / 미설치 표시.
+  const [acpInstalled] = createResource<Record<string, boolean>>(
+    async () => {
+      try {
+        const r = await acpFetch<{ agents?: { name: string; installed: boolean }[] }>("GET", "/agents");
+        const map: Record<string, boolean> = {};
+        for (const a of r?.agents || []) map[a.name] = a.installed;
+        // adapter 이름 → ai_type 매핑
+        return { claude: map["claude-agent-acp"] ?? false, codex: map["codex-acp"] ?? false, gemini: map["gemini"] ?? false, opencode: map["opencode"] ?? false };
+      } catch { return {}; }
+    },
+    { initialValue: {} },
+  );
   const [busy, setBusy] = createSignal(false);
   const [err, setErr] = createSignal<string | null>(null);
 
@@ -178,6 +198,7 @@ export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: s
         machine: machine(),
         worktree: worktree() ? folder().trim() || null : null,
         is_public: isPublic(),
+        perm_mode: permMode(),
       });
       props.onCreated(name);
     } catch (e) {
@@ -202,8 +223,11 @@ export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: s
           <div class="fld">
             <label>3 · AI 종류</label>
             <select class="ctl" value={aiType()} onChange={(e) => setAiType(e.currentTarget.value)}>
-              {AI_TYPES.map((t) => <option value={t.v}>{t.label}</option>)}
+              {AI_TYPES.map((t) => <option value={t.v}>{t.label}{acpInstalled()[t.v] === false ? " · 미설치" : " ✓"}</option>)}
             </select>
+            <Show when={acpInstalled()[aiType()] === false}>
+              <div style="font-size:11px; color:#d29922; margin-top:3px;">⚠ 이 어댑터는 미설치 — 선택해도 ACP 구동이 안 됩니다 (설치 필요).</div>
+            </Show>
           </div>
         </div>
 
@@ -294,6 +318,14 @@ export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: s
               <div class={`s${isPublic() ? " on" : ""}`} onClick={() => setIsPublic(true)}>공개 →</div>
             </div>
           </div>
+        </div>
+
+        <div class="fld">
+          <label>9 · 권한 (기본 perm_mode)</label>
+          <select class="ctl" value={permMode()} onChange={(e) => setPermMode(e.currentTarget.value)}>
+            {PERM_OPTS.map((p) => <option value={p.v}>{p.label}</option>)}
+          </select>
+          <div style="font-size:11px; color:var(--kk-sub,#8a929b); margin-top:3px;">Bypass=모든 권한(도구 무확인) · acceptEdits=편집 자동수락(기본) · plan=계획만(실행 안 함)</div>
         </div>
 
         <Show when={err()}>
