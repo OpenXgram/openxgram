@@ -75,3 +75,26 @@ fn test_reconcile_groups_by_session_then_address() {
         .unwrap();
     assert_eq!(status, "quarantined");
 }
+
+#[test]
+fn test_groups_and_set_primary() {
+    let tmp = TempDir::new().unwrap();
+    let mut db = fresh_db(&tmp);
+    insert_peer(&mut db, "star", Some("0xAAA"), Some("aoe_star_549029"), "primary");
+    insert_peer(&mut db, "starian", Some("0xBBB"), Some("aoe_star_549029"), "worker");
+
+    let mut store = IdentityStore::new(&mut db);
+    store.reconcile("2026-06-20T00:00:00+09:00").unwrap();
+
+    let groups = store.groups().unwrap();
+    let g = groups.iter().find(|g| g.canonical_address == "0xAAA").unwrap();
+    assert_eq!(g.primary_alias.as_deref(), Some("star"));
+    assert!(g.aliases.contains(&"star".to_string()));
+    assert!(g.aliases.contains(&"starian".to_string()));
+    assert!(!g.quarantined);
+
+    store.set_primary_alias("0xAAA", "starian").unwrap();
+    let groups2 = store.groups().unwrap();
+    let g2 = groups2.iter().find(|g| g.canonical_address == "0xAAA").unwrap();
+    assert_eq!(g2.primary_alias.as_deref(), Some("starian"));
+}

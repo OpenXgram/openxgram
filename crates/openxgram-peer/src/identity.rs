@@ -1,4 +1,4 @@
-use crate::Result;
+use crate::{PeerError, Result};
 use openxgram_db::Db;
 
 /// 정본 신원 매핑 저장소. PeerStore 패턴 미러 (`db: &mut Db`).
@@ -105,6 +105,59 @@ impl<'a> IdentityStore<'a> {
             self.upsert_alias(&rows[i].alias, &canon, false, "quarantined", now_rfc3339)?;
         }
 
+        Ok(())
+    }
+
+    /// 정본 주소별 그룹 목록 (현황 그리드 P2 용).
+    pub fn groups(&mut self) -> Result<Vec<CanonicalGroup>> {
+        let mut stmt = self.db.conn().prepare(
+            "SELECT canonical_address, alias, is_primary_alias, status
+             FROM identity_aliases ORDER BY canonical_address, alias",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)? != 0,
+                r.get::<_, String>(3)?,
+            ))
+        })?;
+        use std::collections::BTreeMap;
+        let mut map: BTreeMap<String, CanonicalGroup> = BTreeMap::new();
+        for row in rows {
+            let (canon, alias, is_primary, status) = row?;
+            let g = map.entry(canon.clone()).or_insert_with(|| CanonicalGroup {
+                canonical_address: canon.clone(),
+                primary_alias: None,
+                aliases: Vec::new(),
+                quarantined: false,
+            });
+            if is_primary {
+                g.primary_alias = Some(alias.clone());
+            }
+            if status == "quarantined" {
+                g.quarantined = true;
+            }
+            g.aliases.push(alias);
+        }
+        Ok(map.into_values().collect())
+    }
+
+    /// 정본 alias 재지정: 그룹 내 다른 행의 primary 해제 후 지정 alias 를 primary 로.
+    pub fn set_primary_alias(&mut self, canonical_address: &str, alias: &str) -> Result<()> {
+        self.db.conn().execute(
+            "UPDATE identity_aliases SET is_primary_alias = 0 WHERE canonical_address = ?1",
+            [canonical_address],
+        )?;
+        let affected = self.db.conn().execute(
+            "UPDATE identity_aliases SET is_primary_alias = 1 WHERE canonical_address = ?1 AND alias = ?2",
+            rusqlite::params![canonical_address, alias],
+        )?;
+        if affected != 1 {
+            return Err(PeerError::NotFound(format!(
+                "alias '{alias}' 가 정본 '{canonical_address}' 그룹에 없음"
+            )));
+        }
         Ok(())
     }
 
