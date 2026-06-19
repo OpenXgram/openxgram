@@ -362,6 +362,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "peer_dedicated_fields",
         sql: include_str!("../migrations/0064_peer_dedicated_fields.sql"),
     },
+    Migration {
+        version: 65,
+        name: "identity_aliases",
+        sql: include_str!("../migrations/0065_identity_aliases.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

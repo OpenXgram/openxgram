@@ -113,3 +113,23 @@ fn test_sqlite_vec_loaded() {
         .expect("sqlite-vec must be loaded");
     assert!(!version.is_empty());
 }
+
+#[test]
+fn test_identity_aliases_table_created() {
+    let tmp = TempDir::new().unwrap();
+    let cfg = DbConfig {
+        path: tmp.path().join("db.sqlite"),
+        ..Default::default()
+    };
+    let mut db = Db::open(cfg).unwrap();
+    db.migrate().unwrap();
+    let name: String = db
+        .conn()
+        .query_row(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='identity_aliases'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(name, "identity_aliases");
+}
