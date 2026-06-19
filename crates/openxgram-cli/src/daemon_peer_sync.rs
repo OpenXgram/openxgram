@@ -261,6 +261,28 @@ pub fn reachable_remote_peers(data_dir: &Path) -> anyhow::Result<Vec<RemotePeer>
                     _ => return None,
                 }
             }
+            // rc.344 — 오등록 원격 에이전트 가드. agent_capabilities 에 row 가 있어
+            // is_local_acp_agent 로 잡혔더라도, 이미 self 와 **다른 reachable 주소**를 광고
+            // 중이면 실제로는 원격 머신 에이전트(이 데몬 DB 에 오등록된 peer, 예: zalman)다.
+            // self 머신 주소로 덮어쓰지 말고 재광고에서 제외한다 — 그 머신이 자기를 광고하게 둔다.
+            // 안 그러면 seoul 이 zalman 을 자기 주소로 광고 → 자기-pull 로 재흡수 → 영영 self 주소로
+            // 고정되어 cross-machine A2A 라우팅이 404("unknown agent")로 떨어진다(sidecar peer-lookup 404).
+            // 현재 모든 peer 주소가 self 와 같으면 이 가드는 no-op(동작 변화 없음).
+            if is_local_acp_agent {
+                if let Some(self_addr) = self_machine_addr.as_deref() {
+                    let pa = p.address.trim_end_matches('/');
+                    let sa = self_addr.trim_end_matches('/');
+                    if !is_unreachable_address(&p.address) && !pa.eq_ignore_ascii_case(sa) {
+                        tracing::warn!(
+                            alias = %p.alias,
+                            addr = %p.address,
+                            self_addr = %self_addr,
+                            "peer-sync skip — local_acp 등록됐으나 self 와 다른 reachable 주소 광고(원격 오등록 추정 → 소유권 그 머신에 양보)"
+                        );
+                        return None;
+                    }
+                }
+            }
             // ACP 에이전트는 머신 데몬 주소로 광고(있으면). 그래야 envelope 가 머신 데몬에 도달.
             let address = if is_local_acp_agent {
                 self_machine_addr.clone().unwrap_or_else(|| p.address.clone())
