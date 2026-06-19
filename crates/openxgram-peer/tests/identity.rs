@@ -98,3 +98,22 @@ fn test_groups_and_set_primary() {
     let g2 = groups2.iter().find(|g| g.canonical_address == "0xAAA").unwrap();
     assert_eq!(g2.primary_alias.as_deref(), Some("starian"));
 }
+
+#[test]
+fn test_set_primary_missing_alias_preserves_existing() {
+    let tmp = TempDir::new().unwrap();
+    let mut db = fresh_db(&tmp);
+    insert_peer(&mut db, "star", Some("0xAAA"), Some("aoe_star_549029"), "primary");
+    insert_peer(&mut db, "starian", Some("0xBBB"), Some("aoe_star_549029"), "worker");
+
+    let mut store = IdentityStore::new(&mut db);
+    store.reconcile("2026-06-20T00:00:00+09:00").unwrap();
+
+    // 존재하지 않는 alias 로 호출 → NotFound, 기존 primary(star) 보존 (그룹이 primary 없는 상태가 되면 안 됨)
+    let err = store.set_primary_alias("0xAAA", "ghost").unwrap_err();
+    assert!(matches!(err, openxgram_peer::PeerError::NotFound(_)));
+
+    let groups = store.groups().unwrap();
+    let g = groups.iter().find(|g| g.canonical_address == "0xAAA").unwrap();
+    assert_eq!(g.primary_alias.as_deref(), Some("star"));
+}

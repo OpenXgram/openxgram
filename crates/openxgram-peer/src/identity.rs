@@ -144,20 +144,27 @@ impl<'a> IdentityStore<'a> {
     }
 
     /// 정본 alias 재지정: 그룹 내 다른 행의 primary 해제 후 지정 alias 를 primary 로.
+    /// 대상 alias 가 그룹에 없으면 아무것도 변경하지 않고 NotFound 반환(기존 primary 보존).
     pub fn set_primary_alias(&mut self, canonical_address: &str, alias: &str) -> Result<()> {
-        self.db.conn().execute(
-            "UPDATE identity_aliases SET is_primary_alias = 0 WHERE canonical_address = ?1",
-            [canonical_address],
-        )?;
-        let affected = self.db.conn().execute(
-            "UPDATE identity_aliases SET is_primary_alias = 1 WHERE canonical_address = ?1 AND alias = ?2",
+        // 존재 확인을 먼저 — 그래야 없는 alias 호출 시 기존 primary 를 날리지 않는다.
+        let exists: bool = self.db.conn().query_row(
+            "SELECT COUNT(*) FROM identity_aliases WHERE canonical_address = ?1 AND alias = ?2",
             rusqlite::params![canonical_address, alias],
-        )?;
-        if affected != 1 {
+            |r| r.get::<_, i64>(0),
+        )? > 0;
+        if !exists {
             return Err(PeerError::NotFound(format!(
                 "alias '{alias}' 가 정본 '{canonical_address}' 그룹에 없음"
             )));
         }
+        self.db.conn().execute(
+            "UPDATE identity_aliases SET is_primary_alias = 0 WHERE canonical_address = ?1",
+            [canonical_address],
+        )?;
+        self.db.conn().execute(
+            "UPDATE identity_aliases SET is_primary_alias = 1 WHERE canonical_address = ?1 AND alias = ?2",
+            rusqlite::params![canonical_address, alias],
+        )?;
         Ok(())
     }
 
