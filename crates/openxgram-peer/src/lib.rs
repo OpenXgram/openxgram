@@ -6,7 +6,10 @@
 //! Phase 2 baseline: CRUD + last_seen 갱신. 실제 push/pull 흐름은 transport 통합 PR.
 
 mod identity;
-pub use identity::{CanonicalGroup, IdentityStore};
+pub use identity::{
+    norm_sid, normalize_machine, AgentInput, CanonicalGroup, IdentityStore, PeerInput, RosterEntry,
+    SessionInput,
+};
 
 use chrono::{DateTime, FixedOffset};
 use openxgram_core::time::kst_now;

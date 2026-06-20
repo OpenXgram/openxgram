@@ -342,6 +342,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/agent/{alias}/profile", get(gui_agent_profile_get).post(gui_agent_profile_set))
         // 메신저 v1.3 §3.2 — 머신×세션 통합 detector (M-1).
         .route("/v1/gui/sessions", get(gui_sessions))
+        // P2 — 정본 통합 로스터: peers/agent_profiles/세션 detector 를 한 eth 신원당 1행으로 병합.
+        .route("/v1/gui/roster", get(gui_roster))
         .route("/v1/gui/sessions/{identifier}/screen", get(gui_session_screen))
         // rc.239 (이슈 #66) — cross-machine tmux 화면 read-only 미러.
         //   unlock 불필요 (auth X) — keystore password 불일치/M-8 lockout 제거.
@@ -1711,6 +1713,95 @@ async fn gui_sessions(
     // 로컬+원격(peer merge) 모두에서 claude_project 카드 제거 — 단일 방어선.
     dto.sessions.retain(|s| s.kind != crate::daemon_gui_sessions::SessionKind::ClaudeProject);
     Ok(Json(dto))
+}
+
+/// 통합 로스터 한 행 — `RosterEntry`(openxgram-peer)의 JSON 투영(snake_case 고정).
+/// 프론트(KakaoShell 현황 그리드)가 이 필드명에 의존하므로 안정적으로 유지.
+#[derive(serde::Serialize)]
+struct RosterEntryDto {
+    canonical_address: Option<String>,
+    primary_alias: String,
+    display_name: Option<String>,
+    role: Option<String>,
+    machine: Option<String>,
+    cwd: Option<String>,
+    session_identifier: Option<String>,
+    aliases: Vec<String>,
+    is_peer: bool,
+    has_agent: bool,
+    has_tmux: bool,
+    quarantined: bool,
+}
+
+impl From<openxgram_peer::RosterEntry> for RosterEntryDto {
+    fn from(e: openxgram_peer::RosterEntry) -> Self {
+        RosterEntryDto {
+            canonical_address: e.canonical_address,
+            primary_alias: e.primary_alias,
+            display_name: e.display_name,
+            role: e.role,
+            machine: e.machine,
+            cwd: e.cwd,
+            session_identifier: e.session_identifier,
+            aliases: e.aliases,
+            is_peer: e.is_peer,
+            has_agent: e.has_agent,
+            has_tmux: e.has_tmux,
+            quarantined: e.quarantined,
+        }
+    }
+}
+
+/// `GET /v1/gui/roster` — 정본 통합 로스터 (peers + agent_profiles + 세션 detector).
+/// 세션은 `gui_sessions` 와 동일 경로(`collect_sessions`)로 수집 후 `SessionInput` 으로 투영.
+/// 로컬 머신 alias 는 `this_machine_alias()`(XGRAM_MACHINE_ALIAS env 우선) 재사용.
+async fn gui_roster(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<RosterEntryDto>>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    // gui_sessions 와 동일하게 blocking pool 에서 로컬 세션 수집.
+    let dto = tokio::task::spawn_blocking(crate::daemon_gui_sessions::collect_sessions)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorDto {
+                    error: format!("collect: {e}"),
+                }),
+            )
+        })?;
+    // tmux 세션만 로스터 입력으로(claude_project 제외 — gui_sessions 와 동일 룰).
+    let sessions: Vec<openxgram_peer::SessionInput> = dto
+        .sessions
+        .into_iter()
+        .filter(|s| s.kind != crate::daemon_gui_sessions::SessionKind::ClaudeProject)
+        .map(|s| openxgram_peer::SessionInput {
+            session_identifier: s.identifier,
+            display_name: Some(s.display),
+            cwd: s.cwd,
+        })
+        .collect();
+
+    let local_alias = this_machine_alias();
+
+    let mut db = state.db.lock().await;
+    let entries = {
+        use openxgram_peer::IdentityStore;
+        let mut ident = IdentityStore::new(&mut db);
+        ident.roster(&sessions, &local_alias).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorDto {
+                    error: format!("roster: {e}"),
+                }),
+            )
+        })?
+    };
+    drop(db);
+
+    let out: Vec<RosterEntryDto> = entries.into_iter().map(RosterEntryDto::from).collect();
+    Ok(Json(out))
 }
 
 /// `GET /v1/gui/sessions/{identifier}/screen` — 세션 라이브 출력 (UI-MESSENGER-SPEC §4.3 S5).
