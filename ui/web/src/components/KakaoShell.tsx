@@ -252,6 +252,13 @@ export function KakaoShell(props: { onLogout?: () => void }) {
     return m;
   });
 
+  // 이 머신 라벨 — sessions().machine 우선, 폴백 "이 머신".
+  //   ⚠️ unifiedRows(아래 createMemo)가 즉시평가 시 이를 호출하므로 *반드시 그 위*에 선언.
+  //   (이전엔 786행에 있어 const TDZ → "Cannot access before initialization" 마운트 크래시.)
+  const localMachineName = createMemo(() =>
+    sessions()?.machine?.alias || sessions()?.machine?.hostname || "이 머신",
+  );
+
   // ── rc P2 현황 그리드 — peers + (peer 로 안 잡힌) 모든 tmux 세션 병합 ──────────────
   //   peers() = 정본 신원(canonical_address/name·quarantined 포함, Task1 백엔드).
   //   거기에 어느 peer 의 session_identifier 와도 안 묶인 tmux 세션을 standalone 행으로 합쳐
@@ -783,9 +790,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
   //   요청(마스터): "매 머신에 있는 TMUX·ACP 의 기스트 + TMUX 종료". 깔끔한 목록(표 X).
   //   재사용: sessions()(tmux, machine 포함) + agents()(등록 ACP 에이전트=대화 신원).
   //   머신 그룹핑은 로스터와 동일 로직(isLocalMachine / 머신 라벨). 현재 실세션은 이 머신만.
-  const localMachineName = createMemo(() =>
-    sessions()?.machine?.alias || sessions()?.machine?.hostname || "이 머신",
-  );
+  //   (localMachineName 정의는 unifiedRows 위로 이동 — createMemo 즉시평가 TDZ 회피. 아래 참조.)
   // (통합 데이터그리드가 localTmuxSessions·acpByMachine 를 흡수 — unifiedRows/sortedRows 참조)
   // tmux 세션 종료 — confirm → POST kill → 성공 시 sessions refetch. (대화 곁뷰 tmux 패널에서 사용)
   const [killing, setKilling] = createSignal<string | null>(null);
