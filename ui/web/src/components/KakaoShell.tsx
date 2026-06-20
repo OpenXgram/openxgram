@@ -964,9 +964,16 @@ export function KakaoShell(props: { onLogout?: () => void }) {
     } finally { setActing(null); }
   }
   // (editPeerName·editPeerRole 의 prompt 방식 → 통합 그리드 셀 인라인 편집 commitInlineEdit 로 대체)
-  function openPeerWindow(p: PeerDto) {
-    const url = `${location.origin}${location.pathname}?peer=${encodeURIComponent(p.alias)}`;
-    const w = window.open("", `oxgpeer_${p.alias}`, "width=820,height=620");
+  // 그리드 행 "새창" — 행마다 그 행 신원에 스코프된 팝업을 연다.
+  //   App.tsx 가 실제 소비하는 파라미터만 사용(?peer= 는 무시됨 → 같은 풀 GUI 가 뜨던 버그).
+  //   세션(sid) 있으면 tmux 라이브 팝업(?tmux=identifier&label), 없으면 대화 팝업(?chat=alias).
+  //   창 이름을 행별 고유(oxg_<alias>)로 만들어 서로 다른 행이 서로 다른 창을 갖게 한다.
+  function openPeerWindow(r: { alias: string; sid?: string | null; name?: string | null }) {
+    const display = r.name || r.alias;
+    const url = r.sid
+      ? `${location.origin}${location.pathname}?tmux=${encodeURIComponent(r.sid)}&label=${encodeURIComponent(display)}`
+      : `${location.origin}${location.pathname}?chat=${encodeURIComponent(r.alias)}`;
+    const w = window.open("", `oxg_${r.alias}`, "width=820,height=620");
     if (!w) { location.href = url; return; }
     w.location.href = url;
     try { window.focus(); } catch { /* noop */ }
@@ -1371,7 +1378,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                   {/* 액션 — 모든 행 동일 4버튼(능력별 활성/비활성). 슬롯 고정 → 컬럼 세로 정렬. */}
                   <span class="dg-acts">
                     {/* 새창 — 항상 가능(순수 프론트) */}
-                    <button class="killbtn" style="color:#37424d" title="새 창에서 열기" disabled={acting() === r.alias} onClick={() => openPeerWindow({ alias: r.alias } as PeerDto)}>🗗 새창</button>
+                    <button class="killbtn" style="color:#37424d" title={r.sid ? "새 창 — tmux 라이브" : "새 창 — 대화"} disabled={acting() === r.alias} onClick={() => openPeerWindow({ alias: r.alias, sid: r.sid, name: r.name })}>🗗 새창</button>
                     {/* 종료 — 활성 세션(sid) 있을 때만 */}
                     <button class="killbtn" style="color:#e5484d" title={r.sid ? "세션 종료" : "활성 세션 없음"} disabled={acting() === r.alias || !r.sid} onClick={() => killAgent({ alias: r.alias, session_identifier: r.sid } as any)}>🗑 종료</button>
                     {/* 재시작 — 활성 세션(sid) 있을 때만(kill+재spawn / ACP 재생성) */}
