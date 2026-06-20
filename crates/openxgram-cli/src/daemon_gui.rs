@@ -10870,7 +10870,7 @@ async fn gui_peer_set_name(
     }
     // 전파 (오프라인이면 실패해도 로컬 갱신은 유지 — best-effort).
     let propagated = match openxgram_core::env::require_password() {
-        Ok(pw) => crate::identity_propagate::send_identity_update(
+        Ok(pw) => match crate::identity_propagate::send_identity_update(
             state.data_dir.as_path(),
             &alias,
             Some(&name),
@@ -10878,8 +10878,17 @@ async fn gui_peer_set_name(
             &pw,
         )
         .await
-        .is_ok(),
-        Err(_) => false,
+        {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!(alias = %alias, error = %e, "identity_update 전파 실패 (로컬 갱신은 유지)");
+                false
+            }
+        },
+        Err(_) => {
+            tracing::debug!(alias = %alias, "identity_update 전파 보류 — keystore 비번 부재");
+            false
+        }
     };
     Ok(Json(serde_json::json!({ "ok": true, "propagated": propagated })))
 }
@@ -10913,7 +10922,7 @@ async fn gui_peer_set_role(
             .ok();
     }
     let propagated = match openxgram_core::env::require_password() {
-        Ok(pw) => crate::identity_propagate::send_identity_update(
+        Ok(pw) => match crate::identity_propagate::send_identity_update(
             state.data_dir.as_path(),
             &alias,
             None,
@@ -10921,8 +10930,17 @@ async fn gui_peer_set_role(
             &pw,
         )
         .await
-        .is_ok(),
-        Err(_) => false,
+        {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!(alias = %alias, error = %e, "identity_update 전파 실패 (로컬 갱신은 유지)");
+                false
+            }
+        },
+        Err(_) => {
+            tracing::debug!(alias = %alias, "identity_update 전파 보류 — keystore 비번 부재");
+            false
+        }
     };
     Ok(Json(serde_json::json!({ "ok": true, "propagated": propagated })))
 }
