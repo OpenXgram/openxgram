@@ -276,15 +276,22 @@ export function KakaoShell(props: { onLogout?: () => void }) {
     editable: boolean;        // 이름·역할 인라인 편집 가능(peer)
     quarantined: boolean;     // standalone dimming
     peer?: PeerDto;           // peer 액션용 원본
+    hasAcp?: boolean;         // peer 행에 ACP 세션도 동시 존재(중복 병합 표시)
+    acpStatus?: string | null;// 병합된 ACP 세션 상태(active 등)
   }
   const unifiedRows = createMemo<GridRow[]>(() => {
     const localMach = localMachineName();
     const ps = (peers() ?? []) as PeerDto[];
     const knownSids = new Set(ps.map((p) => p.session_identifier).filter(Boolean) as string[]);
     const rows: GridRow[] = [];
-    // 1) peer 행 — 정본 신원, 완전 편집/액션.
+    // alias dedup — 한 논리 에이전트 = 한 행. peer 가 1차, ACP/tmux 는 같은 alias 면 병합/생략.
+    //   peerByAlias: alias(소문자) → 이미 추가된 peer GridRow(ACP 병합 표시용)
+    //   seenAlias: peer + acp 로 이미 행이 생긴 alias(소문자) — tmux/acp 중복 가드.
+    const peerByAlias = new Map<string, GridRow>();
+    const seenAlias = new Set<string>();
+    // 1) peer 행 — 정본 신원, 완전 편집/액션. (1차 — peer 가 항상 우선)
     for (const p of ps) {
-      rows.push({
+      const row: GridRow = {
         kind: "peer",
         alias: p.alias,
         name: p.display_name ?? p.alias,
@@ -297,14 +304,49 @@ export function KakaoShell(props: { onLogout?: () => void }) {
         editable: true,
         quarantined: !!p.quarantined,
         peer: p,
-      });
+      };
+      rows.push(row);
+      const key = p.alias.toLowerCase();
+      peerByAlias.set(key, row);
+      seenAlias.add(key);
     }
-    // 2) tmux 행 — 어느 peer 와도 안 묶인 standalone tmux 세션(종료/재시작/새창, 읽기성 이름).
+    // 2) acp 행 — 등록 ACP 신원(=대화 신원). 읽기 전용. 로컬/원격 머신 라벨.
+    //    같은 alias 의 peer 가 이미 있으면 새 행 대신 그 peer 행에 ACP 정보 병합(중복 방지).
+    for (const a of agents() ?? []) {
+      const key = a.alias.toLowerCase();
+      const acpActive = onlineFor(a);
+      const existingPeer = peerByAlias.get(key);
+      if (existingPeer) {
+        // peer 가 1차 — 중복 행 추가 금지. ACP 동시 보유만 표시.
+        existingPeer.hasAcp = true;
+        existingPeer.acpStatus = acpActive ? "active" : null;
+        if (!existingPeer.sid && a.session_identifier) existingPeer.sid = a.session_identifier;
+        continue;
+      }
+      if (seenAlias.has(key)) continue; // 같은 alias acp 중복(혹시) 가드
+      rows.push({
+        kind: "acp",
+        alias: a.alias,
+        name: agentName(a),
+        canonical: null,
+        machine: (a.machine ?? "").trim() || localMach,
+        sid: a.session_identifier ?? null,
+        role: a.role ?? a.ai_type ?? "ACP",
+        cwd: a.project_path ?? null,
+        status: acpActive ? "active" : null,
+        editable: false,
+        quarantined: false,
+      });
+      seenAlias.add(key);
+    }
+    // 3) tmux 행 — 어느 peer 와도 안 묶인 standalone tmux 세션(종료/재시작/새창, 읽기성 이름).
+    //    session_identifier(knownSids) 뿐 아니라 alias 도 peer/acp 와 중복이면 생략.
     const sess = (sessions()?.sessions ?? []).filter(
       (s) => s.kind === "tmux" && s.identifier.split(":").length <= 2,
     );
     for (const s of sess) {
       if (knownSids.has(s.identifier)) continue;
+      if (seenAlias.has(s.identifier.toLowerCase())) continue;
       rows.push({
         kind: "tmux",
         alias: s.identifier,
@@ -318,22 +360,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
         editable: false,
         quarantined: true,
       });
-    }
-    // 3) acp 행 — 등록 ACP 신원(=대화 신원). 읽기 전용. 로컬/원격 머신 라벨.
-    for (const a of agents() ?? []) {
-      rows.push({
-        kind: "acp",
-        alias: a.alias,
-        name: agentName(a),
-        canonical: null,
-        machine: (a.machine ?? "").trim() || localMach,
-        sid: a.session_identifier ?? null,
-        role: a.role ?? a.ai_type ?? "ACP",
-        cwd: a.project_path ?? null,
-        status: onlineFor(a) ? "active" : null,
-        editable: false,
-        quarantined: false,
-      });
+      seenAlias.add(s.identifier.toLowerCase());
     }
     return rows;
   });
@@ -1208,7 +1235,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                   {/* 머신 */}
                   <span title={r.machine}>{r.machine || "—"}</span>
                   {/* 종류 배지 */}
-                  <span class="dg-kind" style={r.kind === "peer" ? "background:#e6f0fb;color:#2c5a8f" : r.kind === "tmux" ? "background:#f0ece6;color:#8f6a2c" : "background:#eef1f4;color:#6a727c"}>{r.kind}</span>
+                  <span class="dg-kind" style={r.kind === "peer" ? "background:#e6f0fb;color:#2c5a8f" : r.kind === "tmux" ? "background:#f0ece6;color:#8f6a2c" : "background:#eef1f4;color:#6a727c"} title={r.hasAcp ? "P2P peer + ACP 세션 동시 보유" : r.kind}>{r.kind === "peer" && r.hasAcp ? "peer·acp" : r.kind}</span>
                   {/* 세션 id */}
                   <span title={r.sid ?? ""}>{r.sid ?? "—"}</span>
                   {/* 역할 — peer 면 셀 클릭 인라인 편집 */}
