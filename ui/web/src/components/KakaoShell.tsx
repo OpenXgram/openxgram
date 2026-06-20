@@ -259,6 +259,37 @@ export function KakaoShell(props: { onLogout?: () => void }) {
     sessions()?.machine?.alias || sessions()?.machine?.hostname || "이 머신",
   );
 
+  // ── STEP B 머신명 정규화 ────────────────────────────────────────────────
+  // 물리 머신은 2대(seoul·zalman)뿐인데 머신 라벨 소스가 제각각이라 같은 머신이
+  //   여러 변형으로 보인다: agents().machine=손입력 자유텍스트("서울","seoul",
+  //   "server-seoul.c.teeup-492907.internal","잘만",null), peer/세션 행은
+  //   localMachineName()="server-seoul.c.teeup-492907.internal".
+  //   → 한 물리 머신을 단 하나의 정본 표시명으로 접는 순수 표시 계층.
+  //   규칙: lowercase+trim → seoul/서울 ⇒ "seoul" · zalman/잘만 ⇒ "zalman" ·
+  //         FQDN(점 포함)은 첫 세그먼트만 취하고 선행 "server-" 제거 후 재판정 ·
+  //         빈값/null ⇒ 로컬 머신 정본(이 데몬=seoul = norm(localMachineName())) ·
+  //         그 외(미래 3번째 머신 등) ⇒ 정리된 첫 세그먼트(크래시 X, 깔끔한 토큰).
+  const canonMachine = (raw: string | null | undefined, fallback?: string): string => {
+    let s = (raw ?? "").trim().toLowerCase();
+    if (!s) return fallback !== undefined ? fallback : canonMachine(localMachineName());
+    const apply = (v: string): string | null => {
+      if (v.includes("seoul") || v.includes("서울")) return "seoul";
+      if (v.includes("zalman") || v.includes("잘만")) return "zalman";
+      return null;
+    };
+    const direct = apply(s);
+    if (direct) return direct;
+    if (s.includes(".")) {
+      const first = s.split(".")[0].replace(/^server-/, "");
+      const seg = apply(first);
+      if (seg) return seg;
+      return first || s;
+    }
+    return s.replace(/^server-/, "");
+  };
+  // 빈/null → 로컬 정본으로 폴백(no fallback arg). 셀·정렬키 양쪽에서 사용.
+  const normMachine = (raw: string | null | undefined): string => canonMachine(raw);
+
   // ── rc P2 현황 그리드 — peers + (peer 로 안 잡힌) 모든 tmux 세션 병합 ──────────────
   //   peers() = 정본 신원(canonical_address/name·quarantined 포함, Task1 백엔드).
   //   거기에 어느 peer 의 session_identifier 와도 안 묶인 tmux 세션을 standalone 행으로 합쳐
@@ -463,7 +494,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
         case "status": c = (x.status === "active" ? 0 : 1) - (y.status === "active" ? 0 : 1); break;
         case "canonical": c = cmpStr(x.canonical ?? "", y.canonical ?? ""); break;
         case "name": c = cmpStr(x.name ?? "", y.name ?? ""); break;
-        case "machine": c = cmpStr(x.machine ?? "", y.machine ?? ""); break;
+        case "machine": c = cmpStr(normMachine(x.machine), normMachine(y.machine)); break; // STEP B 정규화 값으로 정렬
         case "sid": c = cmpStr(x.sid ?? "", y.sid ?? ""); break;
         case "role": c = cmpStr(x.role ?? "", y.role ?? ""); break;
         case "cwd": c = cmpStr(x.cwd ?? "", y.cwd ?? ""); break;
@@ -1320,8 +1351,8 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                   </Show>
                   {/* 정본 주소 배지(앞6…뒤4) — peer 만 */}
                   <span style={`font-size:10.5px;font-family:ui-monospace,Menlo,monospace;color:${r.canonical ? "#5a7fb0" : "var(--muted)"};background:${r.canonical ? "#eef4fa" : "transparent"};border-radius:6px;padding:1px 6px;justify-self:start`} title={r.canonical ?? "정본 주소 없음"}>{r.canonical ? `${r.canonical.slice(0, 6)}…${r.canonical.slice(-4)}` : "—"}</span>
-                  {/* 머신 */}
-                  <span title={r.machine}>{r.machine || "—"}</span>
+                  {/* 머신 — STEP B 정규화: 변형 라벨을 물리 머신당 한 정본명으로 */}
+                  <span title={r.machine ?? normMachine(r.machine)}>{normMachine(r.machine)}</span>
                   {/* 종류 배지 — 소스 조합(peer/agent/tmux 플래그) 기준 라벨 */}
                   <span class="dg-kind" style={r.isPeer ? "background:#e6f0fb;color:#2c5a8f" : r.hasAgentRecord ? "background:#eef1f4;color:#6a727c" : "background:#f0ece6;color:#8f6a2c"} title={kindTitle(r)}>{kindLabel(r)}</span>
                   {/* 세션 id */}
