@@ -10868,29 +10868,34 @@ async fn gui_peer_set_name(
             )
             .ok();
     }
-    // 전파 (오프라인이면 실패해도 로컬 갱신은 유지 — best-effort).
-    let propagated = match openxgram_core::env::require_password() {
-        Ok(pw) => match crate::identity_propagate::send_identity_update(
-            state.data_dir.as_path(),
-            &alias,
-            Some(&name),
-            None,
-            &pw,
-        )
-        .await
-        {
-            Ok(()) => true,
-            Err(e) => {
-                tracing::warn!(alias = %alias, error = %e, "identity_update 전파 실패 (로컬 갱신은 유지)");
-                false
-            }
-        },
+    // 전파 — fire-and-forget (rc.350). 전파 채널이 타임아웃까지 블로킹하면 GUI 가 멈추므로,
+    // 로컬 갱신(위, 정본)과 분리해 백그라운드 task 로 보낸다. 응답은 즉시 반환.
+    let propagation_queued = match openxgram_core::env::require_password() {
+        Ok(pw) => {
+            let data_dir = state.data_dir.clone();
+            let alias_c = alias.clone();
+            let name_c = name.clone();
+            tokio::spawn(async move {
+                if let Err(e) = crate::identity_propagate::send_identity_update(
+                    data_dir.as_path(),
+                    &alias_c,
+                    Some(&name_c),
+                    None,
+                    &pw,
+                )
+                .await
+                {
+                    tracing::warn!(alias = %alias_c, error = %e, "identity_update 전파 실패 (로컬 갱신은 유지)");
+                }
+            });
+            true
+        }
         Err(_) => {
             tracing::debug!(alias = %alias, "identity_update 전파 보류 — keystore 비번 부재");
             false
         }
     };
-    Ok(Json(serde_json::json!({ "ok": true, "propagated": propagated })))
+    Ok(Json(serde_json::json!({ "ok": true, "propagation_queued": propagation_queued })))
 }
 
 /// `PATCH /v1/gui/peers/{alias}/role` — P2 Task 5.
@@ -10921,28 +10926,33 @@ async fn gui_peer_set_role(
             )
             .ok();
     }
-    let propagated = match openxgram_core::env::require_password() {
-        Ok(pw) => match crate::identity_propagate::send_identity_update(
-            state.data_dir.as_path(),
-            &alias,
-            None,
-            Some(&role),
-            &pw,
-        )
-        .await
-        {
-            Ok(()) => true,
-            Err(e) => {
-                tracing::warn!(alias = %alias, error = %e, "identity_update 전파 실패 (로컬 갱신은 유지)");
-                false
-            }
-        },
+    // 전파 — fire-and-forget (rc.350). UI 블로킹 방지 — 백그라운드 task 로 분리.
+    let propagation_queued = match openxgram_core::env::require_password() {
+        Ok(pw) => {
+            let data_dir = state.data_dir.clone();
+            let alias_c = alias.clone();
+            let role_c = role.clone();
+            tokio::spawn(async move {
+                if let Err(e) = crate::identity_propagate::send_identity_update(
+                    data_dir.as_path(),
+                    &alias_c,
+                    None,
+                    Some(&role_c),
+                    &pw,
+                )
+                .await
+                {
+                    tracing::warn!(alias = %alias_c, error = %e, "identity_update 전파 실패 (로컬 갱신은 유지)");
+                }
+            });
+            true
+        }
         Err(_) => {
             tracing::debug!(alias = %alias, "identity_update 전파 보류 — keystore 비번 부재");
             false
         }
     };
-    Ok(Json(serde_json::json!({ "ok": true, "propagated": propagated })))
+    Ok(Json(serde_json::json!({ "ok": true, "propagation_queued": propagation_queued })))
 }
 
 /// `GET /v1/gui/vault/pending` — vault 의 pending 승인 요청 목록.

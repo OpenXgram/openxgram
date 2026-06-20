@@ -1073,11 +1073,11 @@ fn extract_latest_changelog() -> (Option<String>, Option<String>) {
     (Some(title), Some(body))
 }
 
-// rc.135 — CARGO_PKG_VERSION 매크로가 incremental cache 로 workspace.version 변경 미반영.
-// const 직접 작성 → 파일 mtime 변경 → 강제 재컴파일 → version_info 응답 갱신 → App.tsx 의
-// 30s polling 이 cur != baseline 감지 → 업데이트 팝업 표시.
-// 매 release 마다 RELEASE_TAG 갱신 (Cargo.toml + ui/web/package.json + 본 const 3곳).
-pub const RELEASE_TAG: &str = "0.2.0-rc.233";
+// rc.350 — workspace.version(CARGO_PKG_VERSION) 단일소스로 자동 동기화.
+// 과거엔 incremental cache 우려로 const 를 직접 작성했으나, 매 release 수동 갱신이 누락돼
+// rc.234~348 동안 rc.233 에 stale 고정되는 사고가 반복됨(라이브 검증에서 발견).
+// 본 라인 변경 + version bump 시 재컴파일되어 version_info 응답이 항상 실제 버전을 반영한다.
+pub const RELEASE_TAG: &str = env!("CARGO_PKG_VERSION");
 
 pub fn version_info() -> VersionInfoDto {
     let (title, body) = extract_latest_changelog();
