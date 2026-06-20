@@ -44,7 +44,20 @@ interface AgentRow {
   execution_mode?: string | null;
   unread?: number | null;
 }
-interface PeerDto { alias: string; last_seen?: string; machine?: string; address?: string }
+interface PeerDto {
+  alias: string;
+  last_seen?: string;
+  machine?: string;
+  address?: string;
+  display_name?: string | null;
+  role?: string | null;
+  cwd?: string | null;
+  session_identifier?: string | null;
+  session_status?: string | null;
+  canonical_address?: string | null;
+  canonical_name?: string | null;
+  quarantined?: boolean;
+}
 interface MessageDto { id: string; sender: string; body: string; timestamp: string; conversation_id: string }
 
 const agentName = (a: { display_name?: string | null; alias: string }) =>
@@ -185,7 +198,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
   const [sub, setSub] = createSignal<SettingsSub>("general");
 
   const [agents, { refetch: refetchAgents, mutate: mutateAgents }] = createResource<AgentRow[]>(() => invoke("agents_list"));
-  const [peers] = createResource<PeerDto[]>(() => invoke("peers_list"), { initialValue: [] });
+  const [peers, { refetch: refetchPeers }] = createResource<PeerDto[]>(() => invoke("peers_list"), { initialValue: [] });
   const [recent] = createResource<MessageDto[]>(() => invoke("messages_recent", { limit: 100 }), { initialValue: [] });
   // 작업환경(tmux) 곁뷰 + 로컬/원격 머신 판정 데이터 소스 — sessions 라우트(이 머신 tmux+워크트리·machine 정보). 동적 only.
   const [sessions, { refetch: refetchSessions }] = createResource<SessionsDto | null>(() => invoke("sessions"), { initialValue: null });
@@ -237,6 +250,33 @@ export function KakaoShell(props: { onLogout?: () => void }) {
     const m = new Map<string, PeerDto>();
     for (const p of peers() ?? []) m.set(p.alias.toLowerCase(), p);
     return m;
+  });
+
+  // ── rc P2 현황 그리드 — peers + (peer 로 안 잡힌) 모든 tmux 세션 병합 ──────────────
+  //   peers() = 정본 신원(canonical_address/name·quarantined 포함, Task1 백엔드).
+  //   거기에 어느 peer 의 session_identifier 와도 안 묶인 tmux 세션을 standalone 행으로 합쳐
+  //   "모든 tmux 리스트업 + 전체 행 액션"(스펙) 을 만족. sessions().sessions(SessionsDto) 가
+  //   실 소스 — 이 머신 tmux. tmux root 만(window entry 제외, identifier ':' 2개 이하).
+  const gridRows = createMemo<PeerDto[]>(() => {
+    const ps = (peers() ?? []) as PeerDto[];
+    const knownSids = new Set(
+      ps.map((p) => p.session_identifier).filter(Boolean) as string[],
+    );
+    const sess = (sessions()?.sessions ?? []).filter(
+      (s) => s.kind === "tmux" && s.identifier.split(":").length <= 2,
+    );
+    const standalone: PeerDto[] = sess
+      .filter((s) => !knownSids.has(s.identifier))
+      .map((s) => ({
+        alias: s.identifier,
+        display_name: s.display ?? s.identifier,
+        session_identifier: s.identifier,
+        cwd: s.cwd ?? null,
+        session_status: s.attached ? "active" : null,
+        role: "tmux",
+        quarantined: true,
+      }));
+    return [...ps, ...standalone];
   });
   const lastMsgByAlias = createMemo(() => {
     const map = new Map<string, MessageDto>();
@@ -670,15 +710,37 @@ export function KakaoShell(props: { onLogout?: () => void }) {
       window.alert(`재시작 실패: ${(e as Error).message}`);
     } finally { setActing(null); }
   }
-  async function spawnAgent(a: AgentRow) {
-    if (!window.confirm(`이 에이전트를 spawn(새 ACP 세션 생성)하시겠습니까?\n\n${agentName(a)} (${a.alias})`)) return;
-    setActing(a.alias);
+  // ── rc P2 현황 그리드 행 액션 — 삭제(목록에서 제거) / 이름(대화명) 편집 / 새 창 ──────────
+  //   재사용: peer_delete(DELETE /peers/{alias}) · peer_set_name(PATCH /peers/{alias}/name).
+  //   동작 후 refetchPeers 로 현황 동적 갱신(정본 신원 전파).
+  async function deletePeer(p: PeerDto) {
+    if (!window.confirm(`이 항목을 목록에서 삭제하시겠습니까?\n\n${p.display_name ?? p.alias}\n\n(되돌릴 수 없습니다)`)) return;
+    setActing(p.alias);
     try {
-      await invoke("agent_spawn", { alias: a.alias });
-      await refetchAgents(); await refetchSessions();
+      await invoke("peer_delete", { alias: p.alias });
+      await refetchPeers();
     } catch (e) {
-      window.alert(`spawn 실패: ${(e as Error).message}`);
+      window.alert(`삭제 실패: ${(e as Error).message}`);
     } finally { setActing(null); }
+  }
+  async function editPeerName(p: PeerDto) {
+    const cur = p.display_name ?? p.alias;
+    const name = window.prompt("이름(대화명):", cur);
+    if (name == null || name.trim() === "" || name === cur) return;
+    setActing(p.alias);
+    try {
+      await invoke("peer_set_name", { alias: p.alias, name: name.trim() });
+      await refetchPeers();
+    } catch (e) {
+      window.alert(`이름 변경 실패: ${(e as Error).message}`);
+    } finally { setActing(null); }
+  }
+  function openPeerWindow(p: PeerDto) {
+    const url = `${location.origin}${location.pathname}?peer=${encodeURIComponent(p.alias)}`;
+    const w = window.open("", `oxgpeer_${p.alias}`, "width=820,height=620");
+    if (!w) { location.href = url; return; }
+    w.location.href = url;
+    try { window.focus(); } catch { /* noop */ }
   }
 
   function openTab(t: Tab) {
@@ -1019,27 +1081,35 @@ export function KakaoShell(props: { onLogout?: () => void }) {
           </div>
         </div>
 
-        {/* ── list-peer 로스터 — 6컬럼(대화명·alias·세션id·역할·폴더·활성) + 종료/재시작/spawn ── */}
-        <h2 style="padding-top:4px">🧩 에이전트 로스터 (list-peer)</h2>
-        <div class="sub">세션 시작 시 각 에이전트가 자기 정보를 갱신 · 종료 🗑 / 재시작 🔄 / spawn ＋ 직접 제어 (list-peer 동적 연동)</div>
+        {/* ── rc P2 현황 그리드 — peers + (peer 로 안 잡힌) 모든 tmux 병합 + 전체 행 액션 ──
+            정본 신원(canonical_address/name·quarantined) 표시 + 행마다 편집/새창/종료/재시작/삭제.
+            gridRows() = peers() + standalone tmux. ✏️/🗗 는 모든 행, 종료/재시작 은 session_identifier 보유 행만. */}
+        <div style="display:flex;align-items:center;gap:10px;padding:4px 24px 0">
+          <h2 style="padding:0">🧩 현황 그리드 (peers + tmux)</h2>
+          <button class="killbtn" style="margin:0;color:#37424d" title="peers·세션 다시 불러오기" onClick={() => { void refetchPeers(); void refetchSessions(); }}>🔄 새로고침</button>
+        </div>
+        <div class="sub">모든 peer + 미연결 tmux 를 한 목록으로 · 이름(대화명) 편집 ✏️ / 새 창 🗗 / 종료 🗑 / 재시작 🔄 / 삭제 🗑 (정본 신원 동적 연동)</div>
         <div class="mach-cards">
           <div class="mach-card" style="grid-column:1/-1">
-            <div class="seclab">에이전트 ({(agents() ?? []).length})</div>
-            <Show when={(agents() ?? []).length > 0} fallback={<div class="mach-row"><span class="empty">등록된 에이전트 없음</span></div>}>
-              <For each={agents() ?? []}>
-                {(a) => (
-                  <div class="mach-row">
-                    <span class="dot" style={`background:${onlineFor(a) ? "var(--green)" : "var(--muted)"}`} />
-                    <span class="nm">{isPrimary(a) ? "⭐ " : ""}{agentName(a)}</span>
-                    <span class="sx" title="alias">{a.alias}</span>
-                    <span class="sx" title="세션 id">{a.session_identifier || "—"}</span>
-                    <span class="meta" title="역할">{a.role || a.ai_type || "ACP"}</span>
-                    <span class="sx" title="폴더">{a.project_path || "—"}</span>
-                    <span class="meta" style={`color:${onlineFor(a) ? "var(--green)" : "var(--muted)"}`}>{onlineFor(a) ? "● 활성" : "○ 비활성"}</span>
+            <div class="seclab">행 ({gridRows().length})</div>
+            <Show when={gridRows().length > 0} fallback={<div class="mach-row"><span class="empty">표시할 peer·tmux 가 없습니다</span></div>}>
+              <For each={gridRows()}>
+                {(p) => (
+                  <div class="mach-row" style={p.quarantined ? "opacity:.78" : ""}>
+                    {/* 활성 점 — 세션 active 면 green, 아니면 muted. (.mach-row .dot 재사용) */}
+                    <span class="dot" style={`background:${p.session_status === "active" ? "var(--green)" : "var(--muted)"}`} />
+                    <span class="nm" style="flex:none;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{p.display_name ?? p.alias}</span>
+                    {/* 정본 주소 배지(앞6…뒤4) */}
+                    <span style={`flex:none;font-size:10.5px;font-family:ui-monospace,Menlo,monospace;color:${p.canonical_address ? "#5a7fb0" : "var(--muted)"};background:#eef4fa;border-radius:6px;padding:1px 6px`} title={p.canonical_address ?? "정본 주소 없음"}>{p.canonical_address ? `${p.canonical_address.slice(0, 6)}…${p.canonical_address.slice(-4)}` : "—"}</span>
+                    <span class="sx" title="세션 id">{p.session_identifier ?? "—"}</span>
+                    <span class="sx" title="역할">{p.role ?? "—"}</span>
+                    <span class="sx" title="폴더">{p.cwd ?? "—"}</span>
                     <span style="flex:1" />
-                    <button class="killbtn" title="세션 종료" disabled={acting() === a.alias || !a.session_identifier} onClick={() => killAgent(a)}>🗑 종료</button>
-                    <button class="killbtn" title="세션 재시작(kill+재spawn)" disabled={acting() === a.alias || !a.session_identifier} onClick={() => restartAgent(a)}>🔄 재시작</button>
-                    <button class="killbtn" title="ACP 세션 spawn" disabled={acting() === a.alias} onClick={() => spawnAgent(a)}>＋ spawn</button>
+                    <button class="killbtn" style="color:#37424d" title="이름(대화명) 편집" disabled={acting() === p.alias} onClick={() => editPeerName(p)}>✏️ 편집</button>
+                    <button class="killbtn" style="color:#37424d" title="새 창에서 열기" disabled={acting() === p.alias} onClick={() => openPeerWindow(p)}>🗗 새창</button>
+                    <button class="killbtn" title="세션 종료" disabled={acting() === p.alias || !p.session_identifier} onClick={() => killAgent({ alias: p.alias, session_identifier: p.session_identifier } as any)}>🗑 종료</button>
+                    <button class="killbtn" style="color:#37424d" title="세션 재시작(kill+재spawn)" disabled={acting() === p.alias || !p.session_identifier} onClick={() => restartAgent({ alias: p.alias, session_identifier: p.session_identifier } as any)}>🔄 재시작</button>
+                    <button class="killbtn" title="목록에서 삭제" disabled={acting() === p.alias} onClick={() => deletePeer(p)}>🗑 삭제</button>
                   </div>
                 )}
               </For>
