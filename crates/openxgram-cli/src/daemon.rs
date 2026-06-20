@@ -748,6 +748,67 @@ pub fn process_inbound(
             continue;
         }
 
+        // 신원 전파 수신 — envelope_type="identity_update" 면 자기 로컬 표시 이름/역할 갱신.
+        // body 는 JSON { "alias", "display_name", "role" } (변경된 필드만 Some). 제어 메시지이므로
+        // inbox 저장 / tmux inject / peer touch 모두 skip (사용자 메시지 X) → ack 분기와 동일하게 continue.
+        if env.envelope_type.as_deref() == Some("identity_update") {
+            let payload_bytes = hex::decode(&env.payload_hex).unwrap_or_default();
+            match serde_json::from_slice::<serde_json::Value>(&payload_bytes) {
+                Ok(v) => {
+                    let alias = v.get("alias").and_then(|x| x.as_str());
+                    let dn = v.get("display_name").and_then(|x| x.as_str());
+                    let role = v.get("role").and_then(|x| x.as_str());
+                    if let Some(alias) = alias {
+                        let conn = db.conn();
+                        let mut affected = 0u64;
+                        if let Some(dn) = dn {
+                            match conn.execute(
+                                "UPDATE agent_profiles SET display_name = ?1 WHERE alias = ?2",
+                                rusqlite::params![dn, alias],
+                            ) {
+                                Ok(n) => affected += n as u64,
+                                Err(e) => tracing::warn!(error = %e, alias, "identity_update agent_profiles.display_name UPDATE 실패"),
+                            }
+                            match conn.execute(
+                                "UPDATE peers SET display_name = ?1 WHERE alias = ?2",
+                                rusqlite::params![dn, alias],
+                            ) {
+                                Ok(n) => affected += n as u64,
+                                Err(e) => tracing::warn!(error = %e, alias, "identity_update peers.display_name UPDATE 실패"),
+                            }
+                        }
+                        if let Some(role) = role {
+                            match conn.execute(
+                                "UPDATE agent_capabilities SET role = ?1 WHERE alias = ?2",
+                                rusqlite::params![role, alias],
+                            ) {
+                                Ok(n) => affected += n as u64,
+                                Err(e) => tracing::warn!(error = %e, alias, "identity_update agent_capabilities.role UPDATE 실패"),
+                            }
+                            match conn.execute(
+                                "UPDATE peers SET role = ?1 WHERE alias = ?2",
+                                rusqlite::params![role, alias],
+                            ) {
+                                Ok(n) => affected += n as u64,
+                                Err(e) => tracing::warn!(error = %e, alias, "identity_update peers.role UPDATE 실패"),
+                            }
+                        }
+                        if affected > 0 {
+                            tracing::info!(alias, from = %env.from, "identity_update 수신 → display_name/role 갱신 적용");
+                        } else {
+                            tracing::warn!(alias, from = %env.from, "identity_update: alias 매칭 row 없음 (로컬 변경 없음)");
+                        }
+                    } else {
+                        tracing::warn!(from = %env.from, "identity_update 도착했으나 alias 비어있음 (skip)");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, from = %env.from, "identity_update payload JSON 파싱 실패 (skip)");
+                }
+            }
+            continue;
+        }
+
         // rc.173 — 메신저 본질: unknown peer 도 inbox 에 저장 (Telegram/카카오톡 식).
         // 단 신원 미검증 표시. 검증 정책은 sender_label prefix 로 구분 (peer: vs unverified:).
         let mut peer_opt = match PeerStore::new(&mut db).get_by_eth_address(&env.from) {
