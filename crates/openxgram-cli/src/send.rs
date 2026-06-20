@@ -67,6 +67,7 @@ async fn dispatch(
                 body,
                 &pw,
                 conversation_id,
+                None,
             )
             .await
         }

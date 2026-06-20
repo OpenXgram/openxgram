@@ -118,6 +118,7 @@ impl Adapter for PeerSendAdapter {
             &ctx.prompt,
             password,
             conversation_id.clone(),
+            None,
         )
         .await
         .with_context(|| format!("peer_send adapter: run_peer_send_with_conv 실패 (alias={target})"))?;

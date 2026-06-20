@@ -1297,7 +1297,7 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 // rc.286 — bare block_on → block_in_place (runtime-in-runtime panic 우회).
                 let p2p_result = tokio::task::block_in_place(|| {
                     handle.block_on(crate::peer_send::run_peer_send_with_conv(
-                        &data_dir, &alias, None, &body, &pw, Some(conv.clone()),
+                        &data_dir, &alias, None, &body, &pw, Some(conv.clone()), None,
                     ))
                 });
                 match p2p_result {

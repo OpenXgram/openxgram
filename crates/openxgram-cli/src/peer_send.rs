@@ -189,7 +189,7 @@ pub async fn run_peer_send(
     body: &str,
     password: &str,
 ) -> Result<()> {
-    run_peer_send_with_conv(data_dir, alias, sender, body, password, None).await
+    run_peer_send_with_conv(data_dir, alias, sender, body, password, None, None).await
 }
 
 /// rc.219 — `--wait-ack` 지원. `30s`, `60`, `500ms` 형식 파싱.
@@ -230,7 +230,7 @@ pub async fn run_peer_send_with_ack_wait(
 ) -> Result<i32> {
     let start = std::time::Instant::now();
     // 1. 일반 send — 내부에서 outbound_queue 에 ACK 추적용 row INSERT.
-    if let Err(e) = run_peer_send_with_conv(data_dir, alias, sender, body, password, None).await {
+    if let Err(e) = run_peer_send_with_conv(data_dir, alias, sender, body, password, None, None).await {
         eprintln!("✗ send 실패: {e}");
         return Ok(2);
     }
@@ -301,7 +301,7 @@ pub async fn run_peer_send_with_app_ack_wait(
 ) -> Result<i32> {
     let start = std::time::Instant::now();
     // 1. 일반 send (자동 UUID conversation_id) — record_outbound_queue_sent 가 conv 저장.
-    if let Err(e) = run_peer_send_with_conv(data_dir, alias, sender, body, password, None).await {
+    if let Err(e) = run_peer_send_with_conv(data_dir, alias, sender, body, password, None, None).await {
         eprintln!("✗ send 실패: {e}");
         return Ok(2);
     }
@@ -369,6 +369,7 @@ pub async fn run_peer_send_with_conv(
     body: &str,
     password: &str,
     conversation_id: Option<String>,
+    env_type: Option<String>,
 ) -> Result<()> {
     // rc.207 — None 이면 자동 UUID 부여. 모든 outbound envelope 가 conversation_id 보유 →
     // 수신측 inject 형식에 conv:<id> 포함 → LLM 가 자기 send 와 시각적 link (polling 무의미).
@@ -454,7 +455,7 @@ pub async fn run_peer_send_with_conv(
         sender_transport_url,
         sender_pubkey_hex,
         recipient_alias: Some(alias.to_string()),
-        envelope_type: None,
+        envelope_type: env_type,
         ack_for_ulid: None,
         ack_status: None,
     };
@@ -639,7 +640,7 @@ async fn apply_routing_rules(
                     );
                     // recursive — marker prefix 가 다음 호출의 routing 차단.
                     if let Err(e) = Box::pin(run_peer_send_with_conv(
-                        data_dir, target, None, &fwd_body, password, None,
+                        data_dir, target, None, &fwd_body, password, None, None,
                     ))
                     .await
                     {
@@ -662,7 +663,7 @@ async fn apply_routing_rules(
                         continue;
                     }
                     if let Err(e) = Box::pin(run_peer_send_with_conv(
-                        data_dir, target, None, &sum_body, password, None,
+                        data_dir, target, None, &sum_body, password, None, None,
                     ))
                     .await
                     {

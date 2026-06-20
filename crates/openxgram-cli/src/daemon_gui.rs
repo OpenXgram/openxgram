@@ -5573,6 +5573,7 @@ async fn gui_agent_request_create(
                 &envelope_body,
                 &pw,
                 None,
+                None,
             )
             .await
             {
@@ -5715,7 +5716,7 @@ async fn gui_agent_request_accept(
     let mut delivered = false;
     if let Ok(pw) = std::env::var("XGRAM_KEYSTORE_PASSWORD") {
         if !pw.is_empty() {
-            match crate::peer_send::run_peer_send_with_conv(&data_dir, &recipient, Some(&actor), &envelope_body, &pw, None).await {
+            match crate::peer_send::run_peer_send_with_conv(&data_dir, &recipient, Some(&actor), &envelope_body, &pw, None, None).await {
                 Ok(()) => delivered = true,
                 Err(e) => tracing::warn!(recipient = %recipient, error = %e, "agent_add_accept 전달 실패 (수락 자체는 영속)"),
             }
@@ -11485,6 +11486,7 @@ async fn gui_peer_send(
         &body.body,
         &pw,
         body.conversation_id.clone(),
+        None,
     )
     .await
     .map_err(|e| internal(&format!("peer_send: {e}")))?;
@@ -12821,6 +12823,7 @@ async fn try_remote_a2a_route(
         from.as_deref(),
         &prompt_text,
         &pw,
+        None,
         None,
     )
     .await

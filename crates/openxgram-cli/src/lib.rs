@@ -59,6 +59,7 @@ pub mod payment;
 pub mod payment_summary;
 pub mod peer;
 pub mod peer_send;
+pub mod identity_propagate;
 pub mod pw;
 pub mod ratchet_cron;
 pub mod reputation;
