@@ -330,6 +330,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/peers", get(gui_peers).post(gui_peer_add))
         // rc.245 — 결정적 세션 매핑 사용자 override: peer 의 터미널 세션 식별자 set/clear.
         .route("/v1/gui/peers/{alias}/session", patch(gui_peer_set_session))
+        // P2 Task 5 — 정본 신원 편집: 이름(display_name)/역할(role) PATCH + 에이전트 전파.
+        .route("/v1/gui/peers/{alias}/name", patch(gui_peer_set_name))
+        .route("/v1/gui/peers/{alias}/role", patch(gui_peer_set_role))
         .route("/v1/gui/peers/{alias}", delete(gui_peer_delete))
         // rc.229 fix#3 — on-demand 1-agent enrich (4-metadata + worktree/subagent/ex_peer tree).
         .route("/v1/gui/agent/{alias}/detail", get(gui_agent_detail))
@@ -10823,6 +10826,105 @@ async fn gui_peer_delete(
         .execute("DELETE FROM identity_aliases WHERE alias = ?1", [&alias])
         .map_err(|e| internal(&format!("alias delete: {e}")))?;
     Ok(Json(serde_json::json!({ "ok": true, "deleted": alias })))
+}
+
+#[derive(Debug, Deserialize)]
+struct PeerNameBody {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PeerRoleBody {
+    role: String,
+}
+
+/// `PATCH /v1/gui/peers/{alias}/name` — P2 Task 5.
+/// 정본 신원 편집: 이름(display_name) 로컬 갱신 + 에이전트로 전파(best-effort).
+/// 로컬 `peers` UPDATE 가 authoritative. `agent_profiles` 미러·전파는 best-effort
+/// (오프라인/비번 부재 시 실패해도 ok:true, propagated:false).
+async fn gui_peer_set_name(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+    Json(body): Json<PeerNameBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let name = body.name.trim().to_string();
+    if alias.trim().is_empty() || name.is_empty() {
+        return Err(bad_request("alias·name 필수"));
+    }
+    {
+        let mut db = state.db.lock().await;
+        db.conn()
+            .execute(
+                "UPDATE peers SET display_name = ?1 WHERE alias = ?2",
+                rusqlite::params![&name, &alias],
+            )
+            .map_err(|e| internal(&format!("name update: {e}")))?;
+        db.conn()
+            .execute(
+                "UPDATE agent_profiles SET display_name = ?1 WHERE alias = ?2",
+                rusqlite::params![&name, &alias],
+            )
+            .ok();
+    }
+    // 전파 (오프라인이면 실패해도 로컬 갱신은 유지 — best-effort).
+    let propagated = match openxgram_core::env::require_password() {
+        Ok(pw) => crate::identity_propagate::send_identity_update(
+            state.data_dir.as_path(),
+            &alias,
+            Some(&name),
+            None,
+            &pw,
+        )
+        .await
+        .is_ok(),
+        Err(_) => false,
+    };
+    Ok(Json(serde_json::json!({ "ok": true, "propagated": propagated })))
+}
+
+/// `PATCH /v1/gui/peers/{alias}/role` — P2 Task 5.
+/// 정본 신원 편집: 역할(role) 로컬 갱신 + 에이전트로 전파(best-effort).
+async fn gui_peer_set_role(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+    Json(body): Json<PeerRoleBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    let role = body.role.trim().to_string();
+    if alias.trim().is_empty() || role.is_empty() {
+        return Err(bad_request("alias·role 필수"));
+    }
+    {
+        let mut db = state.db.lock().await;
+        db.conn()
+            .execute(
+                "UPDATE peers SET role = ?1 WHERE alias = ?2",
+                rusqlite::params![&role, &alias],
+            )
+            .map_err(|e| internal(&format!("role update: {e}")))?;
+        db.conn()
+            .execute(
+                "UPDATE agent_capabilities SET role = ?1 WHERE alias = ?2",
+                rusqlite::params![&role, &alias],
+            )
+            .ok();
+    }
+    let propagated = match openxgram_core::env::require_password() {
+        Ok(pw) => crate::identity_propagate::send_identity_update(
+            state.data_dir.as_path(),
+            &alias,
+            None,
+            Some(&role),
+            &pw,
+        )
+        .await
+        .is_ok(),
+        Err(_) => false,
+    };
+    Ok(Json(serde_json::json!({ "ok": true, "propagated": propagated })))
 }
 
 /// `GET /v1/gui/vault/pending` — vault 의 pending 승인 요청 목록.
