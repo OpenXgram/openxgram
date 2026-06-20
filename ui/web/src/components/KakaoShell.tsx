@@ -280,8 +280,9 @@ export function KakaoShell(props: { onLogout?: () => void }) {
     role: string | null;
     cwd: string | null;
     status: string | null;    // active / attached / null
-    editable: boolean;        // 이름·역할 인라인 편집 가능(peer)
+    editable: boolean;        // 이름·역할 인라인 편집 가능(peer + acp — agent_profiles 신원 보유)
     quarantined: boolean;     // standalone dimming
+    hasAgentRecord: boolean;  // agents() 레코드(agent_profiles) 보유 → agents_delete 가능(acp / peer·acp)
     peer?: PeerDto;           // peer 액션용 원본
     hasAcp?: boolean;         // peer 행에 ACP 세션도 동시 존재(중복 병합 표시)
     acpStatus?: string | null;// 병합된 ACP 세션 상태(active 등)
@@ -310,6 +311,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
         status: p.session_status ?? null,
         editable: true,
         quarantined: !!p.quarantined,
+        hasAgentRecord: false, // agents() 병합 시 true 로 승격(아래 2)
         peer: p,
       };
       rows.push(row);
@@ -326,6 +328,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
       if (existingPeer) {
         // peer 가 1차 — 중복 행 추가 금지. ACP 동시 보유만 표시.
         existingPeer.hasAcp = true;
+        existingPeer.hasAgentRecord = true; // peer·acp — agents_delete 도 가능
         existingPeer.acpStatus = acpActive ? "active" : null;
         if (!existingPeer.sid && a.session_identifier) existingPeer.sid = a.session_identifier;
         continue;
@@ -341,8 +344,9 @@ export function KakaoShell(props: { onLogout?: () => void }) {
         role: a.role ?? a.ai_type ?? "ACP",
         cwd: a.project_path ?? null,
         status: acpActive ? "active" : null,
-        editable: false,
+        editable: true, // acp = agent_profiles 신원 → 이름·역할 인라인 편집 가능
         quarantined: false,
+        hasAgentRecord: true, // agents_delete 대상
       });
       seenAlias.add(key);
     }
@@ -364,8 +368,9 @@ export function KakaoShell(props: { onLogout?: () => void }) {
         role: "tmux",
         cwd: s.cwd ?? null,
         status: s.attached ? "active" : null,
-        editable: false,
+        editable: false, // 순수 tmux = 세션 id 일 뿐, agent_profiles 신원 없음
         quarantined: true,
+        hasAgentRecord: false,
       });
       seenAlias.add(s.identifier.toLowerCase());
     }
@@ -415,13 +420,15 @@ export function KakaoShell(props: { onLogout?: () => void }) {
   async function commitInlineEdit(row: GridRow, field: "name" | "role", value: string) {
     setEditing(null);
     const next = value.trim();
-    const cur = field === "name" ? (row.peer?.display_name ?? row.alias) : (row.peer?.role ?? "");
+    // 비교 기준: peer 면 원본 필드, acp 등은 표시값(row.name/role). peer_set_name/role 은
+    //   peers + agent_profiles 양쪽을 갱신하므로 acp 신원도 동일 호출로 편집된다.
+    const cur = field === "name" ? (row.peer?.display_name ?? row.name) : (row.peer?.role ?? row.role ?? "");
     if (next === "" || next === cur) return; // 빈/불변 = no-op.
     setActing(row.alias);
     try {
       await invoke(field === "name" ? "peer_set_name" : "peer_set_role",
         field === "name" ? { alias: row.alias, name: next } : { alias: row.alias, role: next });
-      await refetchPeers();
+      await refetchPeers(); await refetchAgents();
     } catch (e) {
       window.alert(`${field === "name" ? "이름" : "역할"} 변경 실패: ${(e as Error).message}`);
     } finally { setActing(null); }
@@ -849,6 +856,18 @@ export function KakaoShell(props: { onLogout?: () => void }) {
       window.alert(`삭제 실패: ${(e as Error).message}`);
     } finally { setActing(null); }
   }
+  //   acp / 에이전트 레코드(agent_profiles) 삭제 — agents_delete(POST /agents/{alias}) → gui_agents_delete.
+  //   peer 레코드 삭제(deletePeer)와 별개. 동작 후 agents·peers refetch.
+  async function deleteAgent(alias: string) {
+    if (!window.confirm(`이 에이전트(신원)를 명부에서 삭제하시겠습니까?\n\n${alias}\n\n(agent_profiles 레코드 제거 · 되돌릴 수 없습니다)`)) return;
+    setActing(alias);
+    try {
+      await invoke("agents_delete", { alias });
+      await refetchAgents(); await refetchPeers();
+    } catch (e) {
+      window.alert(`에이전트 삭제 실패: ${(e as Error).message}`);
+    } finally { setActing(null); }
+  }
   // (editPeerName·editPeerRole 의 prompt 방식 → 통합 그리드 셀 인라인 편집 commitInlineEdit 로 대체)
   function openPeerWindow(p: PeerDto) {
     const url = `${location.origin}${location.pathname}?peer=${encodeURIComponent(p.alias)}`;
@@ -1198,12 +1217,12 @@ export function KakaoShell(props: { onLogout?: () => void }) {
 
         {/* ── rc P2.5 통합 현황 데이터그리드 — peer + tmux + acp 한 정렬·인라인편집 표 ──
             컬럼 헤더 클릭 = 정렬(asc↔desc, ▲/▼). 이름·역할 셀 클릭 = 인라인 편집(peer 만).
-            peer 행 = 정본·전체 액션 · tmux 행 = 종료/재시작/새창 · acp 행 = 읽기 전용. */}
+            모든 행 = 동일 4버튼(새창·종료·재시작·삭제), 능력별 활성/비활성으로 슬롯 정렬. */}
         <div style="display:flex;align-items:center;gap:10px;padding:4px 24px 0">
           <h2 style="padding:0">🧩 통합 현황 그리드</h2>
           <button class="killbtn" style="margin:0;color:#37424d" title="peers·세션 다시 불러오기" onClick={() => { void refetchPeers(); void refetchSessions(); void refetchAgents(); }}>🔄 새로고침</button>
         </div>
-        <div class="sub">모든 peer · tmux · ACP 세션을 한 표로 — 헤더 클릭=정렬, 이름·역할 셀 클릭=인라인 편집(peer) · peer 종료/재시작/새창/삭제 · ACP 읽기전용</div>
+        <div class="sub">모든 peer · tmux · ACP 세션을 한 표로 — 헤더 클릭=정렬, 이름·역할 셀 클릭=인라인 편집(peer·ACP) · 모든 행 동일 4액션(새창·종료·재시작·삭제), 능력별 활성/비활성</div>
         <div class="dgrid">
           {/* 헤더 — 클릭 정렬 */}
           <div class="dg-row dg-head">
@@ -1254,19 +1273,22 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                   </Show>
                   {/* 폴더 */}
                   <span title={r.cwd ?? ""}>{r.cwd ?? "—"}</span>
-                  {/* 액션 — kind 별 */}
+                  {/* 액션 — 모든 행 동일 4버튼(능력별 활성/비활성). 슬롯 고정 → 컬럼 세로 정렬. */}
                   <span class="dg-acts">
-                    <Show when={r.kind === "acp"} fallback={
-                      <>
-                        <button class="killbtn" style="color:#37424d" title="새 창에서 열기" disabled={acting() === r.alias} onClick={() => openPeerWindow({ alias: r.alias } as PeerDto)}>🗗 새창</button>
-                        <button class="killbtn" style="color:#e5484d" title="세션 종료" disabled={acting() === r.alias || !r.sid} onClick={() => killAgent({ alias: r.alias, session_identifier: r.sid } as any)}>🗑 종료</button>
-                        <button class="killbtn" style="color:#37424d" title="세션 재시작(kill+재spawn)" disabled={acting() === r.alias || !r.sid} onClick={() => restartAgent({ alias: r.alias, session_identifier: r.sid } as any)}>🔄 재시작</button>
-                        <Show when={r.kind === "peer"}>
-                          <button class="killbtn" style="color:#e5484d" title="목록에서 삭제" disabled={acting() === r.alias} onClick={() => r.peer && deletePeer(r.peer)}>🗑 삭제</button>
-                        </Show>
-                      </>
+                    {/* 새창 — 항상 가능(순수 프론트) */}
+                    <button class="killbtn" style="color:#37424d" title="새 창에서 열기" disabled={acting() === r.alias} onClick={() => openPeerWindow({ alias: r.alias } as PeerDto)}>🗗 새창</button>
+                    {/* 종료 — 활성 세션(sid) 있을 때만 */}
+                    <button class="killbtn" style="color:#e5484d" title={r.sid ? "세션 종료" : "활성 세션 없음"} disabled={acting() === r.alias || !r.sid} onClick={() => killAgent({ alias: r.alias, session_identifier: r.sid } as any)}>🗑 종료</button>
+                    {/* 재시작 — 활성 세션(sid) 있을 때만(kill+재spawn / ACP 재생성) */}
+                    <button class="killbtn" style="color:#37424d" title={r.sid ? "세션 재시작(kill+재spawn)" : "활성 세션 없음"} disabled={acting() === r.alias || !r.sid} onClick={() => restartAgent({ alias: r.alias, session_identifier: r.sid } as any)}>🔄 재시작</button>
+                    {/* 삭제 — peer 레코드면 peer_delete, agent 레코드면 agents_delete, 순수 tmux 면 비활성 */}
+                    <Show when={r.peer} fallback={
+                      <button class="killbtn" style="color:#e5484d"
+                        title={r.hasAgentRecord ? "에이전트(신원) 삭제" : "순수 tmux 세션은 종료로 제거"}
+                        disabled={acting() === r.alias || !r.hasAgentRecord}
+                        onClick={() => { if (r.hasAgentRecord) void deleteAgent(r.alias); }}>🗑 삭제</button>
                     }>
-                      <span class="dg-ro" title="ACP 세션은 읽기 전용">읽기전용</span>
+                      <button class="killbtn" style="color:#e5484d" title="목록에서 삭제(peer)" disabled={acting() === r.alias} onClick={() => r.peer && deletePeer(r.peer)}>🗑 삭제</button>
                     </Show>
                   </span>
                 </div>
