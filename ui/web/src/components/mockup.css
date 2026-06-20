@@ -368,11 +368,12 @@
 .oxg-app .mach-row .killbtn:disabled{opacity:.5;cursor:default}
 
 /* ── rc P2.5 통합 현황 데이터그리드 (정렬·인라인편집 · CSS grid 정렬) ── */
-/* 🔧 scroll-fix: .dash flex 컬럼이 카드(436px)·헤더로 공간을 채우면 그리드가
-   285px 로 압축되고 overflow:hidden 이라 26행이 잘려 사용자가 25행에 못 닿는다.
-   → 그리드에 자체 스크롤(세로+가로) 부여 + flex:1 로 남은 공간 차지 + min-height 로
-   최소 표시 보장. dg-head 의 position:sticky 가 이 스크롤 컨테이너 기준으로 고정된다. */
-.oxg-app .dgrid{width:calc(100% - 48px);margin:0 24px 24px;border:1px solid var(--line);border-radius:14px;background:#fff;overflow:auto;flex:1 1 auto;min-height:120px;max-height:calc(100dvh - 96px);font-size:12.5px}
+/* 🔧 scroll-fix(v2): 사용자 요청 — 그리드 자체 스크롤 제거, 모든 행을 자연 높이로
+   하단까지 펼쳐 표시하고 .dash 한 컨테이너만 세로 스크롤한다("그냥 하단으로 다 보여주면").
+   flex:none 으로 그리드가 압축되지 않게 고정 → 그리드 콘텐츠 전체 높이 유지 →
+   .dash 콘텐츠가 뷰포트를 넘으면 .dash(overflow-y:auto)가 스크롤 → 25행까지 도달.
+   dg-head 의 position:sticky 는 .dash 스크롤 기준으로 상단 고정된다. */
+.oxg-app .dgrid{width:calc(100% - 48px);margin:0 24px 24px;border:1px solid var(--line);border-radius:14px;background:#fff;flex:none;font-size:12.5px}
 .oxg-app .dgrid .dg-row{display:grid;grid-template-columns:38px 60px minmax(120px,1.4fr) 96px minmax(80px,1fr) 64px minmax(120px,1.3fr) minmax(80px,1fr) minmax(140px,1.6fr) 210px;align-items:center;gap:8px;padding:6px 12px;border-top:1px solid var(--line)}
 .oxg-app .dgrid .dg-row:first-child{border-top:none}
 .oxg-app .dgrid .dg-head{background:#f4f7fa;font-weight:700;color:#2c3a47;font-size:11.5px;position:sticky;top:0;z-index:1}
