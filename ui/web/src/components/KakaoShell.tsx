@@ -735,6 +735,18 @@ export function KakaoShell(props: { onLogout?: () => void }) {
       window.alert(`이름 변경 실패: ${(e as Error).message}`);
     } finally { setActing(null); }
   }
+  async function editPeerRole(p: PeerDto) {
+    const cur = p.role ?? "";
+    const role = window.prompt("역할:", cur);
+    if (role == null || role.trim() === "" || role === cur) return;
+    setActing(p.alias);
+    try {
+      await invoke("peer_set_role", { alias: p.alias, role: role.trim() });
+      await refetchPeers();
+    } catch (e) {
+      window.alert(`역할 변경 실패: ${(e as Error).message}`);
+    } finally { setActing(null); }
+  }
   function openPeerWindow(p: PeerDto) {
     const url = `${location.origin}${location.pathname}?peer=${encodeURIComponent(p.alias)}`;
     const w = window.open("", `oxgpeer_${p.alias}`, "width=820,height=620");
@@ -1106,6 +1118,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                     <span class="sx" title="폴더">{p.cwd ?? "—"}</span>
                     <span style="flex:1" />
                     <button class="killbtn" style="color:#37424d" title="이름(대화명) 편집" disabled={acting() === p.alias} onClick={() => editPeerName(p)}>✏️ 편집</button>
+                    <button class="killbtn" style="color:#37424d" title="역할 편집" disabled={acting() === p.alias} onClick={() => editPeerRole(p)}>🏷 역할</button>
                     <button class="killbtn" style="color:#37424d" title="새 창에서 열기" disabled={acting() === p.alias} onClick={() => openPeerWindow(p)}>🗗 새창</button>
                     <button class="killbtn" title="세션 종료" disabled={acting() === p.alias || !p.session_identifier} onClick={() => killAgent({ alias: p.alias, session_identifier: p.session_identifier } as any)}>🗑 종료</button>
                     <button class="killbtn" style="color:#37424d" title="세션 재시작(kill+재spawn)" disabled={acting() === p.alias || !p.session_identifier} onClick={() => restartAgent({ alias: p.alias, session_identifier: p.session_identifier } as any)}>🔄 재시작</button>
