@@ -473,7 +473,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
   };
   // 정렬 상태 — 기본 폴더(cwd) asc(동률 시 이름 asc). 그리드가 폴더 기반이므로 폴더 정렬이 기본.
   //   헤더 클릭으로 컬럼 변경 + asc↔desc 토글(기존 메커니즘 그대로).
-  type SortCol = "status" | "name" | "canonical" | "machine" | "kind" | "sid" | "role" | "cwd";
+  type SortCol = "status" | "name" | "alias" | "canonical" | "machine" | "kind" | "sid" | "role" | "cwd";
   const [sortCol, setSortCol] = createSignal<SortCol>("cwd");
   const [sortDir, setSortDir] = createSignal<"asc" | "desc">("asc");
   const KIND_ORDER: Record<GridKind, number> = { peer: 0, tmux: 1, acp: 2 };
@@ -494,6 +494,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
         case "status": c = (x.status === "active" ? 0 : 1) - (y.status === "active" ? 0 : 1); break;
         case "canonical": c = cmpStr(x.canonical ?? "", y.canonical ?? ""); break;
         case "name": c = cmpStr(x.name ?? "", y.name ?? ""); break;
+        case "alias": c = cmpStr(x.alias ?? "", y.alias ?? ""); break;
         case "machine": c = cmpStr(normMachine(x.machine), normMachine(y.machine)); break; // STEP B 정규화 값으로 정렬
         case "sid": c = cmpStr(x.sid ?? "", y.sid ?? ""); break;
         case "role": c = cmpStr(x.role ?? "", y.role ?? ""); break;
@@ -1331,6 +1332,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
             <span title="순번">#</span>
             <span onClick={() => onSort("status")} title="상태순 정렬">상태{sortInd("status")}</span>
             <span onClick={() => onSort("name")} title="이름순 정렬">이름{sortInd("name")}</span>
+            <span onClick={() => onSort("alias")} title="alias(라우팅 키)순 정렬">alias{sortInd("alias")}</span>
             <span onClick={() => onSort("canonical")} title="정본주소순 정렬">정본주소{sortInd("canonical")}</span>
             <span onClick={() => onSort("machine")} title="머신순 정렬">머신{sortInd("machine")}</span>
             <span onClick={() => onSort("kind")} title="종류순 정렬">종류{sortInd("kind")}</span>
@@ -1356,6 +1358,8 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                       onKeyDown={(e) => { if (e.key === "Enter") void commitInlineEdit(r, "name", e.currentTarget.value); else if (e.key === "Escape") setEditing(null); }}
                       onBlur={(e) => void commitInlineEdit(r, "name", e.currentTarget.value)} /></span>
                   </Show>
+                  {/* alias — A2A 라우팅 키. 항상 존재, raw 표시(이름과 구별되게 모노). */}
+                  <span class="dg-alias" title={r.alias}>{r.alias}</span>
                   {/* 정본 주소 배지(앞6…뒤4) — peer 만 */}
                   <span style={`font-size:10.5px;font-family:ui-monospace,Menlo,monospace;color:${r.canonical ? "#5a7fb0" : "var(--muted)"};background:${r.canonical ? "#eef4fa" : "transparent"};border-radius:6px;padding:1px 6px;justify-self:start`} title={r.canonical ?? "정본 주소 없음"}>{r.canonical ? `${r.canonical.slice(0, 6)}…${r.canonical.slice(-4)}` : "—"}</span>
                   {/* 머신 — STEP B 정규화: 변형 라벨을 물리 머신당 한 정본명으로 */}
