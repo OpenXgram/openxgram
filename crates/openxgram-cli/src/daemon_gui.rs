@@ -118,6 +118,15 @@ pub struct PeerDto {
     /// 세션 상태 ('active' 등; register 시 'active').
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_status: Option<String>,
+    /// P1 IdentityStore — 이 peer 가 속한 정본 신원 주소 (같은 사람의 여러 alias 그룹핑용).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub canonical_address: Option<String>,
+    /// P1 IdentityStore — 정본 신원의 대표 alias (primary_alias).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub canonical_name: Option<String>,
+    /// P1 IdentityStore — 격리(quarantine) 여부.
+    #[serde(default)]
+    pub quarantined: bool,
 }
 
 /// rc.228 — peer 의 git worktree entry.
@@ -1047,6 +1056,34 @@ async fn gui_peers(
             }),
         )
     })?;
+    // 정본 신원 갱신 + 그룹 조회 (P1 IdentityStore). rule 1: 오류는 명시 로그.
+    {
+        use openxgram_peer::IdentityStore;
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut ident = IdentityStore::new(&mut db);
+        if let Err(e) = ident.reconcile(&now) {
+            tracing::warn!(error = %e, "gui_peers: identity reconcile 실패");
+        }
+    }
+    let canon_map: std::collections::HashMap<String, (String, Option<String>, bool)> = {
+        use openxgram_peer::IdentityStore;
+        let mut ident = IdentityStore::new(&mut db);
+        match ident.groups() {
+            Ok(groups) => {
+                let mut m = std::collections::HashMap::new();
+                for g in groups {
+                    for a in &g.aliases {
+                        m.insert(a.clone(), (g.canonical_address.clone(), g.primary_alias.clone(), g.quarantined));
+                    }
+                }
+                m
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "gui_peers: identity groups 조회 실패");
+                std::collections::HashMap::new()
+            }
+        }
+    };
     drop(db); // unlock
 
     // rc.273 — 로스터에는 살아있는 tmux 에이전트만 (마스터 룰). 단일 헬퍼로 LOCAL 생존 판정.
@@ -1077,9 +1114,13 @@ async fn gui_peers(
     //   여기는 기본 필드만 — tmux/ps/git/ls subprocess 호출 0회.
     let mut dtos: Vec<PeerDto> = Vec::with_capacity(rows.len());
     for p in rows.into_iter() {
-        let (description, capabilities) = caps_map.get(&p.alias).cloned().unwrap_or((None, vec![]));
-        let session_identifier = sid_map.get(&p.alias).cloned();
-        let (display_name, cwd, session_status) = meta_map.get(&p.alias).cloned().unwrap_or((None, None, None));
+        let alias_key = p.alias.clone();
+        let (description, capabilities) = caps_map.get(&alias_key).cloned().unwrap_or((None, vec![]));
+        let session_identifier = sid_map.get(&alias_key).cloned();
+        let (display_name, cwd, session_status) = meta_map.get(&alias_key).cloned().unwrap_or((None, None, None));
+        let canonical_address = canon_map.get(&alias_key).map(|t| t.0.clone());
+        let canonical_name = canon_map.get(&alias_key).and_then(|t| t.1.clone());
+        let quarantined = canon_map.get(&alias_key).map(|t| t.2).unwrap_or(false);
         dtos.push(PeerDto {
             id: p.id,
             alias: p.alias,
@@ -1101,6 +1142,9 @@ async fn gui_peers(
             display_name,
             cwd,
             session_status,
+            canonical_address,
+            canonical_name,
+            quarantined,
         });
     }
     Ok(Json(dtos))
