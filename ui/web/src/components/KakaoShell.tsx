@@ -257,27 +257,142 @@ export function KakaoShell(props: { onLogout?: () => void }) {
   //   거기에 어느 peer 의 session_identifier 와도 안 묶인 tmux 세션을 standalone 행으로 합쳐
   //   "모든 tmux 리스트업 + 전체 행 액션"(스펙) 을 만족. sessions().sessions(SessionsDto) 가
   //   실 소스 — 이 머신 tmux. tmux root 만(window entry 제외, identifier ':' 2개 이하).
-  const gridRows = createMemo<PeerDto[]>(() => {
+  // ── rc P2.5 통합 데이터그리드 — peer + tmux + acp 를 한 정렬 가능 표로 ───────────────
+  //   세 소스를 GridRow 로 평탄화: peer(정본·편집/액션 가능) · tmux(standalone, 종료/재시작/새창)
+  //   · acp(sessions().sessions kind="xgram_session" + 원격 ACP 신원, 읽기 전용).
+  //   sessions() 는 단일 머신(SessionsDto.machine). ACP 세션의 머신 = 이 머신(localMachineName),
+  //   원격 ACP 신원은 agents().machine 라벨로 표시. peer 행 머신 = peer.machine ?? 로컬.
+  type GridKind = "peer" | "tmux" | "acp";
+  interface GridRow {
+    kind: GridKind;
+    alias: string;            // 액션 호출 키
+    name: string;             // 표시 이름
+    canonical: string | null; // 정본 주소(peer 만)
+    machine: string;          // 머신
+    sid: string | null;       // 세션 id
+    role: string | null;
+    cwd: string | null;
+    status: string | null;    // active / attached / null
+    editable: boolean;        // 이름·역할 인라인 편집 가능(peer)
+    quarantined: boolean;     // standalone dimming
+    peer?: PeerDto;           // peer 액션용 원본
+  }
+  const unifiedRows = createMemo<GridRow[]>(() => {
+    const localMach = localMachineName();
     const ps = (peers() ?? []) as PeerDto[];
-    const knownSids = new Set(
-      ps.map((p) => p.session_identifier).filter(Boolean) as string[],
-    );
+    const knownSids = new Set(ps.map((p) => p.session_identifier).filter(Boolean) as string[]);
+    const rows: GridRow[] = [];
+    // 1) peer 행 — 정본 신원, 완전 편집/액션.
+    for (const p of ps) {
+      rows.push({
+        kind: "peer",
+        alias: p.alias,
+        name: p.display_name ?? p.alias,
+        canonical: p.canonical_address ?? null,
+        machine: (p.machine ?? "").trim() || localMach,
+        sid: p.session_identifier ?? null,
+        role: p.role ?? null,
+        cwd: p.cwd ?? null,
+        status: p.session_status ?? null,
+        editable: true,
+        quarantined: !!p.quarantined,
+        peer: p,
+      });
+    }
+    // 2) tmux 행 — 어느 peer 와도 안 묶인 standalone tmux 세션(종료/재시작/새창, 읽기성 이름).
     const sess = (sessions()?.sessions ?? []).filter(
       (s) => s.kind === "tmux" && s.identifier.split(":").length <= 2,
     );
-    const standalone: PeerDto[] = sess
-      .filter((s) => !knownSids.has(s.identifier))
-      .map((s) => ({
+    for (const s of sess) {
+      if (knownSids.has(s.identifier)) continue;
+      rows.push({
+        kind: "tmux",
         alias: s.identifier,
-        display_name: s.display ?? s.identifier,
-        session_identifier: s.identifier,
-        cwd: s.cwd ?? null,
-        session_status: s.attached ? "active" : null,
+        name: s.display ?? s.identifier,
+        canonical: null,
+        machine: localMach,
+        sid: s.identifier,
         role: "tmux",
+        cwd: s.cwd ?? null,
+        status: s.attached ? "active" : null,
+        editable: false,
         quarantined: true,
-      }));
-    return [...ps, ...standalone];
+      });
+    }
+    // 3) acp 행 — 등록 ACP 신원(=대화 신원). 읽기 전용. 로컬/원격 머신 라벨.
+    for (const a of agents() ?? []) {
+      rows.push({
+        kind: "acp",
+        alias: a.alias,
+        name: agentName(a),
+        canonical: null,
+        machine: (a.machine ?? "").trim() || localMach,
+        sid: a.session_identifier ?? null,
+        role: a.role ?? a.ai_type ?? "ACP",
+        cwd: a.project_path ?? null,
+        status: onlineFor(a) ? "active" : null,
+        editable: false,
+        quarantined: false,
+      });
+    }
+    return rows;
   });
+
+  // 정렬 상태 — 기본 머신 asc(동률 시 이름 asc). 헤더 클릭으로 컬럼 변경 + asc↔desc 토글.
+  type SortCol = "status" | "name" | "canonical" | "machine" | "kind" | "sid" | "role" | "cwd";
+  const [sortCol, setSortCol] = createSignal<SortCol>("machine");
+  const [sortDir, setSortDir] = createSignal<"asc" | "desc">("asc");
+  const KIND_ORDER: Record<GridKind, number> = { peer: 0, tmux: 1, acp: 2 };
+  const onSort = (col: SortCol) => {
+    if (sortCol() === col) setSortDir(sortDir() === "asc" ? "desc" : "asc");
+    else { setSortCol(col); setSortDir("asc"); }
+  };
+  const sortInd = (col: SortCol) => (sortCol() === col ? (sortDir() === "asc" ? " ▲" : " ▼") : "");
+  const sortedRows = createMemo<GridRow[]>(() => {
+    const col = sortCol();
+    const dir = sortDir() === "asc" ? 1 : -1;
+    const cmpStr = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+    const rows = [...unifiedRows()];
+    rows.sort((x, y) => {
+      let c = 0;
+      switch (col) {
+        case "kind": c = KIND_ORDER[x.kind] - KIND_ORDER[y.kind]; break;
+        case "status": c = (x.status === "active" ? 0 : 1) - (y.status === "active" ? 0 : 1); break;
+        case "canonical": c = cmpStr(x.canonical ?? "", y.canonical ?? ""); break;
+        case "name": c = cmpStr(x.name ?? "", y.name ?? ""); break;
+        case "machine": c = cmpStr(x.machine ?? "", y.machine ?? ""); break;
+        case "sid": c = cmpStr(x.sid ?? "", y.sid ?? ""); break;
+        case "role": c = cmpStr(x.role ?? "", y.role ?? ""); break;
+        case "cwd": c = cmpStr(x.cwd ?? "", y.cwd ?? ""); break;
+      }
+      if (c === 0 && col !== "name") c = cmpStr(x.name ?? "", y.name ?? ""); // 동률 보조키 = 이름
+      return c * dir;
+    });
+    return rows;
+  });
+
+  // 인라인 편집 상태 — { alias, field }. 이름·역할 셀 클릭 시 input 으로 전환.
+  //   커밋: peer_set_name / peer_set_role → refetchPeers. Enter/blur 커밋, Esc 취소, 빈/불변 = no-op.
+  const [editing, setEditing] = createSignal<{ alias: string; field: "name" | "role" } | null>(null);
+  const isEditing = (alias: string, field: "name" | "role") => {
+    const e = editing();
+    return !!e && e.alias === alias && e.field === field;
+  };
+  async function commitInlineEdit(row: GridRow, field: "name" | "role", value: string) {
+    setEditing(null);
+    const next = value.trim();
+    const cur = field === "name" ? (row.peer?.display_name ?? row.alias) : (row.peer?.role ?? "");
+    if (next === "" || next === cur) return; // 빈/불변 = no-op.
+    setActing(row.alias);
+    try {
+      await invoke(field === "name" ? "peer_set_name" : "peer_set_role",
+        field === "name" ? { alias: row.alias, name: next } : { alias: row.alias, role: next });
+      await refetchPeers();
+    } catch (e) {
+      window.alert(`${field === "name" ? "이름" : "역할"} 변경 실패: ${(e as Error).message}`);
+    } finally { setActing(null); }
+  }
+
   const lastMsgByAlias = createMemo(() => {
     const map = new Map<string, MessageDto>();
     const aliases = (agents() ?? []).map((a) => a.alias);
@@ -644,29 +759,8 @@ export function KakaoShell(props: { onLogout?: () => void }) {
   const localMachineName = createMemo(() =>
     sessions()?.machine?.alias || sessions()?.machine?.hostname || "이 머신",
   );
-  // 로컬 tmux 세션(window 단위 entry 제외 — 세션 root 만; identifier 에 ':' 2개 미만).
-  const localTmuxSessions = createMemo<DetectedSession[]>(() =>
-    (sessions()?.sessions ?? []).filter(
-      (s) => s.kind === "tmux" && s.identifier.split(":").length <= 2,
-    ),
-  );
-  // 머신별 ACP 세션 기스트 = 등록 에이전트(=ACP 대화 신원). 로컬/원격 머신 분류.
-  //   read-only(ACP kill 은 범위 외). 각 그룹: { machine, agents }.
-  const acpByMachine = createMemo(() => {
-    const local: AgentRow[] = [];
-    const remote = new Map<string, AgentRow[]>();
-    for (const a of agents() ?? []) {
-      if (isLocalMachine(a.machine)) {
-        local.push(a);
-      } else {
-        const m = (a.machine ?? "").trim() || "알 수 없는 머신";
-        if (!remote.has(m)) remote.set(m, []);
-        remote.get(m)!.push(a);
-      }
-    }
-    return { local, remote: [...remote.entries()].map(([machine, agents]) => ({ machine, agents })) };
-  });
-  // tmux 세션 종료 — confirm → POST kill → 성공 시 sessions refetch.
+  // (통합 데이터그리드가 localTmuxSessions·acpByMachine 를 흡수 — unifiedRows/sortedRows 참조)
+  // tmux 세션 종료 — confirm → POST kill → 성공 시 sessions refetch. (대화 곁뷰 tmux 패널에서 사용)
   const [killing, setKilling] = createSignal<string | null>(null);
   async function killTmux(s: DetectedSession) {
     const label = s.display || s.identifier;
@@ -723,30 +817,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
       window.alert(`삭제 실패: ${(e as Error).message}`);
     } finally { setActing(null); }
   }
-  async function editPeerName(p: PeerDto) {
-    const cur = p.display_name ?? p.alias;
-    const name = window.prompt("이름(대화명):", cur);
-    if (name == null || name.trim() === "" || name === cur) return;
-    setActing(p.alias);
-    try {
-      await invoke("peer_set_name", { alias: p.alias, name: name.trim() });
-      await refetchPeers();
-    } catch (e) {
-      window.alert(`이름 변경 실패: ${(e as Error).message}`);
-    } finally { setActing(null); }
-  }
-  async function editPeerRole(p: PeerDto) {
-    const cur = p.role ?? "";
-    const role = window.prompt("역할:", cur);
-    if (role == null || role.trim() === "" || role === cur) return;
-    setActing(p.alias);
-    try {
-      await invoke("peer_set_role", { alias: p.alias, role: role.trim() });
-      await refetchPeers();
-    } catch (e) {
-      window.alert(`역할 변경 실패: ${(e as Error).message}`);
-    } finally { setActing(null); }
-  }
+  // (editPeerName·editPeerRole 의 prompt 방식 → 통합 그리드 셀 인라인 편집 commitInlineEdit 로 대체)
   function openPeerWindow(p: PeerDto) {
     const url = `${location.origin}${location.pathname}?peer=${encodeURIComponent(p.alias)}`;
     const w = window.open("", `oxgpeer_${p.alias}`, "width=820,height=620");
@@ -1093,108 +1164,83 @@ export function KakaoShell(props: { onLogout?: () => void }) {
           </div>
         </div>
 
-        {/* ── rc P2 현황 그리드 — peers + (peer 로 안 잡힌) 모든 tmux 병합 + 전체 행 액션 ──
-            정본 신원(canonical_address/name·quarantined) 표시 + 행마다 편집/새창/종료/재시작/삭제.
-            gridRows() = peers() + standalone tmux. ✏️/🗗 는 모든 행, 종료/재시작 은 session_identifier 보유 행만. */}
+        {/* ── rc P2.5 통합 현황 데이터그리드 — peer + tmux + acp 한 정렬·인라인편집 표 ──
+            컬럼 헤더 클릭 = 정렬(asc↔desc, ▲/▼). 이름·역할 셀 클릭 = 인라인 편집(peer 만).
+            peer 행 = 정본·전체 액션 · tmux 행 = 종료/재시작/새창 · acp 행 = 읽기 전용. */}
         <div style="display:flex;align-items:center;gap:10px;padding:4px 24px 0">
-          <h2 style="padding:0">🧩 현황 그리드 (peers + tmux)</h2>
-          <button class="killbtn" style="margin:0;color:#37424d" title="peers·세션 다시 불러오기" onClick={() => { void refetchPeers(); void refetchSessions(); }}>🔄 새로고침</button>
+          <h2 style="padding:0">🧩 통합 현황 그리드</h2>
+          <button class="killbtn" style="margin:0;color:#37424d" title="peers·세션 다시 불러오기" onClick={() => { void refetchPeers(); void refetchSessions(); void refetchAgents(); }}>🔄 새로고침</button>
         </div>
-        <div class="sub">모든 peer + 미연결 tmux 를 한 목록으로 · 이름(대화명) 편집 ✏️ / 새 창 🗗 / 종료 🗑 / 재시작 🔄 / 삭제 🗑 (정본 신원 동적 연동)</div>
-        <div class="mach-cards">
-          <div class="mach-card" style="grid-column:1/-1">
-            <div class="seclab">행 ({gridRows().length})</div>
-            <Show when={gridRows().length > 0} fallback={<div class="mach-row"><span class="empty">표시할 peer·tmux 가 없습니다</span></div>}>
-              <For each={gridRows()}>
-                {(p) => (
-                  <div class="mach-row" style={p.quarantined ? "opacity:.78" : ""}>
-                    {/* 활성 점 — 세션 active 면 green, 아니면 muted. (.mach-row .dot 재사용) */}
-                    <span class="dot" style={`background:${p.session_status === "active" ? "var(--green)" : "var(--muted)"}`} />
-                    <span class="nm" style="flex:none;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{p.display_name ?? p.alias}</span>
-                    {/* 정본 주소 배지(앞6…뒤4) */}
-                    <span style={`flex:none;font-size:10.5px;font-family:ui-monospace,Menlo,monospace;color:${p.canonical_address ? "#5a7fb0" : "var(--muted)"};background:#eef4fa;border-radius:6px;padding:1px 6px`} title={p.canonical_address ?? "정본 주소 없음"}>{p.canonical_address ? `${p.canonical_address.slice(0, 6)}…${p.canonical_address.slice(-4)}` : "—"}</span>
-                    <span class="sx" title="세션 id">{p.session_identifier ?? "—"}</span>
-                    <span class="sx" title="역할">{p.role ?? "—"}</span>
-                    <span class="sx" title="폴더">{p.cwd ?? "—"}</span>
-                    <span style="flex:1" />
-                    <button class="killbtn" style="color:#37424d" title="이름(대화명) 편집" disabled={acting() === p.alias} onClick={() => editPeerName(p)}>✏️ 편집</button>
-                    <button class="killbtn" style="color:#37424d" title="역할 편집" disabled={acting() === p.alias} onClick={() => editPeerRole(p)}>🏷 역할</button>
-                    <button class="killbtn" style="color:#37424d" title="새 창에서 열기" disabled={acting() === p.alias} onClick={() => openPeerWindow(p)}>🗗 새창</button>
-                    <button class="killbtn" title="세션 종료" disabled={acting() === p.alias || !p.session_identifier} onClick={() => killAgent({ alias: p.alias, session_identifier: p.session_identifier } as any)}>🗑 종료</button>
-                    <button class="killbtn" style="color:#37424d" title="세션 재시작(kill+재spawn)" disabled={acting() === p.alias || !p.session_identifier} onClick={() => restartAgent({ alias: p.alias, session_identifier: p.session_identifier } as any)}>🔄 재시작</button>
-                    <button class="killbtn" title="목록에서 삭제" disabled={acting() === p.alias} onClick={() => deletePeer(p)}>🗑 삭제</button>
-                  </div>
-                )}
-              </For>
-            </Show>
+        <div class="sub">모든 peer · tmux · ACP 세션을 한 표로 — 헤더 클릭=정렬, 이름·역할 셀 클릭=인라인 편집(peer) · peer 종료/재시작/새창/삭제 · ACP 읽기전용</div>
+        <div class="dgrid">
+          {/* 헤더 — 클릭 정렬 */}
+          <div class="dg-row dg-head">
+            <span title="순번">#</span>
+            <span onClick={() => onSort("status")} title="상태순 정렬">상태{sortInd("status")}</span>
+            <span onClick={() => onSort("name")} title="이름순 정렬">이름{sortInd("name")}</span>
+            <span onClick={() => onSort("canonical")} title="정본주소순 정렬">정본주소{sortInd("canonical")}</span>
+            <span onClick={() => onSort("machine")} title="머신순 정렬">머신{sortInd("machine")}</span>
+            <span onClick={() => onSort("kind")} title="종류순 정렬">종류{sortInd("kind")}</span>
+            <span onClick={() => onSort("sid")} title="세션id순 정렬">세션id{sortInd("sid")}</span>
+            <span onClick={() => onSort("role")} title="역할순 정렬">역할{sortInd("role")}</span>
+            <span onClick={() => onSort("cwd")} title="폴더순 정렬">폴더{sortInd("cwd")}</span>
+            <span style="justify-content:flex-end">액션</span>
           </div>
-        </div>
-
-        {/* ── rc.338 머신별 TMUX·ACP 세션 기스트 (TMUX 종료 가능) — 대시보드 카드와 통일 (FIX 1) ── */}
-        <h2 style="padding-top:4px">🖥 머신별 세션</h2>
-        <div class="sub">각 머신의 TMUX·ACP 세션 기스트 — TMUX 는 종료(🗑) 가능, ACP 는 읽기 전용</div>
-        <div class="mach-cards">
-          {/* 이 머신(로컬) — 실제 세션 보유 */}
-          <div class="mach-card">
-            <div class="t">🖥 {localMachineName()} <span class="tag">이 머신</span></div>
-
-            {/* TMUX 목록 + 종료 */}
-            <div class="seclab">TMUX 세션 ({localTmuxSessions().length})</div>
-            <Show when={localTmuxSessions().length > 0} fallback={<div class="mach-row"><span class="empty">tmux 세션 없음</span></div>}>
-              <For each={localTmuxSessions()}>
-                {(s) => (
-                  <div class="mach-row">
-                    <span class="dot" style={`background:${s.attached ? "var(--green)" : "var(--muted)"}`} />
-                    <span class="nm">{s.display}</span>
-                    <Show when={s.cwd}><span class="sx">{s.cwd}</span></Show>
-                    <span class="meta">{s.attached ? "attached" : "detached"}</span>
-                    <button
-                      class="killbtn"
-                      title={`tmux 세션 종료: ${s.display}`}
-                      disabled={killing() === s.identifier}
-                      onClick={() => killTmux(s)}
-                    >
-                      {killing() === s.identifier ? "종료 중…" : "🗑 종료"}
-                    </button>
-                  </div>
-                )}
-              </For>
-            </Show>
-
-            {/* ACP 목록 (read-only) */}
-            <div class="seclab">ACP 세션 ({acpByMachine().local.length})</div>
-            <Show when={acpByMachine().local.length > 0} fallback={<div class="mach-row"><span class="empty">ACP 세션 없음</span></div>}>
-              <For each={acpByMachine().local}>
-                {(a) => (
-                  <div class="mach-row">
-                    <span>{isPrimary(a) ? "⭐" : "🔵"}</span>
-                    <span class="nm">{agentName(a)}</span>
-                    <span class="sx">{a.role || a.ai_type || "ACP"}</span>
-                    <Show when={onlineFor(a)}><span class="meta" style="color:var(--green)">● 온라인</span></Show>
-                  </div>
-                )}
-              </For>
-            </Show>
-          </div>
-
-          {/* 원격 머신 — ACP 기스트만(원격 tmux 실세션은 미수집). 연결된 머신만 표시. 머신당 카드. */}
-          <For each={acpByMachine().remote.filter((g) => isRemoteMachineConnected(g.machine))}>
-            {(g) => (
-              <div class="mach-card">
-                <div class="t">🖥 {g.machine} <span class="tag">원격</span></div>
-                <div class="seclab">ACP 세션 ({g.agents.length})</div>
-                <For each={g.agents}>
-                  {(a) => (
-                    <div class="mach-row">
-                      <span>{isPrimary(a) ? "⭐" : "🔵"}</span>
-                      <span class="nm">{agentName(a)}</span>
-                      <span class="sx">{a.role || a.ai_type || "ACP"}</span>
-                    </div>
-                  )}
-                </For>
-              </div>
-            )}
-          </For>
+          <Show when={sortedRows().length > 0} fallback={<div class="dg-row"><span /><span class="dg-ro" style="grid-column:3/-1">표시할 peer · tmux · ACP 가 없습니다</span></div>}>
+            <For each={sortedRows()}>
+              {(r, i) => (
+                <div class="dg-row" style={r.quarantined ? "opacity:.78" : ""}>
+                  {/* 순번 — 현재 정렬 순서 기준 1..N */}
+                  <span style="color:var(--muted)">{i() + 1}</span>
+                  {/* 상태 점 */}
+                  <span><span class="dot" style={`display:inline-block;width:8px;height:8px;border-radius:50%;background:${r.status === "active" ? "var(--green)" : "var(--muted)"}`} /></span>
+                  {/* 이름 — peer 면 셀 클릭 인라인 편집 */}
+                  <Show when={isEditing(r.alias, "name")} fallback={
+                    <span class={r.editable ? "dg-edit" : ""} title={r.editable ? "클릭하여 이름 편집" : r.name}
+                      onClick={() => { if (r.editable) setEditing({ alias: r.alias, field: "name" }); }}>{r.name}</span>
+                  }>
+                    <span><input class="dg-in" autofocus value={r.name}
+                      onKeyDown={(e) => { if (e.key === "Enter") void commitInlineEdit(r, "name", e.currentTarget.value); else if (e.key === "Escape") setEditing(null); }}
+                      onBlur={(e) => void commitInlineEdit(r, "name", e.currentTarget.value)} /></span>
+                  </Show>
+                  {/* 정본 주소 배지(앞6…뒤4) — peer 만 */}
+                  <span style={`font-size:10.5px;font-family:ui-monospace,Menlo,monospace;color:${r.canonical ? "#5a7fb0" : "var(--muted)"};background:${r.canonical ? "#eef4fa" : "transparent"};border-radius:6px;padding:1px 6px;justify-self:start`} title={r.canonical ?? "정본 주소 없음"}>{r.canonical ? `${r.canonical.slice(0, 6)}…${r.canonical.slice(-4)}` : "—"}</span>
+                  {/* 머신 */}
+                  <span title={r.machine}>{r.machine || "—"}</span>
+                  {/* 종류 배지 */}
+                  <span class="dg-kind" style={r.kind === "peer" ? "background:#e6f0fb;color:#2c5a8f" : r.kind === "tmux" ? "background:#f0ece6;color:#8f6a2c" : "background:#eef1f4;color:#6a727c"}>{r.kind}</span>
+                  {/* 세션 id */}
+                  <span title={r.sid ?? ""}>{r.sid ?? "—"}</span>
+                  {/* 역할 — peer 면 셀 클릭 인라인 편집 */}
+                  <Show when={isEditing(r.alias, "role")} fallback={
+                    <span class={r.editable ? "dg-edit" : ""} title={r.editable ? "클릭하여 역할 편집" : (r.role ?? "")}
+                      onClick={() => { if (r.editable) setEditing({ alias: r.alias, field: "role" }); }}>{r.role ?? "—"}</span>
+                  }>
+                    <span><input class="dg-in" autofocus value={r.role ?? ""}
+                      onKeyDown={(e) => { if (e.key === "Enter") void commitInlineEdit(r, "role", e.currentTarget.value); else if (e.key === "Escape") setEditing(null); }}
+                      onBlur={(e) => void commitInlineEdit(r, "role", e.currentTarget.value)} /></span>
+                  </Show>
+                  {/* 폴더 */}
+                  <span title={r.cwd ?? ""}>{r.cwd ?? "—"}</span>
+                  {/* 액션 — kind 별 */}
+                  <span class="dg-acts">
+                    <Show when={r.kind === "acp"} fallback={
+                      <>
+                        <button class="killbtn" style="color:#37424d" title="새 창에서 열기" disabled={acting() === r.alias} onClick={() => openPeerWindow({ alias: r.alias } as PeerDto)}>🗗 새창</button>
+                        <button class="killbtn" style="color:#e5484d" title="세션 종료" disabled={acting() === r.alias || !r.sid} onClick={() => killAgent({ alias: r.alias, session_identifier: r.sid } as any)}>🗑 종료</button>
+                        <button class="killbtn" style="color:#37424d" title="세션 재시작(kill+재spawn)" disabled={acting() === r.alias || !r.sid} onClick={() => restartAgent({ alias: r.alias, session_identifier: r.sid } as any)}>🔄 재시작</button>
+                        <Show when={r.kind === "peer"}>
+                          <button class="killbtn" style="color:#e5484d" title="목록에서 삭제" disabled={acting() === r.alias} onClick={() => r.peer && deletePeer(r.peer)}>🗑 삭제</button>
+                        </Show>
+                      </>
+                    }>
+                      <span class="dg-ro" title="ACP 세션은 읽기 전용">읽기전용</span>
+                    </Show>
+                  </span>
+                </div>
+              )}
+            </For>
+          </Show>
         </div>
       </div>
 

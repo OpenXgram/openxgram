@@ -367,6 +367,24 @@
 .oxg-app .mach-row .killbtn:hover{background:#fdecec;border-color:#f3c0c0}
 .oxg-app .mach-row .killbtn:disabled{opacity:.5;cursor:default}
 
+/* ── rc P2.5 통합 현황 데이터그리드 (정렬·인라인편집 · CSS grid 정렬) ── */
+.oxg-app .dgrid{width:calc(100% - 48px);margin:0 24px 24px;border:1px solid var(--line);border-radius:14px;background:#fff;overflow:hidden;font-size:12.5px}
+.oxg-app .dgrid .dg-row{display:grid;grid-template-columns:38px 60px minmax(120px,1.4fr) 96px minmax(80px,1fr) 64px minmax(120px,1.3fr) minmax(80px,1fr) minmax(140px,1.6fr) 210px;align-items:center;gap:8px;padding:6px 12px;border-top:1px solid var(--line)}
+.oxg-app .dgrid .dg-row:first-child{border-top:none}
+.oxg-app .dgrid .dg-head{background:#f4f7fa;font-weight:700;color:#2c3a47;font-size:11.5px;position:sticky;top:0;z-index:1}
+.oxg-app .dgrid .dg-head>span{cursor:pointer;user-select:none;display:flex;align-items:center;gap:3px;white-space:nowrap}
+.oxg-app .dgrid .dg-head>span:hover{color:#16242f}
+.oxg-app .dgrid .dg-row>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.oxg-app .dgrid .dg-row .dg-edit{cursor:text}
+.oxg-app .dgrid .dg-row .dg-edit:hover{background:#eef4fa;border-radius:4px}
+.oxg-app .dgrid .dg-row input.dg-in{width:100%;font-size:12px;font-family:var(--sans);border:1px solid #5a7fb0;border-radius:5px;padding:2px 5px;background:#fff;color:#16242f}
+.oxg-app .dgrid .dg-acts{display:flex;align-items:center;gap:5px;justify-content:flex-end;overflow:visible}
+.oxg-app .dgrid .dg-acts .killbtn{margin:0;flex:none;background:#fff;border:1px solid var(--line);border-radius:7px;padding:3px 7px;font-size:11px;font-weight:600;cursor:pointer;font-family:var(--sans)}
+.oxg-app .dgrid .dg-acts .killbtn:hover{background:#fdecec;border-color:#f3c0c0}
+.oxg-app .dgrid .dg-acts .killbtn:disabled{opacity:.5;cursor:default}
+.oxg-app .dgrid .dg-ro{color:var(--muted);font-size:11px;font-style:italic}
+.oxg-app .dgrid .dg-kind{font-size:10.5px;font-weight:600;border-radius:6px;padding:1px 6px;text-align:center}
+
 /* ── 라이브 term ANSI 색상 span (FIX 2) ── */
 .oxg-app .term .ansi-b{font-weight:700}
 .oxg-app .term .ansi-dim{opacity:.7}
