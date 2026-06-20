@@ -171,6 +171,10 @@ const ROUTES: Record<string, Route> = {
  room_vault_reveal: { method: "POST", path: "/room/{key}/vault/{item}/reveal", body: true},
  // rc.245 — 결정적 세션 매핑 사용자 override (PATCH; body.session_identifier = string|null)
  peer_set_session: { method: "PATCH", path: "/peers/{alias}/session", body: true},
+ // P2 현황 그리드 — peer 레코드 삭제 + 정본 신원 이름/역할 편집(전파 채널)
+ peer_delete: { method: "DELETE", path: "/peers/{alias}"},
+ peer_set_name: { method: "PATCH", path: "/peers/{alias}/name", body: true},
+ peer_set_role: { method: "PATCH", path: "/peers/{alias}/role", body: true},
 
  // Messenger v1.3 §3.2 — 머신×세션 통합 detector (M-1)
  sessions: { method: "GET", path: "/sessions"},
