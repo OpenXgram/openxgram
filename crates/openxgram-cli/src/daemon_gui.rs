@@ -10763,6 +10763,9 @@ async fn gui_peer_add(
         display_name: None,
         cwd: None,
         session_status: None,
+        canonical_address: None,
+        canonical_name: None,
+        quarantined: false,
     }))
 }
 
