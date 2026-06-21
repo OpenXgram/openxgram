@@ -92,6 +92,9 @@ const ROUTES: Record<string, Route> = {
 
  // Peers
  peers_list: { method: "GET", path: "/peers", emptyAs: []},
+ // 현황 그리드 정본 로스터 — 백엔드가 병합·dedup·머신정규화한 단일 진리원천(RosterEntryDto[]).
+ // 프론트 merge 계층 제거 → 그리드는 thin renderer. GET /v1/gui/roster.
+ roster: { method: "GET", path: "/roster", emptyAs: []},
  peer_add: { method: "POST", path: "/peers", body: true},
  // rc.229 fix#3 — on-demand 단일 agent enrich (4-metadata + worktree/subagent/ex_peer)
  agent_detail: { method: "GET", path: "/agent/{alias}/detail"},
