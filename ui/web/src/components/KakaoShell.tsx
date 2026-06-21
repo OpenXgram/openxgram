@@ -353,37 +353,85 @@ export function KakaoShell(props: { onLogout?: () => void }) {
     if (r.hasTmux) t.push("로컬 tmux 세션");
     return t.join(" + ") || r.kind;
   };
-  // 정렬 상태 — 기본 폴더(cwd) asc(동률 시 이름 asc). 그리드가 폴더 기반이므로 폴더 정렬이 기본.
-  //   헤더 클릭으로 컬럼 변경 + asc↔desc 토글(기존 메커니즘 그대로).
+  // 정렬 상태 — 다중컬럼(multi-column). sortKeys = 우선순위 순서 배열.
+  //   기본: 머신(로컬=seoul 먼저) → 폴더(cwd) asc. 서울 데몬이므로 서울 행이 먼저 묶이고 폴더 정렬.
+  //   헤더 클릭 = 그 컬럼을 단독 primary 키로(이미 primary면 asc↔desc 토글).
+  //   Shift+클릭 = 그 컬럼을 보조/3차 정렬키로 추가(이미 있으면 dir 토글). 다중 정렬 메커니즘.
   type SortCol = "status" | "name" | "alias" | "canonical" | "machine" | "kind" | "sid" | "role" | "cwd";
-  const [sortCol, setSortCol] = createSignal<SortCol>("cwd");
-  const [sortDir, setSortDir] = createSignal<"asc" | "desc">("asc");
+  type SortDir = "asc" | "desc";
+  interface SortKey { col: SortCol; dir: SortDir; }
+  const [sortKeys, setSortKeys] = createSignal<SortKey[]>([
+    { col: "machine", dir: "asc" },
+    { col: "cwd", dir: "asc" },
+  ]);
   const KIND_ORDER: Record<GridKind, number> = { peer: 0, tmux: 1, acp: 2 };
-  const onSort = (col: SortCol) => {
-    if (sortCol() === col) setSortDir(sortDir() === "asc" ? "desc" : "asc");
-    else { setSortCol(col); setSortDir("asc"); }
+  // 헤더 클릭 핸들러 — shift 여부로 분기.
+  const onSort = (col: SortCol, ev?: MouseEvent) => {
+    const shift = !!ev?.shiftKey;
+    setSortKeys((prev) => {
+      const idx = prev.findIndex((k) => k.col === col);
+      if (shift) {
+        // Shift+클릭 — 보조키 추가 또는 기존 키 dir 토글(우선순위는 유지).
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = { col, dir: next[idx].dir === "asc" ? "desc" : "asc" };
+          return next;
+        }
+        return [...prev, { col, dir: "asc" }];
+      }
+      // 일반 클릭 — 그 컬럼을 단독 primary 로. 이미 단독 primary면 dir 토글.
+      if (prev.length === 1 && prev[0].col === col) {
+        return [{ col, dir: prev[0].dir === "asc" ? "desc" : "asc" }];
+      }
+      return [{ col, dir: "asc" }];
+    });
   };
-  const sortInd = (col: SortCol) => (sortCol() === col ? (sortDir() === "asc" ? " ▲" : " ▼") : "");
+  // 정렬 우선순위 인디케이터 — ▲/▼ + 작은 순번 위첨자(¹²³). 비활성 컬럼은 빈 문자열.
+  const SUP = ["¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹"];
+  const sortInd = (col: SortCol) => {
+    const keys = sortKeys();
+    const idx = keys.findIndex((k) => k.col === col);
+    if (idx < 0) return "";
+    const arrow = keys[idx].dir === "asc" ? "▲" : "▼";
+    const rank = keys.length > 1 ? (SUP[idx] ?? `${idx + 1}`) : "";
+    return ` ${arrow}${rank}`;
+  };
+  // 머신 컬럼 비교 — 로컬 머신(이 데몬=seoul)을 rank 0 으로 먼저, 나머지는 알파벳순.
+  //   3번째 머신이 생기거나 이름이 바뀌어도 로컬이 항상 앞서도록 local-first 구현.
+  //   로컬 판정은 기존 isLocalMachine(selfMachineNames 기반 — "seoul"/"server-seoul"/hostname 매칭) 재사용.
+  const machineRank = (m: string): [number, string] => {
+    const mm = (m || "").toLowerCase();
+    return [isLocalMachine(m) ? 0 : 1, mm];
+  };
   const sortedRows = createMemo<GridRow[]>(() => {
-    const col = sortCol();
-    const dir = sortDir() === "asc" ? 1 : -1;
+    const keys = sortKeys();
     const cmpStr = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+    const cmpCol = (col: SortCol, x: GridRow, y: GridRow): number => {
+      switch (col) {
+        case "kind": return KIND_ORDER[x.kind] - KIND_ORDER[y.kind];
+        case "status": return (x.status === "active" ? 0 : 1) - (y.status === "active" ? 0 : 1);
+        case "canonical": return cmpStr(x.canonical ?? "", y.canonical ?? "");
+        case "name": return cmpStr(x.name ?? "", y.name ?? "");
+        case "alias": return cmpStr(x.alias ?? "", y.alias ?? "");
+        case "machine": {
+          const [rx, sx] = machineRank(x.machine);
+          const [ry, sy] = machineRank(y.machine);
+          return rx !== ry ? rx - ry : cmpStr(sx, sy); // 로컬 우선 → 나머지 알파벳
+        }
+        case "sid": return cmpStr(x.sid ?? "", y.sid ?? "");
+        case "role": return cmpStr(x.role ?? "", y.role ?? "");
+        case "cwd": return cmpStr(x.cwd ?? "", y.cwd ?? "");
+      }
+      return 0;
+    };
     const rows = [...unifiedRows()];
     rows.sort((x, y) => {
-      let c = 0;
-      switch (col) {
-        case "kind": c = KIND_ORDER[x.kind] - KIND_ORDER[y.kind]; break;
-        case "status": c = (x.status === "active" ? 0 : 1) - (y.status === "active" ? 0 : 1); break;
-        case "canonical": c = cmpStr(x.canonical ?? "", y.canonical ?? ""); break;
-        case "name": c = cmpStr(x.name ?? "", y.name ?? ""); break;
-        case "alias": c = cmpStr(x.alias ?? "", y.alias ?? ""); break;
-        case "machine": c = cmpStr(x.machine, y.machine); break; // 백엔드 정규화 값 그대로 정렬
-        case "sid": c = cmpStr(x.sid ?? "", y.sid ?? ""); break;
-        case "role": c = cmpStr(x.role ?? "", y.role ?? ""); break;
-        case "cwd": c = cmpStr(x.cwd ?? "", y.cwd ?? ""); break;
+      for (const k of keys) {
+        const c = cmpCol(k.col, x, y) * (k.dir === "asc" ? 1 : -1);
+        if (c !== 0) return c;
       }
-      if (c === 0 && col !== "name") c = cmpStr(x.name ?? "", y.name ?? ""); // 동률 보조키 = 이름
-      return c * dir;
+      // 최종 안정 보조키 = alias(결정적 순서 보장).
+      return cmpStr(x.alias ?? "", y.alias ?? "");
     });
     return rows;
   });
@@ -1218,20 +1266,20 @@ export function KakaoShell(props: { onLogout?: () => void }) {
           <h2 style="padding:0">🧩 통합 현황 그리드</h2>
           <button class="killbtn" style="margin:0;color:#37424d" title="로스터·세션 다시 불러오기" disabled={roster.loading || sessions.loading} onClick={() => { void refetchRoster(); void refetchSessions(); }}>{(roster.loading || sessions.loading) ? "⏳ 새로고침 중…" : "🔄 새로고침"}</button>
         </div>
-        <div class="sub">모든 peer · tmux · ACP 세션을 한 표로 — 헤더 클릭=정렬, 이름·역할 셀 클릭=인라인 편집(peer·ACP) · 모든 행 동일 4액션(새창·종료·재시작·삭제), 능력별 활성/비활성</div>
+        <div class="sub">모든 peer · tmux · ACP 세션을 한 표로 — 헤더 클릭=정렬(다시 클릭 ▲↔▼), <b>Shift+클릭=정렬 단계 추가</b>(머신 ▲¹ 폴더 ▲² …) · 이름·역할 셀 클릭=인라인 편집(peer·ACP) · 모든 행 동일 4액션(새창·종료·재시작·삭제), 능력별 활성/비활성</div>
         <div class="dgrid">
           {/* 헤더 — 클릭 정렬 */}
           <div class="dg-row dg-head">
             <span title="순번">#</span>
-            <span onClick={() => onSort("status")} title="상태순 정렬">상태{sortInd("status")}</span>
-            <span onClick={() => onSort("name")} title="이름순 정렬">이름{sortInd("name")}</span>
-            <span onClick={() => onSort("alias")} title="alias(라우팅 키)순 정렬">alias{sortInd("alias")}</span>
-            <span onClick={() => onSort("canonical")} title="정본주소순 정렬">정본주소{sortInd("canonical")}</span>
-            <span onClick={() => onSort("machine")} title="머신순 정렬">머신{sortInd("machine")}</span>
-            <span onClick={() => onSort("kind")} title="종류순 정렬">종류{sortInd("kind")}</span>
-            <span onClick={() => onSort("sid")} title="세션id순 정렬">세션id{sortInd("sid")}</span>
-            <span onClick={() => onSort("role")} title="역할순 정렬">역할{sortInd("role")}</span>
-            <span onClick={() => onSort("cwd")} title="폴더순 정렬">폴더{sortInd("cwd")}</span>
+            <span onClick={(e) => onSort("status", e)} title="상태순 정렬 (Shift+클릭=정렬 단계 추가)">상태{sortInd("status")}</span>
+            <span onClick={(e) => onSort("name", e)} title="이름순 정렬 (Shift+클릭=정렬 단계 추가)">이름{sortInd("name")}</span>
+            <span onClick={(e) => onSort("alias", e)} title="alias(라우팅 키)순 정렬 (Shift+클릭=정렬 단계 추가)">alias{sortInd("alias")}</span>
+            <span onClick={(e) => onSort("canonical", e)} title="정본주소순 정렬 (Shift+클릭=정렬 단계 추가)">정본주소{sortInd("canonical")}</span>
+            <span onClick={(e) => onSort("machine", e)} title="머신순 정렬 — 로컬(seoul) 먼저 (Shift+클릭=정렬 단계 추가)">머신{sortInd("machine")}</span>
+            <span onClick={(e) => onSort("kind", e)} title="종류순 정렬 (Shift+클릭=정렬 단계 추가)">종류{sortInd("kind")}</span>
+            <span onClick={(e) => onSort("sid", e)} title="세션id순 정렬 (Shift+클릭=정렬 단계 추가)">세션id{sortInd("sid")}</span>
+            <span onClick={(e) => onSort("role", e)} title="역할순 정렬 (Shift+클릭=정렬 단계 추가)">역할{sortInd("role")}</span>
+            <span onClick={(e) => onSort("cwd", e)} title="폴더순 정렬 (Shift+클릭=정렬 단계 추가)">폴더{sortInd("cwd")}</span>
             <span style="justify-content:flex-end">액션</span>
           </div>
           <Show when={sortedRows().length > 0} fallback={<div class="dg-row"><span /><span class="dg-ro" style="grid-column:3/-1">표시할 peer · tmux · ACP 가 없습니다</span></div>}>
