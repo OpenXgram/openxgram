@@ -65,10 +65,20 @@ fn default_role() -> String {
 ///   - `eth_address`·`public_key_hex` 둘 다 비면 skip (식별 불가).
 ///   - `self_eth` 와 같은 신원은 skip (자기 자신).
 ///   - 그 외는 `upsert_announce`(eth→pubkey 키 UPSERT, idempotent).
+///
+/// `allow_create`:
+///   - `false` — 마스터 룰(rc.347) 보존: **이미 존재하는 peer 만 UPDATE**. 처음 보는
+///     alias/eth(미등록 머신 추정)는 CREATE 하지 않는다. 신뢰 경계가 불확실한 일반
+///     gossip 호출에 사용.
+///   - `true` — pull 대상이 **등록된(`agent_profiles.source='user'`) 머신만**으로 이미
+///     좁혀진 신뢰 경로(`sync_tick_once`)에서 사용. 미존재 peer 도 CREATE 허용 →
+///     등록된 원격 머신(예: zalman)의 에이전트가 routable peer 로 흡수된다.
+///     이때도 위의 안전 필터(unreachable/eth·pubkey 누락/self-eth)는 그대로 적용된다.
 pub fn merge_remote_peers(
     db: &mut openxgram_db::Db,
     remote: &[RemotePeer],
     self_eth: Option<&str>,
+    allow_create: bool,
 ) -> anyhow::Result<usize> {
     let mut merged = 0usize;
     let mut store = PeerStore::new(db);
@@ -86,13 +96,17 @@ pub fn merge_remote_peers(
                 continue; // 자기 자신
             }
         }
-        // 마스터 룰 — gossip 신규 흡수 차단. 이미 존재하는 peer 만 UPDATE 하고,
-        //   처음 보는 alias/eth 는 CREATE 하지 않는다(미등록 머신 자동흡수 방지).
-        let exists = store.get_by_eth_address(rp.eth_address.trim())?.is_some()
-            || store.get_by_alias(&rp.alias)?.is_some();
-        if !exists {
-            tracing::debug!(alias = %rp.alias, eth = %rp.eth_address, "peer-sync skip — gossip 신규 흡수 차단(미존재 peer)");
-            continue;
+        // 마스터 룰(rc.347) — gossip 신규 흡수 차단. `allow_create=false` 면 이미 존재하는
+        //   peer 만 UPDATE 하고, 처음 보는 alias/eth 는 CREATE 하지 않는다(미등록 머신
+        //   자동흡수 방지). `allow_create=true`(등록 머신만 pull 하는 신뢰 경로)면 신규
+        //   CREATE 를 허용해 등록 원격 머신의 에이전트를 routable peer 로 흡수한다.
+        if !allow_create {
+            let exists = store.get_by_eth_address(rp.eth_address.trim())?.is_some()
+                || store.get_by_alias(&rp.alias)?.is_some();
+            if !exists {
+                tracing::debug!(alias = %rp.alias, eth = %rp.eth_address, "peer-sync skip — gossip 신규 흡수 차단(미존재 peer, allow_create=false)");
+                continue;
+            }
         }
         let role = PeerRole::parse(&rp.role).unwrap_or(PeerRole::Worker);
         let gui = rp
@@ -170,6 +184,56 @@ pub fn reachable_peer_addresses(data_dir: &Path) -> anyhow::Result<Vec<String>> 
         .map(|p| p.address)
         .filter(|a| !is_unreachable_address(a))
         .collect())
+}
+
+/// Part 1 (cross-machine peer-routing seed) — peers 테이블 유래 후보 + env 부트스트랩 URL 을
+/// 합쳐 중복·self·도달불가를 제거한 **유일** pull 후보 목록을 만드는 순수 함수.
+///
+/// 배경(본질 결함): cross-machine sync 는 pull 기반인데, 등록된 **원격 머신**(예: zalman)은
+/// 아직 로컬 `peers` row 가 없고 그 transport URL 이 DB 어디에도 구조화 저장돼 있지 않다 →
+/// seoul 이 zalman 에서 pull 할 시드(base URL)가 없다. 운영자가 `XGRAM_PEER_BOOTSTRAP_URLS`
+/// (콤마/공백 구분 transport base URL 목록)로 시드를 제공하면 첫 pull 이 성사되고, 그 후
+/// Part 2(`allow_create`)로 원격 에이전트가 `peers` row 로 흡수돼 자생적 후보가 된다
+/// (부트스트랩은 seed/recover 용도로만 필요).
+///
+/// 규칙(정적 하드코딩 금지 — env 가 진리원천):
+///   - `bootstrap_env` 를 콤마/공백으로 split, trim, 빈 항목 제거.
+///   - `peer_table_urls` + env 후보를 합친다.
+///   - `is_unreachable_address`(loopback/unspecified/빈값)는 제외.
+///   - `self_host` 와 host 가 같은 후보는 제외(자기 자신 pull 방지).
+///   - 동일 URL(정규화: trailing '/' 제거 + ascii 소문자) 중복은 1회만.
+/// 입력 순서를 보존하되 첫 등장만 채택한다.
+pub fn combine_pull_candidates(
+    peer_table_urls: Vec<String>,
+    bootstrap_env: Option<&str>,
+    self_host: Option<&str>,
+) -> Vec<String> {
+    let env_urls = bootstrap_env
+        .into_iter()
+        .flat_map(|s| s.split([',', ' ', '\t', '\n', '\r']))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    let mut seen: std::collections::HashSet<String> = Default::default();
+    let mut out: Vec<String> = Vec::new();
+    for url in peer_table_urls.into_iter().chain(env_urls) {
+        let url = url.trim().to_string();
+        if url.is_empty() || is_unreachable_address(&url) {
+            continue;
+        }
+        // self host 와 같은 후보 제외 — 자기 데몬을 pull 대상으로 삼지 않는다.
+        if let (Some(sh), Some(uh)) = (self_host, url_host(&url)) {
+            if sh.eq_ignore_ascii_case(&uh) {
+                continue;
+            }
+        }
+        let norm = url.trim_end_matches('/').to_ascii_lowercase();
+        if seen.insert(norm) {
+            out.push(url);
+        }
+    }
+    out
 }
 
 /// 자기 DB 에서 reachable(localhost 아님) + eth_address·pubkey 보유 peer 를 `RemotePeer` 로 매핑.
@@ -370,9 +434,24 @@ async fn fetch_remote_peers(base: &str) -> anyhow::Result<Vec<RemotePeer>> {
 /// per-peer 실패(네트워크/역직렬화)는 전체를 멈추지 않고 warn 후 continue.
 /// 병합된 총 row 수 반환.
 pub async fn sync_tick_once(data_dir: &Path) -> anyhow::Result<usize> {
-    let candidates = reachable_peer_addresses(data_dir)?;
+    let peer_table_urls = reachable_peer_addresses(data_dir)?;
+    // Part 1 — env 부트스트랩 URL 을 합쳐 등록 원격 머신(예: zalman)을 시드한다.
+    //   self 머신 주소(env 권위)는 reachable_remote_peers 와 동일 우선순위로 읽어
+    //   host 만 추출 → 자기 자신 pull 제외에 사용한다.
+    let self_machine_addr = std::env::var("XGRAM_TRANSPORT_PUBLIC_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty() && !is_unreachable_address(u))
+        .or_else(|| {
+            std::env::var("XGRAM_SELF_ADDRESS")
+                .ok()
+                .filter(|u| !u.trim().is_empty() && !is_unreachable_address(u))
+        });
+    let self_host = self_machine_addr.as_deref().and_then(url_host);
+    let bootstrap_env = std::env::var("XGRAM_PEER_BOOTSTRAP_URLS").ok();
+    let candidates =
+        combine_pull_candidates(peer_table_urls, bootstrap_env.as_deref(), self_host.as_deref());
     if candidates.is_empty() {
-        tracing::debug!("peer-sync tick: reachable peer 0 — skip");
+        tracing::debug!("peer-sync tick: pull 후보 0 — skip");
         return Ok(0);
     }
     let self_eth = self_eth_address(data_dir);
@@ -395,7 +474,10 @@ pub async fn sync_tick_once(data_dir: &Path) -> anyhow::Result<usize> {
                         tracing::warn!(base = %base, error = %e, "peer-sync prune 실패 (계속)")
                     }
                 }
-                match merge_remote_peers(&mut db, &remote, self_eth.as_deref()) {
+                // allow_create=true — pull 대상은 reachable_peer_addresses 가 이미
+                //   `agent_profiles.source='user'`(등록 머신)으로 좁힌 신뢰 경로다.
+                //   따라서 등록된 원격 머신의 신규 에이전트도 routable peer 로 흡수(CREATE)한다.
+                match merge_remote_peers(&mut db, &remote, self_eth.as_deref(), true) {
                     Ok(n) => total += n,
                     Err(e) => {
                         tracing::warn!(base = %base, error = %e, "peer-sync merge 실패 (계속)")
@@ -553,7 +635,9 @@ mod tests {
             rp("zero", "http://0.0.0.0:47300", "0xaaa2"),
             rp("good", "http://100.101.237.9:47300", "0xbbb1"),
         ];
-        let merged = merge_remote_peers(&mut db, &remote, None).unwrap();
+        // allow_create=false — 미존재 흡수 차단 정책 하에서도 localhost/0.0.0.0 는
+        //   주소 단계에서 먼저 거부됨을 검증.
+        let merged = merge_remote_peers(&mut db, &remote, None, false).unwrap();
         assert_eq!(merged, 1, "localhost/0.0.0.0 는 거부, 기존 reachable 1 개만 UPDATE");
         let mut store = PeerStore::new(&mut db);
         assert!(store.get_by_eth_address("0xbbb1").unwrap().is_some());
@@ -583,11 +667,12 @@ mod tests {
             rp("me", "http://100.64.0.5:47300", "0xSELF"),
             rp("other", "http://100.64.0.6:47300", "0xOTHER"),
         ];
-        let merged = merge_remote_peers(&mut db, &remote, Some("0xself")).unwrap();
-        assert_eq!(merged, 1, "self(eth 동일, 대소문자 무시) 제외, 기존 other 만 UPDATE");
+        // allow_create=true 라도 self-eth 가드는 항상 우선 — self 는 절대 흡수 안 됨.
+        let merged = merge_remote_peers(&mut db, &remote, Some("0xself"), true).unwrap();
+        assert_eq!(merged, 1, "self(eth 동일, 대소문자 무시) 제외, other 1 개만 병합");
         let mut store = PeerStore::new(&mut db);
         assert!(store.get_by_eth_address("0xOTHER").unwrap().is_some());
-        // self 는 흡수 안 됨.
+        // self 는 흡수 안 됨 (allow_create 여부와 무관).
         assert!(store.get_by_eth_address("0xSELF").unwrap().is_none());
     }
 
@@ -609,8 +694,9 @@ mod tests {
                 .unwrap();
         }
         let remote = vec![rp("dup", "http://100.64.0.7:47300", "0xdup")];
-        let a = merge_remote_peers(&mut db, &remote, None).unwrap();
-        let b = merge_remote_peers(&mut db, &remote, None).unwrap();
+        // allow_create=true — 두 번 호출해도 eth→pubkey 키 UPSERT 라 row 중복 없음.
+        let a = merge_remote_peers(&mut db, &remote, None, true).unwrap();
+        let b = merge_remote_peers(&mut db, &remote, None, true).unwrap();
         assert_eq!(a, 1);
         assert_eq!(b, 1, "재실행해도 row 중복 안 생김 (UPSERT)");
         let mut store = PeerStore::new(&mut db);
@@ -619,15 +705,72 @@ mod tests {
     }
 
     #[test]
-    fn merge_skips_unknown_peers() {
-        // 마스터 룰 — gossip 신규 흡수 차단. 미존재 alias/eth 는 CREATE 안 함.
+    fn merge_skips_unknown_peers_when_create_disallowed() {
+        // 마스터 룰(rc.347) — allow_create=false 면 미존재 alias/eth 는 CREATE 안 함.
+        //   (미등록 머신 gossip 자동흡수 방지 경로.)
         let mut db = open_mem_db();
         let remote = vec![rp("stranger", "http://100.64.0.8:47300", "0xstranger")];
-        let merged = merge_remote_peers(&mut db, &remote, None).unwrap();
-        assert_eq!(merged, 0, "미존재 peer 는 흡수 안 됨 (update-only)");
+        let merged = merge_remote_peers(&mut db, &remote, None, false).unwrap();
+        assert_eq!(merged, 0, "미존재 peer 는 흡수 안 됨 (allow_create=false, update-only)");
         let mut store = PeerStore::new(&mut db);
         assert!(store.get_by_eth_address("0xstranger").unwrap().is_none());
         assert!(store.get_by_alias("stranger").unwrap().is_none());
+    }
+
+    #[test]
+    fn merge_creates_when_allowed_with_gossiped_origin_address() {
+        // 핵심 fix — allow_create=true(등록 머신만 pull 하는 신뢰 경로)면 미존재 peer 도
+        //   CREATE 된다. 그리고 생성된 row 의 주소는 self 주소가 아니라 **원격이 광고한
+        //   origin 주소**여야 한다(cross-machine 라우팅이 zalman 주소로 도달하도록).
+        let mut db = open_mem_db();
+        // pre-seed 없음 — 처음 보는 zalman 에이전트를 시뮬레이트.
+        let zalman_addr = "http://100.80.35.17:17400";
+        let remote = vec![rp("Zalman", zalman_addr, "0xZALMAN")];
+        // self_eth 는 다른 신원 — self-eth 가드에 안 걸림.
+        let merged = merge_remote_peers(&mut db, &remote, Some("0xseoul"), true).unwrap();
+        assert_eq!(merged, 1, "등록 머신의 미존재 peer 는 allow_create=true 로 CREATE 됨");
+        let mut store = PeerStore::new(&mut db);
+        let created = store
+            .get_by_eth_address("0xZALMAN")
+            .unwrap()
+            .expect("zalman peer 가 생성돼야 함");
+        // 결정적 검증 — 생성된 주소가 원격 origin 주소(zalman) 이지 self/seoul 주소가 아님.
+        assert_eq!(
+            created.address, zalman_addr,
+            "생성된 peer 의 주소는 원격이 광고한 origin(zalman) 이어야 함, self 가 아님"
+        );
+        assert_eq!(
+            created.eth_address.as_deref(),
+            Some("0xZALMAN"),
+            "eth 신원 보존"
+        );
+    }
+
+    #[test]
+    fn merge_create_preserves_safety_filters_even_when_allowed() {
+        // allow_create=true 라도 안전 필터(unreachable·eth/pubkey 누락·self-eth)는 유지.
+        let mut db = open_mem_db();
+        let mut unreachable = rp("loop", "http://127.0.0.1:17400", "0xLOOP");
+        let mut no_eth = rp("noeth", "http://100.80.35.17:17400", "");
+        no_eth.eth_address = "".to_string();
+        let self_peer = rp("selfp", "http://100.80.35.17:17400", "0xMINE");
+        // pubkey 누락 케이스.
+        let mut no_pub = rp("nopub", "http://100.80.35.17:17400", "0xNOPUB");
+        no_pub.public_key_hex = "".to_string();
+        // (위 unreachable 는 mut 불필요하지만 일관성 유지)
+        let _ = &mut unreachable;
+        let _ = &mut no_eth;
+        let remote = vec![unreachable, no_eth, self_peer, no_pub];
+        let merged = merge_remote_peers(&mut db, &remote, Some("0xMINE"), true).unwrap();
+        assert_eq!(
+            merged, 0,
+            "allow_create=true 라도 unreachable/eth·pubkey 누락/self-eth 는 전부 skip"
+        );
+        let mut store = PeerStore::new(&mut db);
+        assert!(store.get_by_alias("loop").unwrap().is_none());
+        assert!(store.get_by_alias("noeth").unwrap().is_none());
+        assert!(store.get_by_eth_address("0xMINE").unwrap().is_none());
+        assert!(store.get_by_alias("nopub").unwrap().is_none());
     }
 
     #[test]
@@ -714,6 +857,62 @@ mod tests {
         assert_eq!(pruned, 0, "self peer 는 prune 금지");
         let mut store = PeerStore::new(&mut db);
         assert!(store.get_by_eth_address("0xSELF").unwrap().is_some());
+    }
+
+    #[test]
+    fn combine_includes_bootstrap_env_url() {
+        // env 부트스트랩 URL 이 후보로 포함된다 (peers 테이블이 비어도).
+        let out = combine_pull_candidates(
+            vec![],
+            Some("http://100.80.35.17:17400"),
+            None,
+        );
+        assert_eq!(out, vec!["http://100.80.35.17:17400".to_string()]);
+    }
+
+    #[test]
+    fn combine_excludes_self_host() {
+        // env 안에 self host(seoul) URL 이 있으면 자기 자신 pull 방지로 제외.
+        let out = combine_pull_candidates(
+            vec![],
+            Some("http://100.101.237.9:47300, http://100.80.35.17:17400"),
+            Some("100.101.237.9"),
+        );
+        assert_eq!(
+            out,
+            vec!["http://100.80.35.17:17400".to_string()],
+            "self host(100.101.237.9) 후보는 제외, zalman 만 남음"
+        );
+    }
+
+    #[test]
+    fn combine_excludes_unreachable() {
+        // loopback/unspecified 후보는 제외.
+        let out = combine_pull_candidates(
+            vec!["http://127.0.0.1:47300".to_string()],
+            Some("http://0.0.0.0:17400  http://100.80.35.17:17400"),
+            None,
+        );
+        assert_eq!(
+            out,
+            vec!["http://100.80.35.17:17400".to_string()],
+            "loopback/0.0.0.0 는 제외"
+        );
+    }
+
+    #[test]
+    fn combine_dedupes_same_url_in_table_and_env() {
+        // peers 테이블 + env 에 같은 URL 이 있으면 1회만 등장 (trailing '/' 무시).
+        let out = combine_pull_candidates(
+            vec!["http://100.80.35.17:17400".to_string()],
+            Some("http://100.80.35.17:17400/"),
+            None,
+        );
+        assert_eq!(
+            out,
+            vec!["http://100.80.35.17:17400".to_string()],
+            "중복 URL 은 1회만 (정규화 dedupe)"
+        );
     }
 
     #[test]
