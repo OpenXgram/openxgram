@@ -851,15 +851,25 @@ export function KakaoShell(props: { onLogout?: () => void }) {
   // 그리드 행 "새창" — 행마다 그 행 신원에 스코프된 팝업을 연다.
   //   App.tsx 가 실제 소비하는 파라미터만 사용(?peer= 는 무시됨 → 같은 풀 GUI 가 뜨던 버그).
   //   세션(sid) 있으면 tmux 라이브 팝업(?tmux=identifier&label), 없으면 대화 팝업(?chat=alias).
-  //   창 이름을 행별 고유(oxg_<alias>)로 만들어 서로 다른 행이 서로 다른 창을 갖게 한다.
+  //   ⚠️ sid(roster session_identifier)·DetectedSession identifier 둘 다 `tmux:aoe_X` 형식이고
+  //      session_screen / WS 엔드포인트가 이 prefix 를 요구한다(raw `aoe_X` → "unsupported identifier").
+  //      그래서 sid 를 그대로 ?tmux= 에 넘긴다(openTmuxPopout 과 동일 — strip 하면 안 됨).
+  //   창 이름을 행별 고유(sid 우선, 없으면 alias)로 만들어 서로 다른 행이 서로 다른 창을 갖게 한다.
+  //   → window.open(url, name) 으로 URL 을 직접 연다(빈 창 후 location.href 대입 X — 일부 브라우저서
+  //      about:blank 에 머무는 경합 회피). 같은 행 재클릭 = 명명 타깃 재사용(중복 창 없음).
+  //   팝업 차단 시 현재 탭을 가로채지 않는다(location.href X) — 사용자에게 허용 요청만.
   function openPeerWindow(r: { alias: string; sid?: string | null; name?: string | null }) {
     const display = r.name || r.alias;
     const url = r.sid
       ? `${location.origin}${location.pathname}?tmux=${encodeURIComponent(r.sid)}&label=${encodeURIComponent(display)}`
       : `${location.origin}${location.pathname}?chat=${encodeURIComponent(r.alias)}`;
-    const w = window.open("", `oxg_${r.alias}`, "width=820,height=620");
-    if (!w) { location.href = url; return; }
-    w.location.href = url;
+    // 행 고유 창 이름 — 세션 행은 sid 기준(같은 sid 재클릭 시 그 창 재사용), 그 외 alias 기준.
+    const winName = `oxg_${r.sid ?? r.alias}`;
+    const w = window.open(url, winName, "width=820,height=620");
+    if (!w) {
+      window.alert("팝업이 차단되었습니다 — 이 사이트의 팝업을 허용해 주세요.");
+      return;
+    }
     try { window.focus(); } catch { /* noop */ }
   }
 
@@ -1206,7 +1216,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
             모든 행 = 동일 4버튼(새창·종료·재시작·삭제), 능력별 활성/비활성으로 슬롯 정렬. */}
         <div style="display:flex;align-items:center;gap:10px;padding:4px 24px 0">
           <h2 style="padding:0">🧩 통합 현황 그리드</h2>
-          <button class="killbtn" style="margin:0;color:#37424d" title="로스터·세션 다시 불러오기" onClick={() => { void refetchRoster(); void refetchSessions(); }}>🔄 새로고침</button>
+          <button class="killbtn" style="margin:0;color:#37424d" title="로스터·세션 다시 불러오기" disabled={roster.loading || sessions.loading} onClick={() => { void refetchRoster(); void refetchSessions(); }}>{(roster.loading || sessions.loading) ? "⏳ 새로고침 중…" : "🔄 새로고침"}</button>
         </div>
         <div class="sub">모든 peer · tmux · ACP 세션을 한 표로 — 헤더 클릭=정렬, 이름·역할 셀 클릭=인라인 편집(peer·ACP) · 모든 행 동일 4액션(새창·종료·재시작·삭제), 능력별 활성/비활성</div>
         <div class="dgrid">
