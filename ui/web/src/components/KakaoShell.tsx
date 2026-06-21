@@ -1235,7 +1235,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                   {/* 이름 — peer 면 셀 클릭 인라인 편집 */}
                   <Show when={isEditing(r.alias, "name")} fallback={
                     <span class={r.editable ? "dg-edit" : ""} title={r.editable ? "클릭하여 이름 편집" : r.name}
-                      onClick={() => { if (r.editable) setEditing({ alias: r.alias, field: "name" }); }}>{r.name}</span>
+                      onClick={() => { if (r.editable) setEditing({ alias: r.alias, field: "name" }); }}>{r.editable ? <span class="dg-edit-tx">{r.name}</span> : r.name}</span>
                   }>
                     <span><input class="dg-in" autofocus value={r.name}
                       onKeyDown={(e) => { if (e.key === "Enter") void commitInlineEdit(r, "name", e.currentTarget.value); else if (e.key === "Escape") setEditing(null); }}
@@ -1254,7 +1254,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                   {/* 역할 — peer 면 셀 클릭 인라인 편집 */}
                   <Show when={isEditing(r.alias, "role")} fallback={
                     <span class={r.editable ? "dg-edit" : ""} title={r.editable ? "클릭하여 역할 편집" : (r.role ?? "")}
-                      onClick={() => { if (r.editable) setEditing({ alias: r.alias, field: "role" }); }}>{r.role ?? "—"}</span>
+                      onClick={() => { if (r.editable) setEditing({ alias: r.alias, field: "role" }); }}>{r.editable ? <span class="dg-edit-tx">{r.role ?? "—"}</span> : (r.role ?? "—")}</span>
                   }>
                     <span><input class="dg-in" autofocus value={r.role ?? ""}
                       onKeyDown={(e) => { if (e.key === "Enter") void commitInlineEdit(r, "role", e.currentTarget.value); else if (e.key === "Escape") setEditing(null); }}

@@ -374,14 +374,18 @@
    .dash 콘텐츠가 뷰포트를 넘으면 .dash(overflow-y:auto)가 스크롤 → 25행까지 도달.
    dg-head 의 position:sticky 는 .dash 스크롤 기준으로 상단 고정된다. */
 .oxg-app .dgrid{width:calc(100% - 48px);margin:0 24px 24px;border:1px solid var(--line);border-radius:14px;background:#fff;flex:none;font-size:12.5px}
-.oxg-app .dgrid .dg-row{display:grid;grid-template-columns:38px 60px minmax(120px,1.4fr) minmax(110px,1fr) 96px minmax(80px,1fr) 64px minmax(120px,1.3fr) minmax(80px,1fr) minmax(140px,1.6fr) 304px;align-items:center;gap:8px;padding:6px 12px;border-top:1px solid var(--line)}
+.oxg-app .dgrid .dg-row{display:grid;grid-template-columns:34px 30px minmax(110px,1.2fr) minmax(100px,1fr) 104px 78px 58px minmax(110px,1.1fr) minmax(80px,0.9fr) minmax(160px,2fr) 300px;align-items:center;gap:8px;padding:6px 12px;border-top:1px solid var(--line)}
 .oxg-app .dgrid .dg-row:first-child{border-top:none}
 .oxg-app .dgrid .dg-head{background:#f4f7fa;font-weight:700;color:#2c3a47;font-size:11.5px;position:sticky;top:0;z-index:1}
 .oxg-app .dgrid .dg-head>span{cursor:pointer;user-select:none;display:flex;align-items:center;gap:3px;white-space:nowrap}
 .oxg-app .dgrid .dg-head>span:hover{color:#16242f}
 .oxg-app .dgrid .dg-row>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.oxg-app .dgrid .dg-row .dg-edit{cursor:text}
-.oxg-app .dgrid .dg-row .dg-edit:hover{background:#eef4fa;border-radius:4px}
+/* 편집 가능 셀(이름·역할) — 연필 큐로 편집 가능함을 명시. 호버 시 진해짐. */
+.oxg-app .dgrid .dg-row .dg-edit{cursor:text;display:flex;align-items:center;gap:4px;border:1px solid transparent;border-radius:5px;padding:1px 4px;margin:-1px -4px;transition:background .12s,border-color .12s}
+.oxg-app .dgrid .dg-row .dg-edit::after{content:"✏";font-size:10px;opacity:.32;margin-left:auto;flex:none;color:#5a7fb0;transition:opacity .12s}
+.oxg-app .dgrid .dg-row .dg-edit:hover{background:#eef4fa;border-color:#bcd2ea}
+.oxg-app .dgrid .dg-row .dg-edit:hover::after{opacity:.95}
+.oxg-app .dgrid .dg-row .dg-edit .dg-edit-tx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .oxg-app .dgrid .dg-row input.dg-in{width:100%;font-size:12px;font-family:var(--sans);border:1px solid #5a7fb0;border-radius:5px;padding:2px 5px;background:#fff;color:#16242f}
 /* 4 고정 슬롯 그리드 — 모든 행이 동일 4버튼이므로 새창/종료/재시작/삭제 컬럼이 행 간 세로 정렬된다. */
 .oxg-app .dgrid .dg-acts{display:grid;grid-template-columns:repeat(4,1fr);align-items:center;gap:5px;justify-content:end;overflow:visible}
