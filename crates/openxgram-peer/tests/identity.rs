@@ -173,9 +173,11 @@ fn sess(id: &str, cwd: Option<&str>, name: Option<&str>) -> SessionInput {
     }
 }
 
-/// 한 논리 에이전트가 peer + agent + session + gossip 중복으로 흩어져 있어도 1행으로 접힌다.
+/// rc.360 — **병합 금지**. 같은 논리 에이전트가 peer + agent 로 흩어져 있으면
+/// 각자 자기 행(접지 않음). 단, peer 가 들고 있는 세션과 그 gossip 중복은
+/// peer 행의 라이브 증거로만 흡수돼 별도 standalone 세션 행을 만들지 않는다.
 #[test]
-fn test_roster_collapses_one_agent_across_sources() {
+fn test_roster_no_collapse_peer_and_agent_kept_separate() {
     let tmp = TempDir::new().unwrap();
     let mut db = fresh_db(&tmp);
 
@@ -198,7 +200,7 @@ fn test_roster_collapses_one_agent_across_sources() {
         Some("builder"),
     );
 
-    // sessions: 정상 tmux + gossip 중복(peer:other:tmux:...).
+    // sessions: 정상 tmux + gossip 중복(peer:other:tmux:...). 둘 다 normSid="aoe_flowsync_x".
     let sessions = vec![
         sess("tmux:aoe_flowsync_x", Some("/home/llm/projects/flowsync"), None),
         sess("peer:other:tmux:aoe_flowsync_x", None, None),
@@ -207,36 +209,41 @@ fn test_roster_collapses_one_agent_across_sources() {
     let mut store = IdentityStore::new(&mut db);
     let roster = store.roster(&sessions, "server-seoul").unwrap();
 
-    // peer 의 sid 와 agent alias 매칭으로 한 행: flowsync(agent) sid 는 없지만 alias 매칭됨.
-    // agent alias "flowsync" 는 peer sid/canon 과 직접 안 묶이지만, normSid 가 같지 않으므로
-    // alias 키로는 별개일 수 있다 → 검증: flowsync 한 행으로 합쳐졌는지 vs 분리됐는지.
-    // 본 케이스 설계상 peer.sid 와 session.sid 가 normSid 동일("aoe_flowsync_x") → peer+session 1행.
-    // agent("flowsync")는 alias 가 달라(다른 normSid 없음) 별도일 수 있어 — 통합 키 검증.
-    let flow = roster
+    // peer 행 — 자기 행으로 존재. tmux 세션이 owned_sid 라 active.
+    let peer_row = roster
         .iter()
-        .find(|r| r.aliases.iter().any(|a| a == "aoe_flowsync_x"))
-        .expect("flowsync 행 존재");
+        .find(|r| r.primary_alias == "aoe_flowsync_x")
+        .expect("peer 행 존재");
+    assert_eq!(peer_row.canonical_address.as_deref(), Some("0xFLOW"));
+    assert!(peer_row.is_peer && !peer_row.has_agent, "peer 전용 행(병합 X)");
+    assert!(peer_row.has_tmux, "owned tmux 세션 → active");
+    assert_eq!(peer_row.status, "active");
 
-    assert_eq!(flow.canonical_address.as_deref(), Some("0xFLOW"));
-    assert_eq!(flow.primary_alias, "aoe_flowsync_x");
-    assert!(flow.is_peer, "peer 레코드");
-    assert!(flow.has_tmux, "tmux 세션 매칭");
-    // gossip 중복 세션이 별도 행을 만들지 않았는지(중복 dedup).
-    let dup_rows = roster
+    // agent 행 — 별도 행(접히지 않음).
+    let agent_row = roster
+        .iter()
+        .find(|r| r.primary_alias == "flowsync")
+        .expect("agent 행 별도 존재");
+    assert!(agent_row.has_agent && !agent_row.is_peer, "agent 전용 행(병합 X)");
+    assert_eq!(agent_row.machine.as_deref(), Some("seoul"));
+
+    // gossip 중복 세션(peer 의 owned sid)이 별도 standalone 행을 만들지 않았는지.
+    let standalone_sess = roster
         .iter()
         .filter(|r| {
-            openxgram_peer::norm_sid(r.session_identifier.as_deref()) == "aoe_flowsync_x"
+            r.has_tmux
+                && !r.is_peer
+                && !r.has_agent
+                && openxgram_peer::norm_sid(r.session_identifier.as_deref()) == "aoe_flowsync_x"
         })
         .count();
-    assert_eq!(dup_rows, 1, "gossip 중복 세션이 별도 행을 만들면 안 됨");
+    assert_eq!(standalone_sess, 0, "owned 세션은 standalone 행 금지(dedup)");
 }
 
-/// agent alias 가 peer sid 의 normSid 와 같은 경우(짧은 alias = 세션명) 완전 통합 검증.
+/// rc.360 — peer + 같은 sid 를 든 agent → **두 행**(병합 안 함). 세션·gossip 중복은
+/// owned_sid 로 흡수돼 standalone 행을 만들지 않는다.
 #[test]
-fn test_roster_merges_agent_by_matching_sid() {
-    let tmp = TempDir::new().unwrap();
-    let mut db = fresh_db(&tmp);
-
+fn test_roster_peer_and_agent_same_sid_two_rows() {
     let peers = vec![PeerInput {
         alias: "aoe_flowsync_x".into(),
         eth_address: Some("0xFLOW".into()),
@@ -244,7 +251,7 @@ fn test_roster_merges_agent_by_matching_sid() {
         role: Some("primary".into()),
         display_name: Some("FlowSync".into()),
     }];
-    // agent 가 같은 sid 를 들고 있음 → peer 와 sid 로 병합.
+    // agent 가 같은 sid 를 들고 있어도 rc.360 에선 병합 안 함 — 별도 행.
     let agents = vec![AgentInput {
         alias: "flowsync".into(),
         display_name: Some("FlowSync".into()),
@@ -259,16 +266,20 @@ fn test_roster_merges_agent_by_matching_sid() {
     ];
 
     let rows = IdentityStore::roster_from_sources(&peers, &agents, &sessions, "server-seoul");
-    assert_eq!(rows.len(), 1, "모든 소스가 한 행으로");
-    let r = &rows[0];
-    assert_eq!(r.canonical_address.as_deref(), Some("0xFLOW"));
-    assert_eq!(r.primary_alias, "aoe_flowsync_x");
-    assert_eq!(r.cwd.as_deref(), Some("/home/llm/projects/flowsync"));
-    assert_eq!(r.session_identifier.as_deref(), Some("tmux:aoe_flowsync_x"));
-    assert!(r.is_peer && r.has_agent && r.has_tmux);
-    assert_eq!(r.machine.as_deref(), Some("seoul"));
-    assert!(r.aliases.contains(&"aoe_flowsync_x".to_string()));
-    assert!(r.aliases.contains(&"flowsync".to_string()));
+    // peer 행 1 + agent 행 1 = 2 (owned 세션/gossip 은 standalone 행 안 만듦).
+    assert_eq!(rows.len(), 2, "peer 행 + agent 행 별도(병합 금지, 세션 dedup)");
+    let peer_row = rows.iter().find(|r| r.is_peer).expect("peer 행");
+    assert_eq!(peer_row.canonical_address.as_deref(), Some("0xFLOW"));
+    assert_eq!(peer_row.primary_alias, "aoe_flowsync_x");
+    assert_eq!(peer_row.session_identifier.as_deref(), Some("tmux:aoe_flowsync_x"));
+    assert!(peer_row.has_tmux);
+    assert_eq!(peer_row.status, "active");
+    let agent_row = rows.iter().find(|r| r.has_agent && !r.is_peer).expect("agent 행");
+    assert_eq!(agent_row.primary_alias, "flowsync");
+    assert_eq!(agent_row.cwd.as_deref(), Some("/home/llm/projects/flowsync"));
+    assert_eq!(agent_row.machine.as_deref(), Some("seoul"));
+    // agent 도 같은 sid(owned)라 active.
+    assert_eq!(agent_row.status, "active");
 }
 
 /// agent-only(peer 없음) 와 session-only(peer/agent 없음)는 각자 자기 행.

@@ -1731,6 +1731,8 @@ struct RosterEntryDto {
     has_agent: bool,
     has_tmux: bool,
     quarantined: bool,
+    /// rc.360 — 생명주기 상태: active / stopped / dead. 프론트 현황 그리드 점등.
+    status: String,
 }
 
 impl From<openxgram_peer::RosterEntry> for RosterEntryDto {
@@ -1757,6 +1759,7 @@ impl From<openxgram_peer::RosterEntry> for RosterEntryDto {
             has_agent: if is_aoe_acp { true } else { e.has_agent },
             has_tmux: if is_aoe_acp { false } else { e.has_tmux },
             quarantined: e.quarantined,
+            status: e.status,
         }
     }
 }

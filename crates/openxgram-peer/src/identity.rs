@@ -68,6 +68,10 @@ pub struct RosterEntry {
     pub has_agent: bool,
     pub has_tmux: bool,
     pub quarantined: bool,
+    /// 생명주기 상태 (rc.360): "active" = 라이브 세션 존재 ·
+    /// "stopped" = peer/agent 인데 세션 없음 · "dead" = session_identifier 가
+    /// 가리키는 tmux/acp 세션이 사라짐. 프론트 현황 그리드 점등 표시용.
+    pub status: String,
 }
 
 /// session_identifier 정규화 — peer/agent/session 표현을 한 키로 접는다.
@@ -317,259 +321,142 @@ impl<'a> IdentityStore<'a> {
         ))
     }
 
-    /// 순수 그룹핑 로직(DB 비의존 — 단위 테스트 가능). KakaoShell unifiedRows STEP A 미러.
-    /// 그룹핑 키 우선순위: canonical_address(eth) → normSid(session_identifier) → alias(lowercase).
-    /// 소스 순서: peer(1차·정본+라우팅 alias) → agent → session. 나중 소스가 기존 행과
-    /// 매칭되면 새 행 대신 병합(cwd/세션/머신/플래그 채움).
+    /// 순수 행 빌더(DB 비의존 — 단위 테스트 가능). rc.360 — **병합 금지**.
+    /// 현황 그리드 = `list_peers` 거울 = 전체 에이전트 생명주기 콘솔이므로,
+    /// **모든 소스 행이 자기 1행**이 된다(같은 정본/sid/alias 라도 접지 않음).
+    /// 정본은 `canonical_address` 필드로만 노출 — 프론트가 그룹 헤더/주석으로 묶는다.
+    ///
+    /// 행 생성 규칙(소스별 자기 1행):
+    /// - peers 테이블 1행 = RosterEntry 1행 (is_peer)
+    /// - agent_profiles 1행 = RosterEntry 1행 (has_agent) — peer 와 alias 겹쳐도 별도 행
+    /// - 라이브 세션 1개 = RosterEntry 1행 (has_tmux) — 단, 이미 peer/agent 가 같은
+    ///   normSid 를 들고 있으면 그 행을 active 로 표시하고 중복 세션 standalone 행은 만들지 않는다
+    ///   (세션은 신원이 아니라 peer/agent 의 라이브 증거이기 때문). peer/agent 어느 행도
+    ///   해당 세션을 안 들고 있으면 그때만 standalone 세션 행을 만든다.
+    ///
+    /// status(rc.360): "active" = 라이브 세션과 연결됨 · "dead" = `tmux:` sid 인데
+    /// 라이브 집합에 없음 · "stopped" = 그 외(세션 없는 peer/agent, 또는 비-tmux sid 로
+    /// 라이브 판정 불가). 라이브 판정은 `sessions` 인자의 normSid 집합.
     pub fn roster_from_sources(
         peers: &[PeerInput],
         agents: &[AgentInput],
         sessions: &[SessionInput],
         local_machine_alias: &str,
     ) -> Vec<RosterEntry> {
-        use std::collections::HashMap;
+        use std::collections::HashSet;
 
-        // 행 저장소 + 3개 인덱스(canonical/sid/alias → 행 슬롯 인덱스).
-        let mut rows: Vec<RosterEntry> = Vec::new();
-        let mut by_canon: HashMap<String, usize> = HashMap::new();
-        let mut by_sid: HashMap<String, usize> = HashMap::new();
-        let mut by_alias: HashMap<String, usize> = HashMap::new();
-
-        let index_row = |rows: &[RosterEntry],
-                         by_canon: &mut HashMap<String, usize>,
-                         by_sid: &mut HashMap<String, usize>,
-                         by_alias: &mut HashMap<String, usize>,
-                         slot: usize| {
-            let r = &rows[slot];
-            if let Some(c) = &r.canonical_address {
-                by_canon.insert(c.to_lowercase(), slot);
-            }
-            let n = norm_sid(r.session_identifier.as_deref());
-            if !n.is_empty() {
-                by_sid.insert(n, slot);
-            }
-            if !r.primary_alias.is_empty() {
-                by_alias.insert(r.primary_alias.to_lowercase(), slot);
-            }
-        };
-
-        let find_slot = |by_canon: &HashMap<String, usize>,
-                         by_sid: &HashMap<String, usize>,
-                         by_alias: &HashMap<String, usize>,
-                         canonical: Option<&str>,
-                         sid: Option<&str>,
-                         alias: Option<&str>|
-         -> Option<usize> {
-            if let Some(c) = canonical {
-                if let Some(&s) = by_canon.get(&c.to_lowercase()) {
-                    return Some(s);
-                }
-            }
-            let n = norm_sid(sid);
-            if !n.is_empty() {
-                if let Some(&s) = by_sid.get(&n) {
-                    return Some(s);
-                }
-            }
-            if let Some(a) = alias {
-                if let Some(&s) = by_alias.get(&a.to_lowercase()) {
-                    return Some(s);
-                }
-            }
-            None
-        };
-
-        // 1) peer 행 — 항상 1차. canonical_address + A2A 라우팅 alias.
-        for p in peers {
-            let canonical = p.eth_address.clone();
-            let slot = find_slot(
-                &by_canon,
-                &by_sid,
-                &by_alias,
-                canonical.as_deref(),
-                p.session_identifier.as_deref(),
-                Some(&p.alias),
-            );
-            match slot {
-                Some(s) => {
-                    let r = &mut rows[s];
-                    r.is_peer = true;
-                    if r.canonical_address.is_none() {
-                        r.canonical_address = canonical;
-                    }
-                    if r.display_name.is_none() {
-                        r.display_name = p.display_name.clone();
-                    }
-                    if r.role.is_none() {
-                        r.role = p.role.clone();
-                    }
-                    if r.session_identifier.is_none() {
-                        r.session_identifier = p.session_identifier.clone();
-                    }
-                    if !r.aliases.contains(&p.alias) {
-                        r.aliases.push(p.alias.clone());
-                    }
-                }
-                None => {
-                    rows.push(RosterEntry {
-                        canonical_address: canonical,
-                        primary_alias: p.alias.clone(),
-                        display_name: p.display_name.clone(),
-                        role: p.role.clone(),
-                        machine: None,
-                        cwd: None,
-                        session_identifier: p.session_identifier.clone(),
-                        aliases: vec![p.alias.clone()],
-                        is_peer: true,
-                        has_agent: false,
-                        has_tmux: false,
-                        quarantined: false,
-                    });
-                    let slot = rows.len() - 1;
-                    index_row(&rows, &mut by_canon, &mut by_sid, &mut by_alias, slot);
-                }
-            }
-        }
-
-        // 2) agent 행 — peer 와 매칭되면 병합(cwd/machine/세션/role 채움), 아니면 신규.
-        for a in agents {
-            let slot = find_slot(
-                &by_canon,
-                &by_sid,
-                &by_alias,
-                None,
-                a.session_identifier.as_deref(),
-                Some(&a.alias),
-            );
-            match slot {
-                Some(s) => {
-                    let r = &mut rows[s];
-                    r.has_agent = true;
-                    if r.display_name.is_none() {
-                        r.display_name = a.display_name.clone();
-                    }
-                    if r.role.is_none() {
-                        r.role = a.role.clone();
-                    }
-                    if r.machine.is_none() {
-                        r.machine = a.machine.clone();
-                    }
-                    if r.cwd.is_none() {
-                        r.cwd = a.cwd.clone();
-                    }
-                    if r.session_identifier.is_none() {
-                        r.session_identifier = a.session_identifier.clone();
-                        let n = norm_sid(r.session_identifier.as_deref());
-                        if !n.is_empty() {
-                            by_sid.insert(n, s);
-                        }
-                    }
-                    if !r.aliases.contains(&a.alias) {
-                        r.aliases.push(a.alias.clone());
-                    }
-                }
-                None => {
-                    rows.push(RosterEntry {
-                        canonical_address: None,
-                        primary_alias: a.alias.clone(),
-                        display_name: a.display_name.clone(),
-                        role: a.role.clone(),
-                        machine: a.machine.clone(),
-                        cwd: a.cwd.clone(),
-                        session_identifier: a.session_identifier.clone(),
-                        aliases: vec![a.alias.clone()],
-                        is_peer: false,
-                        has_agent: true,
-                        has_tmux: false,
-                        quarantined: false,
-                    });
-                    let slot = rows.len() - 1;
-                    index_row(&rows, &mut by_canon, &mut by_sid, &mut by_alias, slot);
-                }
-            }
-        }
-
-        // 3) session 행 — sid/alias 로 매칭되면 has_tmux + cwd/세션 채움, 아니면 standalone.
-        for se in sessions {
-            let sid = Some(se.session_identifier.as_str());
-            // 세션은 alias 후보로 normSid 값을 쓴다(예: "tmux:aoe_X" → "aoe_x").
-            let alias_guess = norm_sid(sid);
-            let slot = find_slot(
-                &by_canon,
-                &by_sid,
-                &by_alias,
-                None,
-                sid,
-                if alias_guess.is_empty() {
-                    None
-                } else {
-                    Some(alias_guess.as_str())
-                },
-            );
-            match slot {
-                Some(s) => {
-                    let r = &mut rows[s];
-                    r.has_tmux = true;
-                    if r.session_identifier.is_none() {
-                        r.session_identifier = Some(se.session_identifier.clone());
-                    }
-                    if r.cwd.is_none() {
-                        r.cwd = se.cwd.clone();
-                    }
-                    if r.display_name.is_none() {
-                        r.display_name = se.display_name.clone();
-                    }
-                }
-                None => {
-                    rows.push(RosterEntry {
-                        canonical_address: None,
-                        primary_alias: if alias_guess.is_empty() {
-                            se.session_identifier.clone()
-                        } else {
-                            alias_guess.clone()
-                        },
-                        display_name: se.display_name.clone(),
-                        role: None,
-                        machine: None,
-                        cwd: se.cwd.clone(),
-                        session_identifier: Some(se.session_identifier.clone()),
-                        aliases: vec![if alias_guess.is_empty() {
-                            se.session_identifier.clone()
-                        } else {
-                            alias_guess.clone()
-                        }],
-                        is_peer: false,
-                        has_agent: false,
-                        has_tmux: true,
-                        quarantined: true, // peer/agent 신원 없는 standalone 세션 = 격리 표시.
-                    });
-                    let slot = rows.len() - 1;
-                    index_row(&rows, &mut by_canon, &mut by_sid, &mut by_alias, slot);
-                }
-            }
-        }
-
-        // tmux liveness 필터 — "유령 tmux" 행 제거(rc.358).
-        // sessions 파라미터가 실제 살아있는 세션 집합(daemon_gui collect_sessions).
-        // session_identifier 가 `tmux:` 로 시작하는데 그 normSid 가 live 집합에 없으면
-        // session_identifier 를 None 으로 비운다 → 프론트에서 "active 아님"·종료 불가로 표시.
-        // 주의: `tmux:` 접두만 대상. `aoe-acp:`·`peer:`·원격/크로스머신 sid 는 건드리지 않는다.
-        let live_sids: std::collections::HashSet<String> = sessions
+        // 라이브 세션 normSid 집합 — status 계산 + standalone 세션 중복 제거에 사용.
+        let live_sids: HashSet<String> = sessions
             .iter()
             .map(|s| norm_sid(Some(s.session_identifier.as_str())))
             .filter(|n| !n.is_empty())
             .collect();
+
+        let mut rows: Vec<RosterEntry> = Vec::new();
+        // peer/agent 가 들고 있는 normSid 집합 — standalone 세션 행 중복 방지.
+        let mut owned_sids: HashSet<String> = HashSet::new();
+
+        // 1) peers — 한 행씩 그대로.
+        for p in peers {
+            let n = norm_sid(p.session_identifier.as_deref());
+            if !n.is_empty() {
+                owned_sids.insert(n);
+            }
+            rows.push(RosterEntry {
+                canonical_address: p.eth_address.clone(),
+                primary_alias: p.alias.clone(),
+                display_name: p.display_name.clone(),
+                role: p.role.clone(),
+                machine: None,
+                cwd: None,
+                session_identifier: p.session_identifier.clone(),
+                aliases: vec![p.alias.clone()],
+                is_peer: true,
+                has_agent: false,
+                has_tmux: false,
+                quarantined: false,
+                status: String::new(), // 아래에서 계산
+            });
+        }
+
+        // 2) agent_profiles — 한 행씩 그대로(peer 와 alias 겹쳐도 별도 행).
+        for a in agents {
+            let n = norm_sid(a.session_identifier.as_deref());
+            if !n.is_empty() {
+                owned_sids.insert(n);
+            }
+            rows.push(RosterEntry {
+                canonical_address: None,
+                primary_alias: a.alias.clone(),
+                display_name: a.display_name.clone(),
+                role: a.role.clone(),
+                machine: a.machine.clone(),
+                cwd: a.cwd.clone(),
+                session_identifier: a.session_identifier.clone(),
+                aliases: vec![a.alias.clone()],
+                is_peer: false,
+                has_agent: true,
+                has_tmux: false,
+                quarantined: false,
+                status: String::new(),
+            });
+        }
+
+        // 3) 세션 — peer/agent 가 이미 들고 있는 세션이면 그 행을 active 로 표시(아래 status
+        //    계산이 처리). 그 외(어떤 peer/agent 도 안 들고 있는 라이브 세션)만 standalone 행 생성.
+        for se in sessions {
+            let n = norm_sid(Some(se.session_identifier.as_str()));
+            if !n.is_empty() && owned_sids.contains(&n) {
+                continue; // 이미 peer/agent 행이 이 세션을 증거로 들고 있음 → 중복 standalone 금지.
+            }
+            let alias_guess = if n.is_empty() {
+                se.session_identifier.clone()
+            } else {
+                n
+            };
+            rows.push(RosterEntry {
+                canonical_address: None,
+                primary_alias: alias_guess.clone(),
+                display_name: se.display_name.clone(),
+                role: None,
+                machine: None,
+                cwd: se.cwd.clone(),
+                session_identifier: Some(se.session_identifier.clone()),
+                aliases: vec![alias_guess],
+                is_peer: false,
+                has_agent: false,
+                has_tmux: true,
+                quarantined: true, // peer/agent 신원 없는 standalone 세션 = 격리 표시.
+                status: String::new(),
+            });
+        }
+
+        // status 계산 + has_tmux 표시 — liveness-hide 대신 status 로 노출(rc.360).
+        // `tmux:` sid: normSid 가 라이브 집합에 있으면 active(+has_tmux), 없으면 dead.
+        // 비-tmux sid(aoe-acp:/peer:/원격): 라이브 집합과 매칭되면 active, 아니면 stopped
+        //   (원격/ACP 의 생존은 여기서 단정 못 하므로 보수적으로 stopped, sid 는 보존).
+        // sid 없는 peer/agent: stopped. standalone 세션 행: 항상 active(라이브 증거).
         for r in &mut rows {
-            let is_tmux = r
-                .session_identifier
-                .as_deref()
-                .map(|s| s.starts_with("tmux:"))
-                .unwrap_or(false);
-            if is_tmux {
-                let n = norm_sid(r.session_identifier.as_deref());
-                if !live_sids.contains(&n) {
-                    r.session_identifier = None;
+            let sid = r.session_identifier.clone();
+            let n = norm_sid(sid.as_deref());
+            let is_tmux = sid.as_deref().map(|s| s.starts_with("tmux:")).unwrap_or(false);
+            let live = !n.is_empty() && live_sids.contains(&n);
+            if r.has_tmux && !r.is_peer && !r.has_agent {
+                // standalone 세션 행 — 정의상 라이브.
+                r.status = "active".to_string();
+            } else if sid.is_none() || n.is_empty() {
+                r.status = "stopped".to_string();
+            } else if live {
+                r.status = "active".to_string();
+                if is_tmux {
+                    r.has_tmux = true;
                 }
+            } else if is_tmux {
+                // tmux sid 인데 라이브 집합에 없음 → 죽은 세션. sid 는 유지(프론트 표시·tooltip).
+                r.status = "dead".to_string();
+            } else {
+                // 비-tmux sid(원격/ACP) — 라이브 판정 불가 → stopped(보존).
+                r.status = "stopped".to_string();
             }
         }
 
@@ -642,6 +529,27 @@ mod tests {
         }
     }
 
+    fn peer_eth(alias: &str, eth: &str) -> PeerInput {
+        PeerInput {
+            alias: alias.to_string(),
+            eth_address: Some(eth.to_string()),
+            session_identifier: None,
+            role: None,
+            display_name: None,
+        }
+    }
+
+    fn agent(alias: &str) -> AgentInput {
+        AgentInput {
+            alias: alias.to_string(),
+            display_name: None,
+            role: None,
+            machine: None,
+            cwd: None,
+            session_identifier: None,
+        }
+    }
+
     fn sess(id: &str) -> SessionInput {
         SessionInput {
             session_identifier: id.to_string(),
@@ -656,70 +564,94 @@ mod tests {
             .expect("행 존재")
     }
 
-    /// tmux:live + 해당 세션이 sessions 에 있음 → sid 유지.
+    /// rc.360 핵심: 같은 eth(정본) 두 alias → 접지 않고 **두 행**. canonical_address 는 보존.
     #[test]
-    fn test_liveness_keeps_live_tmux_sid() {
+    fn test_no_collapse_two_aliases_same_eth() {
+        let peers = vec![
+            peer_eth("alias_a", "0xABC"),
+            peer_eth("alias_b", "0xABC"),
+        ];
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &[], "server-seoul");
+        let n: usize = rows.iter().filter(|r| r.is_peer).count();
+        assert_eq!(n, 2, "같은 eth 라도 두 peer = 두 행 (접지 않음)");
+        for a in ["alias_a", "alias_b"] {
+            let r = row_for(&rows, a);
+            assert_eq!(r.canonical_address.as_deref(), Some("0xABC"), "정본 보존");
+        }
+    }
+
+    /// peer + 같은 alias 의 agent_profiles → **두 행**(peer 행 1 + agent 행 1).
+    #[test]
+    fn test_no_collapse_peer_and_agent_same_alias() {
+        let peers = vec![peer("dup", None)];
+        let agents = vec![agent("dup")];
+        let rows = IdentityStore::roster_from_sources(&peers, &agents, &[], "server-seoul");
+        assert_eq!(rows.len(), 2, "peer 행 + agent 행 별도");
+        assert!(rows.iter().any(|r| r.is_peer && !r.has_agent));
+        assert!(rows.iter().any(|r| r.has_agent && !r.is_peer));
+    }
+
+    /// 프로필 없는 peer 도 행으로 나온다(peers 테이블 직접 투영).
+    #[test]
+    fn test_profileless_peer_appears() {
+        let peers = vec![peer("lonely_peer", None)];
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &[], "server-seoul");
+        let r = row_for(&rows, "lonely_peer");
+        assert!(r.is_peer && !r.has_agent);
+        assert_eq!(r.status, "stopped", "세션 없는 peer = stopped");
+    }
+
+    /// status: 라이브 tmux 세션과 연결된 peer → active(+has_tmux), 행은 그대로 유지.
+    #[test]
+    fn test_status_live_tmux_active() {
         let peers = vec![peer("aoe_live_x", Some("tmux:aoe_live_x"))];
         let sessions = vec![sess("tmux:aoe_live_x")];
-        let rows =
-            IdentityStore::roster_from_sources(&peers, &[], &sessions, "server-seoul");
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &sessions, "server-seoul");
         let r = row_for(&rows, "aoe_live_x");
-        assert_eq!(r.session_identifier.as_deref(), Some("tmux:aoe_live_x"));
-        assert!(r.has_tmux, "live tmux 세션과 병합");
+        assert_eq!(r.session_identifier.as_deref(), Some("tmux:aoe_live_x"), "sid 유지");
+        assert_eq!(r.status, "active");
+        assert!(r.has_tmux, "라이브 tmux 표시");
+        // owned_sids dedupe — standalone 세션 행이 추가로 생기지 않아야 함.
+        assert_eq!(rows.iter().filter(|r| r.has_tmux).count(), 1, "세션 중복 행 금지");
     }
 
-    /// tmux:dead + sessions 에 없음 → sid 비워짐(None).
+    /// status: tmux sid 인데 라이브 집합에 없음 → dead, sid 는 유지(숨기지 않음).
     #[test]
-    fn test_liveness_clears_dead_tmux_sid() {
+    fn test_status_dead_tmux() {
         let peers = vec![peer("aoe_dead_x", Some("tmux:aoe_dead_x"))];
-        let sessions: Vec<SessionInput> = vec![];
-        let rows = IdentityStore::roster_from_sources(&peers, &[], &sessions, "server-seoul");
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &[], "server-seoul");
         let r = row_for(&rows, "aoe_dead_x");
-        assert_eq!(
-            r.session_identifier, None,
-            "죽은 tmux sid 는 None 으로 비워져야 함"
-        );
-    }
-
-    /// aoe-acp:<id> 가 tmux 집합에 없어도 → sid 유지(tmux 접두 아님).
-    #[test]
-    fn test_liveness_keeps_aoe_acp_sid() {
-        let peers = vec![peer("acp_agent", Some("aoe-acp:abc123"))];
-        let sessions: Vec<SessionInput> = vec![];
-        let rows = IdentityStore::roster_from_sources(&peers, &[], &sessions, "server-seoul");
-        let r = row_for(&rows, "acp_agent");
+        assert_eq!(r.status, "dead", "죽은 tmux 는 dead");
         assert_eq!(
             r.session_identifier.as_deref(),
-            Some("aoe-acp:abc123"),
-            "aoe-acp sid 는 tmux 접두가 아니므로 비우면 안 됨"
+            Some("tmux:aoe_dead_x"),
+            "rc.360 — 죽어도 sid 유지(숨기지 않음)"
         );
     }
 
-    /// peer:remote/크로스머신 sid → 유지(tmux 접두 아님).
+    /// status: 비-tmux(aoe-acp/원격) sid → stopped, sid 유지.
     #[test]
-    fn test_liveness_keeps_remote_peer_sid() {
-        let peers = vec![peer("remote_agent", Some("peer:zalman:remote_agent"))];
-        let sessions: Vec<SessionInput> = vec![];
-        let rows = IdentityStore::roster_from_sources(&peers, &[], &sessions, "server-seoul");
-        let r = row_for(&rows, "remote_agent");
-        assert_eq!(
-            r.session_identifier.as_deref(),
-            Some("peer:zalman:remote_agent"),
-            "원격 peer sid 는 비우면 안 됨"
-        );
+    fn test_status_non_tmux_sid_stopped() {
+        let peers = vec![
+            peer("acp_agent", Some("aoe-acp:abc123")),
+            peer("remote_agent", Some("peer:zalman:remote_agent")),
+        ];
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &[], "server-seoul");
+        let acp = row_for(&rows, "acp_agent");
+        assert_eq!(acp.session_identifier.as_deref(), Some("aoe-acp:abc123"));
+        assert_eq!(acp.status, "stopped");
+        let rem = row_for(&rows, "remote_agent");
+        assert_eq!(rem.session_identifier.as_deref(), Some("peer:zalman:remote_agent"));
+        assert_eq!(rem.status, "stopped");
     }
 
-    /// live tmux 세션 단독 행(peer 없음) → 영향 없음(유지).
+    /// standalone 라이브 세션(peer/agent 없음) → 자기 행, active.
     #[test]
-    fn test_liveness_session_only_row_unaffected() {
-        let peers: Vec<PeerInput> = vec![];
+    fn test_standalone_session_active() {
         let sessions = vec![sess("tmux:lonely_session")];
-        let rows = IdentityStore::roster_from_sources(&peers, &[], &sessions, "server-seoul");
+        let rows = IdentityStore::roster_from_sources(&[], &[], &sessions, "server-seoul");
         let r = rows.iter().find(|r| r.has_tmux).expect("세션 행 존재");
-        assert_eq!(
-            r.session_identifier.as_deref(),
-            Some("tmux:lonely_session"),
-            "live 세션 단독 행 sid 유지"
-        );
+        assert_eq!(r.session_identifier.as_deref(), Some("tmux:lonely_session"));
+        assert_eq!(r.status, "active");
     }
 }

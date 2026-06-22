@@ -1,5 +1,5 @@
 import { createSignal, createResource, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
-import { invoke } from "../api/client";
+import { invoke, acpFetch } from "../api/client";
 import "./mockup.css";
 import { AcpConversation, aiTypeToAdapter, type AcpPreset } from "./AcpConversation";
 import { A2AMiniPanel } from "./A2AMiniPanel";
@@ -73,6 +73,7 @@ interface RosterEntryDto {
   has_agent: boolean;
   has_tmux: boolean;
   quarantined: boolean;
+  status?: string | null;          // rc.360 — 생명주기: active / stopped / dead
 }
 interface MessageDto { id: string; sender: string; body: string; timestamp: string; conversation_id: string }
 
@@ -327,7 +328,9 @@ export function KakaoShell(props: { onLogout?: () => void }) {
         sid: e.session_identifier ?? null,
         role: e.role ?? null,
         cwd: e.cwd ?? null,
-        status: e.session_identifier ? "active" : null,
+        // rc.360 — 백엔드 생명주기 status(active/stopped/dead)를 그대로 사용.
+        //   폴백: status 미제공(구버전 데몬) 시 sid 유무로 active/stopped 추론.
+        status: e.status ?? (e.session_identifier ? "active" : "stopped"),
         // 편집(이름·역할 인라인) — peer 또는 agent_profiles 신원 보유 행만(순수 tmux 제외).
         editable: e.is_peer || e.has_agent,
         quarantined: !!e.quarantined,
@@ -409,7 +412,7 @@ export function KakaoShell(props: { onLogout?: () => void }) {
     const cmpCol = (col: SortCol, x: GridRow, y: GridRow): number => {
       switch (col) {
         case "kind": return KIND_ORDER[x.kind] - KIND_ORDER[y.kind];
-        case "status": return (x.status === "active" ? 0 : 1) - (y.status === "active" ? 0 : 1);
+        case "status": { const rk = (s: string | null) => (s === "active" ? 0 : s === "stopped" ? 1 : 2); return rk(x.status) - rk(y.status); }
         case "canonical": return cmpStr(x.canonical ?? "", y.canonical ?? "");
         case "name": return cmpStr(x.name ?? "", y.name ?? "");
         case "alias": return cmpStr(x.alias ?? "", y.alias ?? "");
@@ -851,10 +854,33 @@ export function KakaoShell(props: { onLogout?: () => void }) {
     if (!window.confirm(`이 에이전트 세션을 종료하시겠습니까?\n\n${agentName(a)} (${a.alias})\n\n(되돌릴 수 없습니다)`)) return;
     setActing(a.alias);
     try {
-      await invoke("session_kill", { identifier: id });
+      // rc.360 — 종류별 종료 경로 분기:
+      //   aoe-acp:<id> → ACP close (DELETE /v1/acp/sessions/{id}). tmux 가 아니므로 session_kill 불가.
+      //   그 외(tmux:<name> / bare) → session_kill(로컬 tmux only, 데몬이 게이트).
+      if (id.startsWith("aoe-acp:")) {
+        const sessionId = id.slice("aoe-acp:".length);
+        await acpFetch("DELETE", `/sessions/${encodeURIComponent(sessionId)}`);
+      } else {
+        await invoke("session_kill", { identifier: id });
+      }
       await refetchRoster(); await refetchAgents(); await refetchSessions();
     } catch (e) {
       window.alert(`종료 실패: ${(e as Error).message}`);
+    } finally { setActing(null); }
+  }
+  // ── rc.360 Spawn — 중지/사망 행을 다시 띄운다 ──────────────────────────────
+  //   ACP 신원(agent_profiles 보유) → agent_spawn(POST /agents/{alias}/spawn, find-or-create).
+  //   peer-only(신원 레코드 없음) → 동일 라우트 시도(데몬이 alias→adapter/cwd 해석). 실패 시 메시지.
+  //   openxgram 이 peer_send/ask_agent 호출 시 ACP find-or-create 로도 자동 재spawn 되지만,
+  //   콘솔에서 수동 트리거 제공(스펙: ▶️ Spawn).
+  async function spawnAgent(r: GridRow) {
+    if (!window.confirm(`이 에이전트의 ACP 세션을 새로 띄우시겠습니까?\n\n${r.name} (${r.alias})`)) return;
+    setActing(r.alias);
+    try {
+      await invoke("agent_spawn", { alias: r.alias });
+      await refetchRoster(); await refetchAgents(); await refetchSessions();
+    } catch (e) {
+      window.alert(`spawn 실패: ${(e as Error).message}`);
     } finally { setActing(null); }
   }
   async function restartAgent(a: AgentRow) {
@@ -1288,8 +1314,11 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                 <div class="dg-row" style={r.quarantined ? "opacity:.78" : ""}>
                   {/* 순번 — 현재 정렬 순서 기준 1..N */}
                   <span style="color:var(--muted)">{i() + 1}</span>
-                  {/* 상태 점 */}
-                  <span><span class="dot" style={`display:inline-block;width:8px;height:8px;border-radius:50%;background:${r.status === "active" ? "var(--green)" : "var(--muted)"}`} /></span>
+                  {/* 상태 점 — rc.360 3색: active=초록 · stopped=회색 · dead=빨강 */}
+                  <span title={r.status === "active" ? "active — 라이브 세션" : r.status === "dead" ? "dead — 세션 사라짐(spawn 으로 재기동)" : "stopped — 세션 없음(spawn 으로 기동)"}>
+                    <span class="dot" style={`display:inline-block;width:8px;height:8px;border-radius:50%;background:${r.status === "active" ? "var(--green)" : r.status === "dead" ? "#e5484d" : "var(--muted)"}`} />
+                    <span style="margin-left:5px;font-size:10px;color:var(--muted)">{r.status === "active" ? "active" : r.status === "dead" ? "dead" : "stopped"}</span>
+                  </span>
                   {/* 이름 — peer 면 셀 클릭 인라인 편집 */}
                   <Show when={isEditing(r.alias, "name")} fallback={
                     <span class={r.editable ? "dg-edit" : ""} title={r.editable ? "클릭하여 이름 편집" : r.name}
@@ -1328,6 +1357,8 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                     <button class="killbtn" style="color:#e5484d" title={r.sid ? "세션 종료" : "활성 세션 없음"} disabled={acting() === r.alias || !r.sid} onClick={() => killAgent({ alias: r.alias, session_identifier: r.sid } as any)}>🗑 종료</button>
                     {/* 재시작 — 활성 세션(sid) 있을 때만(kill+재spawn / ACP 재생성) */}
                     <button class="killbtn" style="color:#37424d" title={r.sid ? "세션 재시작(kill+재spawn)" : "활성 세션 없음"} disabled={acting() === r.alias || !r.sid} onClick={() => restartAgent({ alias: r.alias, session_identifier: r.sid } as any)}>🔄 재시작</button>
+                    {/* Spawn — rc.360. 중지/사망(active 아님) + ACP 신원(또는 peer) 일 때 활성. ACP find-or-create 로 재기동 */}
+                    <button class="killbtn" style="color:#2c5a8f" title={r.status === "active" ? "이미 active — 새 세션 불필요" : "ACP 세션 새로 띄우기(spawn)"} disabled={acting() === r.alias || r.status === "active" || !(r.hasAgentRecord || r.isPeer)} onClick={() => void spawnAgent(r)}>▶️ spawn</button>
                     {/* 삭제 — is_peer 면 peer_delete, has_agent 면 agents_delete, 순수 tmux 면 비활성 */}
                     <Show when={r.isPeer} fallback={
                       <button class="killbtn" style="color:#e5484d"
