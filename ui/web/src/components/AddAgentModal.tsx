@@ -133,7 +133,9 @@ export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: s
   //   여러 루트(Windows 드라이브 등)면 첫 루트로 진입하고, 사용자는 상단 입력바로
   //   다른 루트(예: D:\ 또는 \\wsl$\Ubuntu)로 이동 가능.
   async function resolveStartRoot(): Promise<string | null> {
-    const r = await invoke<FsRoots | FsNode>("fs_tree", { path: "", depth: 1, machine: machine() });
+    // 로컬 데몬 fs 브라우징 — machine 은 비워 보낸다(self-hostname 을 보내면 백엔드가
+    //   원격으로 취급해 roots 모드를 건너뛰고 "path 필요" 400 이 난다). 폴더 선택은 항상 로컬.
+    const r = await invoke<FsRoots | FsNode>("fs_tree", { path: "", depth: 1, machine: "" });
     if (r && (r as FsRoots).is_roots) {
       const roots = (r as FsRoots).roots ?? [];
       return roots.length ? roots[0].path : null;
@@ -152,7 +154,7 @@ export function AddAgentModal(props: { onClose: () => void; onCreated: (alias: s
         return;
       }
       // 선택 머신 전달 — 원격 머신이면 데몬이 SSH 로 그 머신 디렉토리를 조회.
-      const t = await invoke<FsNode>("fs_tree", { path: start, depth: 4, machine: machine() });
+      const t = await invoke<FsNode>("fs_tree", { path: start, depth: 4, machine: "" });
       setTree(t);
       setTreeRoot(t.path); // 원격 HOME fallback 등으로 root 가 바뀌면 입력에도 반영.
       setExpanded(new Set([t.path])); // 루트 펼침.
