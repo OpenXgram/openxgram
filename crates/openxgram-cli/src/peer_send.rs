@@ -420,7 +420,7 @@ pub async fn run_peer_send_with_conv(
             manifest_opt
                 .as_ref()
                 .and_then(|m| m.machine.tailscale_ip.clone())
-                .map(|ip| format!("http://{ip}:47300"))
+                .map(|ip| format!("http://{ip}:{}", openxgram_core::ports::RPC_PORT))
         })
         .or_else(|| {
             // rc.221 — manifest tailscale_ip null 시 동적 검출 (silent fallback 아님: WARN log)
@@ -430,7 +430,7 @@ pub async fn run_peer_send_with_conv(
                         ip = %ip,
                         "rc.221 sender_transport_url: env/manifest 없음 → tailscale ip --4 동적 검출"
                     );
-                    Some(format!("http://{ip}:47300"))
+                    Some(format!("http://{ip}:{}", openxgram_core::ports::RPC_PORT))
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -726,7 +726,7 @@ pub async fn run_peer_broadcast(
             manifest_opt
                 .as_ref()
                 .and_then(|m| m.machine.tailscale_ip.clone())
-                .map(|ip| format!("http://{ip}:47300"))
+                .map(|ip| format!("http://{ip}:{}", openxgram_core::ports::RPC_PORT))
         })
         .or_else(|| {
             // rc.221 — manifest tailscale_ip null 시 동적 검출 (broadcast 경로)
@@ -736,7 +736,7 @@ pub async fn run_peer_broadcast(
                         ip = %ip,
                         "rc.221 broadcast sender_transport_url: env/manifest 없음 → tailscale ip --4 동적 검출"
                     );
-                    Some(format!("http://{ip}:47300"))
+                    Some(format!("http://{ip}:{}", openxgram_core::ports::RPC_PORT))
                 }
                 Err(e) => {
                     tracing::warn!(

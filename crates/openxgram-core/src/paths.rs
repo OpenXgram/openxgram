@@ -14,8 +14,18 @@ pub const FAILED_SUBDIR: &str = "failed";
 
 pub const DB_FILENAME: &str = "db.sqlite";
 pub const MANIFEST_FILENAME: &str = "install-manifest.json";
+pub const NOTIFY_FILENAME: &str = "notify.toml";
 pub const MASTER_KEY_NAME: &str = "master";
 pub const MASTER_KEYFILE: &str = "master.json";
+
+/// data_dir 안에서 cleanup/uninstall 대상이 되는 항목 이름(파일·디렉토리).
+/// 모든 호출처가 이 한 곳에서 받아 파일명 drift(예: `install_manifest.json` 오타)를 방지한다.
+pub const CLEANUP_ENTRY_NAMES: [&str; 4] = [
+    DB_FILENAME,
+    KEYSTORE_SUBDIR,
+    NOTIFY_FILENAME,
+    MANIFEST_FILENAME,
+];
 
 /// 기본 데이터 디렉토리 (`$HOME/.openxgram`). HOME 미설정 시 Windows `USERPROFILE` fallback, 그래도 없으면 raise.
 pub fn default_data_dir() -> Result<PathBuf> {

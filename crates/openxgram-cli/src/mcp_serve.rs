@@ -188,9 +188,9 @@ impl OpenxgramDispatcher {
                 payment_gateway,
             )
             .with_free_quota(free_quota_gate)
-            // 결제 체인 — env `XGRAM_CHAIN`(기본 "base"). 테스트넷은 "ethereum-sepolia"/"base-sepolia".
-            // chain.rs 레지스트리에서 chain_id·USDC 컨트랙트 매핑.
-            .with_chain(std::env::var("XGRAM_CHAIN").unwrap_or_else(|_| "base".to_string())),
+            // 결제 체인 — env.rs chain_name() SSOT(env `XGRAM_CHAIN`, 기본 base).
+            // 테스트넷은 "ethereum-sepolia"/"base-sepolia". chain.rs 레지스트리에서 chain_id·USDC 매핑.
+            .with_chain(openxgram_core::env::chain_name()),
         );
         Ok(Self {
             db,
@@ -1215,8 +1215,9 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 // XGRAM_MCP_TOKEN env 있을 때만 시도. 없으면 CLI path 폴백.
                 let daemon_token = std::env::var("XGRAM_MCP_TOKEN").ok();
                 if let Some(token) = daemon_token.as_ref() {
-                    let daemon_url = std::env::var("XGRAM_DAEMON_GUI_URL")
-                        .unwrap_or_else(|_| "http://127.0.0.1:47302".to_string());
+                    let daemon_url = std::env::var("XGRAM_DAEMON_GUI_URL").unwrap_or_else(|_| {
+                        format!("http://127.0.0.1:{}", openxgram_core::ports::GUI_PORT)
+                    });
                     let url = format!(
                         "{}/v1/gui/peers/{}/send-unsigned",
                         daemon_url.trim_end_matches('/'),
@@ -2903,7 +2904,7 @@ impl OpenxgramDispatcher {
     /// 데몬 GUI HTTP 의 base URL (`XGRAM_DAEMON_GUI_URL` 또는 기본 loopback).
     fn daemon_gui_url() -> String {
         std::env::var("XGRAM_DAEMON_GUI_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:47302".to_string())
+            .unwrap_or_else(|_| format!("http://127.0.0.1:{}", openxgram_core::ports::GUI_PORT))
     }
 
     /// 데몬 서명 토큰. 없으면 명시 에러(fallback 금지) — ask_agent/list_agent_endpoints 는

@@ -434,7 +434,14 @@ pub async fn run_discord_inbound_for_daemon(
     > = Box::pin(client.connect().await?);
 
     let portal_url = std::env::var("XGRAM_PORTAL_URL").unwrap_or_else(|_| "http://127.0.0.1:9400".into());
-    let portal_token = std::env::var("XGRAM_PORTAL_TOKEN").unwrap_or_else(|_| "0205".into());
+    // portal token — env 에서만. 평문 폴백 제거. 미설정이면 빈 문자열(다운스트림 legacy 인자, 미사용).
+    let portal_token = openxgram_core::env::portal_token().unwrap_or_else(|| {
+        tracing::warn!(
+            "env {} 미설정 — portal token 없이 진행(legacy 인자, same-host dispatch 미사용)",
+            openxgram_core::env::PORTAL_TOKEN_ENV
+        );
+        String::new()
+    });
     let http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .danger_accept_invalid_certs(true)

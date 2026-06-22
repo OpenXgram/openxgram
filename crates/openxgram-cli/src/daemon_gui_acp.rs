@@ -179,6 +179,94 @@ impl AcpHttpState {
         }
     }
 
+    /// rc.355 ACP↔peer 자동 브리지 — spawn 된 ACP 세션을 roster/`list_peers` 에 노출 +
+    /// `peer_send`/A2A 대상으로 만든다. label(에이전트 신원)이 있을 때만 등록(picker 진입은 제외).
+    ///
+    /// 새 스키마를 만들지 않고 **기존** UPSERT 경로를 재사용한다(register_subagent 와 동일 테이블):
+    ///   - `agent_capabilities(alias, role)` — role≠'tmux' 라 `is_acp_drivable` 가 true → A2A 라우팅 대상.
+    ///   - `agent_profiles(alias, ai_type, ...)` — `new_acp` 어댑터 해석용 ai_type.
+    ///   - `peers.session_identifier = acp:<sessionId>`, `session_status='active'` — peers 행이 이미
+    ///     존재할 때만(transport 등록 전이면 affected 0, 무해). roster 의 peers 소스 + Part 2 라우팅 키.
+    ///
+    /// db 미주입(None)이면 no-op. 모든 DB 오류는 명시 로그(절대 규칙 1: silent skip 금지).
+    pub async fn bridge_session_as_peer(&self, session_id: &str, label: Option<&str>, agent: &str) {
+        let Some(upsert) =
+            crate::acp_peer_bridge::map_session_to_peer_upsert(session_id, label, agent)
+        else {
+            return; // label 없음(picker 진입) — 브리지 안 함.
+        };
+        let Some(db) = self.db.as_ref() else {
+            return;
+        };
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut g = db.lock().await;
+        let conn = g.conn();
+        // agent_capabilities — role 시드. 이미 있으면 role 보존(COALESCE: 사용자/등록 role 우선),
+        //   updated_at 만 갱신. is_acp_drivable 가 role IS NOT 'tmux' 만 보므로 'acp' 시드면 충분.
+        if let Err(e) = conn.execute(
+            "INSERT INTO agent_capabilities (alias, role, updated_at) VALUES (?1, ?2, ?3) \
+             ON CONFLICT(alias) DO UPDATE SET updated_at=excluded.updated_at",
+            rusqlite::params![upsert.alias, upsert.role, now],
+        ) {
+            tracing::error!(target: "acp.daemon", alias = %upsert.alias, "rc.355 브리지 agent_capabilities upsert 실패(silent X): {e}");
+        }
+        // agent_profiles — ai_type 시드(어댑터 해석). 이미 있으면 ai_type 갱신, 그 외 보존.
+        if let Err(e) = conn.execute(
+            "INSERT INTO agent_profiles (alias, ai_type, created_at, updated_at) VALUES (?1, ?2, ?3, ?3) \
+             ON CONFLICT(alias) DO UPDATE SET ai_type=excluded.ai_type, updated_at=excluded.updated_at",
+            rusqlite::params![upsert.alias, upsert.ai_type, now],
+        ) {
+            tracing::error!(target: "acp.daemon", alias = %upsert.alias, "rc.355 브리지 agent_profiles upsert 실패(silent X): {e}");
+        }
+        // peers.session_identifier = acp:<sid> + session_status='active'. 행 존재 시에만 영향.
+        //   부재 시 affected 0(transport 등록 전) — 무해. roster 의 peers 소스 + Part 2 라우팅 키.
+        match conn.execute(
+            "UPDATE peers SET session_identifier = ?1, session_status = 'active' WHERE alias = ?2",
+            rusqlite::params![upsert.session_identifier, upsert.alias],
+        ) {
+            Ok(n) => tracing::info!(
+                target: "acp.daemon",
+                alias = %upsert.alias,
+                session = %session_id,
+                peers_rows = n,
+                "rc.355 ACP↔peer 브리지 등록 — roster 노출 + peer_send/A2A 대상화"
+            ),
+            Err(e) => tracing::error!(target: "acp.daemon", alias = %upsert.alias, "rc.355 브리지 peers session_identifier UPDATE 실패(silent X): {e}"),
+        }
+    }
+
+    /// rc.355 Part 3 — ACP 세션 close 시 브리지 peer 를 offline 마킹. peers 행의
+    /// `session_status='disconnected'` + acp:<sid> 마커 제거(다른 acp 마커는 보존: 다른 세션이
+    /// 같은 alias 를 재등록했을 수 있으니 정확히 이 세션의 마커일 때만 NULL 로). roster 는
+    /// 계속 보이되 offline 으로 표시되고, peer_send 는 transport 경로로 폴백(is_acp_backed=false).
+    /// db 미주입이면 no-op. 오류는 명시 로그(절대 규칙 1).
+    pub async fn unbridge_session_peer(&self, session_id: &str, label: Option<&str>) {
+        let Some(alias) = label.map(str::trim).filter(|s| !s.is_empty()) else {
+            return;
+        };
+        let Some(db) = self.db.as_ref() else {
+            return;
+        };
+        let marker = crate::acp_peer_bridge::acp_session_identifier(session_id);
+        let mut g = db.lock().await;
+        // 정확히 이 세션의 acp 마커일 때만 제거 — 같은 alias 를 다른 라이브 세션이 재등록한 경우 보호.
+        match g.conn().execute(
+            "UPDATE peers SET session_status = 'disconnected', \
+                 session_identifier = CASE WHEN session_identifier = ?1 THEN NULL ELSE session_identifier END \
+             WHERE alias = ?2",
+            rusqlite::params![marker, alias],
+        ) {
+            Ok(n) => tracing::info!(
+                target: "acp.daemon",
+                alias = %alias,
+                session = %session_id,
+                peers_rows = n,
+                "rc.355 ACP↔peer 브리지 해제 — close 시 offline 마킹"
+            ),
+            Err(e) => tracing::error!(target: "acp.daemon", alias = %alias, "rc.355 브리지 해제 UPDATE 실패(silent X): {e}"),
+        }
+    }
+
     /// 전역 A2A 활동 마커 발신 — `handle_task` 가 새 A2A 메시지(inbound `me` / outbound `agent`)를
     /// `acp_messages` 에 영속한 직후 호출한다. `{type:"a2a_message", alias, conv_key, from, ts}` 를
     /// 전역 broadcast 채널에 쏜다 → `/v1/gui/a2a/stream` 구독 GUI 가 그 대화 창을 실제 메시지 단위로
@@ -360,7 +448,14 @@ fn expand_home(cwd: &str, machine: Option<&str>) -> String {
         return cwd.to_string();
     }
     // config-driven — 원격 머신이면 machine_home(설정값 or SSH $HOME 동적조회), 로컬이면 $HOME.
-    let local_home = || std::env::var("HOME").unwrap_or_else(|_| "/home/llm".to_string());
+    let local_home = || {
+        std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| {
+                tracing::warn!("HOME/USERPROFILE 미설정 — '~' 확장에 현재 디렉토리(.) 사용");
+                ".".to_string()
+            })
+    };
     let home = match machine.and_then(crate::daemon_gui::machine_lookup) {
         Some(cfg) => crate::daemon_gui::machine_home(&cfg).unwrap_or_else(local_home),
         None => local_home(),
@@ -553,6 +648,12 @@ pub async fn create_session(
     };
     state.sessions.lock().await.insert(session_id.clone(), sess);
 
+    // rc.355 ACP↔peer 자동 브리지 — label(에이전트 신원)이 있으면 roster 노출 + peer_send/A2A 대상화.
+    //   always 모드면 이미 spawn 됨; on_demand 면 첫 prompt 의 spawn 경로에서도 재호출(idempotent UPSERT).
+    state
+        .bridge_session_as_peer(&session_id, body.label.as_deref(), &body.agent)
+        .await;
+
     Ok(json!({
         "sessionId": session_id,
         "agent": body.agent,
@@ -630,15 +731,18 @@ pub async fn prompt(
 ) -> Result<Value, AcpHttpError> {
     // Resolve (and lazily spawn) the handle + cwd under the lock, then release
     // the lock before the (potentially long) prompt turn.
-    let (handle_id, cwd, tx, conv_key, busy) = {
+    let (handle_id, cwd, tx, conv_key, busy, bridge_agent, fresh_spawn) = {
         let mut sessions = state.sessions.lock().await;
         let sess = sessions
             .get_mut(session_id)
             .ok_or_else(|| (StatusCode::NOT_FOUND, format!("unknown session: {session_id}")))?;
+        // rc.355 — on_demand 첫 prompt 에서 spawn 되면(was_fresh) 브리지 재등록 트리거.
+        let mut fresh_spawn = false;
         if sess.handle_id.is_none() {
             // on_demand / heartbeat: spawn on first prompt (§3 hosting).
             let hid = spawn_handle(state, &sess.agent, sess.spawn_opts.clone()).await?;
             sess.handle_id = Some(hid);
+            fresh_spawn = true;
         }
         let hid = sess.handle_id.ok_or_else(|| {
             (
@@ -658,8 +762,18 @@ pub async fn prompt(
             sess.updates_tx.clone(),
             sess.label.clone(),
             busy,
+            sess.agent.clone(),
+            fresh_spawn,
         )
     };
+
+    // rc.355 ACP↔peer 자동 브리지 — on_demand 세션이 첫 prompt 에서 막 spawn 됐다면 등록.
+    //   create_session 에서 이미 등록됐으면 idempotent UPSERT(중복 무해). 락 해제 후 호출.
+    if fresh_spawn {
+        state
+            .bridge_session_as_peer(session_id, conv_key.as_deref(), &bridge_agent)
+            .await;
+    }
     // RAII: 어떤 경로(에러/조기 return/패닉)에서도 턴 종료 시 in_flight=false 보장.
     let _in_flight_guard = InFlightGuard(busy);
 
@@ -838,6 +952,11 @@ pub async fn close(state: &AcpHttpState, session_id: &str) -> Result<Value, AcpH
         .await
         .remove(session_id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("unknown session: {session_id}")))?;
+    // rc.355 Part 3 — 브리지 peer offline 마킹(label 있을 때만). close/reap 양쪽 모두 이 함수를 거친다
+    //   (DELETE 핸들러 + reap_idle_a2a). 핸들 close 전에 수행 — peers 상태가 먼저 정리되게.
+    state
+        .unbridge_session_peer(session_id, sess.label.as_deref())
+        .await;
     match sess.handle_id {
         Some(hid) => state
             .tools

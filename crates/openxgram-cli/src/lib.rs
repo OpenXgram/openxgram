@@ -1,6 +1,8 @@
 //! xgram CLI library — init/uninstall/doctor 등의 핵심 흐름.
 //! main.rs(바이너리)와 통합 테스트가 공유한다.
 
+pub mod acp_peer_bridge;
+pub mod aoe_acp_discovery;
 pub mod age_backup;
 pub mod workflow_engine;
 pub mod agent;
@@ -20,6 +22,7 @@ pub mod daemon_gui_sessions;
 pub mod daemon_gui_terminal;
 pub mod daemon_gui_wallets;
 pub mod daemon_peer_sync;
+pub mod daemon_singleton;
 pub mod daemon_workers;
 pub mod doctor;
 pub mod dump;
@@ -36,6 +39,7 @@ pub mod invite;
 pub mod ledger_gateway;
 pub mod onchain_gateway;
 pub mod link;
+pub mod machine_id;
 pub mod mcp_install;
 pub mod mcp_serve;
 pub mod mcp_tokens;

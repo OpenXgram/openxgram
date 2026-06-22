@@ -390,7 +390,10 @@ pub fn vault_get(state: State<'_, AppState>, key: String) -> Result<String, Stri
 // ── payment limits ──────────────────────────────────────────────────────────
 
 const PAYMENT_LIMIT_AGENT: &str = "default";
-const PAYMENT_LIMIT_CHAIN: &str = "base";
+// chain 키는 SSOT 헬퍼에서 — `XGRAM_CHAIN` env 반영(기본 "base").
+fn payment_limit_chain() -> String {
+    openxgram_core::env::chain_name()
+}
 
 #[tauri::command]
 pub async fn payment_get_daily_limit(state: State<'_, AppState>) -> Result<i64, String> {
@@ -400,7 +403,7 @@ pub async fn payment_get_daily_limit(state: State<'_, AppState>) -> Result<i64, 
     let out: Option<i64> = with_db_optional(&state, |db| {
         let mut store = DailyLimitStore::new(db);
         let row = store
-            .get(PAYMENT_LIMIT_AGENT, PAYMENT_LIMIT_CHAIN)
+            .get(PAYMENT_LIMIT_AGENT, &payment_limit_chain())
             .map_err(|e| format!("daily_limit get: {e}"))?;
         Ok(row.map(|r| r.daily_micro).unwrap_or(0))
     })?;
@@ -421,7 +424,7 @@ pub async fn payment_set_daily_limit(
     with_db_required(&state, |db| {
         let mut store = DailyLimitStore::new(db);
         store
-            .set(PAYMENT_LIMIT_AGENT, PAYMENT_LIMIT_CHAIN, micro_usdc)
+            .set(PAYMENT_LIMIT_AGENT, &payment_limit_chain(), micro_usdc)
             .map_err(|e| format!("daily_limit set: {e}"))?;
         Ok(())
     })

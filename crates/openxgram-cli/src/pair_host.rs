@@ -30,7 +30,8 @@ use crate::peer::{run_peer, PeerAction};
 
 /// 검출 후보 URL 목록 빌드 — host_url 우선순위 보존.
 fn candidate_urls() -> Vec<String> {
-    let mut urls: Vec<String> = vec!["http://127.0.0.1:47300".to_string()];
+    use openxgram_core::ports::{RPC_PORT, RPC_URL_DEFAULT};
+    let mut urls: Vec<String> = vec![RPC_URL_DEFAULT.to_string()];
 
     // /etc/resolv.conf 의 nameserver (WSL2 host IP) — 두 번째 우선순위.
     if let Ok(content) = std::fs::read_to_string("/etc/resolv.conf") {
@@ -39,7 +40,7 @@ fn candidate_urls() -> Vec<String> {
             if let Some(rest) = line.strip_prefix("nameserver") {
                 let ip = rest.trim();
                 if !ip.is_empty() {
-                    let url = format!("http://{ip}:47300");
+                    let url = format!("http://{ip}:{RPC_PORT}");
                     if !urls.contains(&url) {
                         urls.push(url);
                     }
@@ -50,7 +51,7 @@ fn candidate_urls() -> Vec<String> {
     }
 
     // host.docker.internal — Hyper-V fallback.
-    urls.push("http://host.docker.internal:47300".to_string());
+    urls.push(format!("http://host.docker.internal:{RPC_PORT}"));
     urls
 }
 
@@ -101,10 +102,10 @@ fn resolve_self_transport_url(data_dir: &Path) -> String {
     }
     if let Ok(manifest) = openxgram_manifest::InstallManifest::read(manifest_path(data_dir)) {
         if let Some(ip) = manifest.machine.tailscale_ip {
-            return format!("http://{ip}:47300");
+            return format!("http://{ip}:{}", openxgram_core::ports::RPC_PORT);
         }
     }
-    "http://127.0.0.1:47300".to_string()
+    openxgram_core::ports::RPC_URL_DEFAULT.to_string()
 }
 
 /// 자기 측 DB 에 windows-host peer add (placeholder pubkey 로 unverified).

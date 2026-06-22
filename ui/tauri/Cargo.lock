@@ -1092,7 +1092,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-socks",
- "tokio-tungstenite",
+ "tokio-tungstenite 0.26.2",
  "url",
  "wasm-bindgen",
  "web-sys",
@@ -1179,6 +1179,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
 dependencies = [
  "axum-core",
+ "base64 0.22.1",
  "bytes",
  "form_urlencoded",
  "futures-util",
@@ -1197,8 +1198,10 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "serde_urlencoded",
+ "sha1",
  "sync_wrapper",
  "tokio",
+ "tokio-tungstenite 0.29.0",
  "tower",
  "tower-layer",
  "tower-service",
@@ -1402,7 +1405,7 @@ checksum = "cfd1e3f8955a5d7de9fab72fc8373fade9fb8a703968cb200ae3dc6cf08e185a"
 dependencies = [
  "borsh-derive",
  "bytes",
- "cfg_aliases",
+ "cfg_aliases 0.2.1",
 ]
 
 [[package]]
@@ -1638,6 +1641,12 @@ name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
+
+[[package]]
+name = "cfg_aliases"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
 
 [[package]]
 name = "cfg_aliases"
@@ -2487,6 +2496,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "email-encoding"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9298e6504d9b9e780ed3f7dfd43a61be8cd0e09eb07f7706a945b0072b6670b6"
+dependencies = [
+ "base64 0.22.1",
+ "memchr",
+]
+
+[[package]]
+name = "email_address"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e079f19b08ca6239f47f8ba8509c11cf3ea30095831f7fed61441475edd8c449"
+
+[[package]]
 name = "embed-resource"
 version = "3.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2497,7 +2522,7 @@ dependencies = [
  "rustc_version 0.4.1",
  "toml 1.1.2+spec-1.1.0",
  "vswhom",
- "winreg",
+ "winreg 0.55.0",
 ]
 
 [[package]]
@@ -2647,6 +2672,17 @@ checksum = "38e2275cc4e4fc009b0669731a1e5ab7ebf11f469eaede2bab9309a5b4d6057f"
 dependencies = [
  "memoffset",
  "rustc_version 0.4.1",
+]
+
+[[package]]
+name = "filedescriptor"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e40758ed24c9b2eeb76c35fb0aebc66c626084edd827e07e1552279814c6682d"
+dependencies = [
+ "libc",
+ "thiserror 1.0.69",
+ "winapi",
 ]
 
 [[package]]
@@ -3761,6 +3797,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "include_dir"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "923d117408f1e49d914f1a379a309cffe4f18c05cf4e3d12e613a15fc81bd0dd"
+dependencies = [
+ "include_dir_macros",
+]
+
+[[package]]
+name = "include_dir_macros"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cab85a7ed0bd5f0e76d93846e0147172bed2e2d3f859bcc33a8d9699cad1a75"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
 name = "indexmap"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4100,6 +4155,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
+name = "lettre"
+version = "0.11.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0da65617f6cb926332d039cb578aad56178da86e128db6a1b09f4c94fa5b3349"
+dependencies = [
+ "base64 0.22.1",
+ "email-encoding",
+ "email_address",
+ "fastrand",
+ "httpdate",
+ "idna",
+ "mime",
+ "nom 8.0.0",
+ "percent-encoding",
+ "quoted_printable",
+ "rustls",
+ "socket2",
+ "tokio",
+ "url",
+ "webpki-roots 1.0.7",
+]
+
+[[package]]
 name = "libappindicator"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4293,6 +4371,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
+name = "mime_guess"
+version = "2.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
+dependencies = [
+ "mime",
+ "unicase",
+]
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4386,6 +4474,18 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+
+[[package]]
+name = "nix"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
+dependencies = [
+ "bitflags 2.11.1",
+ "cfg-if",
+ "cfg_aliases 0.1.1",
+ "libc",
+]
 
 [[package]]
 name = "nom"
@@ -4882,8 +4982,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "openxgram-a2a"
+version = "0.2.0-rc.352"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "openxgram-core",
+ "reqwest 0.13.1",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "openxgram-acp"
+version = "0.2.0-rc.352"
+dependencies = [
+ "anyhow",
+ "openxgram-core",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "openxgram-adapter"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "chrono",
  "futures-util",
@@ -4900,7 +5030,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-channel"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4920,12 +5050,15 @@ dependencies = [
 
 [[package]]
 name = "openxgram-cli"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "age",
  "anyhow",
  "arboard",
+ "argon2",
+ "async-trait",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "clap",
  "clap_complete",
@@ -4933,11 +5066,17 @@ dependencies = [
  "futures-util",
  "getrandom 0.3.4",
  "hex",
+ "hmac",
+ "include_dir",
  "k256",
+ "lettre",
  "libc",
+ "mime_guess",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "openxgram-a2a",
+ "openxgram-acp",
  "openxgram-adapter",
  "openxgram-channel",
  "openxgram-core",
@@ -4947,6 +5086,7 @@ dependencies = [
  "openxgram-indexer-sdk",
  "openxgram-keystore",
  "openxgram-manifest",
+ "openxgram-marketplace",
  "openxgram-mcp",
  "openxgram-memory",
  "openxgram-mistakes",
@@ -4959,8 +5099,10 @@ dependencies = [
  "openxgram-transport",
  "openxgram-vault",
  "openxgram-wiki",
+ "portable-pty",
  "qrcode",
  "ratatui",
+ "regex",
  "reqwest 0.13.1",
  "rpassword",
  "rusqlite",
@@ -4975,12 +5117,13 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "urlencoding",
  "uuid",
 ]
 
 [[package]]
 name = "openxgram-core"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "chrono",
  "thiserror 1.0.69",
@@ -4988,7 +5131,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-db"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5028,7 +5171,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-did"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5045,7 +5188,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-eas"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5062,7 +5205,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-indexer-sdk"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5080,7 +5223,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-keystore"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "anyhow",
  "argon2",
@@ -5100,7 +5243,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-manifest"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "chrono",
  "hex",
@@ -5112,8 +5255,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "openxgram-marketplace"
+version = "0.2.0-rc.352"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "reqwest 0.13.1",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "openxgram-mcp"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "serde",
  "serde_json",
@@ -5123,7 +5282,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-memory"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5140,7 +5299,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-mistakes"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5157,7 +5316,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-nostr"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "chrono",
  "hex",
@@ -5176,7 +5335,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-orchestration"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5196,7 +5355,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-patterns"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5213,7 +5372,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-payment"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "alloy",
  "chrono",
@@ -5233,7 +5392,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-peer"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "chrono",
  "openxgram-core",
@@ -5248,11 +5407,15 @@ dependencies = [
 
 [[package]]
 name = "openxgram-scheduler"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "anyhow",
+ "chrono",
  "openxgram-db",
  "openxgram-memory",
+ "rusqlite",
+ "serde_json",
+ "sha2",
  "tokio",
  "tokio-cron-scheduler",
  "tracing",
@@ -5261,7 +5424,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-transport"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "anyhow",
  "axum",
@@ -5276,7 +5439,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-vault"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "chrono",
  "hex",
@@ -5297,7 +5460,7 @@ dependencies = [
 
 [[package]]
 name = "openxgram-wiki"
-version = "0.2.0-rc.22"
+version = "0.2.0-rc.352"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5690,6 +5853,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "portable-pty"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4a596a2b3d2752d94f51fac2d4a96737b8705dddd311a32b9af47211f08671e"
+dependencies = [
+ "anyhow",
+ "bitflags 1.3.2",
+ "downcast-rs",
+ "filedescriptor",
+ "lazy_static",
+ "libc",
+ "log",
+ "nix",
+ "serial2",
+ "shared_library",
+ "shell-words",
+ "winapi",
+ "winreg 0.10.1",
+]
+
+[[package]]
 name = "potential_utf"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5909,7 +6093,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e20a958963c291dc322d98411f541009df2ced7b5a4f2bd52337638cfccf20"
 dependencies = [
  "bytes",
- "cfg_aliases",
+ "cfg_aliases 0.2.1",
  "pin-project-lite",
  "quinn-proto",
  "quinn-udp",
@@ -5950,7 +6134,7 @@ version = "0.5.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "addec6a0dcad8a8d96a771f815f0eaf55f9d1805756410b39f5fa81332574cbd"
 dependencies = [
- "cfg_aliases",
+ "cfg_aliases 0.2.1",
  "libc",
  "once_cell",
  "socket2",
@@ -5966,6 +6150,12 @@ checksum = "41f2619966050689382d2b44f664f4bc593e129785a36d6ee376ddf37259b924"
 dependencies = [
  "proc-macro2",
 ]
+
+[[package]]
+name = "quoted_printable"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "478e0585659a122aa407eb7e3c0e1fa51b1d8a870038bd29f0cf4a8551eea972"
 
 [[package]]
 name = "r-efi"
@@ -6227,6 +6417,7 @@ dependencies = [
  "hyper-util",
  "js-sys",
  "log",
+ "mime_guess",
  "percent-encoding",
  "pin-project-lite",
  "quinn",
@@ -6509,6 +6700,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
 dependencies = [
  "aws-lc-rs",
+ "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -7022,6 +7214,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serial2"
+version = "0.2.37"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9eb6ea5562eeaed6936b8b54e086aa0f88b9e5b1bef45beb038e2519fa1185b1"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "serialize-to-javascript"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7108,6 +7311,22 @@ checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
 ]
+
+[[package]]
+name = "shared_library"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a9e7e0f2bfae24d8a5b5a66c5b257a83c7412304311512a0c054cd5e619da11"
+dependencies = [
+ "lazy_static",
+ "libc",
+]
+
+[[package]]
+name = "shell-words"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc6fe69c597f9c37bfeeeeeb33da3530379845f10be461a66d16d03eca2ded77"
 
 [[package]]
 name = "shlex"
@@ -8048,8 +8267,20 @@ dependencies = [
  "rustls-pki-types",
  "tokio",
  "tokio-rustls",
- "tungstenite",
+ "tungstenite 0.26.2",
  "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite 0.29.0",
 ]
 
 [[package]]
@@ -8461,6 +8692,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "tungstenite"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c01152af293afb9c7c2a57e4b559c5620b421f6d133261c60dd2d0cdb38e6b8"
+dependencies = [
+ "bytes",
+ "data-encoding",
+ "http",
+ "httparse",
+ "log",
+ "rand 0.9.4",
+ "sha1",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "twilight-gateway"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8650,6 +8897,12 @@ checksum = "96bd2f2237fe450fcd0a1d2f5f4e91711124f7857ba2e964247776ebeeb7b0c4"
 dependencies = [
  "unic-common",
 ]
+
+[[package]]
+name = "unicase"
+version = "2.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dbc4bc3a9f746d862c45cb89d705aa10f187bb96c76001afab07a0d35ce60142"
 
 [[package]]
 name = "unicode-ident"
@@ -9670,6 +9923,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee1708bef14716a11bae175f579062d4554d95be2c6829f518df847b7b3fdd0"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "winreg"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80d0f4e272c85def139476380b12f9ac60926689dd2e01d4923222f40580869d"
+dependencies = [
+ "winapi",
 ]
 
 [[package]]

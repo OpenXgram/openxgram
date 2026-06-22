@@ -188,8 +188,8 @@ pub fn run_friend_accept(data_dir: &Path, url: &str) -> Result<()> {
             .context("master 로드 (handshake 송신용)")?;
         let my_pubkey = hex::encode(master.public_key_bytes());
         // 자기 address 는 manifest 에서 — 간단히 env 또는 default
-        let my_address =
-            std::env::var("XGRAM_DAEMON_URL").unwrap_or_else(|_| "http://127.0.0.1:47300".into());
+        let my_address = std::env::var("XGRAM_DAEMON_URL")
+            .unwrap_or_else(|_| openxgram_core::ports::RPC_URL_DEFAULT.into());
         let my_alias = std::env::var("XGRAM_AGENT_ALIAS").unwrap_or_else(|_| "me".into());
         let body = build_accept_message(&my_alias, &my_pubkey, &my_address);
 

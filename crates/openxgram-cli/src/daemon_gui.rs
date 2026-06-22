@@ -1772,7 +1772,7 @@ async fn gui_roster(
             )
         })?;
     // tmux 세션만 로스터 입력으로(claude_project 제외 — gui_sessions 와 동일 룰).
-    let sessions: Vec<openxgram_peer::SessionInput> = dto
+    let mut sessions: Vec<openxgram_peer::SessionInput> = dto
         .sessions
         .into_iter()
         .filter(|s| s.kind != crate::daemon_gui_sessions::SessionKind::ClaudeProject)
@@ -1783,7 +1783,45 @@ async fn gui_roster(
         })
         .collect();
 
-    let local_alias = this_machine_alias();
+    let local_alias = this_machine_alias(state.data_dir.as_ref());
+
+    // 라이브 AoE ACP 세션을 동적으로 합류시킨다(스펙 L106-107 / oxg.md L29-30).
+    //   브리지된 peer 의 session_identifier(acp/aoe-acp 계열)를 먼저 모아 dedupe 입력으로 전달.
+    let bridged_idents: Vec<String> = {
+        let mut db = state.db.lock().await;
+        let collected = db
+            .conn()
+            .prepare(
+                "SELECT session_identifier FROM peers \
+                 WHERE session_identifier IS NOT NULL AND session_identifier <> ''",
+            )
+            .and_then(|mut stmt| {
+                let rows = stmt
+                    .query_map([], |r| r.get::<_, String>(0))?
+                    .collect::<Result<Vec<String>, _>>()?;
+                Ok(rows)
+            });
+        // fallback 금지(절대 룰 #1) — 실패는 조용히 넘기지 않고 로그로 명시.
+        match collected {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("gui_roster: bridged session_identifier 조회 실패: {e}");
+                Vec::new()
+            }
+        }
+    };
+    // FS 읽기는 blocking pool 에서(매 호출 라이브 재조회 — 캐싱/정적 list 금지).
+    let aoe_entries =
+        tokio::task::spawn_blocking(move || crate::daemon_gui::collect_aoe_acp_sessions(&bridged_idents))
+            .await
+            .unwrap_or_default();
+    for a in aoe_entries {
+        sessions.push(openxgram_peer::SessionInput {
+            session_identifier: a.session_identifier,
+            display_name: Some(a.display_name),
+            cwd: a.cwd,
+        });
+    }
 
     let mut db = state.db.lock().await;
     let entries = {
@@ -1802,6 +1840,165 @@ async fn gui_roster(
 
     let out: Vec<RosterEntryDto> = entries.into_iter().map(RosterEntryDto::from).collect();
     Ok(Json(out))
+}
+
+/// 라이브 AoE ACP 세션(`aoe __acp-runner`)을 매 호출마다 동적으로 열거한다.
+///
+/// FS 읽기(부수효과)는 여기서, 매핑/dedupe 순수 로직은
+/// [`crate::aoe_acp_discovery::build_entries`] 에서. 정적 list/캐싱 없음 —
+/// `.sock` 존재 + runner pid 생존을 매번 라이브 판정한다(스펙 L106-107 동적 요구).
+///
+/// 출처:
+/// - `~/.config/agent-of-empires/acp-workers/<id>.sock` — 라이브 세션당 소켓
+/// - `~/.config/agent-of-empires/acp-workers/<id>.json` — runner sidecar(cwd/detached_at)
+/// - `~/.config/agent-of-empires/profiles/*/sessions.json` — id→title(label)
+///
+/// 절대 룰 #1(fallback 금지): 디렉토리/파일 읽기 실패는 조용히 무시하지 않고
+/// `tracing::warn!` 로 명시한다(데이터 없음 ≠ 오류 은닉).
+pub fn collect_aoe_acp_sessions(
+    bridged_session_idents: &[String],
+) -> Vec<crate::aoe_acp_discovery::AoeAcpEntry> {
+    use crate::aoe_acp_discovery::{build_entries, AoeSessionStoreEntry, DiscoveredWorker};
+
+    let home = match std::env::var_os("HOME") {
+        Some(h) => std::path::PathBuf::from(h),
+        None => {
+            tracing::warn!("collect_aoe_acp_sessions: HOME 미설정 — AoE ACP 열거 skip");
+            return Vec::new();
+        }
+    };
+    let aoe_root = home.join(".config").join("agent-of-empires");
+    let workers_dir = aoe_root.join("acp-workers");
+
+    // 1) acp-workers/*.sock 열거 → session-id 추출.
+    let mut workers: Vec<DiscoveredWorker> = Vec::new();
+    match std::fs::read_dir(&workers_dir) {
+        Ok(rd) => {
+            for ent in rd.flatten() {
+                let path = ent.path();
+                let is_sock = path.extension().and_then(|e| e.to_str()) == Some("sock");
+                if !is_sock {
+                    continue;
+                }
+                let session_id = match path.file_stem().and_then(|s| s.to_str()) {
+                    Some(s) if !s.is_empty() && s != "None" => s.to_string(),
+                    _ => continue,
+                };
+                // sidecar json (옵션).
+                let sidecar_path = workers_dir.join(format!("{session_id}.json"));
+                let sidecar_json = match std::fs::read_to_string(&sidecar_path) {
+                    Ok(s) => Some(s),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(e) => {
+                        tracing::warn!(
+                            "collect_aoe_acp_sessions: sidecar 읽기 실패 {sidecar_path:?}: {e}"
+                        );
+                        None
+                    }
+                };
+                // 라이브니스: runner pid 가 이 session-id 로 실제 살아있는가.
+                let (live, cwd_from_cmdline) = aoe_runner_liveness(&session_id);
+                workers.push(DiscoveredWorker {
+                    session_id,
+                    sidecar_json,
+                    cwd_from_cmdline,
+                    live,
+                });
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // AoE 미설치 머신 — 정상(빈 결과).
+            return Vec::new();
+        }
+        Err(e) => {
+            tracing::warn!("collect_aoe_acp_sessions: {workers_dir:?} 읽기 실패: {e}");
+            return Vec::new();
+        }
+    }
+
+    // 2) profiles/*/sessions.json 합집합 (id→title/project_path).
+    let mut store_entries: Vec<AoeSessionStoreEntry> = Vec::new();
+    let profiles_dir = aoe_root.join("profiles");
+    if let Ok(rd) = std::fs::read_dir(&profiles_dir) {
+        for prof in rd.flatten() {
+            let sjson = prof.path().join("sessions.json");
+            match std::fs::read_to_string(&sjson) {
+                Ok(contents) => match crate::aoe_acp_discovery::parse_session_store(&contents) {
+                    Ok(mut v) => store_entries.append(&mut v),
+                    Err(e) => {
+                        tracing::warn!(
+                            "collect_aoe_acp_sessions: sessions.json 파싱 실패 {sjson:?}: {e}"
+                        );
+                    }
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    tracing::warn!(
+                        "collect_aoe_acp_sessions: sessions.json 읽기 실패 {sjson:?}: {e}"
+                    );
+                }
+            }
+        }
+    }
+
+    build_entries(&workers, &store_entries, bridged_session_idents)
+}
+
+/// 주어진 session-id 에 대한 `aoe __acp-runner` 프로세스가 살아있는지 + 그 cmdline 의
+/// `--cwd` 값을 반환한다. `/proc` 스캔(Linux user-mode). 발견 못 하면 `(false, None)`.
+fn aoe_runner_liveness(session_id: &str) -> (bool, Option<String>) {
+    let proc_dir = match std::fs::read_dir("/proc") {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!("aoe_runner_liveness: /proc 읽기 실패: {e}");
+            return (false, None);
+        }
+    };
+    for ent in proc_dir.flatten() {
+        let name = ent.file_name();
+        let pid_str = match name.to_str() {
+            Some(s) if s.bytes().all(|b| b.is_ascii_digit()) => s,
+            _ => continue,
+        };
+        let cmdline_path = format!("/proc/{pid_str}/cmdline");
+        let raw = match std::fs::read(&cmdline_path) {
+            Ok(r) => r,
+            Err(_) => continue, // 프로세스 종료 race — skip(은닉 아님, 정상 휘발).
+        };
+        // cmdline 은 NUL 구분 argv.
+        let args: Vec<String> = raw
+            .split(|b| *b == 0)
+            .filter(|s| !s.is_empty())
+            .map(|s| String::from_utf8_lossy(s).into_owned())
+            .collect();
+        let joined = args.join(" ");
+        if !joined.contains("__acp-runner") || !joined.contains(session_id) {
+            continue;
+        }
+        // --session-id <id> 정확 매칭(부분 문자열 오탐 방지).
+        let mut matched = false;
+        let mut cwd: Option<String> = None;
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--session-id" if i + 1 < args.len() => {
+                    if args[i + 1] == session_id {
+                        matched = true;
+                    }
+                    i += 2;
+                }
+                "--cwd" if i + 1 < args.len() => {
+                    cwd = Some(args[i + 1].clone());
+                    i += 2;
+                }
+                _ => i += 1,
+            }
+        }
+        if matched {
+            return (true, cwd);
+        }
+    }
+    (false, None)
 }
 
 /// `GET /v1/gui/sessions/{identifier}/screen` — 세션 라이브 출력 (UI-MESSENGER-SPEC §4.3 S5).
@@ -2218,7 +2415,12 @@ async fn do_local_session_input(
     };
     if let Some((session, idx)) = portal_target {
         let url_base = std::env::var("XGRAM_PORTAL_URL").unwrap_or_else(|_| "https://portal-zalman.starian.us".into());
-        let token = std::env::var("XGRAM_PORTAL_TOKEN").unwrap_or_else(|_| "0205".into());
+        let token = openxgram_core::env::portal_token().ok_or_else(|| {
+            internal(&format!(
+                "portal token 미설정 — env {} 필요(평문 폴백 제거)",
+                openxgram_core::env::PORTAL_TOKEN_ENV
+            ))
+        })?;
         let url = format!("{}/api/tmux/send?token={}", url_base.trim_end_matches('/'), token);
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
@@ -5501,8 +5703,8 @@ fn tailscale_dnsname_for_host(host: &str) -> Option<String> {
 ///     b. 직접 IP:port 폴백: 후보 GUI 포트 [47302, 17402] 각각 `http://<host>:<port>`.
 /// `is_unreachable_address` true 후보는 제외. 순서 보존하며 dedupe.
 fn friend_announce_base_urls(machine: &str) -> Vec<String> {
-    // 후보 GUI 포트 (설치별 상이). probe_gui_urls 와 동일 집합.
-    const CANDIDATE_PORTS: [u16; 2] = [47302, 17402];
+    // 후보 GUI 포트 (설치별 상이) — ports.rs SSOT. probe_gui_urls 와 동일 집합.
+    use openxgram_core::ports::GUI_CANDIDATE_PORTS;
 
     let raw = machine.trim();
     if raw.is_empty() {
@@ -5522,7 +5724,7 @@ fn friend_announce_base_urls(machine: &str) -> Vec<String> {
             candidates.push(format!("https://{dns}"));
         }
         // b. 직접 IP:port 폴백.
-        for port in CANDIDATE_PORTS {
+        for port in GUI_CANDIDATE_PORTS {
             candidates.push(format!("http://{raw}:{port}"));
         }
     }
@@ -5536,13 +5738,11 @@ fn friend_announce_base_urls(machine: &str) -> Vec<String> {
         .collect()
 }
 
-/// 이 머신의 이름 — `XGRAM_MACHINE_ALIAS` env 우선, 없으면 `detect_machine().alias`.
-fn this_machine_alias() -> String {
-    std::env::var("XGRAM_MACHINE_ALIAS")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| crate::daemon_gui_sessions::detect_machine().alias)
+/// 이 머신의 이름 — SSOT(machine_id) 에 위임. data-dir 영속값(manifest→캐시) →
+/// `XGRAM_MACHINE_ALIAS` env → hostname 순으로 결정되어, 같은 data-dir 의 모든
+/// 프로세스가 항상 동일 머신명을 얻는다.
+fn this_machine_alias(data_dir: &std::path::Path) -> String {
+    crate::machine_id::machine_alias(data_dir)
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -5612,8 +5812,8 @@ async fn gui_agent_request_create(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
-        .unwrap_or_else(this_machine_alias);
-    let requester_machine = this_machine_alias();
+        .unwrap_or_else(|| this_machine_alias(state.data_dir.as_ref()));
+    let requester_machine = this_machine_alias(state.data_dir.as_ref());
     let id = uuid::Uuid::new_v4().to_string();
     let now = kst_now_string();
 
@@ -5969,7 +6169,7 @@ async fn gui_friends_roster(
         .collect();
 
     Ok(Json(serde_json::json!({
-        "machine": this_machine_alias(),
+        "machine": this_machine_alias(state.data_dir.as_ref()),
         "agents": agents,
     })))
 }
@@ -9904,6 +10104,79 @@ async fn gui_peer_send_unsigned(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
+    // rc.355 Part 2 — ACP↔peer 브리지 라우팅. 대상 peer 의 session_identifier 가 `acp:` 면
+    //   그 peer 는 라이브 ACP 세션이 소유한다 → transport 서명/enqueue 대신 그 ACP 세션의
+    //   `session/prompt` 를 구동(에이전트가 자동 응답). new_acp 인-프로세스 경로(load_a2a_agent_meta
+    //   + handle_task)를 재사용 — JSON-RPC 배관 중복 금지. ack_status = acp_prompted.
+    let acp_sid: Option<String> = {
+        let mut db = state.db.lock().await;
+        db.conn()
+            .query_row(
+                "SELECT session_identifier FROM peers WHERE alias=?1",
+                rusqlite::params![alias],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .ok()
+            .flatten()
+    };
+    // rc.355 fix — ACP-전용 에이전트(peers 행 없음 → acp: 마커 없음, 예: page-picker)는
+    //   bridge 가 agent_capabilities(role='acp') 만 남긴다. role='acp' 면 ACP prompt 로 라우팅한다.
+    //   주의: is_acp_drivable(role IS NOT 'tmux')은 너무 넓어 tmux/worker peer 까지 오라우팅 →
+    //   정확히 role='acp' 만 매칭(브리지가 박는 값).
+    let acp_role: bool = {
+        let mut db = state.db.lock().await;
+        db.conn()
+            .query_row(
+                "SELECT 1 FROM agent_capabilities WHERE alias=?1 AND role='acp' LIMIT 1",
+                rusqlite::params![alias],
+                |_r| Ok(()),
+            )
+            .is_ok()
+    };
+    if crate::acp_peer_bridge::is_acp_backed(acp_sid.as_deref()) || acp_role {
+        // 인-프로세스 ACP 구동 — a2a_send 의 new_acp 분기와 동일 척추(load_a2a_agent_meta + handle_task).
+        //   대상이 로컬 ACP 에이전트가 아니면(meta None) 명시 404 — 추측/조용한 폴백 금지(절대 규칙 1).
+        let meta = match load_a2a_agent_meta(&state, &alias).await? {
+            Some(m) => m,
+            None => {
+                return Err((
+                    StatusCode::NOT_FOUND,
+                    Json(ErrorDto {
+                        error: format!(
+                            "peer {alias} 는 acp 마커({acp_sid:?})를 가졌으나 로컬 ACP 메타 미해석 — 라이브 세션 종료 추정"
+                        ),
+                    }),
+                ));
+            }
+        };
+        let task_body = crate::daemon_gui_a2a::TaskBody {
+            skill: None,
+            message: serde_json::Value::Null,
+            task: Some(text.clone()),
+            text: None,
+            session_id: None,
+            from: Some("peer_send".to_string()),
+        };
+        let res = crate::daemon_gui_a2a::handle_task(
+            &state.acp,
+            &state.served_a2a,
+            &meta,
+            task_body,
+        )
+        .await
+        .map_err(a2a_err)?;
+        tracing::info!(
+            alias = %alias,
+            acp_sid = ?acp_sid,
+            "rc.355 peer_send → ACP 브리지 라우팅(acp_prompted) — 서명/enqueue 대신 ACP 세션 구동"
+        );
+        return Ok(Json(serde_json::json!({
+            "delivered": crate::acp_peer_bridge::ACK_ACP_PROMPTED,
+            "to_alias": alias,
+            "acp": res,
+        })));
+    }
+
     // master keystore 로 서명. env 필요 — 명시적 503 (silent fallback 금지).
     let pw = std::env::var("XGRAM_KEYSTORE_PASSWORD").map_err(|_| {
         (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorDto{
@@ -9954,7 +10227,7 @@ async fn gui_peer_send_unsigned(
             manifest_opt
                 .as_ref()
                 .and_then(|m| m.machine.tailscale_ip.clone())
-                .map(|ip| format!("http://{ip}:47300"))
+                .map(|ip| format!("http://{ip}:{}", openxgram_core::ports::RPC_PORT))
         });
     let sender_pubkey_hex = Some(hex::encode(signer.public_key_bytes()));
 
@@ -10322,8 +10595,8 @@ async fn gui_ops_machines(
 /// 짧은 타임아웃(~800ms)으로 hang/방화벽 장치가 라우트를 지연시키지 않게 한다.
 /// probe 실패/타임아웃은 조용히 `guiUrl = null` (라우트 전체를 죽이지 않음).
 async fn probe_gui_urls(devices: &mut [serde_json::Value]) {
-    // 후보 GUI 포트 (설치별 상이). 첫 성공 포트가 채택됨.
-    const CANDIDATE_PORTS: [u16; 2] = [47302, 17402];
+    // 후보 GUI 포트 (설치별 상이) — ports.rs SSOT. 첫 성공 포트가 채택됨.
+    use openxgram_core::ports::GUI_CANDIDATE_PORTS;
 
     // probe 실패 시 client 빌드 불가 → 모든 guiUrl 은 그대로 (null). 라우트는 정상.
     let client = match reqwest::Client::builder()
@@ -10354,7 +10627,7 @@ async fn probe_gui_urls(devices: &mut [serde_json::Value]) {
             }
             // 2) 폴백 — IP:후보포트 무인증 health probe (Funnel 미설정 장치).
             if !ip.is_empty() {
-                for port in CANDIDATE_PORTS {
+                for port in GUI_CANDIDATE_PORTS {
                     let health_url = format!("http://{ip}:{port}/v1/gui/health");
                     if let Ok(resp) = http.get(&health_url).send().await {
                         if resp.status().is_success() {
@@ -10563,7 +10836,7 @@ async fn gui_ops_backup_now(
         let f = std::fs::File::create(&out)?;
         let enc = flate2::write::GzEncoder::new(f, flate2::Compression::default());
         let mut tar = tar::Builder::new(enc);
-        for name in ["db.sqlite", "keystore", "notify.toml", "install_manifest.json"] {
+        for name in openxgram_core::paths::CLEANUP_ENTRY_NAMES {
             let p = data_dir.join(name);
             if p.exists() {
                 if p.is_dir() {
@@ -10663,12 +10936,22 @@ async fn gui_ops_update_apply(
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755));
     }
+    // 설치 대상 = 현재 실행 중인 바이너리 경로(하드코딩 제거). 서비스명은 ports.rs SSOT.
+    let install_dest = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "<현재 xgram 바이너리 경로>".to_string());
+    let next_step = format!(
+        "mv {} {} && systemctl --user restart {}",
+        staged.display(),
+        install_dest,
+        openxgram_core::ports::SIDECAR_SERVICE
+    );
     Ok(Json(serde_json::json!({
         "ok": true,
         "tag": tag,
         "staged_at": staged.display().to_string(),
         "size_bytes": bin_bytes.len(),
-        "next_step": format!("mv {} /home/llm/.local/bin/xgram && systemctl restart xgram-daemon", staged.display())
+        "next_step": next_step
     })))
 }
 
@@ -10751,7 +11034,11 @@ async fn gui_machine_info(
     headers: HeaderMap,
 ) -> Result<Json<crate::daemon_gui_sessions::MachineInfo>, (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
-    Ok(Json(crate::daemon_gui_sessions::detect_machine()))
+    // 머신명 SSOT — hostname 기반 detect_machine().alias 대신 영속된 단일 alias
+    // (this_machine_alias = machine_id::machine_alias)로 교정. roster/friend 등록과 일치.
+    let mut machine = crate::daemon_gui_sessions::detect_machine();
+    machine.alias = this_machine_alias(state.data_dir.as_ref());
+    Ok(Json(machine))
 }
 
 /// `GET /v1/gui/channel/status` — notify.toml + DB 카운트 (peers, schedule pending).
@@ -11102,7 +11389,10 @@ async fn gui_vault_pending_deny(
 
 // Tauri 측 handlers_core.rs 와 동일 키 — 단일 master/chain 단위.
 const PAYMENT_LIMIT_AGENT: &str = "default";
-const PAYMENT_LIMIT_CHAIN: &str = "base";
+// chain 키는 SSOT 헬퍼에서 — `XGRAM_CHAIN` env 반영(기본 "base").
+fn payment_limit_chain() -> String {
+    openxgram_core::env::chain_name()
+}
 
 /// `GET /v1/gui/payment/daily-limit` — 현재 일일 USDC 한도 (micro USDC).
 async fn gui_payment_get_limit(
@@ -11112,7 +11402,7 @@ async fn gui_payment_get_limit(
     require_auth(&state, &headers).await.map_err(unauthorized)?;
     let mut db = state.db.lock().await;
     let row = DailyLimitStore::new(&mut db)
-        .get(PAYMENT_LIMIT_AGENT, PAYMENT_LIMIT_CHAIN)
+        .get(PAYMENT_LIMIT_AGENT, &payment_limit_chain())
         .map_err(|e| internal(&format!("daily limit get: {e}")))?;
     Ok(Json(row.map(|r| r.daily_micro).unwrap_or(0)))
 }
@@ -11129,7 +11419,7 @@ async fn gui_payment_set_limit(
     }
     let mut db = state.db.lock().await;
     DailyLimitStore::new(&mut db)
-        .set(PAYMENT_LIMIT_AGENT, PAYMENT_LIMIT_CHAIN, body.micro_usdc)
+        .set(PAYMENT_LIMIT_AGENT, &payment_limit_chain(), body.micro_usdc)
         .map_err(|e| internal(&format!("daily limit set: {e}")))?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -11288,9 +11578,9 @@ async fn gui_payment_wallet(
     // 1) 체인/RPC 결정 — XGRAM_CHAIN_RPC 설정 여부가 온체인 활성 여부.
     let rpc_override = std::env::var("XGRAM_CHAIN_RPC").ok().filter(|s| !s.trim().is_empty());
     let onchain_enabled = rpc_override.is_some();
-    // 체인 = XGRAM_CHAIN(기본 base). chain.rs 레지스트리에서 USDC 컨트랙트·라벨을 가져온다.
+    // 체인 = env.rs chain_name() SSOT(XGRAM_CHAIN, 기본 base). chain.rs 레지스트리에서 USDC·라벨 매핑.
     // (이전엔 BASE 하드코딩이라 ethereum-sepolia 등에서 USDC 잔액을 Base 컨트랙트로 조회해 0 표시 버그.)
-    let chain_name = std::env::var("XGRAM_CHAIN").unwrap_or_else(|_| "base".to_string());
+    let chain_name = openxgram_core::env::chain_name();
     let chain_cfg = openxgram_payment::chain::lookup(&chain_name)
         .unwrap_or(openxgram_payment::chain::BASE);
     let rpc_url = rpc_override

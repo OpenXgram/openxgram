@@ -90,7 +90,7 @@ impl Default for WizardConfig {
             seed_mode: SeedMode::New,
             adapter_discord: false,
             adapter_telegram: false,
-            bind: "127.0.0.1:47300".into(),
+            bind: openxgram_core::ports::RPC_BIND_DEFAULT.into(),
             install_daemon: false,
             install_backup_timer: false,
         }

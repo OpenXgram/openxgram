@@ -12,8 +12,16 @@ use openxgram_scheduler::{add_reflection_job, build_scheduler, NIGHTLY_REFLECTIO
 use openxgram_transport::{spawn_server_with_peer_provider, MetricsProvider};
 use std::sync::Arc;
 
-const DEFAULT_BIND: &str = "127.0.0.1:47300";
-const DEFAULT_GUI_BIND: &str = "127.0.0.1:47302";
+use openxgram_core::ports::{GUI_PORT, RPC_PORT};
+
+/// 기본 transport bind (loopback:RPC_PORT) — ports.rs SSOT 파생.
+fn default_bind() -> SocketAddr {
+    SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), RPC_PORT)
+}
+/// 기본 GUI bind (loopback:GUI_PORT) — ports.rs SSOT 파생.
+fn default_gui_bind() -> SocketAddr {
+    SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), GUI_PORT)
+}
 
 /// rc.244 zero-touch — transport URL(http://host:PORT) 에서 GUI URL 파생 (포트 +2 규약).
 ///   47300→47302, 17400→17402. 자동 등록 시 gui_address 를 채워 cross-machine 터미널
@@ -68,6 +76,11 @@ pub struct DaemonOpts {
 }
 
 pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
+    // 싱글톤 가드 — data_dir 당 데몬 1개. 포트 바인딩 *전에* flock 획득.
+    //   살아있는 데몬이 이미 점유 중이면 AlreadyRunning 에러로 비정상 종료(중복 기동 차단).
+    //   `_daemon_lock` 은 run_daemon 스코프 전체에서 보유해야 락이 유지된다(드롭 금지).
+    let _daemon_lock = crate::daemon_singleton::DaemonLock::acquire(&opts.data_dir)?;
+
     // rc.253 — 데몬 subprocess(tmux 등)가 launchd/systemd 의 빈약한 PATH 에서도 도구를
     //   찾도록 공통 bin 경로 보강. macOS Homebrew(/opt/homebrew/bin)·/usr/local/bin 등.
     //   이게 없으면 macOS launchd 데몬이 `tmux` 를 못 찾아 세션 탐지가 claude 로 폴백했음
@@ -95,9 +108,9 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
     } else if opts.tailscale {
         let ip = openxgram_transport::tailscale::local_ipv4()
             .context("--tailscale 요청 — `tailscale ip --4` 실패")?;
-        SocketAddr::new(std::net::IpAddr::V4(ip), 47300)
+        SocketAddr::new(std::net::IpAddr::V4(ip), RPC_PORT)
     } else {
-        DEFAULT_BIND.parse().expect("DEFAULT_BIND parses")
+        default_bind()
     };
     let cron = opts
         .reflection_cron
@@ -154,7 +167,7 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
     // 별도 axum 서버, transport 와 다른 포트. 토큰 인증 (mcp_tokens 재사용).
     let gui_bind = opts
         .gui_bind
-        .unwrap_or_else(|| DEFAULT_GUI_BIND.parse().expect("DEFAULT_GUI_BIND parses"));
+        .unwrap_or_else(default_gui_bind);
     crate::daemon_gui::spawn_gui_server(opts.data_dir.clone(), gui_bind)
         .await
         .context("GUI HTTP API 서버 가동 실패")?;
@@ -192,13 +205,10 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
     // slug 화(소문자·비영숫자→'-'·trim)하여 cross-machine name collision 방지.
     // 레거시 xgram-ops 는 (충돌 없을 때만) <slug>-master 로 rename 마이그레이션.
     {
-        // rc.316 — 머신 alias override: XGRAM_MACHINE_ALIAS 환경변수 우선(없으면 hostname).
-        //   마스터가 머신별 깔끔한 이름 지정용(seoul/zalman). ops 에이전트 slug 에만 영향(peer 신원 무관).
-        let machine_name = std::env::var("XGRAM_MACHINE_ALIAS")
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| crate::daemon_gui_sessions::detect_machine().alias);
+        // 머신 alias — SSOT(machine_id). data-dir 영속값(manifest→캐시) → env → hostname.
+        //   같은 data-dir 의 모든 프로세스(daemon·mcp-serve 등)가 항상 동일 머신명을 얻는다.
+        //   ops 에이전트 slug 에만 영향(peer 신원 무관).
+        let machine_name = crate::machine_id::machine_alias(&opts.data_dir);
         let slug = machine_slug(&machine_name);
         match ensure_machine_master(&opts.data_dir, &slug) {
             Ok(alias) => {
@@ -498,8 +508,7 @@ fn gather_db_metrics(data_dir: &std::path::Path) -> String {
 /// 데몬 자신의 GUI HTTP base URL. `XGRAM_DAEMON_GUI_URL` 우선, 없으면 loopback 기본.
 /// (mcp_serve.rs::daemon_gui_url 과 동일 규약 — 데몬 ACP 레지스트리 self-call 용.)
 fn self_gui_url() -> String {
-    std::env::var("XGRAM_DAEMON_GUI_URL")
-        .unwrap_or_else(|_| format!("http://{DEFAULT_GUI_BIND}"))
+    std::env::var("XGRAM_DAEMON_GUI_URL").unwrap_or_else(|_| format!("http://{}", default_gui_bind()))
 }
 
 /// fix④ Option A — peer_send inbound 의 ACP-우선 전달 결과.

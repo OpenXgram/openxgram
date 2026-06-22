@@ -269,7 +269,7 @@ pub async fn tailscale_discovery_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()>
     for (hostname, ip) in candidates {
         // 3) port 47300 / 7300 둘 다 시도 (OpenXgram transport)
         let mut found_port: Option<u16> = None;
-        for port in [47300, 7300] {
+        for port in [openxgram_core::ports::RPC_PORT, 7300] {
             let url = format!("http://{}:{}/v1/health", ip, port);
             if let Ok(r) = http.get(&url).send().await {
                 if r.status().is_success() {
@@ -412,7 +412,7 @@ pub async fn peer_sync_tick(db: &Arc<Mutex<Db>>) -> anyhow::Result<()> {
         // 1.5) self-announce — 자기 신원을 peer 의 /v1/gui/peers 에 POST (없으면 등록, 있으면 ignored).
         //     rc.178+: chicken-and-egg 해결 — 어느 한쪽에서 peer add 안 됐어도 양방향 자동 등록.
         if !self_alias.is_empty() {
-            let addr_for_peer = self_address.clone().unwrap_or_else(|| "http://localhost:47300".to_string());
+            let addr_for_peer = self_address.clone().unwrap_or_else(|| format!("http://localhost:{}", openxgram_core::ports::RPC_PORT));
             // placeholder pubkey — process_inbound 의 rc.173 unknown peer fix 가 unverified 로 INSERT.
             let pk_placeholder = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001".to_string();
             let _ = http.post(format!("{base}/v1/gui/peers"))
@@ -759,7 +759,7 @@ async fn daily_backup_tick(data_dir: &std::path::Path) -> anyhow::Result<()> {
         let f = std::fs::File::create(&out)?;
         let enc = flate2::write::GzEncoder::new(f, flate2::Compression::default());
         let mut tar = tar::Builder::new(enc);
-        for name in ["db.sqlite", "keystore", "notify.toml", "install_manifest.json"] {
+        for name in openxgram_core::paths::CLEANUP_ENTRY_NAMES {
             let p = data_dir.join(name);
             if p.exists() {
                 if p.is_dir() {

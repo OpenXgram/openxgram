@@ -363,15 +363,20 @@ fn portal_url_base() -> String {
         .trim_end_matches('/').to_string()
 }
 
-fn portal_token() -> String {
-    std::env::var("XGRAM_PORTAL_TOKEN").unwrap_or_else(|_| "0205".into())
+fn portal_token() -> Result<String, String> {
+    openxgram_core::env::portal_token().ok_or_else(|| {
+        format!(
+            "portal token 미설정 — env {} 필요(평문 폴백 제거)",
+            openxgram_core::env::PORTAL_TOKEN_ENV
+        )
+    })
 }
 
 /// portal capture — `/api/tmux/capture?session=<S>&window=<idx>` (rc.89~).
 /// session 명시 시 그 tmux 세션의 window 캡쳐. None 이면 default starian session.
 pub fn capture_portal_session(session: Option<&str>, idx: u32) -> Result<String, String> {
     let mut url = format!("{}/api/tmux/capture?window={}&lines=200&escape=1&token={}",
-        portal_url_base(), idx, portal_token());
+        portal_url_base(), idx, portal_token()?);
     if let Some(s) = session {
         if !s.is_empty() {
             url.push_str(&format!("&session={}", urlencode(s)));
@@ -671,7 +676,18 @@ fn refresh_or_stale(stale: SessionsDto) -> SessionsDto {
 }
 
 fn collect_fresh() -> SessionsDto {
-    let machine = detect_machine();
+    let mut machine = detect_machine();
+    // 머신명 SSOT — hostname 기반 detect_machine().alias 대신 영속된 단일 alias
+    // (machine_id::machine_alias)로 교정. roster/friend 등록·/v1/gui/machine 과 일치.
+    // collect_fresh 는 zero-arg(spawn_blocking 시그니처)이라 data_dir 은 agent_project_paths
+    // 와 동일하게 default_data_dir() 로 해석한다. 안티패턴 1(fallback 침묵 금지): 실패 시
+    // 명시 로그 후 detect_machine() 의 hostname alias 유지.
+    match openxgram_core::paths::default_data_dir() {
+        Ok(data_dir) => machine.alias = crate::machine_id::machine_alias(&data_dir),
+        Err(e) => {
+            tracing::warn!(error = %e, "collect_fresh: data_dir 확인 실패 — 머신 alias SSOT 적용 불가, hostname alias 유지");
+        }
+    }
     let mut sessions = Vec::new();
 
     // rc.234 — PORTAL 독립 종합. 이 데몬이 자기 머신에서 직접 집계한다 (self-contained).
@@ -1039,11 +1055,16 @@ pub struct VersionInfoDto {
 
 /// CHANGELOG.md 의 최상단 `## [버전] — ...` block 1개 추출.
 fn extract_latest_changelog() -> (Option<String>, Option<String>) {
-    let candidates = [
-        std::path::PathBuf::from("CHANGELOG.md"),
-        std::path::PathBuf::from("/home/pasia/projects/openxgram/CHANGELOG.md"),
-        std::path::PathBuf::from("/home/llm/projects/starian-set/openxgram/CHANGELOG.md"),
-    ];
+    // repo root = 이 crate(CARGO_MANIFEST_DIR=<repo>/crates/openxgram-cli)의 조상 2단계.
+    // 하드코딩 절대경로 제거 — 빌드된 위치에서 동적 파생.
+    let repo_changelog = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .map(|root| root.join("CHANGELOG.md"));
+    let mut candidates: Vec<std::path::PathBuf> = vec![std::path::PathBuf::from("CHANGELOG.md")];
+    if let Some(p) = repo_changelog {
+        candidates.push(p);
+    }
     let mut content = String::new();
     for p in &candidates {
         if let Ok(s) = std::fs::read_to_string(p) {

@@ -123,7 +123,8 @@ pub fn publish_records(data_dir: &Path) -> Result<HashMap<String, String>> {
     records.insert("xgram.handle".into(), handle.to_string());
     records.insert(
         "xgram.daemon".into(),
-        std::env::var("XGRAM_DAEMON_URL").unwrap_or_else(|_| "http://localhost:47300".into()),
+        std::env::var("XGRAM_DAEMON_URL")
+            .unwrap_or_else(|_| format!("http://localhost:{}", openxgram_core::ports::RPC_PORT)),
     );
     if let Some(b) = section.bio.as_deref() {
         records.insert("xgram.bio".into(), b.to_string());

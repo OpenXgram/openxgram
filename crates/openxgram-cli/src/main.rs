@@ -274,7 +274,7 @@ enum Commands {
         binary: Option<PathBuf>,
         #[arg(long)]
         data_dir: Option<PathBuf>,
-        #[arg(long, default_value = "127.0.0.1:47300")]
+        #[arg(long, default_value = openxgram_core::ports::RPC_BIND_DEFAULT)]
         bind: String,
         /// unit 파일 출력 경로 (기본: ~/.config/systemd/user/openxgram-sidecar.service)
         #[arg(long)]
@@ -614,7 +614,7 @@ enum Commands {
         #[arg(long)]
         alias: Option<String>,
         /// 외부 접속 가능한 transport address (예: http://1.2.3.4:47300)
-        #[arg(long, default_value = "http://127.0.0.1:47300")]
+        #[arg(long, default_value = openxgram_core::ports::RPC_URL_DEFAULT)]
         address: String,
     },
 
@@ -1540,8 +1540,9 @@ enum PaymentCli {
         /// USDC 단위 (예: 1.50, 0.001). USDC 는 6 decimals 까지.
         #[arg(long)]
         amount: String,
-        #[arg(long, default_value = "base")]
-        chain: String,
+        /// 결제 체인. 미지정 시 `XGRAM_CHAIN` env(기본 "base") — openxgram_core::env::chain_name().
+        #[arg(long)]
+        chain: Option<String>,
         /// 수취인 ETH 주소 (0x...)
         #[arg(long)]
         to: String,
@@ -1601,7 +1602,7 @@ impl From<PaymentCli> for PaymentAction {
                 memo,
             } => PaymentAction::New {
                 amount_usdc: amount,
-                chain,
+                chain: chain.unwrap_or_else(openxgram_core::env::chain_name),
                 to,
                 memo,
             },
