@@ -549,6 +549,30 @@ impl<'a> IdentityStore<'a> {
             }
         }
 
+        // tmux liveness 필터 — "유령 tmux" 행 제거(rc.358).
+        // sessions 파라미터가 실제 살아있는 세션 집합(daemon_gui collect_sessions).
+        // session_identifier 가 `tmux:` 로 시작하는데 그 normSid 가 live 집합에 없으면
+        // session_identifier 를 None 으로 비운다 → 프론트에서 "active 아님"·종료 불가로 표시.
+        // 주의: `tmux:` 접두만 대상. `aoe-acp:`·`peer:`·원격/크로스머신 sid 는 건드리지 않는다.
+        let live_sids: std::collections::HashSet<String> = sessions
+            .iter()
+            .map(|s| norm_sid(Some(s.session_identifier.as_str())))
+            .filter(|n| !n.is_empty())
+            .collect();
+        for r in &mut rows {
+            let is_tmux = r
+                .session_identifier
+                .as_deref()
+                .map(|s| s.starts_with("tmux:"))
+                .unwrap_or(false);
+            if is_tmux {
+                let n = norm_sid(r.session_identifier.as_deref());
+                if !live_sids.contains(&n) {
+                    r.session_identifier = None;
+                }
+            }
+        }
+
         // 머신 정규화 — 모든 행에 적용.
         for r in &mut rows {
             r.machine = Some(normalize_machine(r.machine.as_deref(), local_machine_alias));
@@ -601,5 +625,101 @@ impl<'a> IdentityStore<'a> {
             rusqlite::params![alias, canonical_address, is_primary as i64, status, created_at],
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn peer(alias: &str, sid: Option<&str>) -> PeerInput {
+        PeerInput {
+            alias: alias.to_string(),
+            eth_address: None,
+            session_identifier: sid.map(|s| s.to_string()),
+            role: None,
+            display_name: None,
+        }
+    }
+
+    fn sess(id: &str) -> SessionInput {
+        SessionInput {
+            session_identifier: id.to_string(),
+            display_name: None,
+            cwd: None,
+        }
+    }
+
+    fn row_for<'a>(rows: &'a [RosterEntry], alias: &str) -> &'a RosterEntry {
+        rows.iter()
+            .find(|r| r.primary_alias == alias || r.aliases.iter().any(|a| a == alias))
+            .expect("행 존재")
+    }
+
+    /// tmux:live + 해당 세션이 sessions 에 있음 → sid 유지.
+    #[test]
+    fn test_liveness_keeps_live_tmux_sid() {
+        let peers = vec![peer("aoe_live_x", Some("tmux:aoe_live_x"))];
+        let sessions = vec![sess("tmux:aoe_live_x")];
+        let rows =
+            IdentityStore::roster_from_sources(&peers, &[], &sessions, "server-seoul");
+        let r = row_for(&rows, "aoe_live_x");
+        assert_eq!(r.session_identifier.as_deref(), Some("tmux:aoe_live_x"));
+        assert!(r.has_tmux, "live tmux 세션과 병합");
+    }
+
+    /// tmux:dead + sessions 에 없음 → sid 비워짐(None).
+    #[test]
+    fn test_liveness_clears_dead_tmux_sid() {
+        let peers = vec![peer("aoe_dead_x", Some("tmux:aoe_dead_x"))];
+        let sessions: Vec<SessionInput> = vec![];
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &sessions, "server-seoul");
+        let r = row_for(&rows, "aoe_dead_x");
+        assert_eq!(
+            r.session_identifier, None,
+            "죽은 tmux sid 는 None 으로 비워져야 함"
+        );
+    }
+
+    /// aoe-acp:<id> 가 tmux 집합에 없어도 → sid 유지(tmux 접두 아님).
+    #[test]
+    fn test_liveness_keeps_aoe_acp_sid() {
+        let peers = vec![peer("acp_agent", Some("aoe-acp:abc123"))];
+        let sessions: Vec<SessionInput> = vec![];
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &sessions, "server-seoul");
+        let r = row_for(&rows, "acp_agent");
+        assert_eq!(
+            r.session_identifier.as_deref(),
+            Some("aoe-acp:abc123"),
+            "aoe-acp sid 는 tmux 접두가 아니므로 비우면 안 됨"
+        );
+    }
+
+    /// peer:remote/크로스머신 sid → 유지(tmux 접두 아님).
+    #[test]
+    fn test_liveness_keeps_remote_peer_sid() {
+        let peers = vec![peer("remote_agent", Some("peer:zalman:remote_agent"))];
+        let sessions: Vec<SessionInput> = vec![];
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &sessions, "server-seoul");
+        let r = row_for(&rows, "remote_agent");
+        assert_eq!(
+            r.session_identifier.as_deref(),
+            Some("peer:zalman:remote_agent"),
+            "원격 peer sid 는 비우면 안 됨"
+        );
+    }
+
+    /// live tmux 세션 단독 행(peer 없음) → 영향 없음(유지).
+    #[test]
+    fn test_liveness_session_only_row_unaffected() {
+        let peers: Vec<PeerInput> = vec![];
+        let sessions = vec![sess("tmux:lonely_session")];
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &sessions, "server-seoul");
+        let r = rows.iter().find(|r| r.has_tmux).expect("세션 행 존재");
+        assert_eq!(
+            r.session_identifier.as_deref(),
+            Some("tmux:lonely_session"),
+            "live 세션 단독 행 sid 유지"
+        );
     }
 }
