@@ -1735,6 +1735,15 @@ struct RosterEntryDto {
 
 impl From<openxgram_peer::RosterEntry> for RosterEntryDto {
     fn from(e: openxgram_peer::RosterEntry) -> Self {
+        // rc.357 — AoE 가 띄운 ACP 세션(`aoe-acp:<id>`)은 tmux 가 아닌 외부 ACP 런타임이다.
+        //   IdentityStore::roster 의 generic session 분기는 모든 세션을 has_tmux 로 본다
+        //   → 프론트(KakaoShell)가 종류를 "tmux" 로 오분류했다(버그). aoe-acp: 식별자 행은
+        //   ACP 로 표시되도록 has_agent 를 켜고 has_tmux 를 끈다(peer 는 건드리지 않음).
+        let is_aoe_acp = e
+            .session_identifier
+            .as_deref()
+            .map(|s| s.starts_with("aoe-acp:"))
+            .unwrap_or(false);
         RosterEntryDto {
             canonical_address: e.canonical_address,
             primary_alias: e.primary_alias,
@@ -1745,8 +1754,8 @@ impl From<openxgram_peer::RosterEntry> for RosterEntryDto {
             session_identifier: e.session_identifier,
             aliases: e.aliases,
             is_peer: e.is_peer,
-            has_agent: e.has_agent,
-            has_tmux: e.has_tmux,
+            has_agent: if is_aoe_acp { true } else { e.has_agent },
+            has_tmux: if is_aoe_acp { false } else { e.has_tmux },
             quarantined: e.quarantined,
         }
     }

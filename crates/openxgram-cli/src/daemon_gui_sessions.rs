@@ -26,6 +26,8 @@ pub enum SessionKind {
     Tmux,
     ClaudeProject,
     XgramSession,
+    /// rc.357 — AoE 가 띄운 ACP 세션(`aoe-acp:<id>`). tmux 가 아닌 외부 ACP 런타임.
+    AcpSession,
 }
 
 #[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -408,6 +410,43 @@ pub fn capture_aoe(rest: &str) -> Result<String, String> {
         return Err("aoe identifier 에 tmux_session_name 없음 (rc.88 cache?). 새로고침 필요.".into());
     }
     capture_portal_session(Some(tmux_session), 0)
+}
+
+/// rc.357 — AoE ACP session-id 가 단순 토큰(영숫자 + `-`/`_`)인지 — 경로 traversal 방지용.
+/// 비어있거나 `.`/`/` 등이 섞이면 거부(파일 경로에 그대로 합성되므로).
+fn is_valid_aoe_acp_id(session_id: &str) -> bool {
+    !session_id.is_empty()
+        && session_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// rc.357 — AoE 가 띄운 ACP 세션의 런너 로그(`acp-workers/<id>.log`) 마지막 80줄을 읽는다.
+/// 식별자 스킴: `aoe-acp:<session-id>` (caller 가 prefix 를 떼고 bare id 전달).
+/// session-id 는 FS 스캔에서 유래하나, 경로 traversal 방지를 위해 단순 토큰만 허용한다
+/// (영숫자 + `-`/`_`). 위반/부재/읽기 실패는 조용히 넘기지 않고 `Err` 로 명시(절대 룰 #1).
+fn tail_aoe_acp_log(session_id: &str) -> Result<String, String> {
+    if !is_valid_aoe_acp_id(session_id) {
+        return Err(format!("부적합한 AoE ACP session-id: {session_id:?}"));
+    }
+    // rc.139 — Windows 호환: HOME 없으면 USERPROFILE fallback.
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .ok_or("HOME/USERPROFILE unset")?;
+    let path: PathBuf = [
+        home,
+        ".config/agent-of-empires/acp-workers".into(),
+        format!("{session_id}.log").into(),
+    ]
+    .iter()
+    .collect();
+    let content = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
+    let lines: Vec<&str> = content.lines().collect();
+    let tail = &lines[lines.len().saturating_sub(80)..];
+    if tail.is_empty() {
+        return Ok("(빈 로그)".into());
+    }
+    Ok(tail.join("\n"))
 }
 
 fn urlencode(s: &str) -> String {
@@ -1213,6 +1252,21 @@ pub fn capture_session(identifier: &str) -> SessionScreenDto {
                 "error".into(),
             ),
         }
+    } else if let Some(id) = identifier.strip_prefix("aoe-acp:") {
+        // rc.357 — AoE 가 띄운 ACP 세션(tmux 아님). acp-workers/<id>.log tail 표시.
+        //   rest 는 bare session-id(aoe_acp_discovery 의 dedup 키와 동일 스킴).
+        match tail_aoe_acp_log(id) {
+            Ok(s) => (
+                SessionKind::AcpSession,
+                s,
+                format!("~/.config/agent-of-empires/acp-workers/{id}.log tail 80"),
+            ),
+            Err(e) => (
+                SessionKind::AcpSession,
+                format!("\x1b[31mAoE ACP 로그 읽기 실패: {e}\x1b[0m"),
+                "error".into(),
+            ),
+        }
     } else if let Some(rest) = identifier.strip_prefix("aoe:") {
         // aoe:<id>:<title> 형식
         match capture_aoe(rest) {
@@ -1265,6 +1319,45 @@ pub fn capture_session(identifier: &str) -> SessionScreenDto {
         lines,
         source_note,
         fetched_at: chrono::Utc::now().to_rfc3339(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aoe_acp_id_accepts_plain_hex_token() {
+        assert!(is_valid_aoe_acp_id("51a4cda6540e4032"));
+        assert!(is_valid_aoe_acp_id("06cbd2cc361d4f98"));
+        assert!(is_valid_aoe_acp_id("a-b_c123"));
+    }
+
+    #[test]
+    fn aoe_acp_id_rejects_traversal_and_separators() {
+        assert!(!is_valid_aoe_acp_id(""));
+        assert!(!is_valid_aoe_acp_id("../etc/passwd"));
+        assert!(!is_valid_aoe_acp_id("a/b"));
+        assert!(!is_valid_aoe_acp_id("a.log"));
+        assert!(!is_valid_aoe_acp_id("a b"));
+    }
+
+    #[test]
+    fn capture_session_aoe_acp_uses_acp_kind_and_no_unsupported() {
+        // 존재하지 않는 id 라도 'unsupported identifier' 가 아니라 AcpSession 분기로 가야 한다.
+        let dto = capture_session("aoe-acp:deadbeefcafe0000");
+        assert_eq!(dto.kind, SessionKind::AcpSession);
+        assert!(
+            !dto.content.contains("unsupported identifier"),
+            "aoe-acp: 식별자가 unsupported 로 떨어지면 안 됨"
+        );
+    }
+
+    #[test]
+    fn capture_session_unknown_prefix_still_unsupported() {
+        let dto = capture_session("bogus:xyz");
+        assert_eq!(dto.kind, SessionKind::XgramSession);
+        assert!(dto.content.contains("unsupported identifier"));
     }
 }
 
