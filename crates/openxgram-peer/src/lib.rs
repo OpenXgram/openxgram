@@ -7,8 +7,8 @@
 
 mod identity;
 pub use identity::{
-    norm_sid, normalize_machine, AgentInput, CanonicalGroup, IdentityStore, PeerInput, RosterEntry,
-    SessionInput,
+    norm_sid, normalize_machine, AgentInput, CanonicalGroup, CapInput, IdentityStore, PeerInput,
+    RosterEntry, SessionInput,
 };
 
 use chrono::{DateTime, FixedOffset};

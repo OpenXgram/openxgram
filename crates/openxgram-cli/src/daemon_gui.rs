@@ -1723,6 +1723,8 @@ struct RosterEntryDto {
     primary_alias: String,
     display_name: Option<String>,
     role: Option<String>,
+    /// rc.361 — agent_capabilities description (list_peers 거울).
+    description: Option<String>,
     machine: Option<String>,
     cwd: Option<String>,
     session_identifier: Option<String>,
@@ -1751,6 +1753,7 @@ impl From<openxgram_peer::RosterEntry> for RosterEntryDto {
             primary_alias: e.primary_alias,
             display_name: e.display_name,
             role: e.role,
+            description: e.description,
             machine: e.machine,
             cwd: e.cwd,
             session_identifier: e.session_identifier,

@@ -265,7 +265,7 @@ fn test_roster_peer_and_agent_same_sid_two_rows() {
         sess("peer:remote:tmux:aoe_flowsync_x", None, None),
     ];
 
-    let rows = IdentityStore::roster_from_sources(&peers, &agents, &sessions, "server-seoul");
+    let rows = IdentityStore::roster_from_sources(&peers, &agents, &[], &sessions, "server-seoul");
     // peer 행 1 + agent 행 1 = 2 (owned 세션/gossip 은 standalone 행 안 만듦).
     assert_eq!(rows.len(), 2, "peer 행 + agent 행 별도(병합 금지, 세션 dedup)");
     let peer_row = rows.iter().find(|r| r.is_peer).expect("peer 행");
@@ -296,7 +296,7 @@ fn test_roster_agent_only_and_session_only() {
     }];
     let sessions = vec![sess("tmux:lonely_session", Some("/tmp/lonely"), None)];
 
-    let rows = IdentityStore::roster_from_sources(&peers, &agents, &sessions, "server-seoul");
+    let rows = IdentityStore::roster_from_sources(&peers, &agents, &[], &sessions, "server-seoul");
     assert_eq!(rows.len(), 2);
 
     let agent = rows.iter().find(|r| r.primary_alias == "soloagent").unwrap();

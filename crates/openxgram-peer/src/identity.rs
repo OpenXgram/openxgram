@@ -43,6 +43,21 @@ pub struct AgentInput {
     pub session_identifier: Option<String>,
 }
 
+/// agent_capabilities 1행의 로스터 입력 투영 (rc.361).
+/// list_peers 거울 — `messenger_enabled=1 OR alias IN peers` 인 모든 능력 행이
+/// (peer 로 이미 표현되지 않았다면) 자기 1행이 된다. sv_aoe_* auto-seed 포함.
+#[derive(Debug, Clone)]
+pub struct CapInput {
+    pub alias: String,
+    pub role: Option<String>,
+    pub description: Option<String>,
+    /// peers 캐시(meta_map)에서 가져온 표시 필드 — list_peers 와 동일 소스.
+    pub display_name: Option<String>,
+    pub cwd: Option<String>,
+    /// peers.session_identifier (있으면) — liveness 판정에 사용.
+    pub session_identifier: Option<String>,
+}
+
 /// 세션 detector(openxgram-cli `DetectedSession`)의 로스터 입력 투영.
 #[derive(Debug, Clone)]
 pub struct SessionInput {
@@ -60,6 +75,8 @@ pub struct RosterEntry {
     pub primary_alias: String,
     pub display_name: Option<String>,
     pub role: Option<String>,
+    /// rc.361 — agent_capabilities description (list_peers 거울). caps 소스 행에서 채움.
+    pub description: Option<String>,
     pub machine: Option<String>,
     pub cwd: Option<String>,
     pub session_identifier: Option<String>,
@@ -313,9 +330,42 @@ impl<'a> IdentityStore<'a> {
             }
             out
         };
+        // agent_capabilities (rc.361) — list_peers 거울. 동일 필터
+        //   `messenger_enabled=1 OR alias IN peers` 적용. peer/agent_profiles 로 이미
+        //   표현된 alias 는 제외(중복 방지) — 그래야 distinct alias 집합이 list_peers 와
+        //   일치한다(peers + caps). display_name/cwd/session_identifier 는 peers 캐시
+        //   (display_name/cwd/session_identifier) 가 있으면 끌어와 list_peers 와 동일 소스.
+        let caps: Vec<CapInput> = {
+            let mut stmt = self.db.conn().prepare(
+                "SELECT ac.alias, ac.role, ac.description,
+                        p.display_name, p.cwd, p.session_identifier
+                 FROM agent_capabilities ac
+                 LEFT JOIN peers p ON p.alias = ac.alias
+                 WHERE (ac.messenger_enabled = 1 OR ac.alias IN (SELECT alias FROM peers))
+                   AND ac.alias NOT IN (SELECT alias FROM peers)
+                   AND ac.alias NOT IN (SELECT alias FROM agent_profiles)
+                 ORDER BY ac.alias ASC",
+            )?;
+            let mapped = stmt.query_map([], |r| {
+                Ok(CapInput {
+                    alias: r.get(0)?,
+                    role: r.get(1)?,
+                    description: r.get(2)?,
+                    display_name: r.get(3)?,
+                    cwd: r.get(4)?,
+                    session_identifier: r.get(5)?,
+                })
+            })?;
+            let mut out = Vec::new();
+            for r in mapped {
+                out.push(r?);
+            }
+            out
+        };
         Ok(Self::roster_from_sources(
             &peers,
             &agents,
+            &caps,
             sessions,
             local_machine_alias,
         ))
@@ -337,9 +387,16 @@ impl<'a> IdentityStore<'a> {
     /// status(rc.360): "active" = 라이브 세션과 연결됨 · "dead" = `tmux:` sid 인데
     /// 라이브 집합에 없음 · "stopped" = 그 외(세션 없는 peer/agent, 또는 비-tmux sid 로
     /// 라이브 판정 불가). 라이브 판정은 `sessions` 인자의 normSid 집합.
+    ///
+    /// rc.361 — `caps`(agent_capabilities) 도 소스로 추가하여 현황 그리드 == `list_peers`.
+    /// list_peers 의 dedup 규칙을 미러: peer 로 이미 표현된 alias 의 능력 행은 건너뛰고
+    /// (peer 행이 그 신원을 대표), 그 외 능력 행(sv_aoe_* auto-seed 포함)은 각자 1행
+    /// (`has_agent=true`). 호출자(`roster()`)가 `messenger_enabled=1 OR alias IN peers`
+    /// 필터를 적용해 전달하므로 여기선 peer-alias 중복만 제거한다.
     pub fn roster_from_sources(
         peers: &[PeerInput],
         agents: &[AgentInput],
+        caps: &[CapInput],
         sessions: &[SessionInput],
         local_machine_alias: &str,
     ) -> Vec<RosterEntry> {
@@ -351,6 +408,9 @@ impl<'a> IdentityStore<'a> {
             .map(|s| norm_sid(Some(s.session_identifier.as_str())))
             .filter(|n| !n.is_empty())
             .collect();
+
+        // peer alias 집합 — caps 행 dedup(list_peers `alias NOT IN peers` 미러)에 사용.
+        let peer_aliases: HashSet<String> = peers.iter().map(|p| p.alias.clone()).collect();
 
         let mut rows: Vec<RosterEntry> = Vec::new();
         // peer/agent 가 들고 있는 normSid 집합 — standalone 세션 행 중복 방지.
@@ -367,6 +427,7 @@ impl<'a> IdentityStore<'a> {
                 primary_alias: p.alias.clone(),
                 display_name: p.display_name.clone(),
                 role: p.role.clone(),
+                description: None,
                 machine: None,
                 cwd: None,
                 session_identifier: p.session_identifier.clone(),
@@ -376,6 +437,34 @@ impl<'a> IdentityStore<'a> {
                 has_tmux: false,
                 quarantined: false,
                 status: String::new(), // 아래에서 계산
+            });
+        }
+
+        // 1.5) agent_capabilities (rc.361) — peer 로 이미 표현된 alias 만 건너뛰고
+        //      나머지는 각자 1행(has_agent). list_peers 의 "kind=agent" 추가와 동일 집합.
+        for c in caps {
+            if peer_aliases.contains(&c.alias) {
+                continue; // peer 행이 이 신원을 대표(list_peers dedup 미러).
+            }
+            let n = norm_sid(c.session_identifier.as_deref());
+            if !n.is_empty() {
+                owned_sids.insert(n);
+            }
+            rows.push(RosterEntry {
+                canonical_address: None,
+                primary_alias: c.alias.clone(),
+                display_name: c.display_name.clone(),
+                role: c.role.clone(),
+                description: c.description.clone(),
+                machine: None,
+                cwd: c.cwd.clone(),
+                session_identifier: c.session_identifier.clone(),
+                aliases: vec![c.alias.clone()],
+                is_peer: false,
+                has_agent: true,
+                has_tmux: false,
+                quarantined: false,
+                status: String::new(),
             });
         }
 
@@ -390,6 +479,7 @@ impl<'a> IdentityStore<'a> {
                 primary_alias: a.alias.clone(),
                 display_name: a.display_name.clone(),
                 role: a.role.clone(),
+                description: None,
                 machine: a.machine.clone(),
                 cwd: a.cwd.clone(),
                 session_identifier: a.session_identifier.clone(),
@@ -419,6 +509,7 @@ impl<'a> IdentityStore<'a> {
                 primary_alias: alias_guess.clone(),
                 display_name: se.display_name.clone(),
                 role: None,
+                description: None,
                 machine: None,
                 cwd: se.cwd.clone(),
                 session_identifier: Some(se.session_identifier.clone()),
@@ -558,6 +649,17 @@ mod tests {
         }
     }
 
+    fn cap(alias: &str) -> CapInput {
+        CapInput {
+            alias: alias.to_string(),
+            role: Some("agent".to_string()),
+            description: None,
+            display_name: None,
+            cwd: None,
+            session_identifier: None,
+        }
+    }
+
     fn row_for<'a>(rows: &'a [RosterEntry], alias: &str) -> &'a RosterEntry {
         rows.iter()
             .find(|r| r.primary_alias == alias || r.aliases.iter().any(|a| a == alias))
@@ -571,7 +673,7 @@ mod tests {
             peer_eth("alias_a", "0xABC"),
             peer_eth("alias_b", "0xABC"),
         ];
-        let rows = IdentityStore::roster_from_sources(&peers, &[], &[], "server-seoul");
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &[], &[], "server-seoul");
         let n: usize = rows.iter().filter(|r| r.is_peer).count();
         assert_eq!(n, 2, "같은 eth 라도 두 peer = 두 행 (접지 않음)");
         for a in ["alias_a", "alias_b"] {
@@ -585,7 +687,7 @@ mod tests {
     fn test_no_collapse_peer_and_agent_same_alias() {
         let peers = vec![peer("dup", None)];
         let agents = vec![agent("dup")];
-        let rows = IdentityStore::roster_from_sources(&peers, &agents, &[], "server-seoul");
+        let rows = IdentityStore::roster_from_sources(&peers, &agents, &[], &[], "server-seoul");
         assert_eq!(rows.len(), 2, "peer 행 + agent 행 별도");
         assert!(rows.iter().any(|r| r.is_peer && !r.has_agent));
         assert!(rows.iter().any(|r| r.has_agent && !r.is_peer));
@@ -595,7 +697,7 @@ mod tests {
     #[test]
     fn test_profileless_peer_appears() {
         let peers = vec![peer("lonely_peer", None)];
-        let rows = IdentityStore::roster_from_sources(&peers, &[], &[], "server-seoul");
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &[], &[], "server-seoul");
         let r = row_for(&rows, "lonely_peer");
         assert!(r.is_peer && !r.has_agent);
         assert_eq!(r.status, "stopped", "세션 없는 peer = stopped");
@@ -606,7 +708,7 @@ mod tests {
     fn test_status_live_tmux_active() {
         let peers = vec![peer("aoe_live_x", Some("tmux:aoe_live_x"))];
         let sessions = vec![sess("tmux:aoe_live_x")];
-        let rows = IdentityStore::roster_from_sources(&peers, &[], &sessions, "server-seoul");
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &[], &sessions, "server-seoul");
         let r = row_for(&rows, "aoe_live_x");
         assert_eq!(r.session_identifier.as_deref(), Some("tmux:aoe_live_x"), "sid 유지");
         assert_eq!(r.status, "active");
@@ -619,7 +721,7 @@ mod tests {
     #[test]
     fn test_status_dead_tmux() {
         let peers = vec![peer("aoe_dead_x", Some("tmux:aoe_dead_x"))];
-        let rows = IdentityStore::roster_from_sources(&peers, &[], &[], "server-seoul");
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &[], &[], "server-seoul");
         let r = row_for(&rows, "aoe_dead_x");
         assert_eq!(r.status, "dead", "죽은 tmux 는 dead");
         assert_eq!(
@@ -636,7 +738,7 @@ mod tests {
             peer("acp_agent", Some("aoe-acp:abc123")),
             peer("remote_agent", Some("peer:zalman:remote_agent")),
         ];
-        let rows = IdentityStore::roster_from_sources(&peers, &[], &[], "server-seoul");
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &[], &[], "server-seoul");
         let acp = row_for(&rows, "acp_agent");
         assert_eq!(acp.session_identifier.as_deref(), Some("aoe-acp:abc123"));
         assert_eq!(acp.status, "stopped");
@@ -649,9 +751,55 @@ mod tests {
     #[test]
     fn test_standalone_session_active() {
         let sessions = vec![sess("tmux:lonely_session")];
-        let rows = IdentityStore::roster_from_sources(&[], &[], &sessions, "server-seoul");
+        let rows = IdentityStore::roster_from_sources(&[], &[], &[], &sessions, "server-seoul");
         let r = rows.iter().find(|r| r.has_tmux).expect("세션 행 존재");
         assert_eq!(r.session_identifier.as_deref(), Some("tmux:lonely_session"));
         assert_eq!(r.status, "active");
+    }
+
+    /// rc.361 — 현황 그리드(roster) ≡ MCP list_peers 의 alias 집합 패리티.
+    /// list_peers = peers ∪ (agent_capabilities[messenger=1 OR in peers] − peers).
+    /// roster_from_sources 에 동일 입력(caps 는 호출자가 peer/profile dedup 후 전달)을
+    /// 주면, 산출 행의 distinct primary_alias 집합이 list_peers 의 alias 집합과 같아야 한다.
+    #[test]
+    fn test_roster_parity_with_list_peers_alias_set() {
+        use std::collections::HashSet;
+
+        // peers 3개(그 중 하나는 caps 와 alias 겹침 → list_peers 는 peer 로만 1행).
+        let peers = vec![
+            peer("aoe_akashic_x", Some("tmux:aoe_akashic_x")),
+            peer("seoul", None),
+            peer("zalman", None),
+        ];
+        // caps: messenger=1 행 집합(호출자가 이미 peer alias 제거해 전달한다고 가정).
+        //   sv_aoe_* auto-seed 2개 + 일반 agent 1개. peer 와 겹치는 "seoul" 은 호출자가 제거.
+        let caps = vec![cap("sv_aoe_flow_1"), cap("sv_aoe_flow_2"), cap("res")];
+
+        // list_peers 기대 alias 집합 = peers ∪ caps(peer 제거 후).
+        let mut expected: HashSet<String> = peers.iter().map(|p| p.alias.clone()).collect();
+        for c in &caps {
+            expected.insert(c.alias.clone());
+        }
+
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &caps, &[], "server-seoul");
+        let got: HashSet<String> = rows.iter().map(|r| r.primary_alias.clone()).collect();
+
+        assert_eq!(got, expected, "roster alias 집합 == list_peers alias 집합");
+        assert_eq!(rows.len(), 6, "peers(3) + caps(3) = 6 행, 중복 없음");
+        // caps 행은 has_agent, peer 행은 is_peer.
+        assert!(rows.iter().filter(|r| r.has_agent && !r.is_peer).count() == 3);
+        assert!(rows.iter().filter(|r| r.is_peer).count() == 3);
+    }
+
+    /// rc.361 — peer alias 와 겹치는 caps 행은 roster_from_sources 가 직접 제거한다
+    /// (list_peers 의 `alias NOT IN peers` dedup 미러). 호출자 누락 시에도 중복 방지.
+    #[test]
+    fn test_caps_dedup_against_peer_alias() {
+        let peers = vec![peer("seoul", None)];
+        let caps = vec![cap("seoul"), cap("res")];
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &caps, &[], "server-seoul");
+        // seoul = peer 1행만(caps 의 seoul 은 흡수). res = caps 1행. 총 2.
+        assert_eq!(rows.len(), 2, "peer 와 겹치는 caps alias 는 제거");
+        assert_eq!(rows.iter().filter(|r| r.primary_alias == "seoul").count(), 1);
     }
 }
