@@ -374,7 +374,25 @@
    .dash 콘텐츠가 뷰포트를 넘으면 .dash(overflow-y:auto)가 스크롤 → 25행까지 도달.
    dg-head 의 position:sticky 는 .dash 스크롤 기준으로 상단 고정된다. */
 .oxg-app .dgrid{width:calc(100% - 48px);margin:0 24px 24px;border:1px solid var(--line);border-radius:14px;background:#fff;flex:none;font-size:12.5px}
-.oxg-app .dgrid .dg-row{display:grid;grid-template-columns:34px 72px minmax(110px,1.2fr) minmax(100px,1fr) 104px 78px 58px minmax(110px,1.1fr) minmax(80px,0.9fr) minmax(160px,2fr) 360px;align-items:center;gap:8px;padding:6px 12px;border-top:1px solid var(--line)}
+.oxg-app .dgrid .dg-row{display:grid;grid-template-columns:30px 34px 72px minmax(110px,1.2fr) minmax(100px,1fr) 104px 78px 58px minmax(110px,1.1fr) minmax(80px,0.9fr) minmax(160px,2fr) 360px;align-items:center;gap:8px;padding:6px 12px;border-top:1px solid var(--line)}
+/* rc.362 행 선택 체크박스 셀 + 선택 행 하이라이트 */
+.oxg-app .dgrid .dg-row .dg-chk{display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:visible}
+.oxg-app .dgrid .dg-row .dg-chk input{cursor:pointer;width:14px;height:14px;margin:0;accent-color:#2c5a8f}
+.oxg-app .dgrid .dg-head .dg-chk{cursor:pointer}
+.oxg-app .dgrid .dg-head .dg-chk:hover{color:inherit}
+.oxg-app .dgrid .dg-row.dg-row-sel{background:#eef4fa}
+/* rc.362 일괄 작업 바 */
+.oxg-app .dg-bulkbar{display:flex;align-items:center;gap:14px;margin:0 24px 10px;padding:8px 14px;background:#eef4fa;border:1px solid #bcd2ea;border-radius:10px;font-size:12.5px}
+.oxg-app .dg-bulkbar .dg-bulk-count{font-weight:700;color:#2c5a8f}
+.oxg-app .dg-bulkbar .dg-bulk-prog{color:var(--muted);font-size:11.5px;font-style:italic}
+.oxg-app .dg-bulkbar .dg-bulk-acts{margin-left:auto;display:flex;gap:8px}
+.oxg-app .dg-bulkbar .dg-bulk-btn{background:#fff;border:1px solid var(--line);border-radius:8px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--sans);white-space:nowrap}
+.oxg-app .dg-bulkbar .dg-bulk-btn:hover{background:#f4f7fa}
+.oxg-app .dg-bulkbar .dg-bulk-btn.del{color:#e5484d;border-color:#f3c0c0}
+.oxg-app .dg-bulkbar .dg-bulk-btn.del:hover{background:#fdecec}
+.oxg-app .dg-bulkbar .dg-bulk-btn.term{color:#b86a00;border-color:#e8cfa0}
+.oxg-app .dg-bulkbar .dg-bulk-btn.term:hover{background:#fcf3e2}
+.oxg-app .dg-bulkbar .dg-bulk-btn:disabled{opacity:.5;cursor:default}
 .oxg-app .dgrid .dg-row:first-child{border-top:none}
 .oxg-app .dgrid .dg-head{background:#f4f7fa;font-weight:700;color:#2c3a47;font-size:11.5px;position:sticky;top:0;z-index:1}
 .oxg-app .dgrid .dg-head>span{cursor:pointer;user-select:none;display:flex;align-items:center;gap:3px;white-space:nowrap}

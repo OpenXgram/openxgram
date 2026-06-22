@@ -439,6 +439,131 @@ export function KakaoShell(props: { onLogout?: () => void }) {
     return rows;
   });
 
+  // ── rc.362 통합 그리드 일괄 관리 — 행 체크박스 선택 + 일괄 삭제 / 일괄 종료 ──────────
+  //   선택 키 = 행의 안정 id. 여기서는 r.alias 사용(roster 행마다 유일 = 액션 키 = 정렬 최종 보조키).
+  //   roster refetch 후에도 alias 는 동일 신원에 안정적이므로 선택이 유지된다(사라진 행만 자연 탈락).
+  //   Set<string> 을 signal 로 보관(불변 교체로 반응성). 헤더 체크박스 = 현재 필터/정렬된 sortedRows 전체.
+  const [gridSel, setGridSel] = createSignal<Set<string>>(new Set());
+  const rowId = (r: GridRow) => r.alias;
+  const isSelected = (r: GridRow) => gridSel().has(rowId(r));
+  const toggleRow = (r: GridRow) => {
+    const id = rowId(r);
+    setGridSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  // 현재 보이는(sortedRows) 행 전체 선택/해제. 모두 선택돼 있으면 해제, 아니면 모두 선택.
+  const visibleIds = createMemo<string[]>(() => sortedRows().map(rowId));
+  const allVisibleSelected = createMemo<boolean>(() => {
+    const ids = visibleIds();
+    return ids.length > 0 && ids.every((id) => gridSel().has(id));
+  });
+  const someVisibleSelected = createMemo<boolean>(() => visibleIds().some((id) => gridSel().has(id)));
+  const toggleSelectAll = () => {
+    setGridSel((prev) => {
+      if (allVisibleSelected()) {
+        // 보이는 것만 해제(필터 밖 선택은 보존)
+        const next = new Set(prev);
+        for (const id of visibleIds()) next.delete(id);
+        return next;
+      }
+      const next = new Set(prev);
+      for (const id of visibleIds()) next.add(id);
+      return next;
+    });
+  };
+  const clearSelection = () => setGridSel(new Set<string>());
+  // 선택된 GridRow 배열(현재 unifiedRows 에 실재하는 것만 — 사라진 행 제외).
+  const selectedRows = createMemo<GridRow[]>(() => {
+    const sel = gridSel();
+    return sortedRows().filter((r) => sel.has(rowId(r)));
+  });
+  const selectedCount = createMemo<number>(() => selectedRows().length);
+
+  // 일괄 작업 진행 상태 — 진행 중이면 버튼 비활성 + 진행 텍스트.
+  const [bulkBusy, setBulkBusy] = createSignal(false);
+  const [bulkProgress, setBulkProgress] = createSignal<string>("");
+
+  // 단일 행 삭제 — 종류별 라우팅(per-row 삭제와 동일 엔드포인트). 확인창 없음(일괄에서 한 번에 확인).
+  //   is_peer → peer_delete · has_agent → agents_delete · 순수 tmux → skip(삭제 대상 아님).
+  async function bulkDeleteOne(r: GridRow): Promise<void> {
+    if (r.isPeer) {
+      await invoke("peer_delete", { alias: r.alias });
+    } else if (r.hasAgentRecord) {
+      await invoke("agents_delete", { alias: r.alias });
+    } else {
+      throw new Error("삭제 가능한 레코드 없음(순수 tmux)");
+    }
+  }
+  // 단일 행 종료 — per-row 종료와 동일 경로. aoe-acp: → ACP close · 그 외 → session_kill.
+  async function bulkTerminateOne(r: GridRow): Promise<void> {
+    const id = r.sid;
+    if (!id) throw new Error("활성 세션 없음");
+    if (id.startsWith("aoe-acp:")) {
+      const sessionId = id.slice("aoe-acp:".length);
+      await acpFetch("DELETE", `/sessions/${encodeURIComponent(sessionId)}`);
+    } else {
+      await invoke("session_kill", { identifier: id });
+    }
+  }
+  // 일괄 삭제 — 선택된 행 각각을 종류별 엔드포인트로(per-row 와 동일). 순차 실행 + 결과 집계.
+  async function bulkDelete() {
+    const rows = selectedRows();
+    if (rows.length === 0) return;
+    // 순수 tmux(삭제 불가) 분리.
+    const deletable = rows.filter((r) => r.isPeer || r.hasAgentRecord);
+    const skipped = rows.length - deletable.length;
+    const msg = `선택한 ${rows.length}개 중 ${deletable.length}개를 삭제합니다.`
+      + (skipped > 0 ? `\n(순수 tmux ${skipped}개는 삭제 대상이 아니어서 건너뜁니다 — 종료를 사용하세요)` : "")
+      + `\n\n(되돌릴 수 없습니다) 계속하시겠습니까?`;
+    if (!window.confirm(msg)) return;
+    setBulkBusy(true);
+    let ok = 0; const fails: string[] = [];
+    for (let i = 0; i < deletable.length; i++) {
+      const r = deletable[i];
+      setBulkProgress(`삭제 중… ${i + 1}/${deletable.length} (${r.name})`);
+      try { await bulkDeleteOne(r); ok++; }
+      catch (e) { fails.push(`${r.name} (${r.alias}): ${(e as Error).message}`); }
+    }
+    setBulkProgress("");
+    setBulkBusy(false);
+    await refetchRoster(); await refetchPeers(); await refetchAgents(); await refetchSessions();
+    clearSelection();
+    let summary = `일괄 삭제 완료 — ${ok}성공 ${fails.length}실패`;
+    if (skipped > 0) summary += ` · ${skipped} 건너뜀(tmux)`;
+    if (fails.length > 0) summary += `\n\n실패:\n- ${fails.join("\n- ")}`;
+    window.alert(summary);
+  }
+  // 일괄 종료 — 선택된 행 중 활성 세션(sid) 보유분만. 세션 없는 행은 skip(건너뜀 수 보고).
+  async function bulkTerminate() {
+    const rows = selectedRows();
+    if (rows.length === 0) return;
+    const live = rows.filter((r) => !!r.sid);
+    const skipped = rows.length - live.length;
+    const msg = `선택한 ${rows.length}개 중 ${live.length}개 세션을 종료합니다.`
+      + (skipped > 0 ? `\n(활성 세션 없는 ${skipped}개는 건너뜁니다)` : "")
+      + `\n\n종료는 세션을 멈출 뿐 목록에서 삭제하지 않습니다(상태→stopped). 계속하시겠습니까?`;
+    if (!window.confirm(msg)) return;
+    setBulkBusy(true);
+    let ok = 0; const fails: string[] = [];
+    for (let i = 0; i < live.length; i++) {
+      const r = live[i];
+      setBulkProgress(`종료 중… ${i + 1}/${live.length} (${r.name})`);
+      try { await bulkTerminateOne(r); ok++; }
+      catch (e) { fails.push(`${r.name} (${r.alias}): ${(e as Error).message}`); }
+    }
+    setBulkProgress("");
+    setBulkBusy(false);
+    await refetchRoster(); await refetchAgents(); await refetchSessions();
+    clearSelection();
+    let summary = `일괄 종료 완료 — ${ok}성공 ${fails.length}실패`;
+    if (skipped > 0) summary += ` · ${skipped} 건너뜀(세션 없음)`;
+    if (fails.length > 0) summary += `\n\n실패:\n- ${fails.join("\n- ")}`;
+    window.alert(summary);
+  }
+
   // 인라인 편집 상태 — { alias, field }. 이름·역할 셀 클릭 시 input 으로 전환.
   //   커밋: peer_set_name / peer_set_role → refetchPeers. Enter/blur 커밋, Esc 취소, 빈/불변 = no-op.
   const [editing, setEditing] = createSignal<{ alias: string; field: "name" | "role" } | null>(null);
@@ -1292,10 +1417,27 @@ export function KakaoShell(props: { onLogout?: () => void }) {
           <h2 style="padding:0">🧩 통합 현황 그리드</h2>
           <button class="killbtn" style="margin:0;color:#37424d" title="로스터·세션 다시 불러오기" disabled={roster.loading || sessions.loading} onClick={() => { void refetchRoster(); void refetchSessions(); }}>{(roster.loading || sessions.loading) ? "⏳ 새로고침 중…" : "🔄 새로고침"}</button>
         </div>
-        <div class="sub">모든 peer · tmux · ACP 세션을 한 표로 — 헤더 클릭=정렬(다시 클릭 ▲↔▼), <b>Shift+클릭=정렬 단계 추가</b>(머신 ▲¹ 폴더 ▲² …) · 이름·역할 셀 클릭=인라인 편집(peer·ACP) · 모든 행 동일 4액션(새창·종료·재시작·삭제), 능력별 활성/비활성</div>
+        <div class="sub">모든 peer · tmux · ACP 세션을 한 표로 — 헤더 클릭=정렬(다시 클릭 ▲↔▼), <b>Shift+클릭=정렬 단계 추가</b>(머신 ▲¹ 폴더 ▲² …) · 이름·역할 셀 클릭=인라인 편집(peer·ACP) · 모든 행 동일 4액션(새창·종료·재시작·삭제), 능력별 활성/비활성 · <b>왼쪽 체크박스로 다중 선택 → 일괄 삭제·종료</b></div>
+        {/* ── rc.362 일괄 작업 바 — ≥1행 선택 시 노출. 선택 수 + 일괄 삭제 / 일괄 종료. ── */}
+        <Show when={selectedCount() > 0}>
+          <div class="dg-bulkbar">
+            <span class="dg-bulk-count">✔ {selectedCount()}개 선택됨</span>
+            <span class="dg-bulk-prog">{bulkProgress()}</span>
+            <div class="dg-bulk-acts">
+              <button class="dg-bulk-btn del" disabled={bulkBusy()} title="선택한 행 일괄 삭제 — peer/agent 레코드 제거(되돌릴 수 없음). 순수 tmux 는 건너뜀." onClick={() => void bulkDelete()}>🗑 일괄 삭제</button>
+              <button class="dg-bulk-btn term" disabled={bulkBusy()} title="선택한 행의 활성 세션 일괄 종료 — 세션만 멈춤(목록 유지). 세션 없는 행은 건너뜀." onClick={() => void bulkTerminate()}>⏹ 일괄 종료</button>
+              <button class="dg-bulk-btn" disabled={bulkBusy()} title="선택 해제" onClick={clearSelection}>✕ 선택 해제</button>
+            </div>
+          </div>
+        </Show>
         <div class="dgrid">
           {/* 헤더 — 클릭 정렬 */}
           <div class="dg-row dg-head">
+            <span class="dg-chk" title={allVisibleSelected() ? "보이는 행 전체 선택 해제" : "보이는 행 전체 선택"} onClick={(e) => e.stopPropagation()}>
+              <input type="checkbox" checked={allVisibleSelected()}
+                ref={(el) => { el.indeterminate = !allVisibleSelected() && someVisibleSelected(); }}
+                onChange={toggleSelectAll} />
+            </span>
             <span title="순번">#</span>
             <span onClick={(e) => onSort("status", e)} title="상태순 정렬 (Shift+클릭=정렬 단계 추가)">상태{sortInd("status")}</span>
             <span onClick={(e) => onSort("name", e)} title="이름순 정렬 (Shift+클릭=정렬 단계 추가)">이름{sortInd("name")}</span>
@@ -1308,10 +1450,14 @@ export function KakaoShell(props: { onLogout?: () => void }) {
             <span onClick={(e) => onSort("cwd", e)} title="폴더순 정렬 (Shift+클릭=정렬 단계 추가)">폴더{sortInd("cwd")}</span>
             <span style="justify-content:flex-end">액션</span>
           </div>
-          <Show when={sortedRows().length > 0} fallback={<div class="dg-row"><span /><span class="dg-ro" style="grid-column:3/-1">표시할 peer · tmux · ACP 가 없습니다</span></div>}>
+          <Show when={sortedRows().length > 0} fallback={<div class="dg-row"><span /><span /><span class="dg-ro" style="grid-column:4/-1">표시할 peer · tmux · ACP 가 없습니다</span></div>}>
             <For each={sortedRows()}>
               {(r, i) => (
-                <div class="dg-row" style={r.quarantined ? "opacity:.78" : ""}>
+                <div class="dg-row" classList={{ "dg-row-sel": isSelected(r) }} style={r.quarantined ? "opacity:.78" : ""}>
+                  {/* rc.362 행 선택 체크박스 — alias 키. 일괄 삭제·종료 대상. */}
+                  <span class="dg-chk" title="이 행 선택">
+                    <input type="checkbox" checked={isSelected(r)} onChange={() => toggleRow(r)} />
+                  </span>
                   {/* 순번 — 현재 정렬 순서 기준 1..N */}
                   <span style="color:var(--muted)">{i() + 1}</span>
                   {/* 상태 점 — rc.360 3색: active=초록 · stopped=회색 · dead=빨강 */}
