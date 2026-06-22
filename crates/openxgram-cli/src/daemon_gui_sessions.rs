@@ -134,9 +134,46 @@ fn agent_project_paths() -> std::collections::HashMap<String, String> {
     map
 }
 
+/// rc.364 — git_worktrees per-path 결과 캐시 (TTL).
+///   배경(버그): `collect_sessions`(→`detect_tmux`→`git_worktrees`)는 GUI 의 세션/로스터
+///   엔드포인트가 매초 폴링한다. 캐시 없이는 매 폴링마다 모든 project_path 에 대해
+///   `git -C <path> worktree list --porcelain` 서브프로세스를 동기 실행했다. 비-repo
+///   디렉터리(`/home/llm`, `/home/llm/agents/rex`)까지 매번 실패하며 실행 → tokio
+///   blocking pool 포화 → peer_send(send-unsigned) 같은 다른 blocking 요청이 000 hang.
+///   캐시(TTL)로 동일 path 에 대한 git 실행을 매초가 아닌 TTL 당 1회 이하로 줄인다.
+///   비-repo(`<path>/.git` 부재)는 git 을 아예 안 띄우고 빈 결과를 캐시(0회 실행).
+static WORKTREE_CACHE: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, Vec<Worktree>)>>,
+> = std::sync::OnceLock::new();
+
+const WORKTREE_TTL_SECS: u64 = 30;
+
 /// rc.234 — 로컬 `git -C <path> worktree list --porcelain` 으로 worktree(path+branch) 종합.
 /// portal 의존 없음. git 미설치·비-repo 면 빈 Vec + 실제 사유 로그 (안티패턴 1: 조작된 fallback 금지).
+/// rc.364 — per-path TTL 캐시 + 비-git 빠른 skip. 호출부(collect_fresh)는 이미 spawn_blocking
+///   안에서 도므로 async 핸들러를 직접 막진 않으나, 매 폴링 git 폭주가 blocking pool 을
+///   포화시켰다. 캐시로 동일 path git 실행을 TTL 당 1회 이하로 제한한다.
 fn git_worktrees(project_path: &str) -> Vec<Worktree> {
+    let cache = WORKTREE_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    // 1) 캐시 hit (TTL 안) → 즉시 반환 (git 실행 0회).
+    if let Ok(guard) = cache.lock() {
+        if let Some((ts, wts)) = guard.get(project_path) {
+            if ts.elapsed() < std::time::Duration::from_secs(WORKTREE_TTL_SECS) {
+                return wts.clone();
+            }
+        }
+    }
+    // 2) 비-git 빠른 skip — `<path>/.git`(디렉터리 또는 worktree gitfile) 부재면 git 안 띄움.
+    //    비-repo path(예: /home/llm)에서 매번 git 서브프로세스 spawn → non-zero exit 폭주 차단.
+    //    결과(빈 Vec)도 캐시 → 다음 TTL 내 재확인도 stat 1회로 끝남.
+    if !std::path::Path::new(project_path).join(".git").exists() {
+        tracing::trace!(path = %project_path, "git_worktrees: 비-repo (.git 부재) — skip + 빈 결과 캐시");
+        if let Ok(mut guard) = cache.lock() {
+            guard.insert(project_path.to_string(), (std::time::Instant::now(), vec![]));
+        }
+        return vec![];
+    }
+    // 3) 캐시 miss + git repo → 실제 git 실행 후 결과 캐시.
     let out = match Command::new("git")
         .args(["-C", project_path, "worktree", "list", "--porcelain"])
         .output()
@@ -144,12 +181,18 @@ fn git_worktrees(project_path: &str) -> Vec<Worktree> {
         Ok(o) => o,
         Err(e) => {
             tracing::debug!(path = %project_path, error = %e, "git_worktrees: git 실행 실패 (미설치?)");
+            if let Ok(mut guard) = cache.lock() {
+                guard.insert(project_path.to_string(), (std::time::Instant::now(), vec![]));
+            }
             return vec![];
         }
     };
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         tracing::debug!(path = %project_path, stderr = %err.trim(), "git_worktrees: non-zero exit (비-repo?)");
+        if let Ok(mut guard) = cache.lock() {
+            guard.insert(project_path.to_string(), (std::time::Instant::now(), vec![]));
+        }
         return vec![];
     }
     // --porcelain block: "worktree <path>" / "HEAD <sha>" / "branch refs/heads/<name>" / "" (구분)
@@ -175,6 +218,10 @@ fn git_worktrees(project_path: &str) -> Vec<Worktree> {
         }
     }
     flush(&mut cur_path, &mut cur_branch, &mut worktrees);
+    // rc.364 — 성공 결과도 캐시 (다음 TTL 내 폴링은 git 실행 0회).
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(project_path.to_string(), (std::time::Instant::now(), worktrees.clone()));
+    }
     worktrees
 }
 
@@ -1358,6 +1405,44 @@ mod tests {
         let dto = capture_session("bogus:xyz");
         assert_eq!(dto.kind, SessionKind::XgramSession);
         assert!(dto.content.contains("unsupported identifier"));
+    }
+
+    // rc.364 — git_worktrees: 비-repo 디렉터리는 git 을 안 띄우고 빈 결과 + 캐시.
+    #[test]
+    fn git_worktrees_non_repo_returns_empty_and_caches() {
+        // 임시 비-repo 디렉터리 (.git 없음).
+        let tmp = std::env::temp_dir().join(format!("xgram_wt_test_norepo_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.to_string_lossy().to_string();
+        // .git 부재 보장.
+        assert!(!tmp.join(".git").exists());
+        let first = git_worktrees(&path);
+        assert!(first.is_empty(), "비-repo 는 빈 worktree 여야 함");
+        // 캐시에 들어갔는지 — 두 번째 호출도 빈 결과(TTL 내).
+        let second = git_worktrees(&path);
+        assert!(second.is_empty());
+        // 캐시 맵에 이 path 의 entry 가 존재해야 함 (skip 결과도 캐시됨).
+        let cache = WORKTREE_CACHE.get().expect("캐시 초기화됨");
+        let guard = cache.lock().unwrap();
+        assert!(guard.contains_key(&path), "비-repo skip 결과가 캐시되어야 함");
+        drop(guard);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    // rc.364 — git_worktrees: 자기 repo(이 crate 가 속한 git repo)는 1개 이상의 worktree 를 반환하고
+    //   TTL 내 재호출은 캐시에서 동일 결과를 돌려준다(git 재실행 회피 — 정합성만 검증).
+    #[test]
+    fn git_worktrees_repo_caches_consistent_result() {
+        // 이 테스트 바이너리는 repo 안에서 빌드되므로 CARGO_MANIFEST_DIR 은 git repo 하위.
+        let repo_path = env!("CARGO_MANIFEST_DIR");
+        // .git 이 있을 때만 의미 있음(없는 환경이면 skip — non_repo 테스트가 그 경로를 커버).
+        if std::path::Path::new(repo_path).join(".git").exists() {
+            let a = git_worktrees(repo_path);
+            let b = git_worktrees(repo_path); // TTL 내 → 캐시 hit
+            assert_eq!(a.len(), b.len(), "TTL 내 재호출은 동일 결과(캐시)");
+        }
+        // CARGO_MANIFEST_DIR 은 crate 디렉터리라 .git 이 worktree gitfile 일 수도, 부재일 수도 있다.
+        // 어느 쪽이든 panic 없이 동작하면 됨(캐시 경로 정합성).
     }
 }
 

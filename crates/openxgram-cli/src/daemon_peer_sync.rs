@@ -108,6 +108,11 @@ pub fn merge_remote_peers(
                 continue;
             }
         }
+        // rc.367 role 무결성 가드 — sync 경로에서 role 은 화이트리스트 enum 만 허용한다.
+        //   `PeerRole::parse` 는 "primary"/"secondary"/"worker" 외 모든 자유텍스트를 거부하고
+        //   여기서 `unwrap_or(Worker)` 로 안전 기본값으로 떨어뜨린다(panic·오염 금지).
+        //   → 원격이 보낸 role 에 임의 문자열(과거 teeup role 이 "wo깃워크트리rker" 로 오염된
+        //     사건)이 와도 절대 그대로 저장되지 않는다. invalid 면 'worker' 로 정규화.
         let role = PeerRole::parse(&rp.role).unwrap_or(PeerRole::Worker);
         let gui = rp
             .gui_address
@@ -157,14 +162,22 @@ fn url_host(url: &str) -> Option<String> {
 
 /// 자기 DB 에서 reachable(localhost 아님) peer 들의 base address 집합을 모은다.
 /// gossip pull 대상 후보 — 각 reachable peer 의 데몬에 sync 엔드포인트가 있다고 가정.
+///
+/// rc.367 — pull 후보 선정 = **두 신뢰 경로의 합집합**(rc.347 의 cruft-차단 의도 보존):
+///   (A) UI 등록 경로: `agent_profiles.source='user'` 행이 있는 alias 의 peer.
+///   (B) **신뢰 머신 peer 경로**(신규): `is_trusted_machine_peer` 가 참인 peer.
+///       = eth_address + public_key_hex 둘 다 보유 + reachable(localhost 아님) 주소.
+///       `gui_peer_add`(운영자가 UI 로 명시 등록한 머신 peer)가 정확히 이 형태를 만든다.
+///       이로써 운영자가 `agent_profiles.source='user'` profile 을 별도로 만들지 않아도
+///       명시 등록한 머신(seoul↔zalman)끼리 전체 로스터를 자동 양방향 pull 한다.
+/// rc.347 차단 의도 유지: 신원 없는(eth·pubkey 누락) gossip cruft·localhost 오염 주소는
+///   (B) 게이트에서 제외된다 → 무분별 흡수가 아니라 "명시 신원 보유 머신"만 후보가 된다.
 pub fn reachable_peer_addresses(data_dir: &Path) -> anyhow::Result<Vec<String>> {
     let mut db = openxgram_db::Db::open(openxgram_db::DbConfig {
         path: openxgram_core::paths::db_path(data_dir),
         ..Default::default()
     })?;
-    // 마스터 룰 — pull(gossip) 대상은 UI 로 등록한 머신만.
-    //   agent_profiles.source='user' 행이 있는 alias 의 peer 만 pull 후보로 채택.
-    //   미등록 머신은 pull 안 함 → 그 머신의 peer 가 흡수되지 않는다.
+    // (A) UI 등록 alias 집합 — agent_profiles.source='user'.
     let mut registered: std::collections::HashSet<String> = Default::default();
     if let Ok(mut stmt) = db
         .conn()
@@ -180,10 +193,34 @@ pub fn reachable_peer_addresses(data_dir: &Path) -> anyhow::Result<Vec<String>> 
     let peers = store.list()?;
     Ok(peers
         .into_iter()
-        .filter(|p| registered.contains(&p.alias))
+        // (A) UI 등록 alias 거나 (B) 신뢰 머신 peer 면 pull 후보.
+        .filter(|p| registered.contains(&p.alias) || is_trusted_machine_peer(p))
         .map(|p| p.address)
         .filter(|a| !is_unreachable_address(a))
         .collect())
+}
+
+/// rc.367 — "신뢰 머신 peer" 판별. pull 후보 + `allow_create=true` 흡수를 허용하는 게이트.
+///
+/// 판별 기준(전부 충족해야 신뢰):
+///   - `eth_address` 가 존재하고 비어있지 않음 (ECDSA 신원 앵커).
+///   - `public_key_hex` 가 비어있지 않음 (서명 검증 키).
+///   - `address` 가 reachable(localhost/unspecified/빈값 아님).
+///
+/// 근거: `gui_peer_add`(운영자가 GUI 로 명시 등록하는 머신 peer 경로)는 alias·address·
+/// public_key 를 필수로 받고 거기서 eth 를 derive 한다 → 이 세 조건을 항상 만족한다.
+/// 반대로 죽은 gossip cruft(eth/pubkey 누락) 와 오염 주소(localhost)는 여기서 탈락한다.
+/// 즉 rc.347 의 "무분별 흡수 차단" 정신을 유지하면서, **명시 신원을 가진 머신끼리만**
+/// 전체 로스터를 자동 sync 한다(수동 per-agent 등록 종결). 너무 넓지 않은 이유: 신원·키
+/// 없는 row 는 후보가 안 됨. 너무 좁지 않은 이유: 운영자 등록 머신은 모두 포함된다.
+fn is_trusted_machine_peer(p: &openxgram_peer::Peer) -> bool {
+    let has_eth = p
+        .eth_address
+        .as_deref()
+        .map(|e| !e.trim().is_empty())
+        .unwrap_or(false);
+    let has_pubkey = !p.public_key_hex.trim().is_empty();
+    has_eth && has_pubkey && !is_unreachable_address(&p.address)
 }
 
 /// Part 1 (cross-machine peer-routing seed) — peers 테이블 유래 후보 + env 부트스트랩 URL 을
@@ -913,6 +950,63 @@ mod tests {
             vec!["http://100.80.35.17:17400".to_string()],
             "중복 URL 은 1회만 (정규화 dedupe)"
         );
+    }
+
+    // --- rc.367 신뢰 머신 peer 게이트 단위테스트 ---
+
+    fn peer(alias: &str, addr: &str, eth: Option<&str>, pubkey: &str) -> openxgram_peer::Peer {
+        openxgram_peer::Peer {
+            id: format!("id-{alias}"),
+            alias: alias.to_string(),
+            public_key_hex: pubkey.to_string(),
+            address: addr.to_string(),
+            eth_address: eth.map(|s| s.to_string()),
+            role: PeerRole::Worker,
+            last_seen: None,
+            created_at: openxgram_core::time::kst_now(),
+            notes: None,
+        }
+    }
+
+    #[test]
+    fn trusted_machine_peer_accepts_registered_machine() {
+        // gui_peer_add 형태(eth+pubkey+reachable) 머신 peer 는 신뢰 후보다.
+        let p = peer("zalman", "http://100.80.35.17:17400", Some("0xZAL"), "02abc");
+        assert!(is_trusted_machine_peer(&p), "eth+pubkey+reachable → 신뢰 머신");
+    }
+
+    #[test]
+    fn trusted_machine_peer_rejects_missing_identity() {
+        // eth 없음 → cruft, 후보 아님.
+        let no_eth = peer("ghost", "http://100.80.35.17:17400", None, "02abc");
+        assert!(!is_trusted_machine_peer(&no_eth), "eth 누락 → 신뢰 아님");
+        // pubkey 없음 → cruft, 후보 아님.
+        let no_pub = peer("ghost2", "http://100.80.35.17:17400", Some("0xX"), "");
+        assert!(!is_trusted_machine_peer(&no_pub), "pubkey 누락 → 신뢰 아님");
+        // eth 빈 문자열도 거부.
+        let empty_eth = peer("ghost3", "http://100.80.35.17:17400", Some("  "), "02abc");
+        assert!(!is_trusted_machine_peer(&empty_eth), "빈 eth → 신뢰 아님");
+    }
+
+    #[test]
+    fn trusted_machine_peer_rejects_unreachable_address() {
+        // localhost 오염 주소는 신원이 있어도 후보 아님 (rc.347 cruft 차단 유지).
+        let loop_p = peer("loopy", "http://127.0.0.1:17400", Some("0xL"), "02abc");
+        assert!(!is_trusted_machine_peer(&loop_p), "localhost → 신뢰 아님");
+        let zero_p = peer("zeroy", "http://0.0.0.0:17400", Some("0xZ"), "02abc");
+        assert!(!is_trusted_machine_peer(&zero_p), "0.0.0.0 → 신뢰 아님");
+    }
+
+    #[test]
+    fn role_validation_rejects_freetext_falls_back_to_worker() {
+        // rc.367 role 무결성 — 화이트리스트 외 자유텍스트는 enum 으로 안 들어가고 Worker 로 폴백.
+        assert_eq!(PeerRole::parse("worker").unwrap(), PeerRole::Worker);
+        assert_eq!(PeerRole::parse("primary").unwrap(), PeerRole::Primary);
+        assert!(PeerRole::parse("wo깃워크트리rker").is_err(), "오염 자유텍스트 거부");
+        assert!(PeerRole::parse("").is_err(), "빈 role 거부");
+        // sync 경로의 정규화 패턴: invalid → Worker.
+        let normalized = PeerRole::parse("garbage").unwrap_or(PeerRole::Worker);
+        assert_eq!(normalized, PeerRole::Worker, "invalid role 은 worker 로 정규화");
     }
 
     #[test]

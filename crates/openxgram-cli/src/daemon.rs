@@ -553,6 +553,203 @@ fn is_acp_drivable(db: &mut openxgram_db::Db, alias: &str) -> bool {
     }
 }
 
+/// rc.365 — 인바운드 peer 메시지가 **tmux 자동 주입 대상**인지 판정하는 순수 함수.
+/// 라우팅 결정의 경계를 한 곳에 모아 단위 테스트 가능하게 한다(daemon.process_inbound 에서 참조).
+///
+/// 주입 대상 조건(모두 만족):
+///   1. 제어 메시지가 아님 — `[AGENT_ADD_REQUEST]`/`[AGENT_ADD_ACCEPT]` prefix 는 대화가 아니라
+///      제어 신호 → 주입 금지(이미 process_inbound 가 `continue` 로 차단하지만 경계를 명시).
+///   2. 본문이 비어있지 않음 — 빈 ack/keepalive 류 주입 금지(스팸 방지).
+///   3. peer tmux 주입이 비활성화되지 않음 — `XGRAM_DISABLE_PEER_TMUX_INJECT` 게이팅.
+///   4. 수신자에게 라이브 tmux 세션이 존재 — 사람-구동 수신처가 실제로 살아있을 때만.
+///
+/// 순수(부수효과 없음) — tmux liveness / disabled 플래그는 호출측이 미리 계산해 넘긴다.
+fn should_inject_inbound_to_tmux(body: &str, tmux_session_live: bool, inject_disabled: bool) -> bool {
+    if inject_disabled {
+        return false;
+    }
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // 제어 메시지(대화 아님) — auto-inject 대상 아님.
+    if trimmed.starts_with("[AGENT_ADD_REQUEST] ") || trimmed.starts_with("[AGENT_ADD_ACCEPT] ") {
+        return false;
+    }
+    tmux_session_live
+}
+
+/// rc.366 — 인바운드 peer 메시지의 수신자가 **자동 spawn 가능(spawnable)** 한지 판정.
+/// 기준은 `acp_spawn_for_alias`(daemon_gui.rs) 와 **동일**: agent_capabilities⋈agent_profiles 에
+/// row 가 있고, `agent_capabilities.project_path`(=ACP cwd)가 비어있지 않으며, `ai_type` 이
+/// 알려진 ACP 어댑터(claude/codex/gemini/opencode)로 매핑되어야 spawn 경로(`POST
+/// /v1/gui/agents/{alias}/spawn`)가 실제로 성공한다. 기동 정보가 없으면 spawn 불가 → false.
+///
+/// 동기 판정(self-call HTTP 전). 쿼리 실패/DB 오류는 보수적으로 false(=spawn 안 함 → 인박스
+/// 보존). 오류는 명시 로그(절대 규칙 1).
+fn is_recipient_spawnable(db: &mut openxgram_db::Db, alias: &str) -> bool {
+    let row: rusqlite::Result<(String, String)> = db.conn().query_row(
+        "SELECT COALESCE(p.ai_type,'claude'), COALESCE(ac.project_path,'') \
+         FROM agent_capabilities ac JOIN agent_profiles p ON p.alias = ac.alias \
+         WHERE ac.alias = ?1",
+        [alias],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+    );
+    match row {
+        Ok((ai_type, project_path)) => {
+            if project_path.trim().is_empty() {
+                return false;
+            }
+            // acp_spawn_for_alias 의 adapter 매핑과 동일 — 알려진 ai_type 만 spawn 가능.
+            matches!(
+                ai_type.trim().to_ascii_lowercase().as_str(),
+                "claude" | "codex" | "gemini" | "opencode"
+            )
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => false,
+        Err(e) => {
+            tracing::warn!(
+                alias = %alias,
+                error = %e,
+                "rc.366 is_recipient_spawnable 쿼리 오류 — 보수적으로 false(=spawn 안 함, 인박스 보존). silent X"
+            );
+            false
+        }
+    }
+}
+
+/// rc.366 — 죽은 수신자(라이브 tmux 세션 없음)를 자동 spawn 해야 하는지 판정하는 순수 함수.
+/// spawn-storm 방지 가드를 한 곳에 모아 단위 테스트 가능하게 한다.
+///
+/// spawn 대상 조건(모두 만족):
+///   1. peer tmux 주입이 비활성화되지 않음 — `XGRAM_DISABLE_PEER_TMUX_INJECT` 게이팅(rc.365 와 동일).
+///   2. 본문이 비어있지 않고 제어 메시지가 아님 — should_inject_inbound_to_tmux 와 동일 필터.
+///   3. **라이브 tmux 세션이 없음** — 살아있으면 rc.365 주입이 처리하므로 spawn 불필요.
+///   4. 수신자가 spawnable — 기동 정보(ai_type+project_path) 보유.
+///   5. rate-limit 미해당 — 동일 수신자를 단시간 내 재spawn 금지(storm 방지).
+///
+/// 순수(부수효과 없음) — tmux liveness / spawnable / rate_limited 는 호출측이 미리 계산해 넘긴다.
+fn should_spawn_inbound_recipient(
+    body: &str,
+    tmux_session_live: bool,
+    spawnable: bool,
+    inject_disabled: bool,
+    rate_limited: bool,
+) -> bool {
+    if inject_disabled {
+        return false;
+    }
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed.starts_with("[AGENT_ADD_REQUEST] ") || trimmed.starts_with("[AGENT_ADD_ACCEPT] ") {
+        return false;
+    }
+    // 라이브 tmux 가 있으면 rc.365 주입이 처리 — spawn 불필요.
+    if tmux_session_live {
+        return false;
+    }
+    spawnable && !rate_limited
+}
+
+/// rc.366 — 자동 spawn rate-limit 맵. 동일 수신자 alias 를 단시간(SPAWN_RATELIMIT_SECS) 내
+/// 반복 spawn 하는 storm 을 막는다(WORKTREE_CACHE 의 OnceLock<Mutex<HashMap>> 패턴 재사용).
+static SPAWN_RATELIMIT: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
+> = std::sync::OnceLock::new();
+
+/// 동일 수신자 재spawn 금지 윈도우(초). 새 세션이 기동·등록되어 라이브 tmux 로 잡힐 때까지의
+/// 여유. env `XGRAM_PEER_SPAWN_RATELIMIT_SECS` 로 조정 가능(기본 300초=5분).
+fn spawn_ratelimit_secs() -> u64 {
+    std::env::var("XGRAM_PEER_SPAWN_RATELIMIT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(300)
+}
+
+/// rc.366 — `alias` 가 rate-limit 윈도우 안에서 최근 spawn 시도됐는지 확인하고, 아니면
+/// 지금 시각으로 마킹한다(check-and-set, 원자적). 반환 true = rate-limited(spawn 금지).
+/// 마킹은 **시도 직전**에 한다 — 동시 envelope 의 중복 spawn 도 차단.
+fn spawn_recently_attempted(alias: &str) -> bool {
+    let map = SPAWN_RATELIMIT.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let window = std::time::Duration::from_secs(spawn_ratelimit_secs());
+    let now = std::time::Instant::now();
+    let mut guard = match map.lock() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(), // 락 poison 시에도 진행(보수적: 마킹은 한다)
+    };
+    // 오래된 엔트리 정리(맵 무한 성장 방지).
+    guard.retain(|_, t| now.duration_since(*t) < window);
+    if let Some(last) = guard.get(alias) {
+        if now.duration_since(*last) < window {
+            return true; // 윈도우 안 — rate-limited.
+        }
+    }
+    guard.insert(alias.to_string(), now);
+    false
+}
+
+/// rc.366 — 죽은 spawnable 수신자를 깨운다. `try_acp_inbound_delivery` 와 동일하게 데몬
+/// self-call(`POST /v1/gui/agents/{alias}/spawn` → gui_agent_spawn → acp_spawn_for_alias)
+/// 로 기존 spawn 경로를 재사용한다. 새 spawner 를 만들지 않는다.
+///
+/// 반환 true = spawn self-call 성공(세션 기동). false = 실패(토큰 부재·HTTP 오류·timeout).
+/// **실패해도 메시지는 인박스에 보존**(호출측이 ACP fallback / undelivered 마커로 처리).
+async fn try_spawn_recipient(target_alias: &str) -> bool {
+    let token = match std::env::var("XGRAM_MCP_TOKEN") {
+        Ok(t) if !t.trim().is_empty() => t,
+        _ => {
+            tracing::warn!(
+                target_alias = %target_alias,
+                "rc.366 자동 spawn 불가 — XGRAM_MCP_TOKEN 부재(데몬 self-call 인증 필요). 메시지는 인박스 보존."
+            );
+            return false;
+        }
+    };
+    let url = format!(
+        "{}/v1/gui/agents/{}/spawn",
+        self_gui_url().trim_end_matches('/'),
+        urlencoding::encode(target_alias)
+    );
+    let client = reqwest::Client::new();
+    let send_fut = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .send();
+    // ACP 세션 spawn(어댑터 프로세스 기동)은 수 초 걸릴 수 있으나 inbound tick 을 무한정
+    // 막으면 안 됨 — 60초 상한.
+    let resp = match tokio::time::timeout(std::time::Duration::from_secs(60), send_fut).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, target_alias = %target_alias, "rc.366 자동 spawn self-call 요청 실패 — 인박스 보존");
+            return false;
+        }
+        Err(_elapsed) => {
+            tracing::warn!(target_alias = %target_alias, "rc.366 자동 spawn self-call TIMEOUT(60s) — 인박스 보존");
+            return false;
+        }
+    };
+    let status = resp.status();
+    if status.is_success() {
+        tracing::info!(
+            target_alias = %target_alias,
+            "rc.366 죽은 spawnable 수신자 자동 spawn OK — 새 ACP 세션 기동(메시지 ACP 전달로 이어짐)"
+        );
+        return true;
+    }
+    let txt = resp.text().await.unwrap_or_default();
+    tracing::warn!(
+        target_alias = %target_alias,
+        http_status = %status,
+        body = %txt,
+        "rc.366 자동 spawn self-call 비-2xx — 인박스 보존(절대 규칙 1: silent X)"
+    );
+    false
+}
+
 /// fix④ — peer_send inbound 를 ACP/A2A 전달 척추로 보낸다. 데몬은 자기 GUI HTTP 서버
 /// (`spawn_gui_server`, 동일 프로세스)의 `/v1/gui/a2a/send` 를 self-call 한다 → a2a_send 가
 /// **기존** spawn 머신리(load_a2a_agent_meta + handle_task, lazy ACP 세션 find-or-create)를
@@ -1170,7 +1367,120 @@ pub fn process_inbound(
             // fallback 하지 않는다. self-call 이 90s timeout 으로 Unavailable 을 돌려줘도 그건
             // "ACP 턴이 90s 보다 길다"는 뜻일 뿐, 백그라운드 ACP 세션은 계속 돌며 답한다.
             // 따라서 timeout==전달실패로 오판해 tmux 까지 주입하던 이중 전달을 차단한다.
-            let acp_drivable = is_acp_drivable(&mut db, &target_alias);
+            let acp_drivable_raw = is_acp_drivable(&mut db, &target_alias);
+
+            // rc.365 — 인바운드 peer 메시지를 **라이브 tmux 세션을 가진 수신 LLM**에게 자동 주입
+            //   (Discord/Telegram auto-echo 의 peer 버전 — 실시간 A2A 대화의 마지막 조각).
+            //
+            // 근본 문제: register_subagent(MCP) 로 자기 등록한 대화형 tmux Claude 에이전트는
+            //   agent_capabilities 에 role≠'tmux' 로 들어간다 → is_acp_drivable=true.
+            //   그 결과 inbound 가 new_acp(헤드리스 ACP 스폰) 경로로 가서 사람-구동 Claude TUI 에는
+            //   닿지 못하고, 90s timeout(Unavailable) 시 acp_delivered=true 로 오판되어 tmux 주입이
+            //   **억제**된다 → 수신 LLM 화면에 아무것도 안 뜸 → app_ack 5분 BLOCKED.
+            //
+            // 핵심 원칙: **라이브 tmux 세션 = 사람-구동 수신자 = 정본 수신처.** 그 세션이 살아있으면
+            //   speculative new_acp 보다 우선. 따라서 라이브 tmux 가 있으면 라우팅상 ACP-drivable 을
+            //   false 로 강등 → 기존 tmux 주입 블록(bracketed-paste → sleep → Enter)이 실제로 발화한다.
+            //   라이브 tmux 가 없으면 종전 ACP 경로 그대로(순수 ACP/GUI 전용 에이전트 회귀 방지).
+            //
+            // 게이팅: 기본 활성. XGRAM_DISABLE_PEER_TMUX_INJECT=1 이면 종전(ACP-우선) 동작으로 끔.
+            let peer_tmux_inject_disabled = std::env::var("XGRAM_DISABLE_PEER_TMUX_INJECT")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+            // 라이브 tmux 세션 존재 여부 — resolve_alias_to_tmux 재사용(3s timeout, hang 방지).
+            let tmux_session_live = if peer_tmux_inject_disabled {
+                false
+            } else {
+                let probe_alias = target_alias.clone();
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async move {
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(3),
+                            crate::notify::resolve_alias_to_tmux(&probe_alias),
+                        )
+                        .await
+                        {
+                            Ok(opt) => opt.is_some(),
+                            Err(_elapsed) => {
+                                tracing::warn!(
+                                    target_alias = %probe_alias,
+                                    "rc.365 tmux liveness probe TIMEOUT(3s) — tmux 없음으로 간주(종전 ACP 경로)"
+                                );
+                                false
+                            }
+                        }
+                    })
+                })
+            };
+            // rc.365 — 주입 대상 판정(제어 메시지·빈 본문·disabled·tmux 부재 모두 거른다).
+            let inject_to_tmux =
+                should_inject_inbound_to_tmux(&body, tmux_session_live, peer_tmux_inject_disabled);
+
+            // ── rc.366 — 죽은 spawnable 수신자 자동 spawn("꺼져 있어도 메시지가 깨운다") ──
+            // 라이브 tmux 세션이 없고(=rc.365 주입 대상 아님), 수신자가 spawnable(ai_type+
+            // project_path 기동 정보 보유) 이면 자동으로 깨운다. 깨운 뒤에는 그 ACP 세션이
+            // 메시지를 처리해야 하므로, spawn 성공 시 acp_drivable_raw 가 true 이면 종전 ACP
+            // 전달 경로(try_acp_inbound_delivery → a2a_send new_acp find-or-create)가 같은
+            // label 세션을 재사용해 메시지를 전달한다(새 spawner 만들지 않음).
+            //
+            // 가드(spawn-storm 방지):
+            //   - disabled / 빈 본문 / 제어 메시지 / 라이브 tmux 있음 → spawn 안 함(should_spawn_*).
+            //   - spawnable(기동 정보) 아님 → spawn 안 함(미등록/system/cwd 없음 → 인박스 보존).
+            //   - rate-limit: 동일 수신자 5분 내 재spawn 금지(spawn_recently_attempted, 시도 직전 마킹).
+            //   - spawn 실패: WARN 로그 + 메시지 인박스 보존(이미 위에서 L0 저장됨, 유실 없음).
+            if !inject_to_tmux {
+                let spawnable = is_recipient_spawnable(&mut db, &target_alias);
+                // rate_limited 판정은 실제 spawn 직전에만(아래) — 여기서는 storm 가드 전 단계 결정만.
+                if should_spawn_inbound_recipient(
+                    &body,
+                    tmux_session_live,
+                    spawnable,
+                    peer_tmux_inject_disabled,
+                    false, // rate_limit 은 spawn 실행 직전 check-and-set 으로 별도 적용.
+                ) {
+                    if spawn_recently_attempted(&target_alias) {
+                        tracing::info!(
+                            target_alias = %target_alias,
+                            window_secs = spawn_ratelimit_secs(),
+                            "rc.366 죽은 spawnable 수신자지만 rate-limit 윈도우 내 — 자동 spawn skip(storm 방지). 메시지는 ACP/인박스 경로로."
+                        );
+                    } else {
+                        tracing::info!(
+                            target_alias = %target_alias,
+                            "rc.366 죽은 spawnable 수신자 발견 — 자동 spawn 시도(메시지가 깨운다)."
+                        );
+                        let spawn_alias = target_alias.clone();
+                        let spawned = tokio::task::block_in_place(|| {
+                            tokio::runtime::Handle::current()
+                                .block_on(try_spawn_recipient(&spawn_alias))
+                        });
+                        if spawned {
+                            // 세션 안정화 대기 — 어댑터 프로세스가 ACP handshake 를 끝내고 등록될 시간.
+                            // 이후 종전 ACP 전달 경로(acp_drivable_raw=true 인 경우)가 같은 label
+                            // 세션을 find-or-create 로 재사용해 메시지를 전달한다.
+                            tokio::task::block_in_place(|| {
+                                tokio::runtime::Handle::current().block_on(async {
+                                    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                                })
+                            });
+                            tracing::info!(
+                                target_alias = %target_alias,
+                                "rc.366 자동 spawn 완료 — 메시지를 ACP 전달 경로로 넘김(label 세션 재사용)."
+                            );
+                        }
+                    }
+                }
+            }
+            // 라이브 tmux 주입 대상이면 라우팅상 ACP-drivable 강등(tmux 우선).
+            let acp_drivable = if inject_to_tmux {
+                tracing::info!(
+                    target_alias = %target_alias,
+                    "rc.365 라이브 tmux 세션 발견 → inbound peer 메시지 tmux 자동 주입 우선(ACP suppression 해제)"
+                );
+                false
+            } else {
+                acp_drivable_raw
+            };
 
             // ── P4a — 턴 모드 게이트 (맥락 누적 ≠ 강제 응답 분리) ──────────────────
             // 스펙 항목 3: 들어오면 무조건 턴=응답이 문제. 방 turn_mode=gated 면 inbound 는
@@ -1208,6 +1518,15 @@ pub fn process_inbound(
             let acp_outcome = if acp_delivered {
                 // gated 로 이미 처리됨 — 자동 턴 발화(try_acp_inbound_delivery) skip. 종전 auto 경로 불변.
                 AcpInboundOutcome::Delivered
+            } else if inject_to_tmux {
+                // rc.365 — 라이브 tmux 세션 수신자: speculative new_acp self-call 을 **건너뛴다**.
+                //   (헤드리스 ACP 중복 스폰 + 최대 90s 낭비 방지.) 곧장 tmux 주입 경로로 간다.
+                //   NoEndpoint 로 처리 → 아래 tmux 주입 블록이 발화(acp_delivered 유지 false).
+                tracing::info!(
+                    target_alias = %target_alias,
+                    "rc.365 라이브 tmux 수신자 — ACP self-call(new_acp) skip, tmux 직접 주입"
+                );
+                AcpInboundOutcome::NoEndpoint
             } else {
                 tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(try_acp_inbound_delivery(
@@ -2142,4 +2461,267 @@ fn retroactive_register_agents(data_dir: &std::path::Path, bind_port: u16) -> an
 
     tracing::info!(registered = registered, candidates = candidates.len(), "rc.196 retroactive 완료");
     Ok(registered)
+}
+
+#[cfg(test)]
+mod rc365_tmux_inject_tests {
+    use super::*;
+    use openxgram_db::{Db, DbConfig};
+    use openxgram_peer::{PeerRole, PeerStore};
+    use tempfile::TempDir;
+
+    fn fresh_db(tmp: &TempDir) -> Db {
+        let cfg = DbConfig {
+            path: tmp.path().join("db.sqlite"),
+            ..Default::default()
+        };
+        let mut db = Db::open(cfg).unwrap();
+        db.migrate().unwrap();
+        db
+    }
+
+    // ── should_inject_inbound_to_tmux — 주입 대상 판별 ───────────────────────
+    #[test]
+    fn normal_peer_message_with_live_tmux_injects() {
+        // 일반 대화 + 라이브 tmux → 주입.
+        assert!(should_inject_inbound_to_tmux("hello there", true, false));
+    }
+
+    #[test]
+    fn no_live_tmux_does_not_inject() {
+        // tmux 세션 없음 → 주입 안 함(종전 ACP 경로 유지).
+        assert!(!should_inject_inbound_to_tmux("hello there", false, false));
+    }
+
+    #[test]
+    fn disabled_flag_blocks_injection() {
+        // XGRAM_DISABLE_PEER_TMUX_INJECT=1 → tmux 살아있어도 주입 안 함.
+        assert!(!should_inject_inbound_to_tmux("hello there", true, true));
+    }
+
+    #[test]
+    fn agent_add_request_control_message_skipped() {
+        // 제어 메시지(agent-add 핸드셰이크) → 주입 금지.
+        assert!(!should_inject_inbound_to_tmux(
+            "[AGENT_ADD_REQUEST] {\"id\":\"x\"}",
+            true,
+            false
+        ));
+    }
+
+    #[test]
+    fn agent_add_accept_control_message_skipped() {
+        assert!(!should_inject_inbound_to_tmux(
+            "[AGENT_ADD_ACCEPT] {\"id\":\"x\"}",
+            true,
+            false
+        ));
+    }
+
+    #[test]
+    fn empty_body_skipped() {
+        // 빈 본문(ack/keepalive 류) → 주입 금지(스팸 방지).
+        assert!(!should_inject_inbound_to_tmux("", true, false));
+        assert!(!should_inject_inbound_to_tmux("   \n  ", true, false));
+    }
+
+    // ── is_acp_drivable — 수신자 신원 → 라우팅 분류 ──────────────────────────
+    #[test]
+    fn acp_drivable_true_for_registered_non_tmux_role() {
+        // register_subagent 로 등록된 대화형 에이전트(role≠'tmux') → ACP-drivable=true.
+        // (rc.365 의 핵심 근본원인: 이런 신원이 tmux 주입을 억제했다.)
+        let tmp = TempDir::new().unwrap();
+        let mut db = fresh_db(&tmp);
+        db.conn()
+            .execute(
+                "INSERT INTO agent_capabilities (alias, role, description, capabilities, updated_at) \
+                 VALUES ('star', 'portal-dev', 'd', '[]', '2026-01-01')",
+                [],
+            )
+            .expect("insert cap");
+        assert!(is_acp_drivable(&mut db, "star"));
+    }
+
+    #[test]
+    fn acp_drivable_false_for_role_tmux() {
+        // role='tmux' 로 명시된 순수 터미널 peer → ACP-drivable=false(tmux 경로).
+        let tmp = TempDir::new().unwrap();
+        let mut db = fresh_db(&tmp);
+        db.conn()
+            .execute(
+                "INSERT INTO agent_capabilities (alias, role, description, capabilities, updated_at) \
+                 VALUES ('term1', 'tmux', 'd', '[]', '2026-01-01')",
+                [],
+            )
+            .expect("insert cap");
+        assert!(!is_acp_drivable(&mut db, "term1"));
+    }
+
+    #[test]
+    fn acp_drivable_false_for_unregistered_alias() {
+        // agent_capabilities row 없음 → ACP-drivable=false.
+        let tmp = TempDir::new().unwrap();
+        let mut db = fresh_db(&tmp);
+        assert!(!is_acp_drivable(&mut db, "ghost"));
+    }
+
+    // ── 수신자 alias resolve — peer pubkey → alias 매핑 ─────────────────────
+    #[test]
+    fn receiver_alias_resolves_from_peer_public_key() {
+        // recv_alias 해석의 2순위(peer table pubkey lookup) 단위 검증.
+        let tmp = TempDir::new().unwrap();
+        let mut db = fresh_db(&tmp);
+        let mut store = PeerStore::new(&mut db);
+        let pubkey = "aa".repeat(33); // 66-hex placeholder pubkey
+        store
+            .add(
+                "star",
+                &pubkey,
+                "http://127.0.0.1:17321",
+                PeerRole::Primary,
+                Some("test"),
+            )
+            .expect("add peer");
+        let got = PeerStore::new(&mut db)
+            .get_by_public_key(&pubkey)
+            .expect("query")
+            .map(|p| p.alias);
+        assert_eq!(got.as_deref(), Some("star"));
+    }
+
+    // ── rc.366 — 죽은 spawnable 수신자 자동 spawn 판별 ──────────────────────────
+
+    /// spawnable agent_capabilities + agent_profiles row 를 심는 헬퍼.
+    fn insert_spawnable(db: &mut Db, alias: &str, role: &str, ai_type: &str, project_path: &str) {
+        db.conn()
+            .execute(
+                "INSERT INTO agent_capabilities (alias, role, description, capabilities, project_path, updated_at) \
+                 VALUES (?1, ?2, 'd', '[]', ?3, '2026-01-01')",
+                rusqlite::params![alias, role, project_path],
+            )
+            .expect("insert cap");
+        db.conn()
+            .execute(
+                "INSERT INTO agent_profiles (alias, ai_type, classification, execution_mode, is_public, created_at, updated_at) \
+                 VALUES (?1, ?2, 'project', 'on_demand', 0, '2026-01-01', '2026-01-01')",
+                rusqlite::params![alias, ai_type],
+            )
+            .expect("insert profile");
+    }
+
+    #[test]
+    fn spawnable_true_when_ai_type_and_cwd_present() {
+        // ai_type=claude + project_path 있음 → spawnable=true (role 무관: tmux 여도 기동 정보 있으면 깨운다).
+        let tmp = TempDir::new().unwrap();
+        let mut db = fresh_db(&tmp);
+        insert_spawnable(&mut db, "bee", "tmux", "claude", "/home/llm/projects/x");
+        assert!(is_recipient_spawnable(&mut db, "bee"));
+    }
+
+    #[test]
+    fn spawnable_false_when_no_project_path() {
+        // project_path 비어있음 → spawn 불가(cwd 없음).
+        let tmp = TempDir::new().unwrap();
+        let mut db = fresh_db(&tmp);
+        insert_spawnable(&mut db, "bee", "portal-dev", "claude", "");
+        assert!(!is_recipient_spawnable(&mut db, "bee"));
+    }
+
+    #[test]
+    fn spawnable_false_when_no_profile_row() {
+        // agent_profiles row 없음(capabilities 만) → JOIN 실패 → spawn 불가.
+        let tmp = TempDir::new().unwrap();
+        let mut db = fresh_db(&tmp);
+        db.conn()
+            .execute(
+                "INSERT INTO agent_capabilities (alias, role, description, capabilities, project_path, updated_at) \
+                 VALUES ('bee', 'portal-dev', 'd', '[]', '/home/llm/x', '2026-01-01')",
+                [],
+            )
+            .expect("insert cap");
+        assert!(!is_recipient_spawnable(&mut db, "bee"));
+    }
+
+    #[test]
+    fn spawnable_false_for_unknown_ai_type() {
+        // ai_type 이 알려진 ACP 어댑터에 매핑 안 됨 → spawn 불가.
+        let tmp = TempDir::new().unwrap();
+        let mut db = fresh_db(&tmp);
+        insert_spawnable(&mut db, "bee", "portal-dev", "mystery-llm", "/home/llm/x");
+        assert!(!is_recipient_spawnable(&mut db, "bee"));
+    }
+
+    #[test]
+    fn spawnable_false_for_unregistered_alias() {
+        let tmp = TempDir::new().unwrap();
+        let mut db = fresh_db(&tmp);
+        assert!(!is_recipient_spawnable(&mut db, "ghost"));
+    }
+
+    // ── should_spawn_inbound_recipient — spawn 트리거 판별 ─────────────────────
+    #[test]
+    fn dead_spawnable_recipient_triggers_spawn() {
+        // 죽은(라이브 tmux 없음) + spawnable + rate-limit 미해당 → spawn.
+        assert!(should_spawn_inbound_recipient("hi", false, true, false, false));
+    }
+
+    #[test]
+    fn live_tmux_recipient_does_not_spawn() {
+        // 라이브 tmux 있음 → rc.365 주입이 처리하므로 spawn 안 함.
+        assert!(!should_spawn_inbound_recipient("hi", true, true, false, false));
+    }
+
+    #[test]
+    fn non_spawnable_recipient_does_not_spawn() {
+        // spawnable 아님(미등록/cwd 없음) → spawn 안 함(인박스 보존).
+        assert!(!should_spawn_inbound_recipient("hi", false, false, false, false));
+    }
+
+    #[test]
+    fn rate_limited_recipient_does_not_spawn() {
+        // rate-limit 윈도우 내 → spawn 안 함(storm 방지).
+        assert!(!should_spawn_inbound_recipient("hi", false, true, false, true));
+    }
+
+    #[test]
+    fn disabled_flag_blocks_spawn() {
+        // XGRAM_DISABLE_PEER_TMUX_INJECT=1 → spawn 안 함(종전 동작).
+        assert!(!should_spawn_inbound_recipient("hi", false, true, true, false));
+    }
+
+    #[test]
+    fn control_message_does_not_spawn() {
+        // 제어 메시지(agent-add) → spawn 안 함.
+        assert!(!should_spawn_inbound_recipient(
+            "[AGENT_ADD_REQUEST] {}",
+            false,
+            true,
+            false,
+            false
+        ));
+        assert!(!should_spawn_inbound_recipient(
+            "[AGENT_ADD_ACCEPT] {}",
+            false,
+            true,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn empty_body_does_not_spawn() {
+        assert!(!should_spawn_inbound_recipient("", false, true, false, false));
+        assert!(!should_spawn_inbound_recipient("   \n ", false, true, false, false));
+    }
+
+    // ── spawn rate-limit guard — check-and-set ────────────────────────────────
+    #[test]
+    fn spawn_ratelimit_blocks_second_attempt() {
+        // 고유 alias — 다른 테스트와 전역 맵 공유하므로 충돌 회피.
+        let alias = "rc366_ratelimit_probe_alias_unique";
+        // 첫 시도 — 미마킹이므로 false(=진행 가능) + 마킹.
+        assert!(!spawn_recently_attempted(alias));
+        // 즉시 두 번째 — 윈도우 내이므로 true(=rate-limited).
+        assert!(spawn_recently_attempted(alias));
+    }
 }
