@@ -744,6 +744,11 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
             "/v1/a2a/agents/{alias}/tasks/{id}",
             get(a2a_served_task_get),
         )
+        // rc.363 — 전역 미들웨어: 로컬-직접 호출(loopback + forwarding 헤더 없음)에
+        //   신뢰 마커 헤더를 주입(클라이언트 위조분은 먼저 제거). require_auth 가 이 마커로
+        //   토큰 없이 로컬 에이전트를 인증한다. 공개 도메인(Caddy)은 X-Forwarded-* 때문에 마커 없음.
+        //   `into_make_service_with_connect_info::<SocketAddr>()` 가 주입한 ConnectInfo 사용.
+        .layer(axum::middleware::from_fn(local_direct_marker))
         .with_state(state);
 
     // rc.184 — port 자동 fallback. 47302 가 Hyper-V/Windows 예약 port 가면 fail → 다른 port 시도.
@@ -790,15 +795,92 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
     Ok(())
 }
 
+/// rc.363 — 신뢰 마커 헤더. **미들웨어(`local_direct_marker`)만** 이 헤더를 설정한다.
+///   클라이언트가 보낸 동명 헤더는 미들웨어가 **무조건 먼저 제거**하므로 위조 불가.
+///   `require_auth` / `verify_terminal_auth` 가 이 헤더 존재 시 토큰 없이 통과시킨다.
+const LOCAL_DIRECT_HEADER: &str = "x-xgram-local-direct";
+
+/// rc.363 — "이 요청이 진짜 로컬-직접 호출인가" 판정 (순수 함수, 단위 테스트 대상).
+///
+/// 위협 모델 (CRITICAL):
+///   데몬은 `0.0.0.0:47302` 에 bind 되고, 공개 도메인(`seoul.openxgram.org`)은
+///   `cloudflared → Caddy(:8789) → reverse_proxy 127.0.0.1:47302` 체인을 탄다.
+///   즉 **원격 웹 트래픽도 데몬 입장에선 peer.ip() == 127.0.0.1 (loopback)** 로 도착한다.
+///   순진하게 "loopback 이면 신뢰"하면 공개 도메인으로 누구나 인증 우회 가능 — 절대 불가.
+///
+///   방어선: Caddy `reverse_proxy` 는 **항상** `X-Forwarded-For`(+`X-Forwarded-Host`/
+///   `-Proto`) 를 추가한다 (production Caddyfile 이 이를 strip 하지 않음 — 실측 확인).
+///   따라서:
+///     - 공개/원격 경로  → peer=loopback **AND** forwarding 헤더 존재  → exempt 거부(인증 강제)
+///     - 진짜 로컬-직접   → peer=loopback **AND** forwarding 헤더 없음  → exempt 허용
+///   로컬 에이전트 MCP 는 `http://127.0.0.1:47302` 로 직접 연결하며 forwarding 헤더를
+///   설정하지 않으므로(reqwest 기본) 토큰 없이 자기 데몬에 인증된다.
+///
+///   비-loopback(tailnet/LAN/공인 IP 직결)은 무조건 인증 강제.
+fn is_local_direct(peer_ip: std::net::IpAddr, headers: &HeaderMap) -> bool {
+    if !peer_ip.is_loopback() {
+        return false;
+    }
+    // forwarding 헤더가 하나라도 있으면 프록시를 거친 것 → 로컬-직접 아님.
+    const FORWARDING_HEADERS: &[&str] = &[
+        "x-forwarded-for",
+        "x-real-ip",
+        "forwarded",
+        "x-forwarded-host",
+        "x-forwarded-proto",
+        "cf-connecting-ip",
+        "via",
+    ];
+    !FORWARDING_HEADERS
+        .iter()
+        .any(|h| headers.contains_key(*h))
+}
+
+/// rc.363 — 전역 미들웨어. 모든 요청에 대해:
+///   ① 클라이언트가 보낸 `LOCAL_DIRECT_HEADER` 를 **무조건 제거**(위조 차단).
+///   ② `ConnectInfo<SocketAddr>` 의 실제 peer IP + 헤더로 `is_local_direct` 판정.
+///   ③ 로컬-직접이면 `LOCAL_DIRECT_HEADER: 1` 을 신뢰 마커로 주입.
+/// 이후 `require_auth` 등이 이 마커만 신뢰한다 (헤더는 커널 수준 peer IP 기반으로만 설정됨).
+async fn local_direct_marker(
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    // ① 위조 방지 — 클라이언트가 보낸 마커는 항상 제거.
+    req.headers_mut().remove(LOCAL_DIRECT_HEADER);
+
+    // ② 실제 peer IP (into_make_service_with_connect_info 가 주입한 ConnectInfo).
+    let peer_ip = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0.ip());
+
+    // ③ 로컬-직접이면 신뢰 마커 주입.
+    if let Some(ip) = peer_ip {
+        if is_local_direct(ip, req.headers()) {
+            req.headers_mut().insert(
+                LOCAL_DIRECT_HEADER,
+                axum::http::HeaderValue::from_static("1"),
+            );
+        }
+    }
+    next.run(req).await
+}
+
 /// Bearer 토큰 검증 — session_token (웹 GUI) 또는 mcp-token (CLI/agent).
 /// PRD §1: 1 사람 = 1 메인 daemon. multi-user X.
 /// XGRAM_GUI_REQUIRE_AUTH=0 으로 명시 끄면 통과 (dev 전용).
+/// rc.363 — `LOCAL_DIRECT_HEADER`(미들웨어가 설정한 신뢰 마커) 존재 시 토큰 없이 통과
+///   (로컬 에이전트가 자기 데몬에 토큰 없이 인증). 공개/원격은 forwarding 헤더 때문에 마커 없음.
 async fn require_auth(
     state: &GuiServerState,
     headers: &HeaderMap,
 ) -> Result<Option<String>, StatusCode> {
     if std::env::var("XGRAM_GUI_REQUIRE_AUTH").as_deref() == Ok("0") {
         return Ok(None);
+    }
+    // rc.363 — 로컬-직접 호출(미들웨어 검증)은 토큰 면제.
+    if headers.contains_key(LOCAL_DIRECT_HEADER) {
+        return Ok(Some("local".to_string()));
     }
     let token = headers
         .get("authorization")
@@ -15328,4 +15410,86 @@ async fn gui_machines_list(
         "machine_count": machines.len(),
         "note": "물리 머신만 (worker agent 제외). local + tailscale online peer.",
     })))
+}
+
+#[cfg(test)]
+mod local_direct_tests {
+    //! rc.363 — `is_local_direct` 면제 술어 단위 테스트.
+    //! 위협 모델: 공개 도메인은 cloudflared→Caddy(:8789)→127.0.0.1:47302 체인을 타며
+    //! Caddy 가 항상 X-Forwarded-For 를 추가한다(실측 확인). 따라서:
+    //!   - loopback + forwarding 헤더 없음 → 면제(로컬 에이전트 직접 호출)
+    //!   - loopback + X-Forwarded-For    → 인증 강제(공개/원격 프록시 경로)
+    //!   - 비-loopback                    → 인증 강제
+    use super::{is_local_direct, HeaderMap};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    fn hm(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.insert(
+                axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                axum::http::HeaderValue::from_str(v).unwrap(),
+            );
+        }
+        h
+    }
+
+    #[test]
+    fn loopback_v4_no_forwarding_header_is_exempt() {
+        let ip = IpAddr::V4(Ipv4Addr::LOCALHOST); // 127.0.0.1
+        assert!(is_local_direct(ip, &hm(&[])));
+        // 무관한 헤더는 면제에 영향 없음.
+        assert!(is_local_direct(ip, &hm(&[("authorization", "Bearer x"), ("accept", "*/*")])));
+    }
+
+    #[test]
+    fn loopback_v6_no_forwarding_header_is_exempt() {
+        let ip = IpAddr::V6(Ipv6Addr::LOCALHOST); // ::1
+        assert!(is_local_direct(ip, &hm(&[])));
+    }
+
+    #[test]
+    fn loopback_with_xff_requires_auth() {
+        // 공개 도메인(Caddy reverse_proxy) 경로 — peer=loopback 이지만 XFF 존재.
+        let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        assert!(!is_local_direct(ip, &hm(&[("x-forwarded-for", "203.0.113.7")])));
+    }
+
+    #[test]
+    fn loopback_with_other_forwarding_headers_requires_auth() {
+        let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        for h in [
+            ("x-real-ip", "203.0.113.7"),
+            ("forwarded", "for=203.0.113.7"),
+            ("x-forwarded-host", "seoul.openxgram.org"),
+            ("x-forwarded-proto", "https"),
+            ("cf-connecting-ip", "203.0.113.7"),
+            ("via", "1.1 Caddy"),
+        ] {
+            assert!(
+                !is_local_direct(ip, &hm(&[h])),
+                "forwarding 헤더 {} 가 있으면 면제 거부여야 함",
+                h.0
+            );
+        }
+    }
+
+    #[test]
+    fn non_loopback_requires_auth_even_without_forwarding() {
+        // tailnet/LAN/공인 IP 직결 — forwarding 헤더가 없어도 절대 면제 안 됨.
+        for ip in [
+            IpAddr::V4(Ipv4Addr::new(100, 101, 237, 9)), // tailnet
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)),  // LAN
+            IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)),   // 공인
+        ] {
+            assert!(!is_local_direct(ip, &hm(&[])), "{ip} 는 면제 거부여야 함");
+        }
+    }
+
+    #[test]
+    fn forwarding_header_case_insensitive() {
+        // HeaderMap 키는 case-insensitive — 대문자 XFF 도 차단되어야 함.
+        let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        assert!(!is_local_direct(ip, &hm(&[("X-Forwarded-For", "203.0.113.7")])));
+    }
 }
