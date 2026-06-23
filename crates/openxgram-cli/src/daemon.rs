@@ -150,6 +150,7 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
                     address: p.address,
                     gui_address: p.gui_address,
                     role: p.role,
+                    display_name: p.display_name,
                 })
                 .collect(),
             Err(e) => {

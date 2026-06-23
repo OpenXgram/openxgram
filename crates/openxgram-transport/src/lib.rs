@@ -162,6 +162,12 @@ pub struct ReachablePeerDto {
     pub gui_address: Option<String>,
     /// "primary" / "secondary" / "worker".
     pub role: String,
+    /// rc.369 — 정본 신원 편집(이름) cross-machine 전파용. 홈 머신이 권위.
+    /// 편집 전파(P2 identity_update)는 편집된 에이전트 자신에게만 가므로, 다른 머신의
+    /// 로스터 행에는 반영되지 않던 갭을 메운다 — 홈 머신이 gossip 으로 display_name 을 광고하고
+    /// merge 가 홈-홈드 peer 행에 한해 갱신한다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
 }
 
 /// reachable peer 목록을 돌려주는 provider closure (이미 localhost 제외된 목록 가정).
@@ -412,6 +418,7 @@ mod peers_reachable_tests {
             address: addr.to_string(),
             gui_address: None,
             role: "worker".to_string(),
+            display_name: None,
         }
     }
 

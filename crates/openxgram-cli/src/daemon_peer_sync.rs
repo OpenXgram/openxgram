@@ -52,6 +52,9 @@ pub struct RemotePeer {
     /// "primary" / "secondary" / "worker".
     #[serde(default = "default_role")]
     pub role: String,
+    /// rc.369 — 정본 신원 편집(이름) 전파용 display_name. 홈 머신이 권위.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
 }
 
 fn default_role() -> String {
@@ -129,6 +132,20 @@ pub fn merge_remote_peers(
             Ok(_) => {
                 merged += 1;
                 tracing::info!(alias = %rp.alias, eth = %rp.eth_address, addr = %rp.address, "peer-sync merge");
+                // rc.369 — 정본 신원 편집(role/display_name) cross-machine 전파.
+                //   `upsert_announce` 는 의도적으로 기존 행의 alias·role 을 보존한다(주소 힌트 sync 라
+                //   role 오실레이션을 막기 위함). 그러나 광고자는 이제 **자기 홈 머신에 홈드된 peer 만**
+                //   광고하므로(rc.369 self-homed 광고), 광고자가 보낸 role·display_name 은 그 peer 의
+                //   **홈 권위값**이다 → 편집이 즉시 다른 머신 로스터로 수렴해야 한다. eth 신원 키로
+                //   role 과 display_name 을 권위 갱신한다. (role 은 이미 화이트리스트 정규화됨.)
+                //   display_name 이 None(미설정)이면 기존 값 보존(COALESCE) — 빈 편집이 이름을 지우지 않게.
+                if let Err(e) = store.update_identity_fields(
+                    &rp.eth_address,
+                    role.as_str(),
+                    rp.display_name.as_deref(),
+                ) {
+                    tracing::warn!(alias = %rp.alias, error = %e, "peer-sync identity(role/name) 갱신 실패");
+                }
             }
             Err(e) => {
                 tracing::warn!(alias = %rp.alias, error = %e, "peer-sync merge 실패");
@@ -306,6 +323,20 @@ pub fn reachable_remote_peers(data_dir: &Path) -> anyhow::Result<Vec<RemotePeer>
             }
         }
     }
+    // rc.369 — alias → display_name prefetch (정본 이름 편집 cross-machine 전파).
+    //   PeerStore.list() 가 display_name 미반환이라 sid_map 과 동일하게 raw SQL 로 맵핑.
+    let mut name_map: std::collections::HashMap<String, String> = Default::default();
+    if let Ok(mut stmt) = db.conn().prepare(
+        "SELECT alias, display_name FROM peers WHERE display_name IS NOT NULL AND display_name != ''",
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        }) {
+            for row in rows.flatten() {
+                name_map.insert(row.0, row.1);
+            }
+        }
+    }
     // 자기 머신의 살아있는 tmux 에이전트 ident 집합 (단일 헬퍼 — 회귀 방지 중앙화).
     let live = crate::daemon::local_live_tmux_agent_idents();
     let self_eth = self_eth_address(data_dir);
@@ -363,6 +394,10 @@ pub fn reachable_remote_peers(data_dir: &Path) -> anyhow::Result<Vec<RemotePeer>
             })
         });
 
+    // rc.369 — self 머신 host. 같은 host 에 홈(homed)된 full-identity peer 를 광고 대상에
+    //   포함하기 위한 게이트. self_machine_addr(env 권위 또는 self peer row)에서 host 만 추출.
+    let self_host: Option<String> = self_machine_addr.as_deref().and_then(url_host);
+
     Ok(peers
         .iter()
         .filter(|p| !is_unreachable_address(&p.address))
@@ -378,6 +413,8 @@ pub fn reachable_remote_peers(data_dir: &Path) -> anyhow::Result<Vec<RemotePeer>
                 .unwrap_or(false);
             // BUG2/3 — LOCAL ACP-drivable 에이전트면 머신 데몬 주소로 광고(아래에서 override).
             let mut is_local_acp_agent = false;
+            // rc.369 — self-host 에 홈된 full-identity peer(라이브 세션·ACP cap 없어도)를 광고 대상에 포함.
+            let mut is_self_homed_peer = false;
             if !is_self {
                 match sid_map.get(&p.alias) {
                     // LOCAL tmux peer — 살아있는 세션 집합에 있을 때만 광고.
@@ -392,10 +429,29 @@ pub fn reachable_remote_peers(data_dir: &Path) -> anyhow::Result<Vec<RemotePeer>
                     _ if local_acp_aliases.contains(&p.alias) => {
                         is_local_acp_agent = true;
                     }
-                    // session_identifier 없음 = 원격 병합 peer (또는 비-tmux LOCAL) — 자기 것만 광고하므로 제외.
-                    _ => return None,
+                    // rc.369 (gossip 갭 fix) — session_identifier 없음 + ACP cap 없음이지만,
+                    //   주소 host 가 **이 머신(self_host)** 과 같은 full-identity peer 는 envelope 으로
+                    //   이 데몬에 등록된 self-머신 소속 신원이다(예: 마스터 master-alias `Starian` 가
+                    //   seoul 데몬에 보낸 서명 메시지로 zero-touch 등록된 peer). 이런 peer 는 라이브
+                    //   tmux pane·ACP cap 이 없어도 **이 머신이 홈(소유)** 이므로 광고해야 다른 머신
+                    //   (zalman)이 fleet 로스터로 학습한다 → 양쪽 list_peers 수렴.
+                    //   ⚠️ 소유권 격리 유지: address host 가 self_host 와 **다르면**(원격 머신 소속
+                    //   병합 peer, 예: codex-ai-image@zalman) 여전히 제외 → 그 머신이 자기를 광고하게
+                    //   둔다(rc.344/rc.345 정신 보존). self_host 미상이면 보수적으로 제외.
+                    _ => {
+                        let homed_here = match (self_host.as_deref(), url_host(&p.address)) {
+                            (Some(sh), Some(ph)) => sh.eq_ignore_ascii_case(&ph),
+                            _ => false,
+                        };
+                        if homed_here {
+                            is_self_homed_peer = true;
+                        } else {
+                            return None;
+                        }
+                    }
                 }
             }
+            let _ = is_self_homed_peer; // 광고 포함만 결정 — 주소는 origin(p.address) 그대로 사용.
             // rc.344 — 오등록 원격 에이전트 가드. agent_capabilities 에 row 가 있어
             // is_local_acp_agent 로 잡혔더라도, 이미 self 와 **다른 reachable 주소**를 광고
             // 중이면 실제로는 원격 머신 에이전트(이 데몬 DB 에 오등록된 peer, 예: zalman)다.
@@ -435,6 +491,8 @@ pub fn reachable_remote_peers(data_dir: &Path) -> anyhow::Result<Vec<RemotePeer>
                 gui_address: derive_gui_url(&address),
                 address,
                 role: p.role.as_str().to_string(),
+                // rc.369 — 홈 머신이 자기 peer 의 display_name 을 권위 광고.
+                display_name: name_map.get(&p.alias).cloned(),
             })
         })
         .collect())
@@ -625,6 +683,7 @@ mod tests {
             address: addr.to_string(),
             gui_address: None,
             role: "worker".to_string(),
+            display_name: None,
         }
     }
 
@@ -821,6 +880,7 @@ mod tests {
             address: "http://100.64.0.9:47300".to_string(),
             gui_address: Some("http://100.64.0.9:47302".to_string()),
             role: "primary".to_string(),
+            display_name: Some("Akashic Records".to_string()),
         };
         let json = serde_json::to_string(&dto).unwrap();
         let rp: RemotePeer = serde_json::from_str(&json).unwrap();
@@ -829,6 +889,7 @@ mod tests {
         assert_eq!(rp.address, "http://100.64.0.9:47300");
         assert_eq!(rp.gui_address.as_deref(), Some("http://100.64.0.9:47302"));
         assert_eq!(rp.role, "primary");
+        assert_eq!(rp.display_name.as_deref(), Some("Akashic Records"));
         // 역방향도 동일 형태 — DTO 로 다시 역직렬화 가능.
         let back: openxgram_transport::ReachablePeerDto =
             serde_json::from_str(&serde_json::to_string(&rp).unwrap()).unwrap();

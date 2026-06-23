@@ -179,6 +179,24 @@ impl<'a> PeerStore<'a> {
             .ok_or_else(|| PeerError::NotFound(format!("just-inserted: {alias}")))
     }
 
+    /// rc.369 — eth 신원 키로 role + display_name 권위 갱신 (cross-machine 편집 전파).
+    /// `upsert_announce` 는 role·alias 를 보존하지만, gossip 광고자가 자기 홈 peer 만 광고하는
+    /// 구조(rc.369)에서는 광고된 role·display_name 이 그 peer 의 홈 권위값이다 → 다른 머신 행에
+    /// 반영해야 편집이 수렴한다. `display_name` 이 None 이면 기존 값 보존(COALESCE) — 미설정 편집이
+    /// 이름을 지우지 않게. 매칭 행 없으면 0 반환(무해).
+    pub fn update_identity_fields(
+        &mut self,
+        eth_address: &str,
+        role: &str,
+        display_name: Option<&str>,
+    ) -> Result<usize> {
+        let affected = self.db.conn().execute(
+            "UPDATE peers SET role = ?1, display_name = COALESCE(?2, display_name) WHERE eth_address = ?3",
+            rusqlite::params![role, display_name, eth_address],
+        )?;
+        Ok(affected)
+    }
+
     /// envelope.from 으로 inbound 매칭. 매칭된 row 수 반환 (0 = 미등록).
     pub fn touch_by_eth_address(&mut self, eth_address: &str) -> Result<usize> {
         let now_rfc = kst_now().to_rfc3339();
