@@ -951,6 +951,59 @@ pub fn process_inbound(
                     tracing::warn!(error = %e, msg_ulid = %ulid, "rc.219 ACK UPDATE 실패");
                 }
             }
+
+            // rc.368 본질 fix — app_ack 텔레메트리 갭.
+            // 이전: ACK envelope 는 outbound_queue.ack_at(transport) 만 UPDATE 하고
+            //   `continue` 로 바로 빠져나가 app_ack conversation_id UPDATE(line ~1138)에
+            //   절대 도달하지 못했다. 그 결과 수신측 LLM 이 같은 conversation_id 로 별도
+            //   답신을 보내지 않는 한(거의 안 함) app_ack_status 가 영원히 NULL→5분 후 blocked.
+            //   증거: zalman→seoul outbound 가 ack_status='inbox_stored'(=전송·저장 성공) 인데도
+            //   app_ack_status='blocked' 로 남음. 반면 same-machine(portal)은 LLM 일반 답신이
+            //   line 1138 을 타서 processed.
+            // 현재: ACK envelope 가 conversation_id 를 운반하고(line ~1681에서 동봉) ack_status 가
+            //   전달 성공(inbox_stored/tmux_injected/acp_delivered)이면, 이 ACK 자체가
+            //   application-level 전달 확증이므로 같은 conversation_id 의 가장 최근 미답신
+            //   outbound row 1건을 app_ack_status='processed' 로 flip. (line 1138 의 일반-답신
+            //   경로와 동일한 매칭 로직 — 단지 ACK envelope 로도 트리거되게 한다.)
+            // → LLM 답신 규율 의존 제거. 양방향 app_ack 대칭 추적. transport ack_at 과 독립.
+            let delivered = matches!(
+                status.as_str(),
+                "inbox_stored" | "tmux_injected" | "acp_delivered"
+            );
+            if delivered {
+                if let Some(conv_id) = env.conversation_id.as_deref() {
+                    if !conv_id.is_empty() {
+                        let conn = db.conn();
+                        match conn.execute(
+                            "UPDATE outbound_queue \
+                             SET app_ack_at = ?1, app_ack_status = 'processed' \
+                             WHERE rowid = ( \
+                                 SELECT rowid FROM outbound_queue \
+                                 WHERE conversation_id = ?2 \
+                                   AND app_ack_at IS NULL \
+                                 ORDER BY enqueued_at DESC LIMIT 1 \
+                             )",
+                            rusqlite::params![now_str, conv_id],
+                        ) {
+                            Ok(rows) if rows > 0 => tracing::info!(
+                                conversation_id = %conv_id,
+                                ack_status = %status,
+                                from = %env.from,
+                                "rc.368 app_ack: ACK envelope(전달성공) → outbound_queue.app_ack_status=processed flip"
+                            ),
+                            Ok(_) => tracing::debug!(
+                                conversation_id = %conv_id,
+                                "rc.368 app_ack: ACK 매칭 outbound row 없음 (자기가 안 보낸 conv 또는 이미 처리됨)"
+                            ),
+                            Err(e) => tracing::warn!(
+                                error = %e,
+                                conversation_id = %conv_id,
+                                "rc.368 app_ack UPDATE 실패 (silent X)"
+                            ),
+                        }
+                    }
+                }
+            }
             continue;
         }
 
