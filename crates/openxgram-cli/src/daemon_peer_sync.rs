@@ -55,6 +55,13 @@ pub struct RemotePeer {
     /// rc.369 — 정본 신원 편집(이름) 전파용 display_name. 홈 머신이 권위.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// rc.370 — 홈 머신이 권위 광고하는 session_identifier(예: `tmux:aoe_codex-..._5322fc47`).
+    ///   다른 머신이 이 값으로 로컬 acp:acp-1 날조를 교정한다. self-homed 광고이므로 항상 홈 권위.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_identifier: Option<String>,
+    /// rc.370 — 홈 머신이 권위 광고하는 session_status(active|idle|disconnected).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_status: Option<String>,
 }
 
 fn default_role() -> String {
@@ -146,6 +153,20 @@ pub fn merge_remote_peers(
                 ) {
                     tracing::warn!(alias = %rp.alias, error = %e, "peer-sync identity(role/name) 갱신 실패");
                 }
+                // rc.370 — 홈 권위 세션상태(session_identifier·session_status) 전파.
+                //   광고자는 자기-홈드 peer 만 광고하므로(rc.369 self-homed 게이트), 광고된
+                //   session_identifier(예: tmux:aoe_codex-..._5322fc47)·status 는 그 peer 의 홈 권위값이다.
+                //   다른 머신(seoul)이 로컬에서 발명한 acp:acp-1 날조를 이 값으로 교정한다.
+                //   None 이면 COALESCE 로 기존값 보존(빈 전파가 상태를 지우지 않게).
+                if rp.session_identifier.is_some() || rp.session_status.is_some() {
+                    if let Err(e) = store.update_session_fields(
+                        &rp.eth_address,
+                        rp.session_identifier.as_deref(),
+                        rp.session_status.as_deref(),
+                    ) {
+                        tracing::warn!(alias = %rp.alias, error = %e, "peer-sync session(ident/status) 갱신 실패");
+                    }
+                }
             }
             Err(e) => {
                 tracing::warn!(alias = %rp.alias, error = %e, "peer-sync merge 실패");
@@ -165,7 +186,7 @@ fn derive_gui_url(transport_url: &str) -> Option<String> {
 
 /// transport/base URL 에서 host(authority 의 host 부분)만 추출. scheme·port·path 무시.
 /// 예: "http://100.64.0.5:47300" → "100.64.0.5". 파싱 실패 시 None.
-fn url_host(url: &str) -> Option<String> {
+pub fn url_host(url: &str) -> Option<String> {
     let after_scheme = url.split("://").nth(1).unwrap_or(url);
     let authority = after_scheme.split('/').next().unwrap_or(after_scheme);
     let host = authority.rsplit_once(':').map(|(h, _)| h).unwrap_or(authority);
@@ -337,6 +358,20 @@ pub fn reachable_remote_peers(data_dir: &Path) -> anyhow::Result<Vec<RemotePeer>
             }
         }
     }
+    // rc.370 — alias → session_status prefetch (홈 권위 세션상태 cross-machine 전파).
+    //   sid_map 과 동일 패턴. 홈 머신만 자기-홈드 peer 를 광고하므로 이 값은 홈 권위값으로 전파된다.
+    let mut status_map: std::collections::HashMap<String, String> = Default::default();
+    if let Ok(mut stmt) = db.conn().prepare(
+        "SELECT alias, session_status FROM peers WHERE session_status IS NOT NULL AND session_status != ''",
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        }) {
+            for row in rows.flatten() {
+                status_map.insert(row.0, row.1);
+            }
+        }
+    }
     // 자기 머신의 살아있는 tmux 에이전트 ident 집합 (단일 헬퍼 — 회귀 방지 중앙화).
     let live = crate::daemon::local_live_tmux_agent_idents();
     let self_eth = self_eth_address(data_dir);
@@ -493,6 +528,11 @@ pub fn reachable_remote_peers(data_dir: &Path) -> anyhow::Result<Vec<RemotePeer>
                 role: p.role.as_str().to_string(),
                 // rc.369 — 홈 머신이 자기 peer 의 display_name 을 권위 광고.
                 display_name: name_map.get(&p.alias).cloned(),
+                // rc.370 — 홈 머신이 자기-홈드 peer 의 session_identifier·status 를 권위 광고.
+                //   광고 대상은 위 필터로 이미 자기-홈드(self/LOCAL tmux/LOCAL ACP/self-homed)로 좁혀졌으므로
+                //   이 sid/status 는 홈 권위값이다 → 다른 머신의 acp:acp-1 날조를 교정한다.
+                session_identifier: sid_map.get(&p.alias).cloned(),
+                session_status: status_map.get(&p.alias).cloned(),
             })
         })
         .collect())
@@ -508,6 +548,55 @@ fn self_eth_address(data_dir: &Path) -> Option<String> {
         .load(openxgram_core::paths::MASTER_KEY_NAME, &pw)
         .ok()?;
     Some(kp.address.as_str().to_string())
+}
+
+/// rc.370 — 자기 머신의 reachable host(IP/hostname 만). #A 소유권 게이트의 공통 진리원천.
+/// `reachable_remote_peers`/`sync_tick_once` 의 self 주소 우선순위와 **동일**:
+///   `XGRAM_TRANSPORT_PUBLIC_URL` → `XGRAM_SELF_ADDRESS` → self peer row(eth==self_eth) → url_host.
+/// 어느 단계도 reachable 주소를 못 주면 None(보수적 — 호출측이 None 이면 게이트를 적용 안 함).
+///
+/// 용도: ACP 브리지(daemon_gui_acp)가 peers.session_identifier 를 `acp:<sid>` 로 덮어쓰기 **전에**,
+/// 그 peer 가 **원격-홈**(address host ≠ self_host)인지 판정해 날조 덮어쓰기를 차단(#A).
+pub fn self_machine_host(data_dir: &Path) -> Option<String> {
+    let self_addr: Option<String> = std::env::var("XGRAM_TRANSPORT_PUBLIC_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty() && !is_unreachable_address(u))
+        .or_else(|| {
+            std::env::var("XGRAM_SELF_ADDRESS")
+                .ok()
+                .filter(|u| !u.trim().is_empty() && !is_unreachable_address(u))
+        })
+        .or_else(|| {
+            // self peer row(eth==self_eth) 주소 폴백 — env 미설정 환경.
+            let self_eth = self_eth_address(data_dir)?;
+            let mut db = openxgram_db::Db::open(openxgram_db::DbConfig {
+                path: openxgram_core::paths::db_path(data_dir),
+                ..Default::default()
+            })
+            .ok()?;
+            let mut store = PeerStore::new(&mut db);
+            let peers = store.list().ok()?;
+            peers.into_iter().find_map(|p| {
+                let eth = p.eth_address.as_deref()?;
+                if self_eth.eq_ignore_ascii_case(eth.trim()) && !is_unreachable_address(&p.address) {
+                    Some(p.address)
+                } else {
+                    None
+                }
+            })
+        });
+    self_addr.as_deref().and_then(url_host)
+}
+
+/// rc.370 #A 헬퍼(순수) — peer 주소 host 가 self_host 와 **다르면** 원격-홈으로 판정한다.
+/// `self_host` 미상(None)이면 보수적으로 `false`(원격-홈 아님 → 게이트 비적용, 종전 동작 유지) —
+/// self 를 잘못 원격으로 분류해 로컬 ACP 브리지를 막는 회귀를 방지한다.
+/// `peer_address` 의 host 파싱 실패 시에도 false(판정 불가 → 게이트 비적용).
+pub fn is_remote_homed_peer(self_host: Option<&str>, peer_address: &str) -> bool {
+    match (self_host, url_host(peer_address)) {
+        (Some(sh), Some(ph)) => !sh.eq_ignore_ascii_case(&ph),
+        _ => false,
+    }
 }
 
 /// 원격 데몬의 `GET {base}/v1/peers/reachable` 를 pull → `Vec<RemotePeer>` 역직렬화.
@@ -684,6 +773,8 @@ mod tests {
             gui_address: None,
             role: "worker".to_string(),
             display_name: None,
+            session_identifier: None,
+            session_status: None,
         }
     }
 
@@ -870,6 +961,63 @@ mod tests {
     }
 
     #[test]
+    fn merge_propagates_home_session_fields_overwriting_local_invention() {
+        // rc.370 #B — 홈이 광고한 session_identifier·status 가 기존(로컬 발명 acp:acp-1) 행을 교정.
+        let mut db = open_mem_db();
+        {
+            let mut store = PeerStore::new(&mut db);
+            store
+                .add_with_eth(
+                    "codex-ai-image",
+                    "02seed-codex",
+                    "http://100.80.35.17:47300",
+                    Some("0xCODEX"),
+                    PeerRole::Worker,
+                    None,
+                )
+                .unwrap();
+            // seoul 의 로컬 날조 상태를 시뮬레이트 — acp:acp-1 / active.
+            store
+                .update_session_fields("0xCODEX", Some("acp:acp-1"), Some("active"))
+                .unwrap();
+        }
+        // 홈(zalman)이 광고한 권위값.
+        let mut adv = rp("codex-ai-image", "http://100.80.35.17:47300", "0xCODEX");
+        adv.session_identifier = Some("tmux:aoe_codex-ai-image_5322fc47".to_string());
+        adv.session_status = Some("active".to_string());
+        let merged = merge_remote_peers(&mut db, &[adv], Some("0xseoul"), true).unwrap();
+        assert_eq!(merged, 1);
+        // 로컬 acp:acp-1 가 홈 권위 tmux:… 로 교정됨.
+        let mut store = PeerStore::new(&mut db);
+        let row = store.get_by_eth_address("0xCODEX").unwrap().unwrap();
+        let (sid, status) = store.session_fields_for_test(&row.alias).unwrap();
+        assert_eq!(sid.as_deref(), Some("tmux:aoe_codex-ai-image_5322fc47"), "acp:acp-1 날조가 홈 권위값으로 교정");
+        assert_eq!(status.as_deref(), Some("active"));
+    }
+
+    #[test]
+    fn merge_session_fields_none_preserves_existing() {
+        // rc.370 — 광고가 session 필드 None 이면 COALESCE 로 기존값 보존(빈 전파가 상태를 안 지움).
+        let mut db = open_mem_db();
+        {
+            let mut store = PeerStore::new(&mut db);
+            store
+                .add_with_eth("keep", "02seed-keep", "http://100.64.0.5:47300", Some("0xKEEP"), PeerRole::Worker, None)
+                .unwrap();
+            store
+                .update_session_fields("0xKEEP", Some("tmux:keep_live"), Some("active"))
+                .unwrap();
+        }
+        // rp() 헬퍼는 session 필드가 None → 기존값 유지돼야 함.
+        let adv = rp("keep", "http://100.64.0.5:47300", "0xKEEP");
+        merge_remote_peers(&mut db, &[adv], Some("0xself"), true).unwrap();
+        let mut store = PeerStore::new(&mut db);
+        let (sid, status) = store.session_fields_for_test("keep").unwrap();
+        assert_eq!(sid.as_deref(), Some("tmux:keep_live"), "None 전파는 기존 sid 보존");
+        assert_eq!(status.as_deref(), Some("active"), "None 전파는 기존 status 보존");
+    }
+
+    #[test]
     fn remote_peer_json_matches_dto_shape() {
         // RemotePeer 가 transport 의 ReachablePeerDto 와 동일 JSON 형태여야 한다
         // (provider 직렬화 → fetch_remote_peers 역직렬화 round-trip).
@@ -881,6 +1029,8 @@ mod tests {
             gui_address: Some("http://100.64.0.9:47302".to_string()),
             role: "primary".to_string(),
             display_name: Some("Akashic Records".to_string()),
+            session_identifier: Some("tmux:aoe_akashic_5054a80a".to_string()),
+            session_status: Some("active".to_string()),
         };
         let json = serde_json::to_string(&dto).unwrap();
         let rp: RemotePeer = serde_json::from_str(&json).unwrap();
@@ -890,10 +1040,33 @@ mod tests {
         assert_eq!(rp.gui_address.as_deref(), Some("http://100.64.0.9:47302"));
         assert_eq!(rp.role, "primary");
         assert_eq!(rp.display_name.as_deref(), Some("Akashic Records"));
+        assert_eq!(rp.session_identifier.as_deref(), Some("tmux:aoe_akashic_5054a80a"));
+        assert_eq!(rp.session_status.as_deref(), Some("active"));
         // 역방향도 동일 형태 — DTO 로 다시 역직렬화 가능.
         let back: openxgram_transport::ReachablePeerDto =
             serde_json::from_str(&serde_json::to_string(&rp).unwrap()).unwrap();
         assert_eq!(back, dto);
+    }
+
+    #[test]
+    fn is_remote_homed_peer_classification() {
+        // rc.370 #A — self_host 와 다른 host 면 원격-홈(true), 같으면 로컬-홈(false).
+        assert!(
+            is_remote_homed_peer(Some("100.101.237.9"), "http://100.80.35.17:47300"),
+            "잘만 주소 = seoul self_host 와 다름 → 원격-홈"
+        );
+        assert!(
+            !is_remote_homed_peer(Some("100.101.237.9"), "http://100.101.237.9:47300"),
+            "self_host 와 같은 host → 로컬-홈"
+        );
+        assert!(
+            !is_remote_homed_peer(Some("100.101.237.9"), "HTTP://100.101.237.9:47302"),
+            "대소문자·포트 무시 — 같은 host → 로컬-홈"
+        );
+        // self_host 미상이면 보수적으로 false(게이트 비적용 — 회귀 방지).
+        assert!(!is_remote_homed_peer(None, "http://100.80.35.17:47300"));
+        // peer 주소 파싱 실패 → false.
+        assert!(!is_remote_homed_peer(Some("100.101.237.9"), ""));
     }
 
     #[test]

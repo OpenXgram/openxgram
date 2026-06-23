@@ -218,8 +218,42 @@ impl AcpHttpState {
         ) {
             tracing::error!(target: "acp.daemon", alias = %upsert.alias, "rc.355 브리지 agent_profiles upsert 실패(silent X): {e}");
         }
+        // rc.370 #A 소유권 게이트 — 이 alias 의 기존 peers 행이 **원격-홈**(address host ≠ self_host)이면
+        //   로컬 ACP 세션(acp:<sid>)을 그 행에 붙이지 않는다. seoul 이 잘만 tmux 에이전트(codex-ai-image
+        //   등)에 가짜 acp:acp-1 세션을 날조해 그리드가 머신마다 어긋나던 #A 결함의 차단점.
+        //   self_host 는 env(XGRAM_TRANSPORT_PUBLIC_URL → XGRAM_SELF_ADDRESS) 우선 — 데몬이 머신별로
+        //   설정한 권위 주소. 미상이거나 로컬-홈이면 종전대로 브리지(회귀 방지). 절대규칙1: 명시 로그.
+        let self_host: Option<String> = std::env::var("XGRAM_TRANSPORT_PUBLIC_URL")
+            .ok()
+            .filter(|u| !u.trim().is_empty())
+            .or_else(|| std::env::var("XGRAM_SELF_ADDRESS").ok().filter(|u| !u.trim().is_empty()))
+            .as_deref()
+            .and_then(crate::daemon_peer_sync::url_host);
+        let existing_addr: Option<String> = conn
+            .query_row(
+                "SELECT address FROM peers WHERE alias = ?1",
+                rusqlite::params![upsert.alias],
+                |r| r.get::<_, String>(0),
+            )
+            .ok();
+        let remote_homed = existing_addr
+            .as_deref()
+            .map(|addr| crate::daemon_peer_sync::is_remote_homed_peer(self_host.as_deref(), addr))
+            .unwrap_or(false);
+        if remote_homed {
+            tracing::info!(
+                target: "acp.daemon",
+                alias = %upsert.alias,
+                session = %session_id,
+                self_host = ?self_host,
+                peer_addr = ?existing_addr,
+                "rc.370 #A — 원격-홈 peer 에 로컬 ACP 세션 브리지 SKIP(가짜 acp:acp-1 날조 방지). 홈 머신 권위값 보존."
+            );
+            return;
+        }
         // peers.session_identifier = acp:<sid> + session_status='active'. 행 존재 시에만 영향.
         //   부재 시 affected 0(transport 등록 전) — 무해. roster 의 peers 소스 + Part 2 라우팅 키.
+        //   (위 #A 게이트로 로컬-홈 peer 만 여기 도달.)
         match conn.execute(
             "UPDATE peers SET session_identifier = ?1, session_status = 'active' WHERE alias = ?2",
             rusqlite::params![upsert.session_identifier, upsert.alias],

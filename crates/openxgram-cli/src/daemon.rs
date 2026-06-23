@@ -151,6 +151,9 @@ pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
                     gui_address: p.gui_address,
                     role: p.role,
                     display_name: p.display_name,
+                    // rc.370 — 홈 권위 세션상태 전파(원격 머신의 acp:acp-1 날조 교정용).
+                    session_identifier: p.session_identifier,
+                    session_status: p.session_status,
                 })
                 .collect(),
             Err(e) => {
@@ -1421,7 +1424,35 @@ pub fn process_inbound(
             // fallback 하지 않는다. self-call 이 90s timeout 으로 Unavailable 을 돌려줘도 그건
             // "ACP 턴이 90s 보다 길다"는 뜻일 뿐, 백그라운드 ACP 세션은 계속 돌며 답한다.
             // 따라서 timeout==전달실패로 오판해 tmux 까지 주입하던 이중 전달을 차단한다.
-            let acp_drivable_raw = is_acp_drivable(&mut db, &target_alias);
+            let acp_drivable_raw_base = is_acp_drivable(&mut db, &target_alias);
+
+            // rc.370 #A 추가 방어 — 수신자가 **원격-홈 peer**(address host ≠ self_host)면 로컬 ACP
+            //   spawn 자체를 안 한다. seoul 이 잘만 tmux 에이전트(codex-ai-image 등)에 로컬 ACP 세션을
+            //   띄워 bridge_session_as_peer 가 peers 행을 acp:acp-1 로 날조하던 #A 근원 경로를 차단한다.
+            //   원격-홈이면 acp_drivable 을 false 로 강등 → 아래 tmux/transport fallback 으로만 전달
+            //   (홈 머신이 그 에이전트의 ACP 를 소유). self_host 미상/로컬-홈이면 종전 동작(회귀 방지).
+            let target_remote_homed = {
+                let self_host = crate::daemon_peer_sync::self_machine_host(data_dir);
+                let peer_addr: Option<String> = db
+                    .conn()
+                    .query_row(
+                        "SELECT address FROM peers WHERE alias = ?1",
+                        [target_alias.as_str()],
+                        |r| r.get::<_, String>(0),
+                    )
+                    .ok();
+                match peer_addr.as_deref() {
+                    Some(addr) => crate::daemon_peer_sync::is_remote_homed_peer(self_host.as_deref(), addr),
+                    None => false,
+                }
+            };
+            if target_remote_homed {
+                tracing::info!(
+                    target_alias = %target_alias,
+                    "rc.370 #A — 원격-홈 peer 수신자: 로컬 ACP spawn 강등(홈 머신이 ACP 소유). tmux/transport 경로로만 전달."
+                );
+            }
+            let acp_drivable_raw = acp_drivable_raw_base && !target_remote_homed;
 
             // rc.365 — 인바운드 peer 메시지를 **라이브 tmux 세션을 가진 수신 LLM**에게 자동 주입
             //   (Discord/Telegram auto-echo 의 peer 버전 — 실시간 A2A 대화의 마지막 조각).

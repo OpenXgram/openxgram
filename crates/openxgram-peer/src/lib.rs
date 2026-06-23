@@ -197,6 +197,42 @@ impl<'a> PeerStore<'a> {
         Ok(affected)
     }
 
+    /// rc.370 — eth 신원 키로 session_identifier + session_status 권위 갱신 (cross-machine 세션상태 전파).
+    /// 홈 머신이 광고한 자기-홈드 peer 의 진짜 세션상태(예: `tmux:aoe_codex-..._5322fc47`/`active`)를
+    /// 다른 머신 행에 수렴시켜, 로컬에서 발명된 `acp:acp-1` 날조를 교정한다. 각 값이 None 이면 기존
+    /// 값 보존(COALESCE) — 빈 전파가 상태를 지우지 않게. 매칭 행 없으면 0 반환(무해).
+    pub fn update_session_fields(
+        &mut self,
+        eth_address: &str,
+        session_identifier: Option<&str>,
+        session_status: Option<&str>,
+    ) -> Result<usize> {
+        let affected = self.db.conn().execute(
+            "UPDATE peers SET session_identifier = COALESCE(?1, session_identifier), \
+                 session_status = COALESCE(?2, session_status) WHERE eth_address = ?3",
+            rusqlite::params![session_identifier, session_status, eth_address],
+        )?;
+        Ok(affected)
+    }
+
+    /// 테스트/검증용 — alias 의 (session_identifier, session_status) 조회. `list()`/`get_by_*` 가
+    /// 미반환하는 세션 컬럼을 직접 읽는다(rc.370 세션상태 전파 단위테스트 + 운영 검증 헬퍼).
+    pub fn session_fields_for_test(
+        &mut self,
+        alias: &str,
+    ) -> Result<(Option<String>, Option<String>)> {
+        let row = self.db.conn().query_row(
+            "SELECT session_identifier, session_status FROM peers WHERE alias = ?1",
+            [alias],
+            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)),
+        );
+        match row {
+            Ok(v) => Ok(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok((None, None)),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// envelope.from 으로 inbound 매칭. 매칭된 row 수 반환 (0 = 미등록).
     pub fn touch_by_eth_address(&mut self, eth_address: &str) -> Result<usize> {
         let now_rfc = kst_now().to_rfc3339();
