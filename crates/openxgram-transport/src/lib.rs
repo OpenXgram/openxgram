@@ -168,6 +168,14 @@ pub struct ReachablePeerDto {
     /// merge 가 홈-홈드 peer 행에 한해 갱신한다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// rc.370 — 홈 머신이 자기 peer 의 session_identifier(예: `tmux:aoe_codex-..._5322fc47`)를
+    /// 권위 광고. 다른 머신은 이 값을 그 peer 의 홈 권위값으로 받아 로컬 acp:acp-1 날조를 교정한다.
+    /// 홈 머신만 자기-홈드 peer 를 광고하므로(rc.369 self-homed 게이트), 이 값은 항상 홈 권위.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_identifier: Option<String>,
+    /// rc.370 — 홈 머신이 권위 광고하는 session_status(active|idle|disconnected). 위와 동일 원리.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_status: Option<String>,
 }
 
 /// reachable peer 목록을 돌려주는 provider closure (이미 localhost 제외된 목록 가정).
@@ -419,6 +427,8 @@ mod peers_reachable_tests {
             gui_address: None,
             role: "worker".to_string(),
             display_name: None,
+            session_identifier: None,
+            session_status: None,
         }
     }
 

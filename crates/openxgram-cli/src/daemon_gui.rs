@@ -10200,6 +10200,13 @@ async fn gui_peer_send_unsigned(
         .get("conversation_id")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    // 발신자별 키 서명 — 'sender' 지정 시 그 에이전트의 keypair 로 서명한다(master 아님).
+    //   미지정 시 종전대로 master 키. 빈 문자열/"master" 는 master 로 취급.
+    let sender_key_name: Option<String> = body
+        .get("sender")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty() && s != openxgram_core::paths::MASTER_KEY_NAME);
 
     // rc.355 Part 2 — ACP↔peer 브리지 라우팅. 대상 peer 의 session_identifier 가 `acp:` 면
     //   그 peer 는 라이브 ACP 세션이 소유한다 → transport 서명/enqueue 대신 그 ACP 세션의
@@ -10230,7 +10237,46 @@ async fn gui_peer_send_unsigned(
             )
             .is_ok()
     };
-    if crate::acp_peer_bridge::is_acp_backed(acp_sid.as_deref()) || acp_role {
+    // rc.371 #B (발신 방향) — 대상 peer 가 **원격-홈**(peers.address host ≠ self_host)이면
+    //   로컬 ACP 브리지로 라우팅하지 않는다. codex-ai-image 같은 원격(zalman) tmux peer 는
+    //   session_identifier 가 `tmux:` 라 is_acp_backed=false 지만, agent_capabilities.role 이
+    //   과거 bridge 잔재로 'acp' 일 수 있다 → acp_role=true 로 잘못 ACP 경로를 타고
+    //   handle_task 의 project_path 요구에서 422("has no project_path (ACP cwd)")로 막혔다.
+    //   원격-홈이면 ACP 분기를 강등하고 아래 sign+enqueue(transport) 경로로만 전달한다
+    //   (홈 머신 데몬이 그 에이전트의 tmux/ACP 를 소유). rc.370 #A(인바운드)의 발신 짝.
+    //   self_host 미상/로컬-홈이면 종전 동작 그대로(회귀 방지).
+    let target_remote_homed: bool = {
+        let self_host = crate::daemon_peer_sync::self_machine_host(state.data_dir.as_ref());
+        let peer_addr: Option<String> = {
+            let mut db = state.db.lock().await;
+            db.conn()
+                .query_row(
+                    "SELECT address FROM peers WHERE alias=?1",
+                    rusqlite::params![alias],
+                    |r| r.get::<_, String>(0),
+                )
+                .ok()
+        };
+        match peer_addr.as_deref() {
+            Some(addr) => {
+                crate::daemon_peer_sync::is_remote_homed_peer(self_host.as_deref(), addr)
+            }
+            None => false,
+        }
+    };
+    if target_remote_homed {
+        tracing::info!(
+            alias = %alias,
+            acp_sid = ?acp_sid,
+            acp_role = acp_role,
+            "rc.371 #B — 원격-홈 peer 발신: 로컬 ACP 브리지 강등(홈 머신이 ACP/tmux 소유). sign+enqueue(transport) 경로로 전달."
+        );
+    }
+    if crate::acp_peer_bridge::should_route_to_local_acp(
+        target_remote_homed,
+        acp_sid.as_deref(),
+        acp_role,
+    ) {
         // 인-프로세스 ACP 구동 — a2a_send 의 new_acp 분기와 동일 척추(load_a2a_agent_meta + handle_task).
         //   대상이 로컬 ACP 에이전트가 아니면(meta None) 명시 404 — 추측/조용한 폴백 금지(절대 규칙 1).
         let meta = match load_a2a_agent_meta(&state, &alias).await? {
@@ -10302,11 +10348,32 @@ async fn gui_peer_send_unsigned(
     let data_dir = state.data_dir.as_ref().clone();
     use openxgram_keystore::{FsKeystore, Keystore};
     let ks = FsKeystore::new(openxgram_core::paths::keystore_dir(&data_dir));
-    let signer = ks
-        .load(openxgram_core::paths::MASTER_KEY_NAME, &pw)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{
-            error: format!("master 키 로드 실패: {e}")
-        })))?;
+    // 발신자별 키 서명 — sender 지정 시 그 alias 의 keypair 로 서명한다.
+    //   키 없으면 그 alias 용 keypair 를 keystore 안에 생성(데몬 추가 생성 아님 — 같은
+    //   keystore 의 새 키만, daemon.rs retroactive 등록과 동일 패턴). 명시 sender 인데
+    //   load/create 둘 다 실패하면 조용한 master 폴백 금지(절대 규칙 1, hermes 갭#7) — 명시 503.
+    let signer = match sender_key_name.as_deref() {
+        Some(name) => match ks.load(name, &pw) {
+            Ok(k) => k,
+            Err(_) => {
+                ks.create(name, &pw).map_err(|e| {
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto {
+                        error: format!("sender 키 '{name}' 생성 실패: {e}"),
+                    }))
+                })?;
+                ks.load(name, &pw).map_err(|e| {
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto {
+                        error: format!("sender 키 '{name}' 로드 실패: {e}"),
+                    }))
+                })?
+            }
+        },
+        None => ks
+            .load(openxgram_core::paths::MASTER_KEY_NAME, &pw)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorDto{
+                error: format!("master 키 로드 실패: {e}")
+            })))?,
+    };
 
     let signature_hex = hex::encode(signer.sign(text.as_bytes()));
     let payload_hex = hex::encode(text.as_bytes());
@@ -10316,7 +10383,10 @@ async fn gui_peer_send_unsigned(
     let manifest_opt = openxgram_manifest::InstallManifest::read(
         openxgram_core::paths::manifest_path(&data_dir),
     ).ok();
-    let sender_alias = manifest_opt.as_ref().map(|m| m.machine.alias.clone());
+    // sender 지정 시 그 alias 가 발신 신원. 미지정 시 종전대로 머신 alias(master).
+    let sender_alias = sender_key_name
+        .clone()
+        .or_else(|| manifest_opt.as_ref().map(|m| m.machine.alias.clone()));
     let sender_transport_url = std::env::var("XGRAM_TRANSPORT_PUBLIC_URL")
         .ok()
         .filter(|s| !s.is_empty())
@@ -11322,20 +11392,66 @@ async fn gui_peer_set_name(
     headers: HeaderMap,
     Path(alias): Path<String>,
     Json(body): Json<PeerNameBody>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
-    require_auth(&state, &headers).await.map_err(unauthorized)?;
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    // 이 핸들러는 충돌 시 구조화 본문({error, conflict_name, conflict_session})을 내야 하므로
+    //   Err 타입을 serde_json::Value 로 둔다. 공통 헬퍼(ErrorDto)는 단일 필드라 인라인 변환.
+    let plain = |code: StatusCode, msg: String| -> (StatusCode, Json<serde_json::Value>) {
+        (code, Json(serde_json::json!({ "error": msg })))
+    };
+    require_auth(&state, &headers)
+        .await
+        .map_err(|c| plain(c, "unauthorized — provide Authorization: Bearer <token>".into()))?;
     let name = body.name.trim().to_string();
     if alias.trim().is_empty() || name.is_empty() {
-        return Err(bad_request("alias·name 필수"));
+        return Err(plain(StatusCode::BAD_REQUEST, "alias·name 필수".into()));
     }
     {
         let mut db = state.db.lock().await;
+        // 정본 이름 중복 검사 — 두 입구 공용 로직(IDENTITY-MODEL-FINAL-SPEC §A·§J).
+        //   이 alias 의 pubkey/session/version 을 자기식별 키로 사용.
+        let my_pubkey: Option<String> = db.conn().query_row(
+            "SELECT public_key_hex FROM peers WHERE alias = ?1",
+            rusqlite::params![&alias],
+            |r| r.get::<_, Option<String>>(0),
+        ).ok().flatten();
+        let (my_sid, my_version, my_machine): (Option<String>, Option<i64>, Option<String>) =
+            db.conn().query_row(
+                "SELECT session_identifier, identity_version, origin_machine FROM peers WHERE alias = ?1",
+                rusqlite::params![&alias],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            ).unwrap_or((None, None, None));
+        let next_version = my_version.unwrap_or(0) + 1;
+        // arbiter tie-break 보조 — 이번 갱신 시각(unix ms). version+1 과 함께 갱신.
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        match crate::identity_registry::check_name_available(
+            db.conn(),
+            &name,
+            my_sid.as_deref(),
+            my_pubkey.as_deref(),
+            Some(next_version),
+            Some(now_ms),
+            my_machine.as_deref(),
+        ) {
+            Ok(_decision) => { /* New | SelfUpdate | TakeoverDead — 진행 */ }
+            Err(conflict) => {
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({
+                        "error": conflict.user_message(),
+                        "conflict_name": conflict.conflict_name,
+                        "conflict_session": conflict.conflict_session,
+                    })),
+                ));
+            }
+        }
         db.conn()
             .execute(
-                "UPDATE peers SET display_name = ?1 WHERE alias = ?2",
-                rusqlite::params![&name, &alias],
+                "UPDATE peers SET display_name = ?1, identity_version = ?2, \
+                   identity_updated_at = ?3, \
+                   origin_machine = COALESCE(origin_machine, ?4) WHERE alias = ?5",
+                rusqlite::params![&name, next_version, now_ms, my_machine, &alias],
             )
-            .map_err(|e| internal(&format!("name update: {e}")))?;
+            .map_err(|e| plain(StatusCode::INTERNAL_SERVER_ERROR, format!("name update: {e}")))?;
         db.conn()
             .execute(
                 "UPDATE agent_profiles SET display_name = ?1 WHERE alias = ?2",

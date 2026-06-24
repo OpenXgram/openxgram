@@ -367,6 +367,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "identity_aliases",
         sql: include_str!("../migrations/0065_identity_aliases.sql"),
     },
+    Migration {
+        version: 66,
+        name: "identity_wallet_arbiter",
+        sql: include_str!("../migrations/0066_identity_wallet_arbiter.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

@@ -218,6 +218,47 @@ impl OpenxgramDispatcher {
             .as_deref()
             .unwrap_or(openxgram_vault::MASTER_AGENT)
     }
+
+    /// 발신자별 키 서명용 — 이 MCP 세션의 발신 에이전트 alias 결정.
+    ///   1) Bearer 토큰으로 식별된 세션 신원(current_agent). master 면 데몬 자신 → None.
+    ///   2) 없으면 cwd 자기식별(IDENTITY-MODEL-FINAL-SPEC §B): 현재 작업 폴더와 매칭되는
+    ///      등록 신원(agent_capabilities.project_path / peers.cwd). hermes 갭#3 — 후보가
+    ///      정확히 1개일 때만 자동 매칭(2개+면 모호하므로 None → master 폴백).
+    ///   결정 못 하면 None(호출부가 master 키 서명으로 폴백). 조용한 신원 오인 방지 위해
+    ///   "있으면 정확히, 없으면 명시 None" 만 반환한다.
+    fn session_sender_alias(&mut self) -> Option<String> {
+        // 1) Bearer 세션 신원.
+        if let Some(agent) = self.current_agent.as_deref() {
+            if !agent.is_empty() && agent != openxgram_vault::MASTER_AGENT {
+                return Some(agent.to_string());
+            }
+        }
+        // 2) cwd 자기식별 — 후보 1개일 때만.
+        let cwd = std::env::current_dir().ok()?;
+        let cwd_str = cwd.to_string_lossy().to_string();
+        let candidates: Vec<String> = self
+            .db
+            .conn()
+            .prepare(
+                "SELECT alias FROM (\
+                   SELECT alias, project_path AS dir FROM agent_capabilities \
+                     WHERE project_path = ?1 \
+                   UNION \
+                   SELECT alias, cwd AS dir FROM peers WHERE cwd = ?1\
+                 ) GROUP BY alias",
+            )
+            .ok()
+            .and_then(|mut stmt| {
+                stmt.query_map(rusqlite::params![cwd_str], |r| r.get::<_, String>(0))
+                    .ok()
+                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+        if candidates.len() == 1 {
+            return candidates.into_iter().next();
+        }
+        None
+    }
 }
 
 impl ToolDispatcher for OpenxgramDispatcher {
@@ -581,7 +622,8 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 "properties": {
                     "alias": {"type": "string", "description": "받는 peer 의 alias (peers table)"},
                     "body": {"type": "string", "description": "메시지 본문"},
-                    "conversation_id": {"type": "string", "description": "(선택) 대화 thread id — 미지정 시 daemon 이 자동 UUID 부여하여 reply auto-correlate"}
+                    "conversation_id": {"type": "string", "description": "(선택) 대화 thread id — 미지정 시 daemon 이 자동 UUID 부여하여 reply auto-correlate"},
+                    "sender": {"type": "string", "description": "(선택) 보내는 에이전트 alias — 그 alias 의 keypair 로 서명. 미지정 시 이 세션 신원(Bearer 토큰 agent) → 없으면 master 키."}
                 },
                 "required": ["alias", "body"]
             }),
@@ -1098,6 +1140,16 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| invalid("missing 'body'"))?
                     .to_string();
+                // 발신자별 키 서명 — 보내는 에이전트의 keypair 로 envelope 서명되도록 sender alias 결정.
+                //   우선순위: 1) 명시 'sender' arg, 2) 이 MCP 세션 신원(Bearer 토큰 agent),
+                //             3) cwd 자기식별(IDENTITY-MODEL-FINAL-SPEC §B — 후보 1개일 때만).
+                //   결정 못 하면 None → daemon/CLI 가 master 키로 서명(데몬 자신 발신).
+                let sender_alias_opt: Option<String> = args
+                    .get("sender")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| self.session_sender_alias());
                 // rc.122 — group fan-out 먼저 검사. alias 가 agent_capabilities.group_name 과
                 // 일치하면 그 group 의 모든 messenger_enabled 멤버에게 fan-out.
                 let group_members: Vec<String> = {
@@ -1223,7 +1275,11 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         daemon_url.trim_end_matches('/'),
                         urlencoding::encode(&alias),
                     );
-                    let payload = json!({"body": body, "conversation_id": conv});
+                    let mut payload = json!({"body": body, "conversation_id": conv});
+                    // 발신자별 서명 — daemon 이 이 alias 의 keypair 로 서명하도록 sender 전달.
+                    if let Some(s) = sender_alias_opt.as_ref() {
+                        payload["sender"] = json!(s);
+                    }
                     let token_clone = token.clone();
                     let url_clone = url.clone();
                     let payload_clone = payload.clone();
@@ -1296,9 +1352,16 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 // xgram peer send CLI 명령 backward compat 보장. 마스터 직접 호출 시 작동.
                 let pw = self.require_vault()?.to_string();
                 // rc.286 — bare block_on → block_in_place (runtime-in-runtime panic 우회).
+                let sender_for_cli = sender_alias_opt.clone();
                 let p2p_result = tokio::task::block_in_place(|| {
                     handle.block_on(crate::peer_send::run_peer_send_with_conv(
-                        &data_dir, &alias, None, &body, &pw, Some(conv.clone()), None,
+                        &data_dir,
+                        &alias,
+                        sender_for_cli.as_deref(),
+                        &body,
+                        &pw,
+                        Some(conv.clone()),
+                        None,
                     ))
                 });
                 match p2p_result {
@@ -1900,13 +1963,51 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 if !matches!(ai_type, "claude" | "codex" | "gemini") { return Err(invalid("ai_type 은 claude|codex|gemini")); }
                 if !matches!(classification, "primary" | "project" | "special") { return Err(invalid("classification 은 primary|project|special")); }
                 if !matches!(execution_mode, "always" | "on_demand" | "heartbeat") { return Err(invalid("execution_mode 은 always|on_demand|heartbeat")); }
-                // dedup-on-register — 같은 대화명을 가진 다른 alias 의 옛 레코드 제거(자기 행은 아래 UPSERT 가 갱신).
-                //   `alias <> ?` 가드로 갱신 대상 행은 보호. display_name 제공·비어있지 않을 때만 실행.
+                // session_identifier 를 먼저 읽어 둔다(중복 판정의 자기식별 키 + 아래 peers 갱신에 재사용).
+                let session_identifier = args.get("session_identifier").and_then(|v| v.as_str())
+                    .map(|s| s.trim()).filter(|s| !s.is_empty());
+                // 정본 이름 중복 검사 — 파괴적 DELETE 폐기(IDENTITY-MODEL-FINAL-SPEC §A·§J 갭#1·#2).
+                //   같은 display_name 의 다른 신원이 살아있으면 에러, 죽은 동명만 arbiter 통과 시 이어받기.
+                //   display_name 제공·비어있지 않을 때만 검사(이름 없는 등록은 유일성 대상 아님).
                 if let Some(dn) = display_name {
-                    let _ = self.db.conn().execute(
-                        "DELETE FROM agent_profiles WHERE display_name = ?1 AND alias <> ?2",
-                        rusqlite::params![dn, entry.alias],
-                    );
+                    // 내 pubkey — 이 alias 의 peers 행에서 조회(자기식별 우선 키).
+                    let my_pubkey: Option<String> = self.db.conn().query_row(
+                        "SELECT public_key_hex FROM peers WHERE alias = ?1",
+                        rusqlite::params![entry.alias],
+                        |r| r.get::<_, Option<String>>(0),
+                    ).ok().flatten();
+                    // 내 신원 메타(arbiter 입력) — 기존 값 +1(monotonic). 머신은 args.machine.
+                    let my_version: Option<i64> = self.db.conn().query_row(
+                        "SELECT identity_version FROM peers WHERE alias = ?1",
+                        rusqlite::params![entry.alias],
+                        |r| r.get::<_, Option<i64>>(0),
+                    ).ok().flatten();
+                    let next_version = my_version.unwrap_or(0) + 1;
+                    // arbiter tie-break 보조 — 이번 갱신 시각(unix ms). version+1 과 함께 갱신.
+                    let now_ms = chrono::Utc::now().timestamp_millis();
+                    match crate::identity_registry::check_name_available(
+                        self.db.conn(),
+                        dn,
+                        session_identifier,
+                        my_pubkey.as_deref(),
+                        Some(next_version),
+                        Some(now_ms),
+                        machine_p,
+                    ) {
+                        Ok(crate::identity_registry::TakeoverDecision::New)
+                        | Ok(crate::identity_registry::TakeoverDecision::SelfUpdate)
+                        | Ok(crate::identity_registry::TakeoverDecision::TakeoverDead { .. }) => {
+                            // 진행 — 아래 UPSERT 가 갱신/이어받기 수행. origin_machine·identity_version·identity_updated_at 갱신.
+                            let _ = self.db.conn().execute(
+                                "UPDATE peers SET origin_machine = COALESCE(?1, origin_machine), \
+                                   identity_version = ?2, identity_updated_at = ?3 WHERE alias = ?4",
+                                rusqlite::params![machine_p, next_version, now_ms, entry.alias],
+                            );
+                        }
+                        Err(conflict) => {
+                            return Err(invalid(&conflict.user_message()));
+                        }
+                    }
                 }
                 let _ = self.db.conn().execute(
                     "INSERT INTO agent_profiles (alias, ai_type, classification, execution_mode, machine, worktree, display_name, is_public, created_at, updated_at) \
@@ -1928,8 +2029,7 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 );
                 // session_identifier 영속 — peers 행이 이 alias 로 존재하면 기록(현황 패널 6컬럼 + 종료/재시작 대상).
                 //   peers 행 부재 시(transport 등록 전) silent skip — 행은 transport 등록이 생성.
-                let session_identifier = args.get("session_identifier").and_then(|v| v.as_str())
-                    .map(|s| s.trim()).filter(|s| !s.is_empty());
+                //   (session_identifier 는 위 중복 검사 직전에 이미 읽어 둠.)
                 if let Some(sid) = session_identifier {
                     let _ = self.db.conn().execute(
                         "UPDATE peers SET session_identifier = ?1 WHERE alias = ?2",

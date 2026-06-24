@@ -33,6 +33,7 @@ pub mod gui;
 pub mod hitl;
 pub mod identity;
 pub mod identity_handle;
+pub mod identity_registry;
 pub mod import_app;
 pub mod init;
 pub mod invite;

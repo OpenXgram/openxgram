@@ -45,6 +45,30 @@ pub fn is_acp_backed(session_identifier: Option<&str>) -> bool {
         .unwrap_or(false)
 }
 
+/// rc.371 #B (발신 라우팅 결정, 순수) — `peer_send`(send-unsigned) 가 대상 peer 를
+/// **로컬 ACP 브리지**(`handle_task`/`session/prompt`)로 구동해야 하는지 판정한다.
+///
+/// 결정 규칙(세 갈래):
+///   - `remote_homed == true` (peers.address host ≠ self_host): **항상 false** —
+///     원격 머신이 그 에이전트의 tmux/ACP 를 소유한다. 로컬 ACP project_path 를
+///     요구하면 안 되고(422 방지), sign+enqueue(transport) 로 홈 데몬에 전달한다.
+///   - 로컬-홈 + (`session_identifier` 가 `acp:` 마커 || `role='acp'`): **true** —
+///     로컬 라이브 ACP 세션이 소유 → ACP prompt 로 구동.
+///   - 그 외(로컬 tmux peer 등): **false** → sign+enqueue.
+///
+/// 이 함수는 DB-free 순수 결정이라 단위 테스트로 세 갈래를 모두 고정한다.
+/// (`remote_homed` 판정 자체는 `daemon_peer_sync::is_remote_homed_peer` 가 담당.)
+pub fn should_route_to_local_acp(
+    remote_homed: bool,
+    session_identifier: Option<&str>,
+    acp_role: bool,
+) -> bool {
+    if remote_homed {
+        return false;
+    }
+    is_acp_backed(session_identifier) || acp_role
+}
+
 /// Extract the ACP session id from an `acp:<sessionId>` marker. Returns `None`
 /// if the marker is not ACP-backed (so callers can fall back cleanly).
 pub fn acp_session_id_of(session_identifier: Option<&str>) -> Option<String> {
@@ -110,6 +134,31 @@ mod tests {
     fn acp_session_identifier_prefixes() {
         assert_eq!(acp_session_identifier("acp-7"), "acp:acp-7");
         assert_eq!(acp_session_identifier("abc"), "acp:abc");
+    }
+
+    #[test]
+    fn should_route_to_local_acp_three_branches() {
+        // ① 원격-홈 tmux peer (codex-ai-image: tmux: sid, role='acp' 잔재) →
+        //    remote_homed 가 true 면 acp_role 이 true 라도 로컬 ACP 로 안 간다(422 방지).
+        assert!(
+            !should_route_to_local_acp(true, Some("tmux:aoe_codex-ai-image_5322fc47"), true),
+            "원격-홈 tmux peer(role=acp 잔재)는 sign+enqueue(transport) 경로 — 로컬 ACP 강등"
+        );
+        // ② 로컬 tmux peer (홈=self) → ACP 아님 → sign+enqueue.
+        assert!(
+            !should_route_to_local_acp(false, Some("tmux:aoe_akashic_5054a80a"), false),
+            "로컬 tmux peer 는 tmux/transport 경로 — 로컬 ACP 아님"
+        );
+        // ③ 로컬 ACP peer (acp: 마커, 홈=self) → 로컬 ACP 구동.
+        assert!(
+            should_route_to_local_acp(false, Some("acp:acp-1"), false),
+            "로컬 acp: 마커 peer 는 ACP prompt 로 구동"
+        );
+        // ③' 로컬 ACP-전용 (peers 행 없음 → sid None, role='acp', 예: page-picker) → 로컬 ACP.
+        assert!(
+            should_route_to_local_acp(false, None, true),
+            "로컬 role=acp 전용 에이전트(예: page-picker)는 ACP prompt 로 구동"
+        );
     }
 
     #[test]

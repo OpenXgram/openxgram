@@ -546,12 +546,19 @@ pub async fn run_discord_inbound_for_daemon(
     Ok(())
 }
 
-/// rc.104 — alias → tmux session 동적 매핑.
-/// `tmux list-sessions -F '#{session_name}'` 호출해서:
-///   1. 정확 일치 (session_name == alias)
-///   2. aoe wrapper 매칭 (aoe_<alias>_<id>)
-///   3. substring 매칭 (session_name.contains(alias))
-/// 첫 매칭 반환. 매번 tmux 진리원천 조회 → 재시작/id 변경 자동 대응. 하드코딩 0.
+/// rc.104 → IDENTITY-MODEL-FINAL-SPEC §F — alias → tmux session **결정적(deterministic)** 매핑.
+///
+/// 정본 스펙 §F: "라우팅 = 이름 → terminalID 정확 조회. fuzzy substring resolver 폐기. 세션명 파싱 폐기."
+/// daemon_gui.rs `resolve_tmux_session`(session_identifier 기반)과 **동일 규칙**으로 통일.
+///
+/// 우선순위 (위에서부터, 첫 결정 반환):
+///   (a) 라이브 세션명과 **정확 일치** → 그 세션.
+///   (b) **peers.session_identifier** 조회 → `tmux:<name>` strip → 라이브면 그 세션. (핵심 — 정확한 명칭 바인딩)
+///   (c) `aoe_{alias}_*` prefix — **단일 매칭일 때만**. 2개 이상 매칭이면 모호 → 해결 실패(로그).
+///   (d) fuzzy `contains` 부분문자열 매칭 **폐기**. 미해결 시 None 반환 + 명확한 로그.
+///
+/// 모호(다중 매칭)·미해결이면 엉뚱한 세션에 주입하지 않도록 **None** 반환(잘못 보내느니 안 보낸다).
+/// 매번 tmux 진리원천 + peers 테이블 조회 → 재시작/id 변경 자동 대응. 하드코딩 0.
 /// rc.198 — Windows daemon 가 WSL 안의 tmux 호출 가능하게 cross-platform wrapper.
 /// Linux/macOS: `tmux ...`. Windows: `wsl tmux ...`.
 pub fn tmux_command_async() -> tokio::process::Command {
@@ -562,6 +569,35 @@ pub fn tmux_command_async() -> tokio::process::Command {
     } else {
         tokio::process::Command::new("tmux")
     }
+}
+
+/// peers.session_identifier 결정적 조회 — `SELECT session_identifier FROM peers WHERE alias=?`.
+/// `tmux:<name>` prefix 를 strip 한 세션명 반환(있고 non-empty 일 때만). DB/조회 실패 시 None.
+/// daemon_gui.rs `resolve_tmux_session` (2) 단계와 동일 로직 — notify 측 재사용용 헬퍼.
+fn lookup_session_identifier(alias: &str) -> Option<String> {
+    let data_dir = match openxgram_core::paths::default_data_dir() {
+        Ok(d) => d,
+        Err(_) => std::env::var("XGRAM_DATA_DIR").ok().map(PathBuf::from)?,
+    };
+    let mut db = Db::open(DbConfig {
+        path: db_path(&data_dir),
+        ..Default::default()
+    })
+    .ok()?;
+    let sid: Option<String> = db
+        .conn()
+        .query_row(
+            "SELECT session_identifier FROM peers \
+             WHERE alias=?1 AND session_identifier IS NOT NULL AND session_identifier != ''",
+            rusqlite::params![alias],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    let sid = sid?;
+    let name = sid.strip_prefix("tmux:").unwrap_or(&sid).trim().to_string();
+    if name.is_empty() { None } else { Some(name) }
 }
 
 pub async fn resolve_alias_to_tmux(alias: &str) -> Option<(String, u32)> {
@@ -578,16 +614,44 @@ pub async fn resolve_alias_to_tmux(alias: &str) -> Option<(String, u32)> {
     if !out.status.success() { return None;}
     let sessions: Vec<String> = String::from_utf8_lossy(&out.stdout)
         .lines().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+
+    // (a) 라이브 세션명과 정확 일치.
     if let Some(s) = sessions.iter().find(|s| s.as_str() == cleaned) {
         return Some((s.clone(), 0));
     }
+
+    // (b) peers.session_identifier ("tmux:<name>") 결정적 바인딩 — 라이브일 때만 채택.
+    if let Some(bound) = lookup_session_identifier(cleaned) {
+        if sessions.iter().any(|s| s == &bound) {
+            return Some((bound, 0));
+        }
+        tracing::warn!(
+            alias = %cleaned, session_identifier = %bound,
+            "§F resolve: peers.session_identifier 바인딩이 라이브 tmux 에 없음 — 그 단계 skip(다음 규칙 시도)"
+        );
+    }
+
+    // (c) aoe_{alias}_* prefix — 단일 매칭일 때만. 2개 이상이면 모호 → 거부(엉뚱한 주입 방지).
     let prefix = format!("aoe_{}_", cleaned);
-    if let Some(s) = sessions.iter().find(|s| s.starts_with(&prefix)) {
-        return Some((s.clone(), 0));
+    let prefix_matches: Vec<&String> = sessions.iter().filter(|s| s.starts_with(&prefix)).collect();
+    match prefix_matches.len() {
+        1 => return Some((prefix_matches[0].clone(), 0)),
+        n if n >= 2 => {
+            tracing::warn!(
+                alias = %cleaned, matches = n,
+                candidates = %prefix_matches.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(","),
+                "§F resolve: aoe_<alias>_* prefix 다중 매칭(모호) — 해결 실패 처리(잘못 보내느니 안 보냄)"
+            );
+            return None;
+        }
+        _ => {}
     }
-    if let Some(s) = sessions.iter().find(|s| s.contains(cleaned)) {
-        return Some((s.clone(), 0));
-    }
+
+    // (d) fuzzy contains 폐기 — 결정적으로 풀리지 않으면 None(명확한 로그).
+    tracing::warn!(
+        alias = %cleaned,
+        "§F resolve: 결정적 매칭 실패(정확일치/session_identifier/단일 aoe prefix 모두 없음). fuzzy contains 폐기 → 미해결 None"
+    );
     None
 }
 
