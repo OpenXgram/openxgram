@@ -2042,6 +2042,24 @@ pub(crate) fn local_live_tmux_agent_idents() -> std::collections::HashSet<String
     live
 }
 
+/// 세션↔신원 바인딩 self-heal 판정 (pure — tmux 의존 없음, 단위테스트 대상).
+///
+/// auto-seed 의 `peers.session_identifier` UPDATE 가드가 이 함수에 위임한다.
+/// 재바인딩(=UPDATE) 해야 하는 경우:
+///   - 현재 바인딩이 NULL 또는 빈 문자열 (아직 미바인딩), 또는
+///   - 현재 바인딩이 가리키는 tmux 세션이 **현재 live 집합에 없음** (재시작 후 stale/죽은 세션).
+/// 보존(=UPDATE 안 함) 해야 하는 경우:
+///   - 현재 바인딩이 가리키는 세션이 **live** (정상 동작 중인 바인딩 / 사용자 UI override 보호).
+///
+/// `live` 는 "tmux:<session_name>" 형식의 현재 live 식별자 집합.
+pub fn should_rebind(current: Option<&str>, live: &std::collections::HashSet<String>) -> bool {
+    match current {
+        None => true,
+        Some(s) if s.is_empty() => true,
+        Some(s) => !live.contains(s),
+    }
+}
+
 /// rc.201 — auto-seed: 자기 머신 의 tmux session 을 agent_capabilities 자동 등록.
 /// 마스터의 본질: peer = 터미널 (각 tmux). daemon startup 시 자기 머신 tmux session list
 /// 가져와서 각 session_name 의 alias 추출 → agent_capabilities INSERT OR IGNORE.
@@ -2071,6 +2089,10 @@ fn auto_seed_local_tmux_agents(data_dir: &std::path::Path) -> anyhow::Result<usi
     if local_sessions.is_empty() {
         return Ok(0);
     }
+    // self-heal 판정용 live 식별자 집합 — 현재 살아있는 모든 tmux 세션의 "tmux:<name>".
+    // should_rebind 가 이 집합으로 "현재 바인딩이 죽은 세션인가"를 판정한다.
+    let live_sids: std::collections::HashSet<String> =
+        local_sessions.iter().map(|sn| format!("tmux:{sn}")).collect();
 
     let mut db = openxgram_db::Db::open(openxgram_db::DbConfig {
         path: openxgram_core::paths::db_path(data_dir),
@@ -2115,13 +2137,27 @@ fn auto_seed_local_tmux_agents(data_dir: &std::path::Path) -> anyhow::Result<usi
         // format 은 collect_sessions(/v1/gui/sessions) 의 local tmux entry 와 동일 ("tmux:<name>").
         // capture_session 이 이 식별자를 바로 resolve → Messenger.tsx normalizeAlias 추정 불필요.
         // peer 가 아직 없으면 no-op (retroactive_register_agents 가 peer 생성 후 다음 startup 에 set).
-        // 사용자가 UI 에서 override 한 경우 (session_identifier IS NOT NULL) 는 덮어쓰지 않음.
+        //
+        // self-heal (5x-rebuild root fix): write-once 폐기. 매 startup 마다 should_rebind 판정 —
+        //   현재 바인딩이 NULL/빈값/죽은 세션이면 현재 live 세션으로 재바인딩(stale 덮어쓰기),
+        //   live 세션을 가리키면 보존(정상 바인딩 + 사용자 UI override 보호). alias 매칭은 유지 —
+        //   auto-seed 는 로컬 세션을 alias 로만 매칭(alias==name 에이전트 대상).
         let sid = format!("tmux:{sn}");
-        let _ = db.conn().execute(
-            "UPDATE peers SET session_identifier = ?1 \
-             WHERE alias = ?2 AND (session_identifier IS NULL OR session_identifier = '')",
-            rusqlite::params![&sid, &alias],
-        );
+        let current: Option<String> = db
+            .conn()
+            .query_row(
+                "SELECT session_identifier FROM peers WHERE alias = ?1",
+                rusqlite::params![&alias],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .ok()
+            .flatten();
+        if should_rebind(current.as_deref(), &live_sids) {
+            let _ = db.conn().execute(
+                "UPDATE peers SET session_identifier = ?1 WHERE alias = ?2",
+                rusqlite::params![&sid, &alias],
+            );
+        }
     }
     tracing::info!(seeded = seeded, total_sessions = local_sessions.len(), "rc.201 auto-seed 완료");
     Ok(seeded)

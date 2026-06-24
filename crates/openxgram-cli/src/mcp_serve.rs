@@ -2035,6 +2035,28 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         "UPDATE peers SET session_identifier = ?1 WHERE alias = ?2",
                         rusqlite::params![sid, entry.alias],
                     );
+                    // keypair 앵커 재바인딩 (5x-rebuild root fix §B) — 같은 신원(=같은 public_key_hex)을
+                    //   공유하는 모든 peers 행의 session_identifier 를 새 세션으로 repoint. 재시작으로
+                    //   세션 id 가 회전해도 동일 신원(pubkey)이 현재 live 세션을 따라간다. alias/display_name
+                    //   은 pubkey 위의 편집 가능한 라벨일 뿐 — 신원이 파편화되지 않는다.
+                    //   pubkey 불명(NULL)이면 pubkey-repoint skip(전체 행 오염 방지).
+                    let my_pubkey: Option<String> = self
+                        .db
+                        .conn()
+                        .query_row(
+                            "SELECT public_key_hex FROM peers WHERE alias = ?1",
+                            rusqlite::params![entry.alias],
+                            |r| r.get::<_, Option<String>>(0),
+                        )
+                        .ok()
+                        .flatten();
+                    if let Some(pk) = my_pubkey.as_deref().filter(|s| !s.is_empty()) {
+                        let _ = self.db.conn().execute(
+                            "UPDATE peers SET session_identifier = ?1 \
+                             WHERE public_key_hex = ?2 AND session_identifier IS NOT ?1",
+                            rusqlite::params![sid, pk],
+                        );
+                    }
                     // 동일 신원의 sibling human-alias 자동 재바인딩 — 같은 display_name 을 가진 모든
                     //   peers 행의 session_identifier 를 새 세션으로 repoint. (예: star/starian 가 같은
                     //   Star 신원이면 둘 다 라이브 세션으로 따라감.) display_name 제공 시에만, 자기 행은
