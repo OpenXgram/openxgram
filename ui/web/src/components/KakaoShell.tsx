@@ -1008,6 +1008,27 @@ export function KakaoShell(props: { onLogout?: () => void }) {
       window.alert(`spawn 실패: ${(e as Error).message}`);
     } finally { setActing(null); }
   }
+  // ── rc 현황 그리드 — 미등록 tmux 행을 에이전트로 등록(스펙: "현황그리드에서 모든 TMUX가 보이면 거기서 등록") ──
+  //   재사용: agents_register(POST /v1/gui/agents) — AddAgentModal 과 동일 invoke. agent_capabilities + agent_profiles 기록.
+  //   대상: 순수 tmux 행(hasTmux && !hasAgentRecord && !isPeer). r.machine/r.cwd 가 있으면 전달.
+  async function registerTmux(r: GridRow) {
+    if (!window.confirm(`이 TMUX 세션을 에이전트로 등록하시겠습니까?\n\n${r.name} (${r.alias})`)) return;
+    setActing(r.alias);
+    try {
+      await invoke("agents_register", {
+        alias: r.alias,
+        role: "agent",
+        ai_type: "claude",
+        classification: "project",
+        machine: r.machine || null,
+        project_path: r.cwd || null,
+        messenger_enabled: true,
+      });
+      await refetchRoster(); await refetchAgents(); await refetchSessions();
+    } catch (e) {
+      window.alert(`등록 실패: ${(e as Error).message}`);
+    } finally { setActing(null); }
+  }
   async function restartAgent(a: AgentRow) {
     const id = a.session_identifier;
     if (!id) { window.alert("세션 id 없음 — 재시작할 활성 세션이 없습니다. spawn 으로 새로 띄우세요."); return; }
@@ -1505,6 +1526,10 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                     <button class="killbtn" style="color:#37424d" title={r.sid ? "세션 재시작(kill+재spawn)" : "활성 세션 없음"} disabled={acting() === r.alias || !r.sid} onClick={() => restartAgent({ alias: r.alias, session_identifier: r.sid } as any)}>🔄 재시작</button>
                     {/* Spawn — rc.360. 중지/사망(active 아님) + ACP 신원(또는 peer) 일 때 활성. ACP find-or-create 로 재기동 */}
                     <button class="killbtn" style="color:#2c5a8f" title={r.status === "active" ? "이미 active — 새 세션 불필요" : "ACP 세션 새로 띄우기(spawn)"} disabled={acting() === r.alias || r.status === "active" || !(r.hasAgentRecord || r.isPeer)} onClick={() => void spawnAgent(r)}>▶️ spawn</button>
+                    {/* 등록 — 미등록 순수 tmux 행만(스펙: 현황그리드에서 TMUX 직접 등록). agents_register 로 agent_profiles 신원 부여 */}
+                    <Show when={r.hasTmux && !r.hasAgentRecord && !r.isPeer}>
+                      <button class="killbtn" style="color:#2e7d32" title="이 TMUX 세션을 에이전트로 등록" disabled={acting() === r.alias} onClick={() => void registerTmux(r)}>📝 등록</button>
+                    </Show>
                     {/* 삭제 — is_peer 면 peer_delete, has_agent 면 agents_delete, 순수 tmux 면 비활성 */}
                     <Show when={r.isPeer} fallback={
                       <button class="killbtn" style="color:#e5484d"
