@@ -372,6 +372,24 @@ const MIGRATIONS: &[Migration] = &[
         name: "identity_wallet_arbiter",
         sql: include_str!("../migrations/0066_identity_wallet_arbiter.sql"),
     },
+    // Phase B 통합 현황 그리드 — 토큰단가(외부 사용 시 1M 토큰당 단가). agent_profiles 확장.
+    Migration {
+        version: 67,
+        name: "agent_token_price",
+        sql: include_str!("../migrations/0067_agent_token_price.sql"),
+    },
+    // Phase B — 샘플(sample_text/sample_url). agent_profiles 확장.
+    Migration {
+        version: 68,
+        name: "agent_sample",
+        sql: include_str!("../migrations/0068_agent_sample.sql"),
+    },
+    // Phase B — 인지도(views) 메트릭 테이블. gui_roster LEFT-JOIN read-only.
+    Migration {
+        version: 69,
+        name: "agent_metrics",
+        sql: include_str!("../migrations/0069_agent_metrics.sql"),
+    },
 ];
 
 pub struct MigrationRunner<'a> {

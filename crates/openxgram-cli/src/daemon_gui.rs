@@ -335,6 +335,9 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         // P2 Task 5 — 정본 신원 편집: 이름(display_name)/역할(role) PATCH + 에이전트 전파.
         .route("/v1/gui/peers/{alias}/name", patch(gui_peer_set_name))
         .route("/v1/gui/peers/{alias}/role", patch(gui_peer_set_role))
+        // Phase B 현황 그리드 — 토큰단가(PATCH)/샘플(POST) 편집. agent_profiles 백킹.
+        .route("/v1/gui/agents/{alias}/token-price", patch(gui_agent_set_token_price))
+        .route("/v1/gui/agents/{alias}/sample", post(gui_agent_set_sample))
         .route("/v1/gui/peers/{alias}", delete(gui_peer_delete))
         // rc.229 fix#3 — on-demand 1-agent enrich (4-metadata + worktree/subagent/ex_peer tree).
         .route("/v1/gui/agent/{alias}/detail", get(gui_agent_detail))
@@ -1907,8 +1910,15 @@ struct RosterEntryDto {
     rating: Option<f64>,
     /// 평가 수 — external_reputation.review_count.
     review_count: Option<i64>,
-    /// 인지도(views/usage) — 현재 backing 테이블 없음 → 항상 None (다음 페이즈에서 스키마 추가).
+    /// 인지도(views) — Phase B: agent_metrics.views LEFT-JOIN. backing row 없으면 None.
     views: Option<i64>,
+    // ── Phase B 통합 현황 그리드 컬럼 (agent_profiles 백킹) ──
+    /// 토큰단가 — 외부 에이전트가 이 에이전트 사용 시 1M 토큰당 단가. agent_profiles.token_price_per_million.
+    token_price: Option<f64>,
+    /// 샘플 텍스트 — agent_profiles.sample_text.
+    sample_text: Option<String>,
+    /// 샘플 URL(파일 또는 랜딩페이지) — agent_profiles.sample_url.
+    sample_url: Option<String>,
 }
 
 impl From<openxgram_peer::RosterEntry> for RosterEntryDto {
@@ -1944,6 +1954,9 @@ impl From<openxgram_peer::RosterEntry> for RosterEntryDto {
             rating: None,
             review_count: None,
             views: None,
+            token_price: None,
+            sample_text: None,
+            sample_url: None,
         }
     }
 }
@@ -2100,7 +2113,44 @@ async fn gui_roster(
                 entry.primary_alias
             ),
         }
-        // views(인지도) — backing 테이블 없음 → None 유지(다음 페이즈 스키마 추가 예정).
+        // ── Phase B — agent_profiles(토큰단가/샘플). alias 후보 IN 매칭, 첫 행. 없으면 None 유지. ──
+        let prof_sql = format!(
+            "SELECT token_price_per_million, sample_text, sample_url FROM agent_profiles \
+             WHERE alias IN ({placeholders}) LIMIT 1"
+        );
+        match db.conn().query_row(&prof_sql, params.as_slice(), |r| {
+            Ok((
+                r.get::<_, Option<f64>>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, Option<String>>(2)?,
+            ))
+        }) {
+            Ok((price, stext, surl)) => {
+                entry.token_price = price;
+                entry.sample_text = stext;
+                entry.sample_url = surl;
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => {} // profile 없음 — None 유지(정상).
+            Err(e) => tracing::warn!(
+                "gui_roster: agent_profiles 조회 실패(alias={}): {e}",
+                entry.primary_alias
+            ),
+        }
+
+        // ── Phase B — 인지도(views): agent_metrics LEFT-JOIN(alias 후보 IN). 없으면 None. ──
+        let metrics_sql = format!(
+            "SELECT views FROM agent_metrics WHERE alias IN ({placeholders}) LIMIT 1"
+        );
+        match db.conn().query_row(&metrics_sql, params.as_slice(), |r| {
+            r.get::<_, i64>(0)
+        }) {
+            Ok(v) => entry.views = Some(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => {} // metrics row 없음 — None 유지(정상).
+            Err(e) => tracing::warn!(
+                "gui_roster: agent_metrics 조회 실패(alias={}): {e}",
+                entry.primary_alias
+            ),
+        }
     }
     drop(db);
 
@@ -11572,6 +11622,22 @@ struct PeerRoleBody {
     role: String,
 }
 
+/// Phase B — 토큰단가 PATCH body. null=미설정(컬럼 NULL).
+#[derive(Debug, Deserialize)]
+struct AgentTokenPriceBody {
+    #[serde(default)]
+    token_price_per_million: Option<f64>,
+}
+
+/// Phase B — 샘플 POST body. 각 필드 null=미설정(해당 컬럼 NULL).
+#[derive(Debug, Deserialize)]
+struct AgentSampleBody {
+    #[serde(default)]
+    sample_text: Option<String>,
+    #[serde(default)]
+    sample_url: Option<String>,
+}
+
 /// `PATCH /v1/gui/peers/{alias}/name` — P2 Task 5.
 /// 정본 신원 편집: 이름(display_name) 로컬 갱신 + 에이전트로 전파(best-effort).
 /// 로컬 `peers` UPDATE 가 authoritative. `agent_profiles` 미러·전파는 best-effort
@@ -11733,6 +11799,77 @@ async fn gui_peer_set_role(
         }
     };
     Ok(Json(serde_json::json!({ "ok": true, "propagation_queued": propagation_queued })))
+}
+
+/// `PATCH /v1/gui/agents/{alias}/token-price` (Phase B) — 토큰단가 갱신.
+/// body `{ token_price_per_million: number|null }`. null=미설정(NULL). agent_profiles 존재 검증.
+async fn gui_agent_set_token_price(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+    Json(body): Json<AgentTokenPriceBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    if alias.trim().is_empty() {
+        return Err(bad_request("alias 필수"));
+    }
+    let mut db = state.db.lock().await;
+    // alias 존재 검증 — agent_profiles 행 없으면 갱신 대상 없음(가짜 성공 금지, 절대 룰 #1).
+    let exists: bool = db
+        .conn()
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM agent_profiles WHERE alias = ?1)",
+            rusqlite::params![&alias],
+            |r| r.get(0),
+        )
+        .map_err(|e| internal(&format!("token-price exists: {e}")))?;
+    if !exists {
+        return Err(bad_request(&format!(
+            "agent_profiles 행 없음(alias={alias}) — 먼저 프로필 등록 필요"
+        )));
+    }
+    db.conn()
+        .execute(
+            "UPDATE agent_profiles SET token_price_per_million = ?1 WHERE alias = ?2",
+            rusqlite::params![body.token_price_per_million, &alias],
+        )
+        .map_err(|e| internal(&format!("token-price update: {e}")))?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// `POST /v1/gui/agents/{alias}/sample` (Phase B) — 샘플(텍스트/URL) 갱신.
+/// body `{ sample_text: string|null, sample_url: string|null }`. agent_profiles 존재 검증.
+async fn gui_agent_set_sample(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Path(alias): Path<String>,
+    Json(body): Json<AgentSampleBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    require_auth(&state, &headers).await.map_err(unauthorized)?;
+    if alias.trim().is_empty() {
+        return Err(bad_request("alias 필수"));
+    }
+    let mut db = state.db.lock().await;
+    let exists: bool = db
+        .conn()
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM agent_profiles WHERE alias = ?1)",
+            rusqlite::params![&alias],
+            |r| r.get(0),
+        )
+        .map_err(|e| internal(&format!("sample exists: {e}")))?;
+    if !exists {
+        return Err(bad_request(&format!(
+            "agent_profiles 행 없음(alias={alias}) — 먼저 프로필 등록 필요"
+        )));
+    }
+    db.conn()
+        .execute(
+            "UPDATE agent_profiles SET sample_text = ?1, sample_url = ?2 WHERE alias = ?3",
+            rusqlite::params![body.sample_text, body.sample_url, &alias],
+        )
+        .map_err(|e| internal(&format!("sample update: {e}")))?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 /// `GET /v1/gui/vault/pending` — vault 의 pending 승인 요청 목록.

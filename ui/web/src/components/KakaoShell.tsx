@@ -74,11 +74,27 @@ interface RosterEntryDto {
   has_tmux: boolean;
   quarantined: boolean;
   status?: string | null;          // rc.360 — 생명주기: active / stopped / dead
+  // ── Phase A 통합 현황 그리드 — 백엔드가 이미 제공하는 재무·평판 필드(스네이크). ──
+  //   백엔드 RosterEntryDto 가 직렬화하지만 프론트 매핑에서 누락하던 것들을 그리드로 노출.
+  wallet_balance?: number | null;  // 지갑잔액(전체 단위, 백엔드가 micro→단위 환산)
+  income?: number | null;          // 수입
+  expense?: number | null;         // 지출
+  rating?: number | null;          // 별점(external_reputation.avg_rating)
+  review_count?: number | null;    // 평가 수
+  views?: number | null;           // 인지도(조회수) — Phase B: agent_metrics.views 백킹
+  // ── Phase B 통합 현황 그리드 — agent_profiles 백킹(토큰단가/샘플). ──
+  token_price?: number | null;     // 토큰단가(1M) — 외부 사용 시 1M 토큰당 단가
+  sample_text?: string | null;     // 샘플 텍스트
+  sample_url?: string | null;      // 샘플 URL(파일 또는 랜딩페이지)
 }
 interface MessageDto { id: string; sender: string; body: string; timestamp: string; conversation_id: string }
 
 const agentName = (a: { display_name?: string | null; alias: string }) =>
   (a.display_name && a.display_name.trim()) || a.alias;
+
+// ── Phase A 현황 그리드 — 숫자 셀 표시. null → "—", 소수 최대 4자리(불필요한 0 제거). ──
+const fmtNum = (n: number | null | undefined): string =>
+  (n == null || !Number.isFinite(n)) ? "—" : String(Math.round(n * 1e4) / 1e4);
 
 // ai_type → 목업 .av 배경(목업의 하드코딩 색을 라이브 ai_type 으로 매핑).
 const AI_BG: Record<string, string> = {
@@ -308,6 +324,17 @@ export function KakaoShell(props: { onLogout?: () => void }) {
     // ── 신원 통합 capability 플래그(roster 의 소스 플래그 → 종류 셀) ──
     isPeer: boolean;          // peer 레코드 보유 → peer_delete 가능
     hasTmux: boolean;         // 로컬 tmux 세션 존재
+    // ── Phase A 통합 현황 그리드 — 등록상태 + 재무·평판 컬럼(백엔드 roster 제공). ──
+    registered: boolean;      // 등록상태(peer 또는 agent_profiles 신원 보유)
+    walletBalance: number | null; // 지갑잔액
+    income: number | null;        // 수입
+    expense: number | null;       // 지출
+    rating: number | null;        // 별점(avg_rating)
+    reviewCount: number | null;   // 평가 수
+    views: number | null;         // 인지도(조회수 — Phase B agent_metrics 백킹)
+    tokenPrice: number | null;    // 토큰단가(1M) — Phase B agent_profiles 백킹(인라인 편집)
+    sampleText: string | null;    // 샘플 텍스트 — Phase B
+    sampleUrl: string | null;     // 샘플 URL(파일/랜딩) — Phase B
   }
   // ── rc 현황 그리드 — 백엔드 roster 엔드포인트를 직접 GridRow 로 매핑(thin renderer) ──────
   //   이전엔 여기서 peers()+agents()+sessions() 를 normSid/byCanon/bySid/byAlias 로 프론트 병합했다.
@@ -337,6 +364,18 @@ export function KakaoShell(props: { onLogout?: () => void }) {
         hasAgentRecord: e.has_agent,      // agents_delete 가능
         isPeer: e.is_peer,                // peer_delete 가능
         hasTmux: e.has_tmux,              // 로컬 tmux 세션 존재
+        // ── Phase A — 등록상태 + 재무·평판(백엔드 roster 가 이미 제공, 매핑만 추가) ──
+        registered: e.is_peer || e.has_agent, // 등록상태(peer/agent 신원 보유)
+        walletBalance: e.wallet_balance ?? null,
+        income: e.income ?? null,
+        expense: e.expense ?? null,
+        rating: e.rating ?? null,
+        reviewCount: e.review_count ?? null,
+        views: e.views ?? null,
+        // ── Phase B — 토큰단가/샘플(agent_profiles 백킹) ──
+        tokenPrice: e.token_price ?? null,
+        sampleText: e.sample_text ?? null,
+        sampleUrl: e.sample_url ?? null,
       };
     });
   });
@@ -566,8 +605,8 @@ export function KakaoShell(props: { onLogout?: () => void }) {
 
   // 인라인 편집 상태 — { alias, field }. 이름·역할 셀 클릭 시 input 으로 전환.
   //   커밋: peer_set_name / peer_set_role → refetchPeers. Enter/blur 커밋, Esc 취소, 빈/불변 = no-op.
-  const [editing, setEditing] = createSignal<{ alias: string; field: "name" | "role" } | null>(null);
-  const isEditing = (alias: string, field: "name" | "role") => {
+  const [editing, setEditing] = createSignal<{ alias: string; field: "name" | "role" | "tokenPrice" } | null>(null);
+  const isEditing = (alias: string, field: "name" | "role" | "tokenPrice") => {
     const e = editing();
     return !!e && e.alias === alias && e.field === field;
   };
@@ -585,6 +624,49 @@ export function KakaoShell(props: { onLogout?: () => void }) {
       await refetchRoster(); await refetchPeers(); await refetchAgents();
     } catch (e) {
       window.alert(`${field === "name" ? "이름" : "역할"} 변경 실패: ${(e as Error).message}`);
+    } finally { setActing(null); }
+  }
+
+  // Phase B — 토큰단가 인라인 편집 커밋. 빈 문자열=null(미설정), 숫자=값. 불변=no-op.
+  //   백엔드 PATCH /v1/gui/agents/{alias}/token-price (body.token_price_per_million). registered 행만.
+  async function commitTokenPrice(row: GridRow, value: string) {
+    setEditing(null);
+    const raw = value.trim();
+    let next: number | null;
+    if (raw === "") {
+      next = null;
+    } else {
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 0) { window.alert("토큰단가는 0 이상 숫자만 가능합니다"); return; }
+      next = n;
+    }
+    if (next === row.tokenPrice) return; // 불변 = no-op.
+    setActing(row.alias);
+    try {
+      await invoke("agents_set_token_price", { alias: row.alias, token_price_per_million: next });
+      await refetchRoster();
+    } catch (e) {
+      window.alert(`토큰단가 변경 실패: ${(e as Error).message}`);
+    } finally { setActing(null); }
+  }
+
+  // Phase B — 샘플 편집(텍스트/URL). prompt 로 간소 입력(전체 에디터는 Phase C).
+  //   POST /v1/gui/agents/{alias}/sample (sample_text/sample_url). registered 행만.
+  async function editSample(row: GridRow) {
+    const text = window.prompt("샘플 텍스트(설명/스니펫) — 비우면 미설정:", row.sampleText ?? "");
+    if (text === null) return; // 취소.
+    const url = window.prompt("샘플 URL(파일 또는 랜딩페이지) — 비우면 미설정:", row.sampleUrl ?? "");
+    if (url === null) return; // 취소.
+    setActing(row.alias);
+    try {
+      await invoke("agents_set_sample", {
+        alias: row.alias,
+        sample_text: text.trim() === "" ? null : text.trim(),
+        sample_url: url.trim() === "" ? null : url.trim(),
+      });
+      await refetchRoster();
+    } catch (e) {
+      window.alert(`샘플 변경 실패: ${(e as Error).message}`);
     } finally { setActing(null); }
   }
 
@@ -1029,6 +1111,22 @@ export function KakaoShell(props: { onLogout?: () => void }) {
       window.alert(`등록 실패: ${(e as Error).message}`);
     } finally { setActing(null); }
   }
+  // ── Phase A 금액추가(topup) — 마스터 → 서브 지갑 즉시 충전. ──
+  //   재사용: MarketTab 과 동일한 wallet_topup(agent_id, amount_micro) invoke(POST /v1/gui/wallets/topup).
+  //   roster 의 alias(primary_alias) = sub_wallets.agent_id. prompt 로 USD 입력 → micro 환산.
+  async function topupRow(r: GridRow) {
+    const raw = window.prompt(`충전할 금액(USD)을 입력하세요\n\n${r.name} (${r.alias})`, "1");
+    if (raw == null) return;
+    const usd = Number(raw);
+    if (!Number.isFinite(usd) || usd <= 0) { window.alert("0 보다 큰 숫자를 입력하세요."); return; }
+    setActing(r.alias);
+    try {
+      await invoke("wallet_topup", { agent_id: r.alias, amount_micro: Math.floor(usd * 1_000_000) });
+      await refetchRoster();
+    } catch (e) {
+      window.alert(`금액추가 실패: ${(e as Error).message}`);
+    } finally { setActing(null); }
+  }
   async function restartAgent(a: AgentRow) {
     const id = a.session_identifier;
     if (!id) { window.alert("세션 id 없음 — 재시작할 활성 세션이 없습니다. spawn 으로 새로 띄우세요."); return; }
@@ -1459,16 +1557,27 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                 ref={(el) => { el.indeterminate = !allVisibleSelected() && someVisibleSelected(); }}
                 onChange={toggleSelectAll} />
             </span>
+            {/* ── Phase A 통합 현황 그리드 컬럼 순서 ──
+                순번/상태/이름/역할/세션id/PATH/머신/종류/등록상태/토큰단가(1M)/지갑잔액/수입/지출/정본주소/샘플/별점/평가/인지도/액션.
+                토큰단가(인라인 편집)·샘플(링크/보기+✎)·인지도(views) = Phase B 백킹 완료. 신규 컬럼 정렬 미적용. */}
             <span title="순번">#</span>
             <span onClick={(e) => onSort("status", e)} title="상태순 정렬 (Shift+클릭=정렬 단계 추가)">상태{sortInd("status")}</span>
             <span onClick={(e) => onSort("name", e)} title="이름순 정렬 (Shift+클릭=정렬 단계 추가)">이름{sortInd("name")}</span>
-            <span onClick={(e) => onSort("alias", e)} title="alias(라우팅 키)순 정렬 (Shift+클릭=정렬 단계 추가)">alias{sortInd("alias")}</span>
-            <span onClick={(e) => onSort("canonical", e)} title="정본주소순 정렬 (Shift+클릭=정렬 단계 추가)">정본주소{sortInd("canonical")}</span>
+            <span onClick={(e) => onSort("role", e)} title="역할순 정렬 (Shift+클릭=정렬 단계 추가)">역할{sortInd("role")}</span>
+            <span onClick={(e) => onSort("sid", e)} title="세션id순 정렬 (Shift+클릭=정렬 단계 추가)">세션id{sortInd("sid")}</span>
+            <span onClick={(e) => onSort("cwd", e)} title="PATH(폴더)순 정렬 (Shift+클릭=정렬 단계 추가)">PATH{sortInd("cwd")}</span>
             <span onClick={(e) => onSort("machine", e)} title="머신순 정렬 — 로컬(seoul) 먼저 (Shift+클릭=정렬 단계 추가)">머신{sortInd("machine")}</span>
             <span onClick={(e) => onSort("kind", e)} title="종류순 정렬 (Shift+클릭=정렬 단계 추가)">종류{sortInd("kind")}</span>
-            <span onClick={(e) => onSort("sid", e)} title="세션id순 정렬 (Shift+클릭=정렬 단계 추가)">세션id{sortInd("sid")}</span>
-            <span onClick={(e) => onSort("role", e)} title="역할순 정렬 (Shift+클릭=정렬 단계 추가)">역할{sortInd("role")}</span>
-            <span onClick={(e) => onSort("cwd", e)} title="폴더순 정렬 (Shift+클릭=정렬 단계 추가)">폴더{sortInd("cwd")}</span>
+            <span title="등록상태 — peer/agent 신원 보유 여부">등록상태</span>
+            <span title="토큰단가(1M) — 외부 사용 시 1M 토큰당 단가(클릭 편집)">토큰단가(1M)</span>
+            <span title="지갑잔액">지갑잔액</span>
+            <span title="수입">수입</span>
+            <span title="지출">지출</span>
+            <span onClick={(e) => onSort("canonical", e)} title="정본주소순 정렬 (Shift+클릭=정렬 단계 추가)">정본주소{sortInd("canonical")}</span>
+            <span title="샘플 — 파일/랜딩 URL 링크 또는 텍스트 보기(✎ 편집)">샘플</span>
+            <span title="별점(평균 평점)">별점</span>
+            <span title="평가 수">평가</span>
+            <span title="인지도(조회 수) — agent_metrics.views">인지도</span>
             <span style="justify-content:flex-end">액션</span>
           </div>
           <Show when={sortedRows().length > 0} fallback={<div class="dg-row"><span /><span /><span class="dg-ro" style="grid-column:4/-1">표시할 peer · tmux · ACP 가 없습니다</span></div>}>
@@ -1495,16 +1604,6 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                       onKeyDown={(e) => { if (e.key === "Enter") void commitInlineEdit(r, "name", e.currentTarget.value); else if (e.key === "Escape") setEditing(null); }}
                       onBlur={(e) => void commitInlineEdit(r, "name", e.currentTarget.value)} /></span>
                   </Show>
-                  {/* alias — A2A 라우팅 키. 항상 존재, raw 표시(이름과 구별되게 모노). */}
-                  <span class="dg-alias" title={r.alias}>{r.alias}</span>
-                  {/* 정본 주소 배지(앞6…뒤4) — peer 만 */}
-                  <span style={`font-size:10.5px;font-family:ui-monospace,Menlo,monospace;color:${r.canonical ? "#5a7fb0" : "var(--muted)"};background:${r.canonical ? "#eef4fa" : "transparent"};border-radius:6px;padding:1px 6px;justify-self:start`} title={r.canonical ?? "정본 주소 없음"}>{r.canonical ? `${r.canonical.slice(0, 6)}…${r.canonical.slice(-4)}` : "—"}</span>
-                  {/* 머신 — 백엔드 roster 가 이미 seoul/zalman 으로 정규화 → 그대로 표시 */}
-                  <span title={r.machine}>{r.machine || "—"}</span>
-                  {/* 종류 배지 — 소스 조합(peer/agent/tmux 플래그) 기준 라벨 */}
-                  <span class="dg-kind" style={r.isPeer ? "background:#e6f0fb;color:#2c5a8f" : r.hasAgentRecord ? "background:#eef1f4;color:#6a727c" : "background:#f0ece6;color:#8f6a2c"} title={kindTitle(r)}>{kindLabel(r)}</span>
-                  {/* 세션 id */}
-                  <span title={r.sid ?? ""}>{r.sid ?? "—"}</span>
                   {/* 역할 — peer 면 셀 클릭 인라인 편집 */}
                   <Show when={isEditing(r.alias, "role")} fallback={
                     <span class={r.editable ? "dg-edit" : ""} title={r.editable ? "클릭하여 역할 편집" : (r.role ?? "")}
@@ -1514,9 +1613,55 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                       onKeyDown={(e) => { if (e.key === "Enter") void commitInlineEdit(r, "role", e.currentTarget.value); else if (e.key === "Escape") setEditing(null); }}
                       onBlur={(e) => void commitInlineEdit(r, "role", e.currentTarget.value)} /></span>
                   </Show>
-                  {/* 폴더 */}
+                  {/* 세션 id */}
+                  <span title={r.sid ?? ""}>{r.sid ?? "—"}</span>
+                  {/* PATH(폴더) */}
                   <span title={r.cwd ?? ""}>{r.cwd ?? "—"}</span>
-                  {/* 액션 — 모든 행 동일 4버튼(능력별 활성/비활성). 슬롯 고정 → 컬럼 세로 정렬. */}
+                  {/* 머신 — 백엔드 roster 가 이미 seoul/zalman 으로 정규화 → 그대로 표시 */}
+                  <span title={r.machine}>{r.machine || "—"}</span>
+                  {/* 종류 배지 — 소스 조합(peer/agent/tmux 플래그) 기준 라벨 */}
+                  <span class="dg-kind" style={r.isPeer ? "background:#e6f0fb;color:#2c5a8f" : r.hasAgentRecord ? "background:#eef1f4;color:#6a727c" : "background:#f0ece6;color:#8f6a2c"} title={kindTitle(r)}>{kindLabel(r)}</span>
+                  {/* 등록상태 배지 — 등록=초록 · 미등록=회색 */}
+                  <span class="dg-kind" style={r.registered ? "background:#e6f5ea;color:#2e7d32" : "background:#eef1f4;color:#6a727c"} title={r.registered ? "등록 — peer/agent 신원 보유" : "미등록 — 순수 tmux"}>{r.registered ? "등록" : "미등록"}</span>
+                  {/* 토큰단가(1M) — Phase B: registered 행만 인라인 편집(빈값=미설정 null) */}
+                  <Show when={isEditing(r.alias, "tokenPrice")} fallback={
+                    <span class={r.registered ? "dg-edit" : ""} style={r.registered ? "" : "color:var(--muted)"}
+                      title={r.registered ? "클릭하여 토큰단가(1M) 편집 — 외부 사용 시 1M 토큰당 단가" : "미등록 — 토큰단가 설정 불가"}
+                      onClick={() => { if (r.registered) setEditing({ alias: r.alias, field: "tokenPrice" }); }}>
+                      {r.registered ? <span class="dg-edit-tx">{fmtNum(r.tokenPrice)}</span> : "—"}</span>
+                  }>
+                    <span><input class="dg-in" type="number" min="0" step="any" autofocus value={r.tokenPrice ?? ""}
+                      onKeyDown={(e) => { if (e.key === "Enter") void commitTokenPrice(r, e.currentTarget.value); else if (e.key === "Escape") setEditing(null); }}
+                      onBlur={(e) => void commitTokenPrice(r, e.currentTarget.value)} /></span>
+                  </Show>
+                  {/* 지갑잔액 */}
+                  <span title="지갑잔액">{fmtNum(r.walletBalance)}</span>
+                  {/* 수입 */}
+                  <span title="수입">{fmtNum(r.income)}</span>
+                  {/* 지출 */}
+                  <span title="지출">{fmtNum(r.expense)}</span>
+                  {/* 정본 주소 배지(앞6…뒤4) — peer 만 */}
+                  <span style={`font-size:10.5px;font-family:ui-monospace,Menlo,monospace;color:${r.canonical ? "#5a7fb0" : "var(--muted)"};background:${r.canonical ? "#eef4fa" : "transparent"};border-radius:6px;padding:1px 6px;justify-self:start`} title={r.canonical ?? "정본 주소 없음"}>{r.canonical ? `${r.canonical.slice(0, 6)}…${r.canonical.slice(-4)}` : "—"}</span>
+                  {/* 샘플 — Phase B: URL 있으면 링크, 텍스트만 있으면 "보기"(tooltip), 둘 다 없으면 "—". registered 행은 ✎ 편집(prompt) */}
+                  <span title={r.sampleUrl ?? r.sampleText ?? "샘플 미설정"}>
+                    <Show when={r.sampleUrl} fallback={
+                      <Show when={r.sampleText} fallback={<span style="color:var(--muted)">—</span>}>
+                        <span style="cursor:help;color:#5a7fb0" title={r.sampleText ?? ""}>보기</span>
+                      </Show>
+                    }>
+                      <a href={r.sampleUrl ?? "#"} target="_blank" rel="noreferrer" style="color:#2c5a8f" onClick={(e) => e.stopPropagation()}>샘플</a>
+                    </Show>
+                    <Show when={r.registered}>
+                      <span class="dg-edit" style="margin-left:6px;cursor:pointer;color:var(--muted)" title="샘플 편집(텍스트/URL)" onClick={() => void editSample(r)}>✎</span>
+                    </Show>
+                  </span>
+                  {/* 별점 — avg_rating */}
+                  <span title="별점(평균 평점)">{r.rating == null ? "—" : `★ ${fmtNum(r.rating)}`}</span>
+                  {/* 평가 수 */}
+                  <span title="평가 수">{r.reviewCount == null ? "—" : `(${r.reviewCount})`}</span>
+                  {/* 인지도(조회 수) — Phase B: agent_metrics.views(없으면 —) */}
+                  <span title="인지도(조회 수)">{fmtNum(r.views)}</span>
+                  {/* 액션 — 모든 행 동일 버튼(능력별 활성/비활성). 슬롯 고정 → 컬럼 세로 정렬. */}
                   <span class="dg-acts">
                     {/* 새창 — 항상 가능(순수 프론트) */}
                     <button class="killbtn" style="color:#37424d" title={r.sid ? "새 창 — tmux 라이브" : "새 창 — 대화"} disabled={acting() === r.alias} onClick={() => openPeerWindow({ alias: r.alias, sid: r.sid, name: r.name })}>🗗 새창</button>
@@ -1526,6 +1671,10 @@ export function KakaoShell(props: { onLogout?: () => void }) {
                     <button class="killbtn" style="color:#37424d" title={r.sid ? "세션 재시작(kill+재spawn)" : "활성 세션 없음"} disabled={acting() === r.alias || !r.sid} onClick={() => restartAgent({ alias: r.alias, session_identifier: r.sid } as any)}>🔄 재시작</button>
                     {/* Spawn — rc.360. 중지/사망(active 아님) + ACP 신원(또는 peer) 일 때 활성. ACP find-or-create 로 재기동 */}
                     <button class="killbtn" style="color:#2c5a8f" title={r.status === "active" ? "이미 active — 새 세션 불필요" : "ACP 세션 새로 띄우기(spawn)"} disabled={acting() === r.alias || r.status === "active" || !(r.hasAgentRecord || r.isPeer)} onClick={() => void spawnAgent(r)}>▶️ spawn</button>
+                    {/* 금액추가(topup) — 에이전트 행(agent/peer)만. wallet_topup 재사용(마스터 → 서브 충전) */}
+                    <button class="killbtn" style="color:#2e7d32" title={(r.hasAgentRecord || r.isPeer) ? "이 에이전트 지갑에 금액 추가(충전)" : "에이전트 행만 충전 가능"} disabled={acting() === r.alias || !(r.hasAgentRecord || r.isPeer)} onClick={() => void topupRow(r)}>💰＋ 금액추가</button>
+                    {/* 금액이전(에이전트→메인) — 백엔드 이전 엔드포인트 없음 → Phase C 비활성 플레이스홀더 */}
+                    <button class="killbtn" style="color:#6a727c" title="금액이전(서브→메인) — Phase C" disabled>↪ 금액이전</button>
                     {/* 등록 — 미등록 순수 tmux 행만(스펙: 현황그리드에서 TMUX 직접 등록). agents_register 로 agent_profiles 신원 부여 */}
                     <Show when={r.hasTmux && !r.hasAgentRecord && !r.isPeer}>
                       <button class="killbtn" style="color:#2e7d32" title="이 TMUX 세션을 에이전트로 등록" disabled={acting() === r.alias} onClick={() => void registerTmux(r)}>📝 등록</button>

@@ -374,7 +374,8 @@
    .dash 콘텐츠가 뷰포트를 넘으면 .dash(overflow-y:auto)가 스크롤 → 25행까지 도달.
    dg-head 의 position:sticky 는 .dash 스크롤 기준으로 상단 고정된다. */
 .oxg-app .dgrid{width:calc(100% - 48px);margin:0 24px 24px;border:1px solid var(--line);border-radius:14px;background:#fff;flex:none;font-size:12.5px}
-.oxg-app .dgrid .dg-row{display:grid;grid-template-columns:30px 34px 72px minmax(110px,1.2fr) minmax(100px,1fr) 104px 78px 58px minmax(110px,1.1fr) minmax(80px,0.9fr) minmax(160px,2fr) 360px;align-items:center;gap:8px;padding:6px 12px;border-top:1px solid var(--line)}
+/* Phase A 통합 현황 그리드 — 컬럼 순서: chk/순번/상태/이름/역할/세션id/PATH/머신/종류/등록상태/토큰단가/지갑잔액/수입/지출/정본주소/샘플/별점/평가/인지도/액션 */
+.oxg-app .dgrid .dg-row{display:grid;grid-template-columns:30px 34px 72px minmax(110px,1.2fr) minmax(80px,0.9fr) minmax(110px,1.1fr) minmax(150px,1.6fr) 78px 58px 64px 72px 80px 72px 72px 104px 56px 64px 56px 64px 470px;align-items:center;gap:8px;padding:6px 12px;border-top:1px solid var(--line)}
 /* rc.362 행 선택 체크박스 셀 + 선택 행 하이라이트 */
 .oxg-app .dgrid .dg-row .dg-chk{display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:visible}
 .oxg-app .dgrid .dg-row .dg-chk input{cursor:pointer;width:14px;height:14px;margin:0;accent-color:#2c5a8f}
@@ -406,7 +407,7 @@
 .oxg-app .dgrid .dg-row .dg-edit .dg-edit-tx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .oxg-app .dgrid .dg-row input.dg-in{width:100%;font-size:12px;font-family:var(--sans);border:1px solid #5a7fb0;border-radius:5px;padding:2px 5px;background:#fff;color:#16242f}
 /* 4 고정 슬롯 그리드 — 모든 행이 동일 4버튼이므로 새창/종료/재시작/삭제 컬럼이 행 간 세로 정렬된다. */
-.oxg-app .dgrid .dg-acts{display:grid;grid-template-columns:repeat(5,1fr);align-items:center;gap:5px;justify-content:end;overflow:visible}
+.oxg-app .dgrid .dg-acts{display:grid;grid-template-columns:repeat(7,1fr);align-items:center;gap:5px;justify-content:end;overflow:visible}
 .oxg-app .dgrid .dg-acts .killbtn{margin:0;width:100%;flex:none;background:#fff;border:1px solid var(--line);border-radius:7px;padding:3px 7px;font-size:11px;font-weight:600;cursor:pointer;font-family:var(--sans);white-space:nowrap;text-align:center}
 .oxg-app .dgrid .dg-acts .killbtn:hover{background:#fdecec;border-color:#f3c0c0}
 .oxg-app .dgrid .dg-acts .killbtn:disabled{opacity:.5;cursor:default}

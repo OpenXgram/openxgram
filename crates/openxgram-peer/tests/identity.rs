@@ -250,6 +250,9 @@ fn test_roster_peer_and_agent_same_sid_two_rows() {
         session_identifier: Some("tmux:aoe_flowsync_x".into()),
         role: Some("primary".into()),
         display_name: Some("FlowSync".into()),
+        session_status: Some("active".into()),
+        last_seen: Some("2026-06-26T00:00:00+09:00".into()),
+        notes: None,
     }];
     // agent 가 같은 sid 를 들고 있어도 rc.360 에선 병합 안 함 — 별도 행.
     let agents = vec![AgentInput {

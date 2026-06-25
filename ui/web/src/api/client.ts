@@ -178,6 +178,10 @@ const ROUTES: Record<string, Route> = {
  peer_delete: { method: "DELETE", path: "/peers/{alias}"},
  peer_set_name: { method: "PATCH", path: "/peers/{alias}/name", body: true},
  peer_set_role: { method: "PATCH", path: "/peers/{alias}/role", body: true},
+ // Phase B 현황 그리드 — 토큰단가(PATCH)/샘플(POST). agent_profiles 백킹.
+ //   body 키는 daemon body struct 와 동일(snake_case): token_price_per_million / sample_text·sample_url.
+ agents_set_token_price: { method: "PATCH", path: "/agents/{alias}/token-price", body: true},
+ agents_set_sample: { method: "POST", path: "/agents/{alias}/sample", body: true},
 
  // Messenger v1.3 §3.2 — 머신×세션 통합 detector (M-1)
  sessions: { method: "GET", path: "/sessions"},

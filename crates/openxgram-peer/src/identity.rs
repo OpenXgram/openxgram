@@ -29,6 +29,12 @@ pub struct PeerInput {
     pub session_identifier: Option<String>,
     pub role: Option<String>,
     pub display_name: Option<String>,
+    /// 라이브 상태 캐시 (0064 컬럼): active | idle | disconnected | NULL.
+    pub session_status: Option<String>,
+    /// 마지막 연결 시각 (RFC3339). gossip 자동흡수 stub 식별·연결성 판정에 사용.
+    pub last_seen: Option<String>,
+    /// 등록 출처 메모. "auto-registered"/"auto-seed"/"auto-synced" prefix = gossip/테스트 stub.
+    pub notes: Option<String>,
 }
 
 /// agent_profiles(+agent_capabilities) 1행의 로스터 입력 투영.
@@ -110,6 +116,24 @@ pub fn norm_sid(s: Option<&str>) -> String {
     let no_lead = after_tmux.strip_prefix('[').unwrap_or(after_tmux);
     let no_trail = no_lead.strip_suffix(']').unwrap_or(no_lead);
     no_trail.trim().to_lowercase()
+}
+
+/// gossip/테스트 자동흡수 stub 여부 — notes prefix 로 판정.
+/// `auto-registered`(envelope zero-touch) · `auto-seed`(tmux 자동 등록) ·
+/// `auto-synced`(세션 동기화) 로 시작하면 사람이 등록한 신원이 아니라 자동 흡수 stub.
+/// 이 stub 은 자체로는 라이브 증거가 아니므로(세션/active 상태가 따로 있어야 함),
+/// 다른 라이브 신호가 없으면 현황 그리드에서 제외한다.
+fn is_auto_stub(notes: Option<&str>) -> bool {
+    let n = notes.unwrap_or("").trim().to_lowercase();
+    n.starts_with("auto-registered") || n.starts_with("auto-seed") || n.starts_with("auto-synced")
+}
+
+/// peers.session_status 가 라이브(연결됨)인지 — `active`/`live`/`connected`.
+fn is_live_status(status: Option<&str>) -> bool {
+    matches!(
+        status.unwrap_or("").trim().to_lowercase().as_str(),
+        "active" | "live" | "connected"
+    )
 }
 
 /// 머신 라벨 정규화 — KakaoShell `canonMachine` 미러.
@@ -287,7 +311,8 @@ impl<'a> IdentityStore<'a> {
         // peers — eth_address(정본 주소)·session_identifier·role·display_name.
         let peers: Vec<PeerInput> = {
             let mut stmt = self.db.conn().prepare(
-                "SELECT alias, eth_address, session_identifier, role, display_name
+                "SELECT alias, eth_address, session_identifier, role, display_name,
+                        session_status, last_seen, notes
                  FROM peers ORDER BY created_at ASC",
             )?;
             let mapped = stmt.query_map([], |r| {
@@ -297,6 +322,9 @@ impl<'a> IdentityStore<'a> {
                     session_identifier: r.get(2)?,
                     role: r.get(3)?,
                     display_name: r.get(4)?,
+                    session_status: r.get(5)?,
+                    last_seen: r.get(6)?,
+                    notes: r.get(7)?,
                 })
             })?;
             let mut out = Vec::new();
@@ -411,6 +439,30 @@ impl<'a> IdentityStore<'a> {
 
         // peer alias 집합 — caps 행 dedup(list_peers `alias NOT IN peers` 미러)에 사용.
         let peer_aliases: HashSet<String> = peers.iter().map(|p| p.alias.clone()).collect();
+
+        // 정본 agent_profiles 등록 alias 집합 — spec #1: 세션이 꺼져 있어도(spawn 가능)
+        // 항상 현황 그리드에 남는다. caps(능력 거울) 행과 구분하기 위해 별도 집합으로 유지.
+        let profile_aliases: HashSet<String> = agents.iter().map(|a| a.alias.clone()).collect();
+
+        // 라이브/연결된 peer alias 집합 — 현황 그리드 포함 판정에 사용.
+        //   포함 조건(peers 행): session_status 가 active/live  OR
+        //   라이브 세션 sid 와 매칭  OR  (notes 가 auto-stub 가 아니고 last_seen 존재).
+        //   bare gossip/테스트 stub(auto-registered/auto-seed/auto-synced + 세션·active 없음)은 제외.
+        let live_peer_aliases: HashSet<String> = peers
+            .iter()
+            .filter(|p| {
+                let live_sid = {
+                    let n = norm_sid(p.session_identifier.as_deref());
+                    !n.is_empty() && live_sids.contains(&n)
+                };
+                if is_live_status(p.session_status.as_deref()) || live_sid {
+                    return true;
+                }
+                // 세션 증거가 없으면 — auto-stub 은 제외, 사람이 등록한 행(non-stub)만 유지.
+                !is_auto_stub(p.notes.as_deref()) && p.last_seen.is_some()
+            })
+            .map(|p| p.alias.clone())
+            .collect();
 
         let mut rows: Vec<RosterEntry> = Vec::new();
         // peer/agent 가 들고 있는 normSid 집합 — standalone 세션 행 중복 방지.
@@ -556,6 +608,31 @@ impl<'a> IdentityStore<'a> {
             r.machine = Some(normalize_machine(r.machine.as_deref(), local_machine_alias));
         }
 
+        // ── 포함 필터(현황 그리드 source pollution 제거) ──
+        // 행은 다음 중 하나 이상이면 EMIT, 아니면 stale gossip/테스트 echo 로 간주해 제외:
+        //   1) 라이브 세션 증거: has_tmux == true  또는  status == "active".
+        //   2) 정본 agent_profiles 등록: primary_alias ∈ profile_aliases
+        //      (세션이 꺼져 있어도 spawn 위해 유지 — spec #1).
+        //   3) 연결된 peer: is_peer == true 이고 primary_alias ∈ live_peer_aliases.
+        // 제외 대상:
+        //   - bare peers 행(profile/세션/active 없음 + auto-stub or last_seen 부재).
+        //   - caps echo 행(has_agent=true 지만 profile/세션/active 없음 — 예: 테스트 stub).
+        let before = rows.len();
+        rows.retain(|r| {
+            let live = r.has_tmux || r.status == "active";
+            let registered = profile_aliases.contains(&r.primary_alias);
+            let connected_peer = r.is_peer && live_peer_aliases.contains(&r.primary_alias);
+            live || registered || connected_peer
+        });
+        let dropped = before - rows.len();
+        if dropped > 0 {
+            tracing::debug!(
+                dropped,
+                kept = rows.len(),
+                "roster: stale gossip/test echo 행 제외(현황 그리드 정제)"
+            );
+        }
+
         rows
     }
 
@@ -617,6 +694,10 @@ mod tests {
             session_identifier: sid.map(|s| s.to_string()),
             role: None,
             display_name: None,
+            session_status: None,
+            // 사람이 등록한 실제 peer 모델 — last_seen 존재(stub 아님) → 포함 필터 통과.
+            last_seen: Some("2026-06-26T00:00:00+09:00".to_string()),
+            notes: None,
         }
     }
 
@@ -627,6 +708,9 @@ mod tests {
             session_identifier: None,
             role: None,
             display_name: None,
+            session_status: None,
+            last_seen: Some("2026-06-26T00:00:00+09:00".to_string()),
+            notes: None,
         }
     }
 
@@ -657,6 +741,14 @@ mod tests {
             display_name: None,
             cwd: None,
             session_identifier: None,
+        }
+    }
+
+    /// 라이브 세션 sid 를 든 caps 행 — 포함 필터 통과(현황 그리드 유지) 검증용.
+    fn cap_sid(alias: &str, sid: &str) -> CapInput {
+        CapInput {
+            session_identifier: Some(sid.to_string()),
+            ..cap(alias)
         }
     }
 
@@ -759,8 +851,9 @@ mod tests {
 
     /// rc.361 — 현황 그리드(roster) ≡ MCP list_peers 의 alias 집합 패리티.
     /// list_peers = peers ∪ (agent_capabilities[messenger=1 OR in peers] − peers).
-    /// roster_from_sources 에 동일 입력(caps 는 호출자가 peer/profile dedup 후 전달)을
-    /// 주면, 산출 행의 distinct primary_alias 집합이 list_peers 의 alias 집합과 같아야 한다.
+    /// 포함 필터(현황 그리드 정제) 이후에도, **라이브 증거가 있는** 행은 모두 살아남고
+    /// distinct primary_alias 집합이 list_peers 의 alias 집합과 같아야 한다.
+    /// (caps 행은 라이브 세션을 들고 있을 때 유지 — bare caps echo 는 별도 테스트에서 제외 확인.)
     #[test]
     fn test_roster_parity_with_list_peers_alias_set() {
         use std::collections::HashSet;
@@ -771,9 +864,18 @@ mod tests {
             peer("seoul", None),
             peer("zalman", None),
         ];
-        // caps: messenger=1 행 집합(호출자가 이미 peer alias 제거해 전달한다고 가정).
-        //   sv_aoe_* auto-seed 2개 + 일반 agent 1개. peer 와 겹치는 "seoul" 은 호출자가 제거.
-        let caps = vec![cap("sv_aoe_flow_1"), cap("sv_aoe_flow_2"), cap("res")];
+        // caps: 라이브 세션을 들고 있는 능력 행(현황 그리드 포함 대상).
+        let caps = vec![
+            cap_sid("sv_aoe_flow_1", "tmux:sv_aoe_flow_1"),
+            cap_sid("sv_aoe_flow_2", "tmux:sv_aoe_flow_2"),
+            cap_sid("res", "tmux:res"),
+        ];
+        // 위 caps 세션이 라이브로 보이도록 세션 detector 입력에 동일 sid 주입.
+        let sessions = vec![
+            sess("tmux:sv_aoe_flow_1"),
+            sess("tmux:sv_aoe_flow_2"),
+            sess("tmux:res"),
+        ];
 
         // list_peers 기대 alias 집합 = peers ∪ caps(peer 제거 후).
         let mut expected: HashSet<String> = peers.iter().map(|p| p.alias.clone()).collect();
@@ -781,14 +883,47 @@ mod tests {
             expected.insert(c.alias.clone());
         }
 
-        let rows = IdentityStore::roster_from_sources(&peers, &[], &caps, &[], "server-seoul");
+        let rows =
+            IdentityStore::roster_from_sources(&peers, &[], &caps, &sessions, "server-seoul");
         let got: HashSet<String> = rows.iter().map(|r| r.primary_alias.clone()).collect();
 
         assert_eq!(got, expected, "roster alias 집합 == list_peers alias 집합");
-        assert_eq!(rows.len(), 6, "peers(3) + caps(3) = 6 행, 중복 없음");
+        assert_eq!(rows.len(), 6, "peers(3) + 라이브 caps(3) = 6 행, 중복 없음");
         // caps 행은 has_agent, peer 행은 is_peer.
         assert!(rows.iter().filter(|r| r.has_agent && !r.is_peer).count() == 3);
         assert!(rows.iter().filter(|r| r.is_peer).count() == 3);
+    }
+
+    /// 포함 필터: 라이브 증거(세션/active/profile/연결 peer) 없는 **bare caps echo**
+    /// (예: 테스트 stub eno-test/pip-test)는 현황 그리드에서 제외된다.
+    #[test]
+    fn test_bare_caps_echo_excluded() {
+        let caps = vec![cap("eno-test"), cap("pip-test")];
+        let rows = IdentityStore::roster_from_sources(&[], &[], &caps, &[], "server-seoul");
+        assert!(
+            rows.is_empty(),
+            "라이브 증거 없는 caps echo 는 현황 그리드에서 제외(stale gossip/test)"
+        );
+    }
+
+    /// 포함 필터: bare gossip/test peer(profile·세션·active 없음 + auto-stub notes)는 제외.
+    #[test]
+    fn test_bare_gossip_peer_excluded() {
+        let peers = vec![PeerInput {
+            alias: "mptest".into(),
+            eth_address: None,
+            session_identifier: None,
+            role: Some("primary".into()),
+            display_name: None,
+            session_status: None,
+            last_seen: Some("2026-06-26T00:00:00+09:00".into()),
+            notes: Some("auto-registered via envelope (zero-touch rc.244)".into()),
+        }];
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &[], &[], "server-seoul");
+        assert!(
+            rows.is_empty(),
+            "auto-registered stub + 세션/active 없음 = 제외(현황 그리드 정제)"
+        );
     }
 
     /// rc.361 — peer alias 와 겹치는 caps 행은 roster_from_sources 가 직접 제거한다
@@ -796,8 +931,11 @@ mod tests {
     #[test]
     fn test_caps_dedup_against_peer_alias() {
         let peers = vec![peer("seoul", None)];
-        let caps = vec![cap("seoul"), cap("res")];
-        let rows = IdentityStore::roster_from_sources(&peers, &[], &caps, &[], "server-seoul");
+        // res 는 라이브 세션을 들고 있어야 포함 필터를 통과(bare echo 제외 규칙).
+        let caps = vec![cap("seoul"), cap_sid("res", "tmux:res")];
+        let sessions = vec![sess("tmux:res")];
+        let rows =
+            IdentityStore::roster_from_sources(&peers, &[], &caps, &sessions, "server-seoul");
         // seoul = peer 1행만(caps 의 seoul 은 흡수). res = caps 1행. 총 2.
         assert_eq!(rows.len(), 2, "peer 와 겹치는 caps alias 는 제거");
         assert_eq!(rows.iter().filter(|r| r.primary_alias == "seoul").count(), 1);
