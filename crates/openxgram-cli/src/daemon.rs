@@ -1498,8 +1498,18 @@ pub fn process_inbound(
                 })
             };
             // rc.365 — 주입 대상 판정(제어 메시지·빈 본문·disabled·tmux 부재 모두 거른다).
+            // rc.376 — 카톡식 비침범 전달: ACP-drivable 수신자는 tmux 입력창 send-keys 주입 대신
+            //   **ACP 전달**(try_acp_inbound_delivery → acp_messages → GUI 대화방)을 우선한다.
+            //   사용자의 입력창을 건드리지 않고, 사람은 KakaoShell 대화방에서 모니터링한다(=마스터
+            //   확정 모델). rc.365 가 tmux 주입을 우선했던 이유("ACP 헤드리스는 사람이 못 봄")는
+            //   GUI 대화방 렌더(/v1/gui/a2a/stream)가 해소한다. 순수 터미널 peer(비-ACP-drivable)는
+            //   여전히 tmux fallback. 게이트: 기본 ACP 우선, `XGRAM_P2P_PREFER_ACP=0` 이면 rc.365 복귀.
+            let prefer_acp_delivery = std::env::var("XGRAM_P2P_PREFER_ACP")
+                .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+                .unwrap_or(true);
             let inject_to_tmux =
-                should_inject_inbound_to_tmux(&body, tmux_session_live, peer_tmux_inject_disabled);
+                should_inject_inbound_to_tmux(&body, tmux_session_live, peer_tmux_inject_disabled)
+                    && !(prefer_acp_delivery && acp_drivable_raw);
 
             // ── rc.366 — 죽은 spawnable 수신자 자동 spawn("꺼져 있어도 메시지가 깨운다") ──
             // 라이브 tmux 세션이 없고(=rc.365 주입 대상 아님), 수신자가 spawnable(ai_type+
