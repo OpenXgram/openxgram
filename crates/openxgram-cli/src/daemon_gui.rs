@@ -1894,6 +1894,21 @@ struct RosterEntryDto {
     quarantined: bool,
     /// rc.360 — 생명주기 상태: active / stopped / dead. 프론트 현황 그리드 점등.
     status: String,
+    // ── phase 2A 통합 현황 그리드 financial/reputation 컬럼 (read-only display) ──
+    //   백엔드 gui_roster 가 backing 테이블(sub_wallets/external_reputation)을 행별 alias 로
+    //   LEFT-JOIN 조회하여 채운다. backing row 없으면 None(프론트 "—"). 단위는 표시값(micro→whole).
+    /// 지갑잔액 — sub_wallets (allocated - spent + earned) / 1e6. backing 없으면 None.
+    wallet_balance: Option<f64>,
+    /// 수입 — sub_wallets.earned_micro / 1e6.
+    income: Option<f64>,
+    /// 지출 — sub_wallets.spent_micro / 1e6.
+    expense: Option<f64>,
+    /// 별점 — external_reputation.avg_rating.
+    rating: Option<f64>,
+    /// 평가 수 — external_reputation.review_count.
+    review_count: Option<i64>,
+    /// 인지도(views/usage) — 현재 backing 테이블 없음 → 항상 None (다음 페이즈에서 스키마 추가).
+    views: Option<i64>,
 }
 
 impl From<openxgram_peer::RosterEntry> for RosterEntryDto {
@@ -1922,6 +1937,13 @@ impl From<openxgram_peer::RosterEntry> for RosterEntryDto {
             has_tmux: if is_aoe_acp { false } else { e.has_tmux },
             quarantined: e.quarantined,
             status: e.status,
+            // financial/reputation 은 DB 조회가 필요 → From 단계선 None, gui_roster 에서 채운다.
+            wallet_balance: None,
+            income: None,
+            expense: None,
+            rating: None,
+            review_count: None,
+            views: None,
         }
     }
 }
@@ -2010,9 +2032,78 @@ async fn gui_roster(
             )
         })?
     };
+    let mut out: Vec<RosterEntryDto> = entries.into_iter().map(RosterEntryDto::from).collect();
+
+    // ── phase 2A financial/reputation 컬럼 LEFT-JOIN 채우기 (read-only) ──
+    //   행마다 alias 후보(primary_alias + aliases)로 sub_wallets / external_reputation 조회.
+    //   첫 매칭 행 사용, 없으면 None 유지(가짜값 금지 — 절대 룰 #1: 조용한 fallback 안 함, 실패는 로그).
+    for entry in out.iter_mut() {
+        // alias 후보 — 중복 허용(SQL IN 으로 한 번에). primary_alias 우선.
+        let mut candidates: Vec<String> = Vec::with_capacity(entry.aliases.len() + 1);
+        candidates.push(entry.primary_alias.clone());
+        for a in &entry.aliases {
+            if !candidates.contains(a) {
+                candidates.push(a.clone());
+            }
+        }
+        if candidates.is_empty() {
+            continue;
+        }
+        let placeholders = candidates
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(",");
+        let params: Vec<&dyn rusqlite::ToSql> =
+            candidates.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+
+        // sub_wallets — 잔액/수입/지출 (micro → 표시 단위로 /1e6).
+        let wallet_sql = format!(
+            "SELECT allocated_micro, spent_micro, earned_micro FROM sub_wallets \
+             WHERE agent_id IN ({placeholders}) LIMIT 1"
+        );
+        match db.conn().query_row(&wallet_sql, params.as_slice(), |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
+        }) {
+            Ok((allocated, spent, earned)) => {
+                entry.wallet_balance = Some((allocated - spent + earned) as f64 / 1_000_000.0);
+                entry.income = Some(earned as f64 / 1_000_000.0);
+                entry.expense = Some(spent as f64 / 1_000_000.0);
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => {} // backing row 없음 — None 유지(정상).
+            Err(e) => tracing::warn!(
+                "gui_roster: sub_wallets 조회 실패(alias={}): {e}",
+                entry.primary_alias
+            ),
+        }
+
+        // external_reputation — 별점/평가 수.
+        let rep_sql = format!(
+            "SELECT avg_rating, review_count FROM external_reputation \
+             WHERE external_agent IN ({placeholders}) LIMIT 1"
+        );
+        match db.conn().query_row(&rep_sql, params.as_slice(), |r| {
+            Ok((r.get::<_, Option<f64>>(0)?, r.get::<_, i64>(1)?))
+        }) {
+            Ok((avg, count)) => {
+                entry.rating = avg;
+                entry.review_count = Some(count);
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => {} // backing row 없음 — None 유지(정상).
+            Err(e) => tracing::warn!(
+                "gui_roster: external_reputation 조회 실패(alias={}): {e}",
+                entry.primary_alias
+            ),
+        }
+        // views(인지도) — backing 테이블 없음 → None 유지(다음 페이즈 스키마 추가 예정).
+    }
     drop(db);
 
-    let out: Vec<RosterEntryDto> = entries.into_iter().map(RosterEntryDto::from).collect();
     Ok(Json(out))
 }
 
