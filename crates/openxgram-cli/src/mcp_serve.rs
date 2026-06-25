@@ -3274,6 +3274,10 @@ pub async fn run_http_serve(data_dir: &Path, addr: std::net::SocketAddr) -> Resu
 /// stdio loop — line 단위 JSON-RPC.
 pub fn run_serve(data_dir: &Path) -> Result<()> {
     let mut dispatcher = OpenxgramDispatcher::open(data_dir)?;
+    // 5x-rebuild ROOT fix PART 2 (iii) — 세션 시작 시 자기 tmux 세션을 데몬에 알려
+    //   keypair 앵커 바인딩(token→신원→pubkey)을 트리거. MCP 는 XGRAM_MCP_TOKEN(신원) +
+    //   $TMUX(세션) 둘 다 가진 유일 컨텍스트. best-effort — 실패해도 MCP 정상 동작.
+    crate::mcp_install::bind_session_selfcall_to_daemon();
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();

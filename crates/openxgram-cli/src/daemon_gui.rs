@@ -330,6 +330,8 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         .route("/v1/gui/peers", get(gui_peers).post(gui_peer_add))
         // rc.245 — 결정적 세션 매핑 사용자 override: peer 의 터미널 세션 식별자 set/clear.
         .route("/v1/gui/peers/{alias}/session", patch(gui_peer_set_session))
+        // 5x-rebuild ROOT fix PART 2 (iii) — MCP self-call 세션 바인딩(token→신원→pubkey 앵커).
+        .route("/v1/gui/identity/bind-session", post(gui_identity_bind_session))
         // P2 Task 5 — 정본 신원 편집: 이름(display_name)/역할(role) PATCH + 에이전트 전파.
         .route("/v1/gui/peers/{alias}/name", patch(gui_peer_set_name))
         .route("/v1/gui/peers/{alias}/role", patch(gui_peer_set_role))
@@ -899,6 +901,81 @@ async fn require_auth(
         Ok(None) => Err(StatusCode::UNAUTHORIZED),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
+}
+
+#[derive(serde::Deserialize)]
+struct BindSessionBody {
+    session_identifier: String,
+}
+
+/// `POST /v1/gui/identity/bind-session` — 5x-rebuild ROOT fix PART 2 (iii).
+///   MCP self-call 이 자기 tmux 세션을 알리면, 호출자 신원을 **Bearer mcp_token** 으로 해석
+///   (token→agent alias→public_key_hex)하고 그 신원의 session_identifier 를 keypair 앵커로
+///   바인딩한다. 세션 재시작(새 session_id)마다 자동 갱신 = durable.
+///
+///   주의: require_auth 의 local-direct/"self" 단축은 **신원이 모호**(어느 N키인지 모름)하므로
+///   여기서는 쓰지 않고 토큰을 직접 verify_token 한다. 유효 토큰 없으면 401.
+async fn gui_identity_bind_session(
+    State(state): State<GuiServerState>,
+    headers: HeaderMap,
+    Json(body): Json<BindSessionBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .ok_or((
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorDto {
+                error: "Bearer mcp_token 필요".into(),
+            }),
+        ))?;
+    // bare 세션명으로 정규화 (bind_session_upsert 가 "tmux:" 접두 부착).
+    let raw = body.session_identifier.trim();
+    let bare = raw.strip_prefix("tmux:").unwrap_or(raw).trim().to_string();
+
+    let mut db = state.db.lock().await;
+    let agent = match crate::mcp_tokens::verify_token(&mut db, token) {
+        Ok(Some(a)) => a,
+        Ok(None) => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorDto {
+                    error: "유효하지 않은 토큰".into(),
+                }),
+            ))
+        }
+        Err(e) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorDto {
+                    error: format!("token 검증 실패: {e}"),
+                }),
+            ))
+        }
+    };
+    if agent.is_empty() || bare.is_empty() {
+        return Ok(Json(serde_json::json!({ "bound": 0, "alias": agent, "reason": "empty agent/session — no-op" })));
+    }
+    // token→alias→public_key_hex → keypair 앵커 바인딩.
+    let pubkey: Option<String> = db
+        .conn()
+        .query_row(
+            "SELECT public_key_hex FROM peers WHERE alias = ?1",
+            rusqlite::params![agent],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .ok()
+        .flatten();
+    let bound = match pubkey.as_deref().filter(|p| !p.is_empty()) {
+        Some(pk) => crate::mcp_install::bind_session_upsert(db.conn(), pk, &bare).unwrap_or(0),
+        None => 0,
+    };
+    Ok(Json(serde_json::json!({
+        "bound": bound,
+        "alias": agent,
+        "session_identifier": format!("tmux:{bare}"),
+    })))
 }
 
 /// `GET /v1/gui/health` — 무인증 health check (load balancer / probe 용).

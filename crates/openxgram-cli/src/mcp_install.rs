@@ -1166,4 +1166,109 @@ mod tests {
         let env = build_mcp_env(dir.path(), false);
         assert!(!env.contains_key("XGRAM_MCP_TOKEN"));
     }
+
+    #[test]
+    fn tmux_session_extract_trims_and_first_line() {
+        assert_eq!(tmux_session_from_display_output(" aoe_x_1 \n"), Some("aoe_x_1".to_string()));
+        assert_eq!(tmux_session_from_display_output("s1\ns2"), Some("s1".to_string()));
+        assert_eq!(tmux_session_from_display_output("   \n  "), None);
+        assert_eq!(tmux_session_from_display_output(""), None);
+    }
+
+    #[test]
+    fn should_bind_self_guards_empty() {
+        assert!(should_bind_self("abc", "sess"));
+        assert!(!should_bind_self("", "sess"));
+        assert!(!should_bind_self("abc", ""));
+    }
+}
+
+// ── 5x-rebuild ROOT fix PART 2 (iii) — token-anchored MCP-side 세션 바인딩 ──────────
+// 신원 = mcp_token (데몬이 verify_token 으로 해석). cwd 안 씀(오염원 회피). MCP 는 시작 시
+// XGRAM_MCP_TOKEN(신원) + $TMUX(세션) 둘 다 가진 유일 컨텍스트 — 자기 tmux 세션을 데몬
+// bind-session 엔드포인트에 self-call 로 알리면, 데몬이 token→alias→public_key_hex 로
+// **keypair 앵커** 바인딩한다. 세션 재시작(새 session_id)마다 자동 갱신 = durable.
+
+/// `tmux display-message` 출력에서 세션명만 추출(trim, 여러 줄이면 첫 줄, 비면 None). 순수 함수.
+pub fn tmux_session_from_display_output(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        None
+    } else {
+        s.lines()
+            .next()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+    }
+}
+
+/// 자기 live tmux 세션명 탐지. tmux 밖($TMUX_PANE 부재)이면 None — graceful skip(에러 아님).
+fn detect_own_tmux_session() -> Option<String> {
+    let pane = std::env::var("TMUX_PANE").ok().filter(|p| !p.is_empty())?;
+    let out = std::process::Command::new("tmux")
+        .args(["display-message", "-p", "-t", &pane, "#{session_name}"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    tmux_session_from_display_output(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// keypair 앵커 바인딩 UPDATE 가 돌아야 하는지 — pubkey/세션 비면 안 됨(전체 peers 행 오염 방지).
+pub fn should_bind_self(pubkey_hex: &str, tmux_session: &str) -> bool {
+    !pubkey_hex.is_empty() && !tmux_session.is_empty()
+}
+
+/// (열린 DB, pubkey, bare tmux 세션명) → keypair 앵커 UPDATE, 영향행수 반환.
+///   register_subagent §B 와 동일 SQL. `IS NOT ?1` 가드로 멱등(이미 올바르면 0행).
+///   `tmux_session` 은 bare name — 여기서 `tmux:` 접두 부착.
+pub fn bind_session_upsert(
+    conn: &rusqlite::Connection,
+    pubkey_hex: &str,
+    tmux_session: &str,
+) -> rusqlite::Result<usize> {
+    if !should_bind_self(pubkey_hex, tmux_session) {
+        return Ok(0);
+    }
+    let sid = format!("tmux:{tmux_session}");
+    conn.execute(
+        "UPDATE peers SET session_identifier = ?1 \
+         WHERE public_key_hex = ?2 AND session_identifier IS NOT ?1",
+        rusqlite::params![sid, pubkey_hex],
+    )
+}
+
+/// MCP 시작 시 self-call — 자기 tmux 세션을 데몬 bind-session 엔드포인트에 알린다(Bearer mcp_token).
+///   best-effort: XGRAM_MCP_TOKEN 부재 / tmux 밖 / 데몬 미응답 → 조용히 skip(크래시 X).
+///   실제 keypair 앵커 바인딩은 데몬이 수행(token→신원→pubkey). 이 함수는 신호만 보낸다.
+pub fn bind_session_selfcall_to_daemon() {
+    let Some(token) = std::env::var("XGRAM_MCP_TOKEN").ok().filter(|t| !t.is_empty()) else {
+        return; // 토큰 없음 — 신원 식별 불가 → skip
+    };
+    let Some(session) = detect_own_tmux_session() else {
+        return; // tmux 밖 → skip
+    };
+    let base = std::env::var("XGRAM_DAEMON_GUI_URL")
+        .ok()
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:47302".to_string());
+    let url = format!("{}/v1/gui/identity/bind-session", base.trim_end_matches('/'));
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    match client
+        .post(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .json(&serde_json::json!({ "session_identifier": format!("tmux:{session}") }))
+        .send()
+    {
+        Ok(r) => eprintln!("[session-bind] self-call → bind-session (HTTP {})", r.status()),
+        Err(e) => eprintln!("[session-bind] self-call skip(데몬 미응답): {e}"),
+    }
 }
