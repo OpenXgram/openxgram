@@ -10405,19 +10405,40 @@ async fn gui_peer_send_unsigned(
     })?;
 
     // peer 조회 + 서명 준비. db lock 은 짧게 (INSERT 위해 다시 잡는다).
-    let (peer_pubkey_hex, _peer_address) = {
+    //   alias 직접 매칭 실패 시 session_identifier 폴백 — 긴 session-name alias
+    //   (예: aoe_starianset-hermes_a6d5031f)로 보내도 그 tmux 세션을 가진 canonical peer
+    //   (예: hermes)로 해석한다. "peer not found"(짧은/긴 alias 불일치) 클래스 제거.
+    let (alias, peer_pubkey_hex, _peer_address) = {
         let mut db = state.db.lock().await;
-        let row = db.conn().query_row(
+        // 1) 직접 alias 매칭.
+        let direct = db.conn().query_row(
             "SELECT address, public_key_hex FROM peers WHERE alias=?1",
             rusqlite::params![alias],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
         );
-        match row {
-            Ok(r) => r,
+        match direct {
+            Ok((addr, pk)) => (alias.clone(), pk, addr),
             Err(_) => {
-                return Err((StatusCode::NOT_FOUND, Json(ErrorDto{
-                    error: format!("peer {alias} not found")
-                })));
+                // 2) session_identifier 폴백 — 'tmux:<alias>' 또는 raw <alias> 가 어떤 peer 의
+                //    세션이면 그 peer 의 canonical alias 로 해석.
+                let sid_a = format!("tmux:{alias}");
+                let fb = db.conn().query_row(
+                    "SELECT alias, address, public_key_hex FROM peers \
+                     WHERE session_identifier = ?1 OR session_identifier = ?2 LIMIT 1",
+                    rusqlite::params![sid_a, alias],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+                );
+                match fb {
+                    Ok((canon, addr, pk)) => {
+                        tracing::info!(requested = %alias, resolved = %canon, "peer alias 폴백 해석(session_identifier) — session-name alias → canonical peer");
+                        (canon, pk, addr)
+                    }
+                    Err(_) => {
+                        return Err((StatusCode::NOT_FOUND, Json(ErrorDto {
+                            error: format!("peer {alias} not found"),
+                        })));
+                    }
+                }
             }
         }
     };
