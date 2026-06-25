@@ -384,6 +384,23 @@ pub fn reachable_remote_peers(data_dir: &Path) -> anyhow::Result<Vec<RemotePeer>
     //   결과: seoul 이 "navi 가 zalman 에 산다"를 영영 알 수 없었다(=BUG2/3 discovery 갭).
     // 이 집합으로 LOCAL ACP 에이전트를 추가 광고 대상에 포함한다. 원격 병합 peer 는
     // 이 머신의 agent_capabilities 에 row 가 없으므로 여전히 재광고되지 않는다(소유권 보존).
+    // 머신인식 게이트 (cross-machine 주소 오염 근본 fix) — agent_capabilities 에 role!=tmux 로
+    //   있어도 **로컬 키스토어 키가 있는 신원만** 로컬 ACP 로 인정한다. 원격 머신 에이전트가
+    //   gossip/오등록으로 이 머신 agent_capabilities 에 들어와도 로컬 키가 없으면 제외 →
+    //   self 주소로 오스탬프(아래 ~line 517)되지 않아 cross-machine 라우팅이 self-loopback 으로
+    //   고착되지 않는다. (예: zalman 의 codex-ai-image 가 seoul agent_capabilities 에 acp 로
+    //   박혔던 사건 — seoul 키스토어에 키 없어 자동 배제 → seoul 이 자기주소로 재광고 안 함.)
+    let local_keystore_idents: std::collections::HashSet<String> = {
+        let mut s = std::collections::HashSet::new();
+        if let Ok(rd) = std::fs::read_dir(openxgram_core::paths::keystore_dir(data_dir)) {
+            for e in rd.flatten() {
+                if let Some(stem) = e.file_name().to_str().and_then(|n| n.strip_suffix(".json")) {
+                    s.insert(stem.to_string());
+                }
+            }
+        }
+        s
+    };
     let local_acp_aliases: std::collections::HashSet<String> = {
         let mut set = std::collections::HashSet::new();
         if let Ok(mut stmt) = db.conn().prepare(
@@ -391,7 +408,10 @@ pub fn reachable_remote_peers(data_dir: &Path) -> anyhow::Result<Vec<RemotePeer>
         ) {
             if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
                 for a in rows.flatten() {
-                    set.insert(a);
+                    // 머신인식: 로컬 키스토어 키가 있는 신원만 로컬 ACP 로 인정(원격 오등록 배제).
+                    if local_keystore_idents.contains(&a) {
+                        set.insert(a);
+                    }
                 }
             }
         }
