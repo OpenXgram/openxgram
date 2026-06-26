@@ -61,6 +61,22 @@ Envelope 구조는 **안 건드림**. `envelope_type` 에 신규 값 `"a2a_comma
 { "v":1, "command_id":"<uuid>", "ok": true|false, "applied": {...}|null, "error": "<사유>"|null }
 ```
 
+## 3.5 통합 지점 (코드 레벨 — 확인 완료)
+
+process_inbound 에 envelope_type 분기 패턴 이미 확립:
+- `daemon.rs:925` — `"ack"` 분기
+- `daemon.rs:1017` — `"identity_update"` 분기 (원격 신호로 자기 로컬 display_name/role UPDATE — a2a_command 의 직접 선례)
+
+→ **`"a2a_command"` 분기를 daemon.rs:1014 근처(identity_update 인접)에 추가.** ack/identity_update 처럼 inbox 저장·tmux inject skip 후 continue.
+
+### ⚠️ 현존 취약점 (3-4 와 직결 — seoul 보고함)
+기존 `identity_update` 분기(daemon.rs:1017-1056)는 **인가 게이트가 전혀 없음**:
+- `verified` 플래그 미확인 (서명검증 결과 무시)
+- allowlist·origin_machine 소유권 체크 없음
+- → **누구든 identity_update envelope 으로 임의 alias 의 display_name/role 원격 변경 가능** (현존 취약).
+
+함의: GAP-4(ACL)는 신규 기능이 아니라 **현존 위험의 패치**이기도 함. a2a_command 는 처음부터 3중 게이트로 구현하고, identity_update 도 같은 게이트로 보강 검토(별도 합의 — 3-4 v1 범위 밖일 수 있음, seoul 판단).
+
 ## 4. 흐름
 
 ```
