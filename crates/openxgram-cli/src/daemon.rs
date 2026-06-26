@@ -1016,6 +1016,36 @@ pub fn process_inbound(
         // inbox 저장 / tmux inject / peer touch 모두 skip (사용자 메시지 X) → ack 분기와 동일하게 continue.
         if env.envelope_type.as_deref() == Some("identity_update") {
             let payload_bytes = hex::decode(&env.payload_hex).unwrap_or_default();
+            let sig_bytes = hex::decode(&env.signature_hex).unwrap_or_default();
+
+            // 보안 게이트 (auth-bypass 패치) — 원격 신원변경은 인가된 fleet 발행자만.
+            // (1) 발신자가 등록 peer + (2) 등록 pubkey 로 서명검증 + (3) 신뢰 allowlist 멤버.
+            // 하나라도 실패 → DB 변경 없이 무시(continue). default-deny.
+            let issuer = match PeerStore::new(&mut db).get_by_eth_address(&env.from) {
+                Ok(Some(p)) => Some(crate::auth_gate::IssuerPeer {
+                    public_key_hex: p.public_key_hex,
+                    eth_address: p.eth_address.unwrap_or_default(),
+                }),
+                _ => None,
+            };
+            let allowlist = crate::auth_gate::parse_trusted_issuers(
+                &std::env::var("XGRAM_TRUSTED_ISSUERS").unwrap_or_default(),
+            );
+            if crate::auth_gate::authorize_remote_mutation(
+                issuer.as_ref(),
+                &payload_bytes,
+                &sig_bytes,
+                &allowlist,
+            )
+            .is_none()
+            {
+                tracing::warn!(
+                    from = %env.from,
+                    "identity_update 인가 거부 (미등록/서명불일치/allowlist 외) — 변경 무시"
+                );
+                continue;
+            }
+
             match serde_json::from_slice::<serde_json::Value>(&payload_bytes) {
                 Ok(v) => {
                     let alias = v.get("alias").and_then(|x| x.as_str());
