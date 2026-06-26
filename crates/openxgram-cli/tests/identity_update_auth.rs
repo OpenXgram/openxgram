@@ -167,3 +167,64 @@ fn trusted_fleet_sender_can_mutate_identity() {
         std::env::remove_var("XGRAM_TRUSTED_ISSUERS");
     }
 }
+
+/// seoul 가용성 지적: env.from 의 eth 대소문자가 저장 eth 와 달라도 정당 발신자는 통과해야.
+/// (EIP-55 체크섬 대소문자 차이로 정당 발신이 fail-closed 되지 않도록.)
+#[test]
+#[serial_test::file_serial]
+fn trusted_sender_case_insensitive_eth_still_authorized() {
+    set_env();
+    let tmp = tempdir().unwrap();
+    let data_dir = tmp.path().join("openxgram");
+    run_init(&init_opts(data_dir.clone())).unwrap();
+
+    let ks = FsKeystore::new(keystore_dir(&data_dir));
+    let fleet = ks.load(MASTER_KEY_NAME, TEST_PASSWORD).unwrap();
+
+    // 발신 peer 의 eth 를 **대문자**로 저장. envelope.from 은 원래(혼합) 대소문자.
+    let upper_eth = fleet.address.to_string().to_uppercase();
+    {
+        let mut db = Db::open(DbConfig {
+            path: db_path(&data_dir),
+            ..Default::default()
+        })
+        .unwrap();
+        db.migrate().unwrap();
+        let mut ps = PeerStore::new(&mut db);
+        ps.add_with_eth(
+            "victim",
+            &"02".to_string().repeat(33),
+            "http://127.0.0.1:0",
+            Some("0xVictimEth"),
+            PeerRole::Worker,
+            None,
+        )
+        .ok();
+        ps.add_with_eth(
+            "fleet-upper",
+            &hex::encode(fleet.public_key_bytes()),
+            "http://127.0.0.1:0",
+            Some(&upper_eth), // 대문자 eth 저장
+            PeerRole::Worker,
+            None,
+        )
+        .unwrap();
+    }
+    unsafe {
+        // allowlist 는 소문자 정규화되므로 어느 케이스든 매칭.
+        std::env::set_var("XGRAM_TRUSTED_ISSUERS", fleet.address.to_string());
+    }
+
+    let env = identity_update_env(&fleet, "victim", "primary");
+    process_inbound(&data_dir, &[env]).unwrap();
+
+    let after = victim_role(&data_dir);
+    assert_eq!(
+        after.as_deref(),
+        Some("primary"),
+        "eth 대소문자 차이가 정당 발신자를 막으면 안 됨 (가용성)"
+    );
+    unsafe {
+        std::env::remove_var("XGRAM_TRUSTED_ISSUERS");
+    }
+}

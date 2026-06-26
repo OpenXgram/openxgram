@@ -1021,13 +1021,27 @@ pub fn process_inbound(
             // 보안 게이트 (auth-bypass 패치) — 원격 신원변경은 인가된 fleet 발행자만.
             // (1) 발신자가 등록 peer + (2) 등록 pubkey 로 서명검증 + (3) 신뢰 allowlist 멤버.
             // 하나라도 실패 → DB 변경 없이 무시(continue). default-deny.
-            let issuer = match PeerStore::new(&mut db).get_by_eth_address(&env.from) {
-                Ok(Some(p)) => Some(crate::auth_gate::IssuerPeer {
-                    public_key_hex: p.public_key_hex,
-                    eth_address: p.eth_address.unwrap_or_default(),
-                }),
-                _ => None,
+            // 발신 peer 조회 — 정확일치 우선, 실패 시 eth 대소문자 무시 fallback
+            // (EIP-55 체크섬 대소문자 차이로 정당 발신자가 fail-closed 되지 않도록. seoul 지적).
+            let issuer_peer = {
+                let mut ps = PeerStore::new(&mut db);
+                match ps.get_by_eth_address(&env.from) {
+                    Ok(Some(p)) => Some(p),
+                    _ => ps.list().ok().and_then(|peers| {
+                        let target = env.from.trim().to_ascii_lowercase();
+                        peers.into_iter().find(|p| {
+                            p.eth_address
+                                .as_deref()
+                                .map(|e| e.trim().to_ascii_lowercase() == target)
+                                .unwrap_or(false)
+                        })
+                    }),
+                }
             };
+            let issuer = issuer_peer.map(|p| crate::auth_gate::IssuerPeer {
+                public_key_hex: p.public_key_hex,
+                eth_address: p.eth_address.unwrap_or_default(),
+            });
             let allowlist = crate::auth_gate::parse_trusted_issuers(
                 &std::env::var("XGRAM_TRUSTED_ISSUERS").unwrap_or_default(),
             );
