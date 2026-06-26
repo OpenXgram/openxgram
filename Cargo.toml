@@ -33,7 +33,7 @@ members = [
 exclude = ["ui/tauri"]
 
 [workspace.package]
-version = "0.2.0-rc.377"
+version = "0.2.0-rc.378"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/OpenXgram/openxgram"

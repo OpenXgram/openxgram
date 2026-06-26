@@ -1,6 +1,6 @@
 {
   "name": "openxgram",
-  "version": "0.2.0-rc.353",
+  "version": "0.2.0-rc.378",
   "description": "Memory & Credential Infrastructure for Multi-Agent, Multi-Machine, Multi-LLM",
   "private": true,
   "scripts": {

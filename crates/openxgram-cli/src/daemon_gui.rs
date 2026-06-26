@@ -11801,8 +11801,53 @@ async fn gui_peer_set_role(
     Ok(Json(serde_json::json!({ "ok": true, "propagation_queued": propagation_queued })))
 }
 
+/// Phase B 편집 보조 — peer-only 등록 행도 토큰단가/샘플 편집 가능하게 최소 profile 생성.
+///
+/// 현황 그리드에는 peers-only 행도 등록 행으로 보일 수 있다. 이때 Phase B 컬럼은
+/// agent_profiles 백킹이라 기존 구현은 400 을 냈다. 임의 alias 를 새로 만들지는 않고,
+/// `peers` 에 실제 행이 있을 때만 minimal `agent_profiles` row 를 자동 upsert 한다.
+fn ensure_agent_profile_for_phase_b_edit(
+    conn: &rusqlite::Connection,
+    alias: &str,
+    now: &str,
+) -> Result<bool, (StatusCode, Json<ErrorDto>)> {
+    let profile_exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM agent_profiles WHERE alias = ?1)",
+            rusqlite::params![alias],
+            |r| r.get(0),
+        )
+        .map_err(|e| internal(&format!("agent profile exists: {e}")))?;
+    if profile_exists {
+        return Ok(false);
+    }
+
+    let peer_exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM peers WHERE alias = ?1)",
+            rusqlite::params![alias],
+            |r| r.get(0),
+        )
+        .map_err(|e| internal(&format!("peer exists: {e}")))?;
+    if !peer_exists {
+        return Err(bad_request(&format!(
+            "agent_profiles/peers 행 없음(alias={alias}) — 먼저 에이전트 또는 peer 등록 필요"
+        )));
+    }
+
+    conn.execute(
+        "INSERT INTO agent_profiles \
+            (alias, ai_type, classification, execution_mode, is_public, created_at, updated_at) \
+         VALUES (?1, 'claude', 'project', 'on_demand', 0, ?2, ?2) \
+         ON CONFLICT(alias) DO NOTHING",
+        rusqlite::params![alias, now],
+    )
+    .map_err(|e| internal(&format!("agent profile minimal upsert: {e}")))?;
+    Ok(true)
+}
+
 /// `PATCH /v1/gui/agents/{alias}/token-price` (Phase B) — 토큰단가 갱신.
-/// body `{ token_price_per_million: number|null }`. null=미설정(NULL). agent_profiles 존재 검증.
+/// body `{ token_price_per_million: number|null }`. null=미설정(NULL). peer-only 행은 minimal agent_profiles auto-upsert.
 async fn gui_agent_set_token_price(
     State(state): State<GuiServerState>,
     headers: HeaderMap,
@@ -11814,31 +11859,19 @@ async fn gui_agent_set_token_price(
         return Err(bad_request("alias 필수"));
     }
     let mut db = state.db.lock().await;
-    // alias 존재 검증 — agent_profiles 행 없으면 갱신 대상 없음(가짜 성공 금지, 절대 룰 #1).
-    let exists: bool = db
-        .conn()
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM agent_profiles WHERE alias = ?1)",
-            rusqlite::params![&alias],
-            |r| r.get(0),
-        )
-        .map_err(|e| internal(&format!("token-price exists: {e}")))?;
-    if !exists {
-        return Err(bad_request(&format!(
-            "agent_profiles 행 없음(alias={alias}) — 먼저 프로필 등록 필요"
-        )));
-    }
+    let now = chrono::Utc::now().to_rfc3339();
+    let profile_auto_upserted = ensure_agent_profile_for_phase_b_edit(db.conn(), &alias, &now)?;
     db.conn()
         .execute(
-            "UPDATE agent_profiles SET token_price_per_million = ?1 WHERE alias = ?2",
-            rusqlite::params![body.token_price_per_million, &alias],
+            "UPDATE agent_profiles SET token_price_per_million = ?1, updated_at = ?3 WHERE alias = ?2",
+            rusqlite::params![body.token_price_per_million, &alias, &now],
         )
         .map_err(|e| internal(&format!("token-price update: {e}")))?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(Json(serde_json::json!({ "ok": true, "profile_auto_upserted": profile_auto_upserted })))
 }
 
 /// `POST /v1/gui/agents/{alias}/sample` (Phase B) — 샘플(텍스트/URL) 갱신.
-/// body `{ sample_text: string|null, sample_url: string|null }`. agent_profiles 존재 검증.
+/// body `{ sample_text: string|null, sample_url: string|null }`. peer-only 행은 minimal agent_profiles auto-upsert.
 async fn gui_agent_set_sample(
     State(state): State<GuiServerState>,
     headers: HeaderMap,
@@ -11850,26 +11883,15 @@ async fn gui_agent_set_sample(
         return Err(bad_request("alias 필수"));
     }
     let mut db = state.db.lock().await;
-    let exists: bool = db
-        .conn()
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM agent_profiles WHERE alias = ?1)",
-            rusqlite::params![&alias],
-            |r| r.get(0),
-        )
-        .map_err(|e| internal(&format!("sample exists: {e}")))?;
-    if !exists {
-        return Err(bad_request(&format!(
-            "agent_profiles 행 없음(alias={alias}) — 먼저 프로필 등록 필요"
-        )));
-    }
+    let now = chrono::Utc::now().to_rfc3339();
+    let profile_auto_upserted = ensure_agent_profile_for_phase_b_edit(db.conn(), &alias, &now)?;
     db.conn()
         .execute(
-            "UPDATE agent_profiles SET sample_text = ?1, sample_url = ?2 WHERE alias = ?3",
-            rusqlite::params![body.sample_text, body.sample_url, &alias],
+            "UPDATE agent_profiles SET sample_text = ?1, sample_url = ?2, updated_at = ?4 WHERE alias = ?3",
+            rusqlite::params![body.sample_text, body.sample_url, &alias, &now],
         )
         .map_err(|e| internal(&format!("sample update: {e}")))?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(Json(serde_json::json!({ "ok": true, "profile_auto_upserted": profile_auto_upserted })))
 }
 
 /// `GET /v1/gui/vault/pending` — vault 의 pending 승인 요청 목록.

@@ -128,6 +128,16 @@ fn is_auto_stub(notes: Option<&str>) -> bool {
     n.starts_with("auto-registered") || n.starts_with("auto-seed") || n.starts_with("auto-synced")
 }
 
+/// 테스트/타이밍 검증용 표시명 sentinel 여부.
+///
+/// 특정 probe 이름을 하드코딩하지 않고, 사람이 붙인 일반 이름과 충돌 가능성이 낮은
+/// 양끝이 double underscore(`__...__`)인 짧은 marker. 이 표식만으로 행을 지우지는 않고,
+/// profile/live/active 증거가 전혀 없는 peer-only echo 에만 적용한다.
+fn is_test_sentinel_display_name(display_name: Option<&str>) -> bool {
+    let s = display_name.unwrap_or("").trim();
+    s.len() > 4 && s.starts_with("__") && s.ends_with("__")
+}
+
 /// peers.session_status 가 라이브(연결됨)인지 — `active`/`live`/`connected`.
 fn is_live_status(status: Option<&str>) -> bool {
     matches!(
@@ -459,6 +469,12 @@ impl<'a> IdentityStore<'a> {
                     return true;
                 }
                 // 세션 증거가 없으면 — auto-stub 은 제외, 사람이 등록한 행(non-stub)만 유지.
+                // profile·라이브 세션·active 연결 없이 `__...__` 표시명만 남은 행은
+                // rc.350 타이밍/검증용 peer echo 로 보고 제외한다. 특정 이름이 아니라
+                // sentinel 구조만 본다.
+                if is_test_sentinel_display_name(p.display_name.as_deref()) {
+                    return false;
+                }
                 !is_auto_stub(p.notes.as_deref()) && p.last_seen.is_some()
             })
             .map(|p| p.alias.clone())
@@ -924,6 +940,45 @@ mod tests {
             rows.is_empty(),
             "auto-registered stub + 세션/active 없음 = 제외(현황 그리드 정제)"
         );
+    }
+
+    /// 발견2: profile·live 세션·active 연결 없이 `__...__` 표시명만 남은 rc.350류
+    /// 타이밍/검증 stub 은 하드코딩 이름 없이 구조적 sentinel 로 제외한다.
+    #[test]
+    fn test_display_name_sentinel_peer_without_live_signal_excluded() {
+        let peers = vec![PeerInput {
+            alias: "rc350-probe".into(),
+            eth_address: None,
+            session_identifier: None,
+            role: Some("worker".into()),
+            display_name: Some("__some_timing_probe__".into()),
+            session_status: None,
+            last_seen: Some("2026-06-26T00:00:00+09:00".into()),
+            notes: None,
+        }];
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &[], &[], "server-seoul");
+        assert!(
+            rows.is_empty(),
+            "profile/live/active 없는 __...__ 표시명 peer stub 은 현황 그리드에서 제외"
+        );
+    }
+
+    /// 같은 sentinel 표시명이어도 active 연결 증거가 있으면 실제 행으로 유지한다.
+    #[test]
+    fn test_display_name_sentinel_peer_with_active_status_kept() {
+        let peers = vec![PeerInput {
+            alias: "live-probe".into(),
+            eth_address: None,
+            session_identifier: None,
+            role: Some("worker".into()),
+            display_name: Some("__some_live_probe__".into()),
+            session_status: Some("active".into()),
+            last_seen: Some("2026-06-26T00:00:00+09:00".into()),
+            notes: None,
+        }];
+        let rows = IdentityStore::roster_from_sources(&peers, &[], &[], &[], "server-seoul");
+        assert_eq!(rows.len(), 1, "active peer 는 sentinel 표시명이어도 유지");
+        assert_eq!(rows[0].primary_alias, "live-probe");
     }
 
     /// rc.361 — peer alias 와 겹치는 caps 행은 roster_from_sources 가 직접 제거한다
