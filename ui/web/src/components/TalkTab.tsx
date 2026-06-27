@@ -8,6 +8,8 @@ import { AddFriendModal, loadExternalFriends, type ExternalFriend } from "./AddF
 import { AgentRequestsInbox } from "./AgentRequestsInbox";
 import { ProviderLogo, providerKey } from "./ProviderLogo";
 import {
+  detectHome,
+  expandHome,
   computeUnregisteredSessions,
   isTooBroadPath,
   normPath,
@@ -109,24 +111,14 @@ const CLASS_GROUPS = [
 // 이 머신(server-seoul) = 로컬 에이전트만(파일트리·ACP 완전 작동).
 // 다른 머신/외부 = "친구" — A2A/peer 로 통신, 그쪽 primary 가 자기 에이전트 처리.
 //
-// 로컬 판정: project_path 가 `/home/llm/` 하위(이 머신 HOME) OR machine 이 비었거나 현재 머신.
-// 친구 판정: project_path 가 다른 경로(`/home/pasia/` 등) OR machine 이 원격 머신값.
-const LOCAL_HOME_PREFIX = "/home/llm";
-
 // machine 필드가 현재 머신을 가리키는가(또는 비었는가). 현재 머신 alias/hostname 후보 목록과 비교.
 function isLocalMachineField(machine: string | null | undefined, selfNames: string[]): boolean {
   const m = (machine ?? "").trim().toLowerCase();
   if (!m) return true; // 비었으면 로컬로 간주(기존 로컬 에이전트는 machine 미설정).
-  // "서울"/"seoul"/"local"/hostname/alias 등 현재 머신을 가리키면 로컬.
-  if (m === "local" || m === "서울" || m === "seoul") return true;
+  // local 은 로컬 별칭. seoul/zalman 같은 실제 머신명은 selfNames 에 있을 때만 로컬.
+  // 과거엔 seoul 을 항상 로컬로 보아 zalman 에서 seoul 친구가 로컬 명부로 섞이는 버그가 있었다.
+  if (m === "local") return true;
   return selfNames.some((n) => n && (m === n || m.includes(n) || n.includes(m)));
-}
-
-// project_path 가 이 머신 HOME(/home/llm) 하위면 로컬 폴더.
-function isLocalPath(projectPath: string | null | undefined): boolean {
-  const p = (projectPath ?? "").trim();
-  if (!p) return false; // 경로 정보 없으면 path 단독으로 로컬 단정 안 함(machine 으로 판정).
-  return p === LOCAL_HOME_PREFIX || p.startsWith(LOCAL_HOME_PREFIX + "/");
 }
 
 // 로컬 에이전트 여부 — classification==="friend" 면 무조건 친구(명시 친구 등록).
@@ -383,15 +375,21 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
     return (msgTextByAlias().get(a.alias.toLowerCase()) ?? "").includes(ql);
   };
 
-  // 현재 머신 식별 — sessions().machine.alias/hostname. 로컬/친구 분류 기준.
-  // 기본값 "server-seoul"(이 머신) — sessions 미로드 시 폴백.
+  // 현재 머신 식별 — sessions().machine.alias/hostname/tailscale_ip. 로컬/친구 분류 기준.
+  // 특정 머신명(server-seoul 등)을 하드코딩하지 않는다. zalman/seoul 양쪽에서 같은 번들이 돌기 때문.
   const selfMachineNames = createMemo<string[]>(() => {
     const m = sessions()?.machine;
-    const names = ["server-seoul"];
+    const names: string[] = [];
     if (m?.alias) names.push(m.alias.toLowerCase());
     if (m?.hostname) names.push(m.hostname.toLowerCase());
+    if (m?.tailscale_ip) names.push(m.tailscale_ip.toLowerCase());
     return [...new Set(names.filter(Boolean).map((n) => n.toLowerCase()))];
   });
+
+  // 세션 cwd 들에서 현재 daemon 의 HOME 을 추정해 `~/...` project_path 를 실제 cwd 와 비교 가능하게 한다.
+  const sessionHome = createMemo(() => detectHome((sessions()?.sessions ?? []).map((s) => s.cwd)));
+  const agentProjectPath = (a: { project_path?: string | null } | null | undefined): string =>
+    normPath(expandHome((a?.project_path ?? "").trim(), sessionHome()));
 
   // 로컬 에이전트만 — 분류 그룹(👑/📌/📁/⚙️)에 들어감.
   const localAgents = createMemo<AgentRow[]>(() =>
@@ -518,7 +516,7 @@ export function TalkTab(props: { onJumpToSettings?: () => void; onRoomChange?: (
   const selSessions = createMemo<DetectedSession[]>(() => {
     const alias = (selected() ?? "").toLowerCase();
     if (!alias) return [];
-    const convoCwd = normPath((selAgent()?.project_path ?? "").trim());
+    const convoCwd = agentProjectPath(selAgent());
     const regs = registeredCwds();
     const all = sessions()?.sessions ?? [];
     return all.filter((s) => {

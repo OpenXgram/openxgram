@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git config *)",
+      "Bash(git -C \"//wsl.localhost/Ubuntu/home/pasia/projects/openxgram\" log --pretty=format:'%h  %ad  %an  %s' --date=short -- CLAUDE.md)"
+    ]
+  }
+}

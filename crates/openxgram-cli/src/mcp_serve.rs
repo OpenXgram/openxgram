@@ -1896,43 +1896,17 @@ impl ToolDispatcher for OpenxgramDispatcher {
                     return Err(invalid("role 은 영숫자/-/_ 만"));
                 }
 
-                // 이미 등록된 봇이면 skip + 정보 반환.
-                let root = crate::bot::xgram_root().map_err(internal)?;
-                let reg = crate::bot::BotRegistry::load(&root).map_err(internal)?;
-                if let Some(existing) = reg.get(role) {
-                    return Ok(json!({
-                        "already_registered": true,
-                        "name": existing.name,
-                        "alias": existing.alias,
-                        "data_dir": existing.data_dir.display().to_string(),
-                        "transport_port": existing.transport_port,
-                    }));
-                }
-
-                // subprocess 로 분리 — bot_register 의 init [1/6] println 이 stdio JSON-RPC 와
-                // 섞이는 걸 방지. stdout/stderr 모두 폐기.
-                let xgram_bin = std::env::current_exe()
-                    .map_err(|e| internal(format!("xgram bin path: {e}")))?;
-                let output = std::process::Command::new(&xgram_bin)
-                    .args(["bot", "register", role])
-                    .env("XGRAM_KEYSTORE_PASSWORD", &pw)
-                    .env("XGRAM_SKIP_PORT_PRECHECK", "1")
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .stdin(std::process::Stdio::null())
-                    .status()
-                    .map_err(|e| internal(format!("xgram bot register spawn: {e}")))?;
-                if !output.success() {
-                    return Err(internal(format!(
-                        "xgram bot register {role} 실패 (exit {:?})",
-                        output.code()
-                    )));
-                }
-
-                let reg2 = crate::bot::BotRegistry::load(&root).map_err(internal)?;
-                let entry = reg2
-                    .get(role)
-                    .ok_or_else(|| internal("등록 직후 조회 실패"))?;
+                // rc.379 — 현재 TMUX 세션을 P2P 통신용으로 직접 등록한다(새 봇 spawn 금지).
+                //   이전: `xgram bot register <role>` 서브프로세스가 ~/.xgram/bots/<role> 에
+                //   별도 봇 인스턴스를 생성 → 정작 살아있는 현재 세션은 peers 에 등록 안 되고
+                //   엉뚱한 봇만 양산됐다(P2P 도달 불가 → idle 트리거 실패의 근본 원인).
+                //   현재: role 을 곧 이 세션의 alias 로 보고, 아래 UPSERT 들이 현재 세션을
+                //   peers/agent_profiles 에 name+path 기준으로 등록·갱신한다. 봇 인프라 미사용.
+                //   `_ = pw` — vault 인증은 require_vault 로 이미 검증됨(서명 경로 활성).
+                let _ = &pw;
+                // entry.alias 를 쓰던 하위 코드와의 호환을 위해 role 을 alias 로 바인딩.
+                struct SessionEntry<'a> { alias: &'a str }
+                let entry = SessionEntry { alias: role };
                 // rc.92 D1 — capabilities + description 저장 (agent_capabilities 테이블)
                 let description = args.get("description").and_then(|v| v.as_str());
                 let capabilities = args.get("capabilities")
