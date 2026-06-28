@@ -372,6 +372,11 @@ export function AcpConversation(props: {
     setSlashFilter("");
   }
   const [busy, setBusy] = createSignal(false); // 세션 생성/프롬프트 진행 중
+  // rc.379 — 비동기 턴 타임아웃 가드(보완 B). prompt 가 202 즉시반환 후 SSE conv_persisted 를
+  // 놓쳐 busy 가 영구 고착되는 걸 방지. 턴 시작 시 타이머를 걸고 finishTurn 에서 클리어.
+  let turnTimeout: number | undefined;
+  const TURN_TIMEOUT_MS = 180_000; // 3분 — 긴 turn(에이전트 장시간 작업)도 감당하는 넉넉한 상한.
+  const TURN_POLL_MS = 2_000; // DB 메시지박스 폴링 주기(카카오톡 모델 안전망). SSE 유실해도 답 복원.
   const [streaming, setStreaming] = createSignal(false);
   // 재연결한 SSE 로 진행 중 턴의 청크가 들어오면 true → '입력중' 표시. 다른 창 갔다 와서
   // busy 가 false(새 마운트)여도 서버 턴이 살아있으면 이걸로 입력중을 보여준다. conv_persisted 에 해제.
@@ -659,8 +664,16 @@ export function AcpConversation(props: {
     // 데몬이 턴 결과를 acp_messages 에 영속한 직후 보내는 마커. 권위 소스(DB)에서
     // 재동기화 → 다른 창 갔다 와도(loadHistory 1회성으로 놓쳤던) 완료 답변이 복원된다.
     if (tag === "conv_persisted") {
-      setRecvActive(false); // 턴 완료(영속) → 입력중 해제
-      void loadHistory(true);
+      // rc.379 — 비동기 턴의 **종료 마커**. busy 해제·큐 드레인·타임아웃 클리어를 finishTurn 이
+      // 담당(prompt 의 202 즉시반환 후 여기로 턴종료가 온다). status(success/empty/error)는
+      // 데몬이 실어 보낸다(보완 A) — error 면 사용자에게 알린다.
+      const status = (o.status as string | undefined) ?? undefined;
+      if (status === "error") {
+        const em = (o.errorMessage as string | undefined) ?? "알 수 없는 오류";
+        pushBubble({ id: nextId++, kind: "note", text: `⚠ 턴 실패: ${em}`, time: nowClock() });
+      }
+      void loadHistory(true); // 권위 소스(DB)에서 재동기화 → 완료 답변 복원
+      finishTurn(); // busy/recvActive 해제 + 타임아웃 클리어 + 대기열 다음 메시지 자동 전송
       return;
     }
     // 진행 중 턴의 활동(메시지/사고/툴) 수신 = 입력중. 재연결한 SSE 로 와도 표시된다.
@@ -958,44 +971,81 @@ export function AcpConversation(props: {
       pushBubble({ id: nextId++, kind: "note", text: "↻ 이전 맥락을 에이전트에 전달하여 이어감", time: nowClock() });
       pendingContext = null;
     }
+    // rc.379 — 비동기 prompt: 데몬이 즉시 202 를 반환하고(턴은 백그라운드), 턴 종료는
+    // SSE 의 conv_persisted(status) 마커로 통지된다. 따라서 여기서 busy 를 풀거나 큐를
+    // 드레인하지 않는다 — 그건 conv_persisted 핸들러(finishTurn)가 담당. 이 await 는 이제
+    // ~즉시 끝나므로 ~20초 동기 블로킹으로 인한 Cloudflare 502 가 사라진다.
+    // 카카오톡 모델 — 전송(보내기)은 즉시(데몬 202). 답변은 서버가 'DB 메시지박스'에
+    // 기록하고, 화면은 그 박스를 비춘다. 실시간 SSE(chunk/conv_persisted)는 '빠른 표시'용
+    // 보조일 뿐 — broadcast 유실·페이지 재오픈으로 놓쳐도, 아래 DB 폴링이 박스에서 최종
+    // 답변을 확실히 불러와 띄운다. 즉 답변은 SSE 가 아니라 DB(권위)로 보장된다.
+    const turnStartCount = bubbles().filter((b) => b.kind === "agent").length;
     try {
-      // SSE 가 동일 update 를 먼저 relay 할 수 있으므로, prompt 응답의 updates 는
-      // 스트림이 죽었을 때의 폴백으로만 적용. stopReason 은 note 로 표시.
-      const r = await acpFetch<{ stopReason: string; updates?: unknown[] }>(
+      await acpFetch<{ accepted?: boolean }>(
         "POST",
         `/sessions/${encodeURIComponent(id)}/prompt`,
-        { text: sendText },
+        // text = agent 가 받는 전체(preamble 포함), display_text = 사용자 원문.
+        // 데몬은 me 권위 기록·표시에 display_text 만 써서 주입 규칙·기억이 me 버블에 노출되지 않게 한다.
+        { text: sendText, display_text: text },
       );
-      if (!streaming() && Array.isArray(r.updates)) {
-        for (const u of r.updates) applyUpdate(u);
-      }
-      if (r.stopReason && r.stopReason !== "end_turn") {
-        pushBubble({ id: nextId++, kind: "note", text: `· turn 종료: ${r.stopReason}`, time: nowClock() });
-      }
     } catch (e) {
+      // POST 자체 실패(전송 실패) — 턴이 시작도 안 됐으므로 여기서 busy 해제 + 큐 진행.
       pushBubble({ id: nextId++, kind: "note", text: `⚠ 구동 실패: ${(e as Error)?.message ?? e}`, time: nowClock() });
-    } finally {
-      setBusy(false);
-      setRecvActive(false); // 내 턴 종료(에러 포함) → 입력중 해제(conv_persisted 못 오는 에러 턴 대비).
+      finishTurn();
+      return;
     }
-    // ⚠ agent 응답 영속화는 이제 데몬이 권위있게 담당한다(daemon_gui.rs acp_session_prompt).
-    // 종전엔 UI 가 turn-end 에 recordMsg("agent", ...) 로 기록했으나, 사용자가 턴 중/후
-    // 대화창을 나가면 이 코드가 실행되지 않아 기록이 누락 → 돌아오면 "idle" 로 보이는
-    // 핵심 버그였다. 데몬이 prompt 턴 종료 시 acp_messages 에 INSERT 하므로 UI 이탈과
-    // 무관하게 영속화된다. 이중 기록 방지를 위해 UI 측 agent recordMsg 는 제거.
-    // loadHistory(DB) 가 진실 원천 — 라이브 버블은 SSE/updates 의 낙관적 표시일 뿐.
-    //
-    // 데몬은 prompt HTTP 응답을 반환하기 전에 기록을 마치므로, 아래 acp_conv_read 시점엔
-    // 이미 agent row 가 존재(created_at ≤ 턴 완료시각) → last_read ≥ created_at 보장,
-    // "안읽음 1" 위양성 배지 없음.
+    // ── DB 메시지박스 폴링(카카오톡 모델의 핵심 안전망) ───────────────────────
+    // turn 동안 주기적으로 loadHistory(DB)를 다시 읽어, 박스에 새 agent 답변이 들어오면
+    // SSE 와 무관하게 화면에 뜬다(conv_persisted/타임아웃 안 와도). 답변 도착 또는 상한 시각에
+    // 폴링을 멈추고 finishTurn(입력 다시 엶). 폴링 주기·상한은 상수로(흩뿌리지 않음).
+    if (turnTimeout !== undefined) clearTimeout(turnTimeout);
+    const pollDeadline = Date.now() + TURN_TIMEOUT_MS;
+    const poll = async () => {
+      // 다른 턴/이탈로 이미 정리됐으면 중단.
+      if (!busy()) return;
+      await loadHistory(true).catch(() => {});
+      // 박스에 이 턴의 새 agent 답변이 들어왔나(턴 시작 시점보다 agent 버블이 늘었으면 도착).
+      const arrived = bubbles().filter((b) => b.kind === "agent").length > turnStartCount;
+      if (arrived) {
+        finishTurn(); // 답변이 박스에 떴다 → 입력 다시 엶 + 대기열 진행
+        return;
+      }
+      if (Date.now() >= pollDeadline) {
+        pushBubble({
+          id: nextId++,
+          kind: "note",
+          text: "⚠ 응답이 아직 박스에 도착하지 않아 입력을 다시 엽니다(에이전트가 계속 작업 중일 수 있어요. 잠시 후 새로고침하면 답이 보일 수 있습니다).",
+          time: nowClock(),
+        });
+        finishTurn();
+        return;
+      }
+      turnTimeout = window.setTimeout(() => void poll(), TURN_POLL_MS);
+    };
+    turnTimeout = window.setTimeout(() => void poll(), TURN_POLL_MS);
+  }
+
+  // rc.379 — 턴 종료 처리(공통). conv_persisted(SSE) 도착 / 전송 실패 / 타임아웃 가드 어디서든
+  // 호출되어 busy·recvActive 를 해제하고 타임아웃 타이머를 클리어한 뒤, 대기열의 다음 메시지를
+  // 순서대로 자동 전송한다. 정확히 1회 동작하도록 busy 가드(이미 풀렸으면 큐 드레인만 스킵).
+  function finishTurn() {
+    if (turnTimeout !== undefined) {
+      clearTimeout(turnTimeout);
+      turnTimeout = undefined;
+    }
+    const wasBusy = busy();
+    setBusy(false);
+    setRecvActive(false);
     // 대화 중이므로 방금 받은 응답은 읽음 처리(안읽음 배지 누적 방지).
     void invoke("acp_conv_read", { key: convKey() }).catch(() => {});
-    // 대기열에 후속 메시지가 있으면 턴 종료 후 순서대로 자동 전송.
-    const q = queue();
-    if (q.length > 0) {
-      setQueue(q.slice(1));
-      setDraft(q[0]);
-      void sendPrompt();
+    // 대기열에 후속 메시지가 있으면 턴 종료 후 순서대로 자동 전송(중복 드레인 방지 — busy 였을 때만).
+    if (wasBusy) {
+      const q = queue();
+      if (q.length > 0) {
+        setQueue(q.slice(1));
+        setDraft(q[0]);
+        void sendPrompt();
+      }
     }
   }
 

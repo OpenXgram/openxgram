@@ -75,27 +75,107 @@ pub struct DaemonOpts {
     pub tailscale: bool,
 }
 
+/// rc.379 — `npm prefix -g` 의 bin 디렉토리(npm global 패키지 설치 위치 정본)를 동적으로
+/// 해석한다. ACP 어댑터(claude-agent-acp 등)가 여기에 깔리므로 데몬 PATH 보강에 사용.
+/// npm 미설치·실패·행(hang) 시 `None` (호출부가 흔한 폴백 경로로 대체). 머신별 하드코딩 금지.
+/// npm 이 멈추는 환경(npmrc lock 등)에서 데몬 부팅이 영원히 막히지 않도록 2초 안에 끝나지
+/// 않으면 자식 프로세스를 kill 하고 `None` 반환(openxgram-hermes 교차검증: timeout 권장).
+fn npm_global_bin() -> Option<String> {
+    use std::io::Read;
+    let mut child = std::process::Command::new("npm")
+        .args(["prefix", "-g"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    // 2초 폴링 대기 — 넘기면 kill (npm 행 방지).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return None;
+                }
+                break;
+            }
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(_) => return None,
+        }
+    }
+    let mut buf = String::new();
+    child.stdout.as_mut()?.read_to_string(&mut buf).ok()?;
+    let prefix = buf.trim().to_string();
+    if prefix.is_empty() {
+        return None;
+    }
+    Some(
+        std::path::Path::new(&prefix)
+            .join("bin")
+            .to_string_lossy()
+            .into_owned(),
+    )
+}
+
+/// rc.379 — 데몬 프로세스의 PATH 를 공통 + 사용자 단위 bin 경로로 보강한다.
+///
+/// **반드시 tokio 런타임/스레드가 뜨기 전(단일스레드 구간)에 호출할 것.** `set_var`(POSIX
+/// `setenv`)는 멀티스레드에서 비스레드안전이라, main 최상단(런타임 build 전)에서만 호출한다
+/// (openxgram-hermes 교차검증 합의 — UB 완전 해소).
+///
+/// rc.253 — 데몬 subprocess(tmux 등)가 launchd/systemd 의 빈약한 PATH 에서도 도구를 찾도록
+///   공통 bin(/opt/homebrew/bin·/usr/local/bin 등) 보강.
+/// rc.379 — 사용자 단위 bin(npm global prefix·~/.npm-global/bin·~/.local/bin·~/.cargo/bin)도
+///   보강. systemd --user 의 빈약한 PATH 에는 이게 없어 ACP 어댑터(claude-agent-acp 등 npm
+///   global 설치)를 command_installed 가 못 찾아 GUI 가 "어댑터 미설치" 로 ACP 세션을 막던
+///   버그(zalman.openxgram.org ACP 대화 불능)의 근본 원인. HOME 은 머신마다 다르므로 하드코딩
+///   대신 $HOME 으로 동적 해석(정적 복제 금지 — 절대 규칙).
+pub fn augment_path() {
+    let cur = std::env::var("PATH").unwrap_or_default();
+    let mut extra: Vec<String> = [
+        "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+        "/data/data/com.termux/files/usr/bin", // Android Termux
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    // 사용자 단위 bin — npm global prefix(~/.npm-global/bin) 동적 해석 우선, 폴백으로 흔한 위치.
+    if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+        // npm prefix -g 결과의 bin (설치 위치 정본). 실패하면 폴백 경로들로.
+        if let Some(npm_bin) = npm_global_bin() {
+            extra.push(npm_bin);
+        }
+        for sub in [".npm-global/bin", ".local/bin", ".cargo/bin"] {
+            extra.push(home.join(sub).to_string_lossy().into_owned());
+        }
+    }
+    let missing: Vec<String> = extra
+        .into_iter()
+        .filter(|p| !cur.split(':').any(|c| c == p))
+        .collect();
+    if !missing.is_empty() {
+        // SAFETY: main 최상단 단일스레드 구간에서만 호출(augment_path 문서 계약). 다른
+        // 스레드가 없으므로 setenv 데이터레이스 없음.
+        std::env::set_var("PATH", format!("{}:{}", missing.join(":"), cur));
+    }
+}
+
 pub async fn run_daemon(opts: DaemonOpts) -> Result<()> {
     // 싱글톤 가드 — data_dir 당 데몬 1개. 포트 바인딩 *전에* flock 획득.
     //   살아있는 데몬이 이미 점유 중이면 AlreadyRunning 에러로 비정상 종료(중복 기동 차단).
     //   `_daemon_lock` 은 run_daemon 스코프 전체에서 보유해야 락이 유지된다(드롭 금지).
     let _daemon_lock = crate::daemon_singleton::DaemonLock::acquire(&opts.data_dir)?;
 
-    // rc.253 — 데몬 subprocess(tmux 등)가 launchd/systemd 의 빈약한 PATH 에서도 도구를
-    //   찾도록 공통 bin 경로 보강. macOS Homebrew(/opt/homebrew/bin)·/usr/local/bin 등.
-    //   이게 없으면 macOS launchd 데몬이 `tmux` 를 못 찾아 세션 탐지가 claude 로 폴백했음
-    //   (마스터: "설치하면 자동으로 tmux 목록이 나와야"). 설치만 하면 자동 탐지되게.
-    {
-        let cur = std::env::var("PATH").unwrap_or_default();
-        let extra = [
-            "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
-            "/data/data/com.termux/files/usr/bin", // Android Termux
-        ];
-        let missing: Vec<&str> = extra.iter().copied().filter(|p| !cur.split(':').any(|c| c == *p)).collect();
-        if !missing.is_empty() {
-            std::env::set_var("PATH", format!("{}:{}", missing.join(":"), cur));
-        }
-    }
+    // PATH 보강(augment_path)은 main 최상단(tokio 런타임 build 전 단일스레드 구간)으로 이동했다.
+    // set_var 는 멀티스레드에서 비스레드안전이라, 워커 스레드가 뜬 이 async 구간에서 호출하면
+    // UB 우려가 있어 main 으로 옮겼다(openxgram-hermes 교차검증 합의, rc.379).
 
     // rc.117 — daemon 첫 시작 시 ~/oxg.md + 전역 CLAUDE.md @~/oxg.md reference 자동 setup.
     // install.sh / cargo build / 무관하게 OpenXgram 깔리는 순간 자동 setup. idempotent.

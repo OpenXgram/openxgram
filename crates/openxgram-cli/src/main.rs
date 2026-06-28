@@ -2150,8 +2150,20 @@ enum KeypairAction {
     },
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+// rc.379 — #[tokio::main] 을 풀어 동기 main 진입부(단일스레드 구간)에서 PATH 를 보강한 뒤
+// tokio 멀티스레드 런타임을 수동으로 빌드한다. set_var(POSIX setenv)는 멀티스레드 비스레드
+// 안전이라, 어떤 워커 스레드도 뜨기 전인 여기서만 PATH 를 손대 UB 를 원천 차단한다
+// (openxgram-hermes 교차검증 합의). 이전엔 run_daemon(async, 워커 가동 후)에서 set_var 했음.
+fn main() -> anyhow::Result<()> {
+    // ⚠ tokio 런타임 build 전 단일스레드 구간 — 여기서만 PATH 를 보강한다.
+    daemon::augment_path();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async_main())
+}
+
+async fn async_main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // 로그 초기화 — `XGRAM_LOG_FORMAT=json` 시 구조화 로그 (운영·SRE 친화),

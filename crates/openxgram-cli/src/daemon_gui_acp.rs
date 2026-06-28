@@ -564,8 +564,14 @@ fn remote_acp_command(machine: &str, cwd: &str, permission_mode: Option<&str>, e
 /// `POST /v1/acp/sessions/{id}/prompt` body.
 #[derive(Debug, Deserialize)]
 pub struct PromptBody {
-    /// Prompt text (single text ContentBlock for B-2).
+    /// Prompt text (single text ContentBlock for B-2). agent 에게 실제로 보내는 텍스트 —
+    /// 규칙/기억/맥락 preamble 이 앞에 붙은 전체.
     pub text: String,
+    /// 사용자가 실제로 친 원문(선택). 있으면 데몬이 "me" 권위 기록·화면 표시에 이것을 쓴다.
+    /// preamble(주입 규칙·기억)이 me 버블/DB 에 노출되던 회귀 fix — agent 엔 `text`(전체),
+    /// 사용자에겐 `display_text`(원문)만. 미지정(구 클라이언트)이면 `text` 로 폴백(기존 동작).
+    #[serde(default)]
+    pub display_text: Option<String>,
 }
 
 // ── Handlers (free fns; daemon_gui.rs wraps them after require_auth) ────────
@@ -1051,6 +1057,31 @@ pub async fn notify_conv_persisted(state: &AcpHttpState, session_id: &str) {
         let _ = sess
             .updates_tx
             .send(serde_json::json!({ "sessionUpdate": "conv_persisted" }));
+    }
+}
+
+/// rc.379 — `notify_conv_persisted` 의 status 버전. 비동기(202) prompt 경로의 **턴 종료
+/// 마커**로 쓴다. 모든 종료 경로(성공/빈턴/에러/패닉)에서 정확히 1회 호출하여, GUI 가
+/// SSE 로 턴 종료를 감지해 `busy` 를 해제하게 한다(openxgram-hermes 교차검증 보완 A·C).
+///   - status: "success" | "empty" | "error"
+///   - error_message: status="error" 일 때 사용자/디버그용 메시지(없으면 생략)
+/// 기존 `conv_persisted` 핸들러는 추가 필드를 무시하므로 하위호환(스키마 변경 없음).
+pub async fn notify_conv_persisted_status(
+    state: &AcpHttpState,
+    session_id: &str,
+    status: &str,
+    error_message: Option<&str>,
+) {
+    let sessions = state.sessions.lock().await;
+    if let Some(sess) = sessions.get(session_id) {
+        let mut payload = serde_json::json!({
+            "sessionUpdate": "conv_persisted",
+            "status": status,
+        });
+        if let Some(msg) = error_message {
+            payload["errorMessage"] = serde_json::json!(msg);
+        }
+        let _ = sess.updates_tx.send(payload);
     }
 }
 

@@ -4828,7 +4828,7 @@ async fn gui_wiki_ingest(
         model: None, thinking: None, machine: None, label: None,
     }).await.map_err(|(c, m)| (c, Json(ErrorDto{error: m})))?;
     let sid = create.get("sessionId").and_then(|s| s.as_str()).unwrap_or("").to_string();
-    let res = crate::daemon_gui_acp::prompt(&state.acp, &sid, crate::daemon_gui_acp::PromptBody{ text: prompt }).await;
+    let res = crate::daemon_gui_acp::prompt(&state.acp, &sid, crate::daemon_gui_acp::PromptBody{ text: prompt, display_text: None }).await;
     let _ = crate::daemon_gui_acp::close(&state.acp, &sid).await;
     let acp_result = res.map_err(|(c, m)| (c, Json(ErrorDto{error: m})))?;
     let mut text = String::new();
@@ -8803,6 +8803,7 @@ async fn heartbeat_wake(state: &GuiServerState) {
         if sid.is_empty() { continue; }
         let _ = crate::daemon_gui_acp::prompt(&state.acp, &sid, crate::daemon_gui_acp::PromptBody {
             text: "정기 하트비트 점검입니다. 처리할 일이 있으면 진행하고, 없으면 한 문장으로 '대기 중'만 보고하세요.".to_string(),
+            display_text: None,
         }).await;
         let _ = crate::daemon_gui_acp::close(&state.acp, &sid).await;
         tracing::info!(alias = %alias, "heartbeat wake 완료");
@@ -10266,7 +10267,7 @@ async fn gui_workflow_plan(
         },
     ).await.map_err(|(c, m)| (c, Json(ErrorDto{error: m})))?;
     let sid = create.get("sessionId").and_then(|s| s.as_str()).unwrap_or("").to_string();
-    let res = crate::daemon_gui_acp::prompt(&state.acp, &sid, crate::daemon_gui_acp::PromptBody{ text: prompt }).await;
+    let res = crate::daemon_gui_acp::prompt(&state.acp, &sid, crate::daemon_gui_acp::PromptBody{ text: prompt, display_text: None }).await;
     let _ = crate::daemon_gui_acp::close(&state.acp, &sid).await;
     let acp_result = res.map_err(|(c, m)| (c, Json(ErrorDto{error: m})))?;
     let mut text = String::new();
@@ -13025,13 +13026,20 @@ async fn acp_session_create(
         .map_err(acp_err)
 }
 
-/// `POST /v1/acp/sessions/{id}/prompt` — 한 prompt turn 구동, {stopReason, updates}.
+/// `POST /v1/acp/sessions/{id}/prompt` — rc.379: 비동기(202) 턴 구동.
+///
+/// ACP 첫 prompt 는 claude-agent-acp 프로세스 spawn+부팅+첫턴으로 ~20초 블로킹되어,
+/// 동기로 await 하면 Cloudflare 터널 origin 타임아웃을 넘겨 502 Bad Gateway 가 났다.
+/// 이제 me-row(턴 전 사용자 메시지)만 동기 기록한 뒤 턴 실행을 `tokio::spawn` 으로 분리하고
+/// 즉시 `202 Accepted` 를 반환한다. 턴 결과/과정은 기존 SSE(`/stream`, updates_tx)로 흐르고,
+/// 턴 종료는 `conv_persisted`(status 포함) 마커로 GUI 에 통지된다. spawn 된 턴은 panic 을
+/// 잡아(catch) 어떤 종료 경로에서도 정확히 1회 종료 마커를 보장한다(openxgram-hermes 교차검증).
 async fn acp_session_prompt(
     State(state): State<GuiServerState>,
     headers: HeaderMap,
     Path(id): Path<String>,
     Json(body): Json<crate::daemon_gui_acp::PromptBody>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDto>)> {
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ErrorDto>)> {
     require_auth(&state, &headers).await.map_err(unauthorized)?;
 
     // ── 사용자 프롬프트("me") 권위 기록 (턴 실행 전) ─────────────────────────
@@ -13040,27 +13048,74 @@ async fn acp_session_prompt(
     // (턴 끝에 자동 전송) 이나 UI 이탈 시 'me' 버블이 DB 재동기화(conv_persisted/loadHistory)
     // 로 사라졌다. 이제 데몬이 agent 응답과 동일하게 "me" 도 권위 기록한다 — UI 와 무관히 영속.
     // 순서: 여기서 me-row(턴 전) → 아래 agent-row(턴 후). created_at(me) ≤ created_at(agent).
-    // raw 텍스트 기록: 맥락 복원 preamble 은 prompt() 내부에서 body.text 앞에 붙으므로
-    // body.text 는 사용자가 실제로 친 원문이다. 그 원문을 기록해 화면에 정확히 보이게 한다.
-    let raw_user_text = body.text.clone();
+    // raw 텍스트 기록: GUI 는 주입 규칙·기억·맥락 preamble 을 앞에 붙인 전체를 body.text 로
+    // 보내고(agent 가 받아야 하므로), 사용자 원문은 body.display_text 로 따로 보낸다. me 권위
+    // 기록·화면 표시엔 원문(display_text)만 써서 preamble 이 me 버블/DB 에 노출되지 않게 한다.
+    // display_text 미지정(구 클라이언트)이면 body.text 로 폴백 — 기존 동작 보존.
+    let raw_user_text = body
+        .display_text
+        .clone()
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or_else(|| body.text.clone());
     if let Some(conv_key) = state.acp.session_label(&id).await {
         // record_message 는 빈 텍스트면 no-op, 영속 실패 시 명시 로그(절대 규칙 1).
         state.acp.record_message(&conv_key, "me", &raw_user_text).await;
     }
 
-    let result = crate::daemon_gui_acp::prompt(&state.acp, &id, body)
+    // ── rc.379 비동기 턴 — 즉시 202 반환, 실제 턴은 백그라운드 task ───────────
+    // AcpHttpState/GuiServerState 는 Clone(전부 Arc 백킹; axum State<> 가 이미 Clone 요구).
+    // state.clone()/id.clone() 을 'static task 로 이동해 spawn. 턴 결과는 기존 SSE(updates_tx)로
+    // 흐르고, 턴 종료는 conv_persisted(status) 마커로 통지. spawn 된 턴은 panic 을 잡아 어떤
+    // 종료 경로(성공/빈턴/에러/패닉)에서도 정확히 1회 종료 마커를 보장한다(openxgram-hermes 보완 A·C).
+    let task_state = state.clone();
+    let task_id = id.clone();
+    tokio::spawn(async move {
+        use futures_util::FutureExt;
+        let outcome = std::panic::AssertUnwindSafe(run_acp_turn(&task_state, &task_id, body))
+            .catch_unwind()
+            .await;
+        let (status, err_msg): (&str, Option<String>) = match outcome {
+            Ok(Ok(true)) => ("success", None),
+            Ok(Ok(false)) => ("empty", None),
+            Ok(Err(e)) => {
+                tracing::error!(target: "acp.daemon", session = %task_id, "ACP 턴 실패: {e}");
+                ("error", Some(e))
+            }
+            Err(_) => {
+                tracing::error!(target: "acp.daemon", session = %task_id, "ACP 턴 panic — 종료 마커 강제 발송");
+                ("error", Some("internal turn panic".to_string()))
+            }
+        };
+        crate::daemon_gui_acp::notify_conv_persisted_status(
+            &task_state.acp,
+            &task_id,
+            status,
+            err_msg.as_deref(),
+        )
+        .await;
+    });
+
+    // 즉시 202 — 본문에 updates/stopReason 없음(결과는 SSE 로). GUI 는 conv_persisted 로 턴종료 감지.
+    Ok((StatusCode::ACCEPTED, Json(serde_json::json!({ "accepted": true }))))
+}
+
+/// rc.379 — 한 ACP 턴 실행 + 서버측 권위 기록. `acp_session_prompt` 백그라운드 task 본문.
+/// 반환: `Ok(true)`=agent/plan 영속됨(성공), `Ok(false)`=빈/취소 턴(영속 없음),
+/// `Err(msg)`=턴 구동 실패. 종료 마커는 호출부가 status 와 함께 발송(여기선 미발송 — 중복 방지).
+async fn run_acp_turn(
+    state: &GuiServerState,
+    id: &str,
+    body: crate::daemon_gui_acp::PromptBody,
+) -> Result<bool, String> {
+    let result = crate::daemon_gui_acp::prompt(&state.acp, id, body)
         .await
-        .map_err(acp_err)?;
+        .map_err(|(_code, msg)| msg)?;
 
     // ── 서버측 권위 기록 ──────────────────────────────────────────────────
-    // 핵심 버그 fix: 턴 결과를 데몬이 직접 `acp_messages` 에 기록한다. 종전에는
-    // UI(AcpConversation.tsx) 만 turn-end 에 agent 응답을 conv_add 로 기록했기에,
-    // 사용자가 턴 중/후 대화창을 나가면 기록이 누락되어 돌아왔을 때 "아무것도 안
-    // 한 idle" 상태로 보였다. 이제 데몬이 권위 소스 — UI 이탈과 무관하게 영속화된다.
-    //
-    // 기록 조건: 세션에 label(conv_key=대화 신원)이 있고(=picker 진입 아님),
-    // 추출한 agent 텍스트가 비어있지 않을 때만. 빈/취소 턴은 가짜 빈 메시지 방지로 스킵.
-    if let Some(conv_key) = state.acp.session_label(&id).await {
+    // 턴 결과를 데몬이 직접 `acp_messages` 에 기록(권위 소스 — UI 이탈과 무관히 영속).
+    // 기록 조건: 세션에 label(conv_key)이 있고, agent 텍스트가 비어있지 않을 때만.
+    // 빈/취소 턴은 가짜 빈 메시지 방지로 스킵 → Ok(false).
+    if let Some(conv_key) = state.acp.session_label(id).await {
         let mut agent_text = String::new();
         // 과정(툴 호출·계획)도 순서대로 수집 → DB 영속. 나갔다 와도 ▸단계 아코디언에 복원된다.
         let mut tools: Vec<(String, serde_json::Value)> = Vec::new(); // (toolCallId, {title,status})
@@ -13130,13 +13185,12 @@ async fn acp_session_prompt(
                 }
             }
             drop(db);
-            // 영속 직후 SSE 로 'conv_persisted' 알림 → 떠 있는 클라이언트가 DB 재동기화(loadHistory).
-            // 사용자가 턴 도중/직후 다른 창에 갔다 와도 (loadHistory 1회성으로 놓치던) 완료 답변·과정이 뜬다.
-            crate::daemon_gui_acp::notify_conv_persisted(&state.acp, &id).await;
+            // 종료 마커(conv_persisted+status)는 호출부(spawn task)가 결과에 따라 발송한다.
+            return Ok(true);
         }
     }
-
-    Ok(Json(result))
+    // 빈/취소 턴 또는 label 없음(picker) — 영속한 것 없음.
+    Ok(false)
 }
 
 /// `POST /v1/acp/sessions/{id}/cancel` — session/cancel.
@@ -13676,6 +13730,7 @@ async fn a2a_send(
                 &session_id,
                 crate::daemon_gui_acp::PromptBody {
                     text: prompt_text.clone(),
+                    display_text: None,
                 },
             )
             .await
@@ -13798,6 +13853,7 @@ async fn a2a_send(
                 &session_id,
                 crate::daemon_gui_acp::PromptBody {
                     text: prompt_text.clone(),
+                    display_text: None,
                 },
             )
             .await;

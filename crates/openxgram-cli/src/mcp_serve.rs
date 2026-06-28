@@ -1995,7 +1995,7 @@ impl ToolDispatcher for OpenxgramDispatcher {
                 //   부재 시 affected 0 (무해 통과 — 행은 transport 등록이 생성).
                 //   display_name = agent_profiles 와 동일 소스(args.display_name, 없으면 alias).
                 //   cwd = project_path. 둘 다 COALESCE 로 None 이 기존값 안 덮게 보존. session_status='active'.
-                let peers_display_name = display_name.or(Some(entry.alias.as_str()));
+                let peers_display_name = display_name.or(Some(entry.alias));
                 let _ = self.db.conn().execute(
                     "UPDATE peers SET display_name = COALESCE(?1, display_name), \
                        cwd = COALESCE(?2, cwd), session_status = 'active' WHERE alias = ?3",
@@ -2044,13 +2044,18 @@ impl ToolDispatcher for OpenxgramDispatcher {
                         );
                     }
                 }
+                // 봇 인프라 폐기 리팩터(SessionEntry → {alias})로 사라진 옛 응답 필드를
+                // '하위호환 채움'으로 유지(제거 X) — 옛 응답을 파싱하는 MCP 호출자가 깨지지
+                // 않게 키 형태 보존(openxgram-hermes 교차검증 합의). name=alias(현재 세션은
+                // alias 가 신원), data_dir=데몬 data_dir, transport_port/mcp_port=0(봇 포트는
+                // 폐기 개념 — self 에 bind 포트 없음).
                 Ok(json!({
                     "registered": true,
-                    "name": entry.name,
+                    "name": entry.alias,
                     "alias": entry.alias,
-                    "data_dir": entry.data_dir.display().to_string(),
-                    "transport_port": entry.transport_port,
-                    "mcp_port": entry.transport_port + 2,
+                    "data_dir": self.data_dir.display().to_string(),
+                    "transport_port": 0,
+                    "mcp_port": 0,
                     "description_saved": description.is_some(),
                     "capabilities_saved": capabilities.is_some(),
                     "ai_type": ai_type,

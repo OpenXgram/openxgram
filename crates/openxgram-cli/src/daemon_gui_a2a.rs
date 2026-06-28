@@ -871,6 +871,7 @@ pub mod server {
             &session_id,
             daemon_gui_acp::PromptBody {
                 text: layered_text,
+                display_text: None,
             },
         )
         .await;
