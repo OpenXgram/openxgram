@@ -109,8 +109,24 @@ pub fn spawn_agent(
     for (k, v) in env {
         cmd.env(k, v);
     }
+    // cwd 존재 검증 + fallback — 존재하지 않는 디렉토리로 current_dir 를 걸면 자식이
+    // chdir 실패로 spawn 직후 즉사(`agent process exited code=None`)한다. 깨진/삭제된
+    // 세션 cwd(예: 사라진 프로젝트 경로) 때문에 agent 가 답을 못 하던 회귀를 막는다:
+    // 디렉토리가 없으면 $HOME 으로 떨어뜨리고 경고 로그(silent skip 금지 — 절대 규칙 1).
     if let Some(dir) = cwd {
-        cmd.current_dir(dir);
+        if std::path::Path::new(dir).is_dir() {
+            cmd.current_dir(dir);
+        } else {
+            let home = std::env::var("HOME")
+                .or_else(|_| std::env::var("USERPROFILE"))
+                .unwrap_or_else(|_| ".".to_string());
+            tracing::warn!(
+                target: "acp.transport",
+                "ACP cwd '{dir}' 존재하지 않음 — agent 즉사 방지로 HOME('{home}')으로 fallback. \
+                 세션 cwd 가 삭제됐거나 다른 머신 경로일 수 있음."
+            );
+            cmd.current_dir(home);
+        }
     }
 
     let mut child = cmd.spawn().map_err(AcpError::Spawn)?;
