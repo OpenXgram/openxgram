@@ -360,22 +360,28 @@ impl AcpHttpState {
         self.sessions.lock().await.contains_key(session_id)
     }
 
-    /// A2A 지속 세션 idle TTL 안전망 — label 이 `a2a:` 로 시작하는(친구 대화) 세션 중
-    /// 마지막 사용 이후 `idle` 초과한 것을 close 한다. 누수 방지 reaper 가 주기적으로 호출.
+    /// idle 세션 TTL 안전망 — **agent 가 spawn 된**(handle_id.is_some()) 세션 중 마지막 사용
+    /// 이후 `idle` 초과한 것을 close 해 agent 프로세스를 회수한다. 누수 방지 reaper 가 주기적 호출.
+    ///
+    /// 종전엔 label=`a2a:*`(친구 대화)만 대상이라 GUI ACP 세션의 agent 가 무한 누적됐다
+    /// (세션을 많이 열어두면 agent 좀비가 쌓여 daemon 이 새 턴을 처리 못 하던 회귀). 이제
+    /// **모든 세션**을 대상으로 일반화하되, 다음은 닫지 않는다(안전):
+    ///   - 진행 중 턴(`in_flight`) — 장시간 턴 mid-turn 사망 방지
+    ///   - 아직 agent 미spawn(lazy, `handle_id`=None) — 닫을 프로세스 없음, label 재사용 보존
+    /// close 후 세션 메타가 사라져도, 사용자가 다시 메시지를 보내면 find-or-create 로 재spawn
+    /// 되어 끊김 없이 이어진다(대화 기록은 DB 영속, label 로 재연결).
     /// close 자체에 `self`(state)가 필요하므로 reap 대상 id 만 lock 안에서 모으고 lock 해제 후 close.
-    pub async fn reap_idle_a2a(&self, idle: std::time::Duration) {
+    pub async fn reap_idle(&self, idle: std::time::Duration) {
         let now = std::time::Instant::now();
         let stale: Vec<String> = {
             let sessions = self.sessions.lock().await;
             sessions
                 .iter()
                 .filter(|(_, s)| {
-                    s.label
-                        .as_deref()
-                        .map(|l| l.starts_with("a2a:"))
-                        .unwrap_or(false)
+                    // spawn 된 agent 가 있는 세션만(회수 대상). lazy 세션은 프로세스 없음 → skip.
+                    s.handle_id.is_some()
                         && now.duration_since(s.last_used) >= idle
-                        // 진행 중 턴이 있으면 close 금지 — 장시간 위임 턴 mid-turn 사망 방지.
+                        // 진행 중 턴이 있으면 close 금지 — mid-turn 사망 방지.
                         && !s.in_flight.load(std::sync::atomic::Ordering::SeqCst)
                 })
                 .map(|(id, _)| id.clone())
@@ -383,8 +389,8 @@ impl AcpHttpState {
         };
         for sid in stale {
             match close(self, &sid).await {
-                Ok(_) => tracing::info!(target: "acp.daemon", session = %sid, "a2a idle reaper: 지속 세션 close(idle TTL 초과)"),
-                Err(e) => tracing::debug!(target: "acp.daemon", session = %sid, "a2a idle reaper close 실패(계속): {e:?}"),
+                Ok(_) => tracing::info!(target: "acp.daemon", session = %sid, "idle reaper: 세션 close(idle TTL 초과 — agent 회수)"),
+                Err(e) => tracing::debug!(target: "acp.daemon", session = %sid, "idle reaper close 실패(계속): {e:?}"),
             }
         }
     }
@@ -650,17 +656,32 @@ pub async fn create_session(
             .find(|(_, s)| s.label.as_deref() == Some(lbl))
             .map(|(sid, _)| sid.clone());
         if let Some(sid) = reuse {
-            if let Some(s) = sessions.get_mut(&sid) {
-                // idle reaper 안전망 갱신 — 재사용도 활성 사용으로 본다.
-                s.last_used = std::time::Instant::now();
-                return Ok(json!({
-                    "sessionId": sid,
-                    "agent": s.agent,
-                    "cwd": s.cwd,
-                    "executionMode": s.execution_mode,
-                    "spawned": s.handle_id.is_some(),
-                    "reused": true,
-                }));
+            // ★좀비 세션 방지 — 재사용 후보의 어댑터 핸들이 아직 살아있는지 검증한다.
+            // 어댑터가 죽으면(agent process exited) 세션 테이블엔 남지만 handle 은 죽은 것을
+            // 가리켜, find-or-create 가 그 죽은 세션을 계속 집어 영구 먹통(답 안 옴)이 됐다.
+            // handle 없거나(on_demand 미spawn) 살아있으면 재사용, 죽었으면 제거 후 새로 만든다.
+            let handle = sessions.get(&sid).and_then(|s| s.handle_id);
+            let alive = match handle {
+                None => true, // 아직 spawn 안 된 on_demand — 첫 prompt 가 새로 spawn. 재사용 OK.
+                Some(hid) => state.tools.acp_handle_alive(hid).await,
+            };
+            if alive {
+                if let Some(s) = sessions.get_mut(&sid) {
+                    // idle reaper 안전망 갱신 — 재사용도 활성 사용으로 본다.
+                    s.last_used = std::time::Instant::now();
+                    return Ok(json!({
+                        "sessionId": sid,
+                        "agent": s.agent,
+                        "cwd": s.cwd,
+                        "executionMode": s.execution_mode,
+                        "spawned": s.handle_id.is_some(),
+                        "reused": true,
+                    }));
+                }
+            } else {
+                // 좀비 — 세션 테이블에서 제거하고 아래에서 새 세션을 만든다(새 어댑터 spawn).
+                tracing::info!(target: "acp.daemon", session = %sid, label = %lbl, "좀비 ACP 세션 제거 — 어댑터 죽어 재사용 불가, 새 세션 생성");
+                sessions.remove(&sid);
             }
         }
     }

@@ -308,15 +308,24 @@ pub async fn spawn_gui_server(data_dir: PathBuf, bind_addr: SocketAddr) -> Resul
         });
     }
 
-    // A2A 지속 세션 idle TTL reaper — 친구 대화(label=a2a:*) 세션이 마지막 사용 후 30분 이상
-    // idle 이면 close(에이전트 reap). onClose 가 누락돼도(탭 강제종료 등) 누수되지 않게 하는 안전망.
+    // idle 세션 TTL reaper — **모든** ACP 세션(GUI 대화 + A2A 친구 대화)이 마지막 사용 후
+    // idle 초과면 close 해 agent 프로세스를 회수한다. 세션을 많이 열어두고 agent 가 쌓여도
+    // 유휴분이 자동 정리되어 누적되지 않게 하는 핵심 안전망(마스터 요구 2026-06-30).
+    // 진행 중 턴(in_flight)·미spawn(lazy) 세션은 건드리지 않으며, 닫힌 세션은 다음 메시지
+    // 전송 시 find-or-create 로 끊김 없이 재spawn 된다(대화 기록은 DB 영속).
     {
         let reap_state = state.clone();
         tokio::spawn(async move {
-            let idle = std::time::Duration::from_secs(1800); // 30분
+            // idle 기준: 환경변수 XGRAM_ACP_IDLE_SECS 로 override(기본 900초=15분).
+            let idle_secs = std::env::var("XGRAM_ACP_IDLE_SECS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|&n| n >= 60) // 너무 짧으면(<60s) 작업 중 끊김 위험 → 무시하고 기본값
+                .unwrap_or(900);
+            let idle = std::time::Duration::from_secs(idle_secs);
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(300)).await; // 5분마다 점검
-                reap_state.acp.reap_idle_a2a(idle).await;
+                tokio::time::sleep(std::time::Duration::from_secs(120)).await; // 2분마다 점검
+                reap_state.acp.reap_idle(idle).await;
             }
         });
     }
