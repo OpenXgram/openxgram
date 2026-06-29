@@ -89,8 +89,19 @@ interface RosterEntryDto {
 }
 interface MessageDto { id: string; sender: string; body: string; timestamp: string; conversation_id: string }
 
-const agentName = (a: { display_name?: string | null; alias: string }) =>
-  (a.display_name && a.display_name.trim()) || a.alias;
+// 표시용 짧은 이름. display_name 이 지정돼 있으면 그대로(사용자 지정 우선), 없으면 alias 에서
+// AoE tmux 세션명 패턴 `aoe_<name>_<hash>` / `aoe_term_<name>_<hash>` 의 가운데 <name> 만 뽑아
+// 깔끔히 보여준다(예: `aoe_live-vision_910b58ea` → `live-vision`). 데이터는 안 바꾸고 표시만 정규화.
+const prettyAlias = (raw: string): string => {
+  const m = raw.match(/^aoe_(?:term_)?(.+)_[0-9a-f]{6,}$/i);
+  return m ? m[1] : raw;
+};
+const agentName = (a: { display_name?: string | null; alias: string }) => {
+  const dn = a.display_name && a.display_name.trim();
+  // display_name 이 raw 세션명과 동일(자동 채움)하면 그것도 정규화 대상.
+  if (dn && dn !== a.alias) return prettyAlias(dn);
+  return prettyAlias(a.alias);
+};
 
 // ── Phase A 현황 그리드 — 숫자 셀 표시. null → "—", 소수 최대 4자리(불필요한 0 제거). ──
 const fmtNum = (n: number | null | undefined): string =>
